@@ -78,6 +78,13 @@ module.exports = function makeRouter(ctx) {
   No network calls of any kind from routes.js: outside systems are reached
   only through services the platform lends on `ctx` (a first version usually
   has none; the design's Connections section says what a person has to set up).
+- routes.js runs in a process of its own, with a database login that reaches
+  only this company's tables and an environment with nothing of the platform's
+  in it. So `ctx` is not a suggestion, it is the whole world: `process.env`,
+  the platform's files and another company's data are not merely off limits,
+  they are not there. Keep the top of the file cheap: it is loaded with a time
+  limit, and a file that loops or waits before returning its router fails to
+  load.
 - The platform reads every `.js` file before any of it runs and stops the
   build on: a `require` of anything but your own files (`require("./name.js")`);
   `process`, `global`, `globalThis`, `eval`, `new Function`, `import`, `fetch`;

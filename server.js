@@ -28,6 +28,7 @@ async function main() {
   await require("./src/arrival").init();     // propose on arrival: duplicates folded in, one question instead of a guess, what the person pointed at (after closeloop: its trigger names closeloop's columns)
   await require("./src/credit").init();       // the AI credit glide slope on /admin (the balance the admin enters, projected from the platform's own spend)
   await require("./src/acceptance").init();   // acceptance checks that accumulate: the promises a manager retired (the checks themselves live in the module's files)
+  await require("./src/runner").init();      // module code in a process of its own per company (tenancy option C): the user ids
   await connections.init();   // what modules reach outside through: spreadsheets, label printers (src/connections.js)
   await require("./src/datacheck").init();   // the review-time check that a change's ERP data is available, and the admin's data requests
 
@@ -84,6 +85,8 @@ async function main() {
 
   // every deploy redraws the module's diagrams for the new version
   registry.hooks.deployed = (company, mod, version) => diagrams.generate(company, mod, version);
+  // can this instance run module code in a process of its own, with a database login of its own? find out before anything is mounted
+  await require("./src/runner").selfTest().catch((e) => console.error("[runner] self test:", e.message));
   await registry.loadAll();
   // companies from before per-company passwords keep the shared ones until the admin sets their own
   await auth.ensureAccessRows();

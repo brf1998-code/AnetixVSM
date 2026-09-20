@@ -61,6 +61,7 @@
     <h2>Loop health <small>the platform's own numbers: is the loop turning, how fast, where it stops</small>
       <select id="h-days" onchange="loadHealth()"><option value="7">last 7 days</option><option value="30" selected>last 30 days</option><option value="90">last 90 days</option><option value="365">last year</option><option value="0">all time</option></select></h2>
     <div id="credit" style="margin:8px 0 10px;padding:9px 12px;border-radius:9px;background:var(--fog);font-size:13px;line-height:1.45"></div>
+    <div id="isolation" style="margin:8px 0 10px;padding:9px 12px;border-radius:9px;background:var(--fog);font-size:13px;line-height:1.45"></div>
     <div class="grid" id="h-fleet"></div>
     <div class="hwrap"><table class="health" id="h-table"></table></div>
     <p class="sub" id="h-note" style="margin-top:8px">Counts are for the window; open items, what is waiting, and the quiet stretch are as of now. Same shift means feedback to floor within 8 hours. To floor runs from the feedback item to the deploy (the oldest item in a batch). Manager wait is proposal drafted to decided, then ready to deployed. Stops are where builds stopped: the platform's own checks (gate), the reviewer, the tests, or something else. Quiet is days since the last reviewer or test stop, gate stop, and rollback; a long quiet stretch is the signal to try a cheaper build model. Edited is how many approved proposals the manager changed first (on the record since Sept 19). Decision times before the record use the run's start.</p>
@@ -210,6 +211,25 @@ async function creditSave() {
   await post("/api/admin/credit", { balance_usd, autofill: document.getElementById("cr-auto").checked, note: document.getElementById("cr-note").value });
   closeModal(); loadCredit();
 }
+// Tenancy option C (src/runner.js): is module code running in a process of its own, with a database login of its
+// own? Green when it is, red when it fell back to running inside the platform (do not put a second company's real
+// data on this instance while it is red).
+function drawIsolation(rn) {
+  const el = document.getElementById("isolation"); if (!el || !rn) return;
+  const ok = rn.effective === "process" && rn.roles.ok;
+  const color = ok ? "var(--green)" : "var(--red)";
+  el.style.borderLeft = `4px solid ${color}`;
+  let body;
+  if (rn.effective === "inline" && rn.mode === "inline") body = "Set to run module code inside the platform's own process on purpose (SOS_MODULE_RUNNER=inline). Fine for one company; do not put a second company's real data here.";
+  else if (!ok) body = `Module code is running INSIDE the platform's own process, not isolated: ${esc(rn.roles.reason || "the instance cannot isolate it")}. Do not put a second company's real data on this instance until this reads green.`;
+  else {
+    const procs = rn.processes || [];
+    const mem = procs.reduce((s, p) => s + (p.memory_mb || 0), 0);
+    body = `Each company's module code runs in a process of its own with a database login that reaches only that company's tables. ${procs.length} process${procs.length === 1 ? "" : "es"} up${mem ? `, about ${mem} MB` : ""}. ${rn.user.ok ? "As their own users." : `<span class="warn">NOT as their own users (${esc(rn.user.reason || "")})</span>.`} ${rn.flags.ok ? "Node permission flags on." : `<span class="warn">Node permission flags off (${esc(rn.flags.reason || "")})</span>.`}`;
+    if ((rn.inline_modules || []).length) body += `<br><span class="warn">Kept inside the platform after a bad start: ${rn.inline_modules.map(m => `${esc(m.company)}/${esc(m.module)}`).join(", ")}. Look at those tools.</span>`;
+  }
+  el.innerHTML = `<b style="color:${color}">Module isolation</b> · ${body}`;
+}
 async function loadHealth() {
   loadCredit().catch((e) => console.error("credit:", e));
   const days = document.getElementById("h-days").value;
@@ -265,6 +285,7 @@ async function load() {
   if (r.status === 401) { location.href = "/login?next=/admin"; return; }
   if (r.status === 403) { document.body.innerHTML = "<p style='padding:20px'>Admin login required.</p>"; return; }
   D = await r.json();
+  drawIsolation(D.runner);
   loadHealth().catch((e) => console.error("loop health:", e));
   const fable = D.models.find(m => m.id === "claude-fable-5-1") ? "claude-fable-5-1" : D.defaults.propose;
   document.getElementById("c-model").innerHTML = D.models.filter(m => m.agent !== false || m.id === fable).map(m => `<option value="${m.id}" ${m.id === fable ? "selected" : ""}>guide by ${m.label} ($${m.in}/$${m.out} per M tokens)</option>`).join("");

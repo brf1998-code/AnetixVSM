@@ -231,7 +231,8 @@ async function startBuild(intake) {
 }
 
 // ---- checks that need no tokens --------------------------------------------------------------
-function validateModule(dir, slug) {
+// run: { uid, gid } of the company's staged user, when the caller knows it (src/runner.js probe()).
+function validateModule(dir, slug, run) {
   const errors = [];
   let manifest = null;
   try { manifest = JSON.parse(fs.readFileSync(path.join(dir, "module.json"), "utf8")); }
@@ -258,7 +259,12 @@ function validateModule(dir, slug) {
   // the module gate first, whoever calls this function.
   const gated = gate.checkDir(dir, { lane: "module" });
   if (!gated.ok) errors.push(`the module gate refuses it: ${gate.oneLine(gated)}`);
-  if (gated.ok && fs.existsSync(entry)) {
+  const runner = require("./runner");
+  if (gated.ok && fs.existsSync(entry) && runner.MODE !== "inline") {
+    // never inside the platform's own process: a throwaway one with an empty environment and a time limit
+    const r = runner.probe({ dir, entry: (manifest && manifest.entry) || "routes.js", slug, manifest: manifest || {}, run });
+    if (!r.ok) errors.push(r.error || "routes.js fails to load");
+  } else if (gated.ok && fs.existsSync(entry)) {
     try {
       delete require.cache[require.resolve(entry)];
       const make = require(entry);
@@ -395,7 +401,7 @@ Rules for this build:
       }
       { const c1 = await P.getRun(runId); await P.setRun(runId, { evidence: { ...c1.evidence, gate: gate.record(verdict) } }); }
       // platform checks, no tokens
-      const v = validateModule(dir, slug);
+      const v = validateModule(dir, slug, await require("./runner").userFor(company, "staged").catch(() => null));
       if (!v.ok) {
         const summary = "The module did not pass the platform's checks:\n" + v.errors.map((e) => `- ${e}`).join("\n");
         const c2 = await P.getRun(runId);

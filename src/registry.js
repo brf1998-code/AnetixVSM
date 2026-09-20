@@ -27,6 +27,8 @@ const express = require("express");
 const { q, scopedDb, logEvent, upsertDoc } = require("./db");
 const migrate = require("./migrate");
 const gate = require("./modulegate");
+const runner = require("./runner");
+const dbroles = require("./dbroles");
 const { liveSchema, stagingSchema, applyMigrations, rebuildStagingClone } = migrate;
 
 const REPO_MODULES_DIR = process.env.REPO_MODULES_DIR || path.join(__dirname, "..", "modules");
@@ -143,7 +145,11 @@ function widgetInject(html, company, mod, version, mount, manifest) {
   return html.includes("</body>") ? html.replace("</body>", `${tag}\n</body>`) : html + tag;
 }
 
-function buildRouter(company, mod, version, schema) {
+// Where a module version's server code runs (src/runner.js, tenancy option C): in the company's own process
+// for that lane, with its own database login, behind a proxy; or, when the instance cannot do that (or
+// SOS_MODULE_RUNNER=inline, or `inline` is asked for by the boot safety net), inside this process as before.
+// The screens are files and are always served from here: no module code runs to serve one.
+async function buildRouter(company, mod, version, schema, { inline = false } = {}) {
   const mount = schema.startsWith("stg_") ? "staged" : "live";
   const dir = versionDir(company, mod, version);
   const manifest = readManifest(company, mod, version);
@@ -158,13 +164,20 @@ function buildRouter(company, mod, version, schema) {
   }
 
   // module routes
+  router.manifest = manifest;
+  if (runner.enabled() && !inline) {
+    await dbroles.grant(company, mod);   // the platform has just made or remade this module's tables
+    await runner.load({ company, lane: mount, mod, version, schema, dir, manifest });
+    router.use((req, res) => runner.proxy(req, res, { company, lane: mount, mod }));
+    router.ownProcess = true;
+    return router;
+  }
   const entry = path.join(dir, manifest.entry || "routes.js");
   delete require.cache[require.resolve(entry)];
   const makeRouter = require(entry);
   const requireManager = (req, res, next) =>
     ["manager", "admin"].includes(req.sosRole) ? next() : res.status(403).json({ error: "manager login required" });
   router.use(makeRouter({ express, db: scopedDb(schema), moduleName: mod, company, requireManager, ...moduleServices(company, mod, manifest, version) }));
-  router.manifest = manifest;
   return router;
 }
 function hasPrinter(manifest) {
@@ -218,11 +231,12 @@ function moduleServices(company, mod, manifest, version) {
   };
 }
 
-async function mountLive(company, mod, version) {
+async function mountLive(company, mod, version, opts) {
   await materialize(company, mod, version);
   await applyMigrations(liveSchema(company, mod), versionDir(company, mod, version));
   const entry = mounts.get(key(company, mod)) || {};
-  entry.live = buildRouter(company, mod, version, liveSchema(company, mod));
+  entry.live = await buildRouter(company, mod, version, liveSchema(company, mod), opts);
+  if (!entry.live.ownProcess) await runner.unload(company, "live", mod).catch(() => {});   // it may have run in its own process until now
   mounts.set(key(company, mod), entry);
   // one platform.connections row per declared connection, kept across versions
   await require("./connections").ensureRows(company, mod, readManifest(company, mod, version)).catch((e) => console.error(`[connections] ${company}/${mod}:`, e.message));
@@ -232,13 +246,14 @@ async function mountStaged(company, mod, version) {
   await materialize(company, mod, version);
   await applyMigrations(stagingSchema(company, mod), versionDir(company, mod, version));
   const entry = mounts.get(key(company, mod)) || {};
-  entry.staged = buildRouter(company, mod, version, stagingSchema(company, mod));
+  entry.staged = await buildRouter(company, mod, version, stagingSchema(company, mod));
   mounts.set(key(company, mod), entry);
 }
 
 function unmountStaged(company, mod) {
   const entry = mounts.get(key(company, mod));
   if (entry) entry.staged = null;
+  runner.unload(company, "staged", mod).catch(() => {});   // the staged process goes away with its last preview
 }
 
 // ---- lifecycle ------------------------------------------------------------
@@ -390,6 +405,35 @@ async function loadAll() {
       catch (e) { console.error(`staged mount failed for ${row.company}/${row.name}:`, e.message); }
     }
   }
+  await bootNet();
+}
+
+// The deploy-day safety net (SOS_MODULE_RUNNER=auto only): a tool that is on the floor and answers 500 from its
+// own process on one of its own smoke paths goes back inside the platform's process, loudly, until someone has
+// looked at it. Run once, after every tool is mounted (a tool may read its siblings). Never for a staged build:
+// there a 500 is the build's failure and the checks say so.
+async function bootNet() {
+  if (!runner.enabled() || runner.MODE !== "auto") return;
+  for (const [k, entry] of mounts) {
+    if (!entry.live || !entry.live.ownProcess) continue;
+    const [company, mod] = k.split("/");
+    const rec = runner.children.get(`${company}/live`);
+    if (!rec) continue;
+    const paths = (Array.isArray(entry.live.manifest.smoke) ? entry.live.manifest.smoke : []).filter((p) => typeof p === "string" && /^\/api\//.test(p)).slice(0, 12);
+    let broken = null;
+    for (const p of paths) {
+      try { const r = await runner.call(rec, { url: `/${mod}${p}`, headers: { "x-sos-role": "manager" }, timeoutMs: 10000 }); if (r.status >= 500) { broken = `${p} answered ${r.status}: ${String(r.body).slice(0, 160)}`; break; } }
+      catch (e) { broken = `${p}: ${e.message}`; break; }
+    }
+    if (!broken) continue;
+    console.error(`[runner] ${k} does not work in a process of its own (${broken}); it is running INSIDE the platform's process until that is looked at`);
+    try {
+      const row = await getModule(company, mod);
+      await mountLive(company, mod, row.live_version, { inline: true });
+      runner.state.inline_modules.push({ company, module: mod, why: broken });
+      await logEvent("module_kept_inline", k, { why: broken });
+    } catch (e) { console.error(`[runner] and it does not mount the old way either: ${e.message}`); }
+  }
 }
 
 // Create the next version directory as a copy of the current live version.
@@ -417,6 +461,7 @@ async function dropDraftVersion(company, mod, version) {
 // Forget every mount of a company (company deletion).
 function unmountCompany(company) {
   for (const k of [...mounts.keys()]) if (k.startsWith(`${company}/`)) mounts.delete(k);
+  runner.stop(company);
   fs.rmSync(path.join(MODULES_DIR, company), { recursive: true, force: true });
 }
 
@@ -562,6 +607,7 @@ async function goToVersion(company, mod, version, { restoreData = false } = {}) 
   await mountLive(company, mod, version); // applies any migrations the schema is missing (no-op going back)
   if (target) {
     await migrate.restoreSnapshot(company, mod, target.file);
+    if (runner.enabled()) await dbroles.grant(company, mod);   // a restore can make tables again, and a new table carries no rights
     await q("DELETE FROM platform.schema_snapshots WHERE id=$1", [target.id]);
     await q(`DROP SCHEMA IF EXISTS ${target.file} CASCADE`);
   }
@@ -655,5 +701,5 @@ function attach(app) {
 module.exports = {
   MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,
-  unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany,
+  unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany, moduleServices,
 };

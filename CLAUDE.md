@@ -275,9 +275,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   Tests: `node scripts/test-modulegate.js` (no database; also proves the
   library modules and the skeleton pass) and TEST-CAMPAIGN S0-74 to S0-80,
   S3-03a. **It is not a security boundary**: any text check can be got
-  around. It stops the careless build and the lazily steered one until
-  module code runs in a child process per company with its own database
-  role (tenancy trade study of 2026-09-17, option C). Still open from the
+  around. It stops the careless build and the lazily steered one; the wall is
+  the process and database boundary (option C, built 2026-09-20, see "Module
+  code runs in a process of its own"). The gate still runs first, so a build
+  that trips a rule is refused before it is ever loaded, in either world. Still open from the
   same review, NOT covered by the gate: agent-written PAGES run in the
   manager's browser with the manager's session, so a staged preview could
   call the platform's own APIs (approve, deploy) as the manager; the fix is
@@ -591,8 +592,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   with Nixpacks because railway.json says so, whatever the service settings
   show); found on the PATH or at `SOS_CHROMIUM_PATH`; it runs `--no-sandbox`
   because the container is root (agent-written page code in an unsandboxed
-  renderer: no wider than routes.js in our own process, one more reason for
-  option C). Evidence: `evidence.checks = { ok, kind, detail, smoke,
+  renderer; the browser here is the platform's own check, not a place module
+  code runs, and module code itself is now isolated, see option C). Evidence: `evidence.checks = { ok, kind, detail, smoke,
   acceptance: { total, passed, added, retired, wrote, failed: [{ file, title,
   new, steps, origin }] }, pages: { mode, screens, problems, inherited, notes,
   fell_back } }`; `test_run` / `visual_check` keep `{ ok, checked }`. Errors
@@ -749,6 +750,86 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   kind `ai`, NOT as a gate, reviewer or test stop (so it never resets the
   quiet stretch that decides on a cheaper build model). `project()` and
   `slopeOf()` are pure: `scripts/test-credit.js`. `ai_credit` is in the backup.
+- **Module code runs in a process of its own, with a database login of its
+  own** (2026-09-20, `src/runner.js`, `src/runner-child.js`,
+  `src/runner-probe.js`, `src/dbroles.js`; tenancy trade study option C, build
+  order item 9). The review's largest finding: `routes.js` is written by a
+  build agent from words typed on a floor, and the platform `require`d it into
+  ITS OWN process, where `DATABASE_URL`, `SESSION_SECRET`, the API key and
+  every company's schema and files were one expression away. The module gate
+  (a text check) narrows a careless or steered build; it is not a wall. This
+  is the wall. Each company gets two child processes, `live` (the code a
+  manager approved) and `staged` (a preview nobody has approved yet, up only
+  while a preview exists), each started (a) as an unprivileged user of its own
+  when the platform runs as root, one per company and lane, the two of a
+  company sharing a group and the company's module folder closed to every
+  other group; (b) with an environment of ONE variable (`SOS_RUNNER_BOOT`),
+  which the child reads and deletes at once, so module code that looks at
+  `process.env` finds nothing of the platform's; (c) under Node's permission
+  flags where this Node has them (files readable only under the company's
+  module folder and the app's `node_modules`, no child processes, no workers,
+  no native add-ons); (d) with a database login of its own (`src/dbroles.js`):
+  the live role reads and writes only its company's `mod_<company>_*` tables,
+  the staged role reads the floor and writes only `stg_<company>_*`, so
+  UNAPPROVED code cannot change a row on the floor. No CREATE/ALTER/DROP/
+  TRUNCATE, no other schema, no `platform.*`, no another company, no files,
+  no `SET ROLE`. Passwords are never stored: an HMAC of the role name under
+  `SOS_CONNECTION_KEY` (else `SESSION_SECRET`), set again at every boot, so a
+  rotated secret heals. The platform keeps everything else in its own process
+  and stays the owner of every schema and the only one that migrates, clones,
+  snapshots and restores (it calls `dbroles.grant` again after each, because a
+  new table carries no rights). A request under a module mount is checked by
+  sign-in, the company guard and the page policy FIRST (`registry.attach`),
+  then handed to the child over a unix socket in a folder only that child's
+  user can enter, WITHOUT the visitor's cookies (the child gets role, person,
+  device as headers, never the session), guarded by a per-process token; the
+  child's answer returns under the platform's headers minus any Set-Cookie (a
+  tool cannot set a cookie or a CSP on the platform's address). What the
+  platform lends (`ctx.connections`, `ctx.ai`, `ctx.agentDoc`, `ctx.peer`) is
+  asked for over the fork's private channel and answered for the company that
+  channel belongs to, whatever the child claims; `ctx.peer` reaches only the
+  company's own sibling tools. Also gained: a module that throws, leaks or
+  loops takes down one company's lane, not the instance (`request timeout` =
+  504 then a liveness ping ends a stuck process, which restarts on its own; a
+  crash restarts, with a 30 s back-off after five crashes in a minute); the
+  "does routes.js load" check of a new module runs in a THROWAWAY process
+  (`runner-probe.js`) with an empty environment and a time limit
+  (`modulebuild.validateModule`), so a build whose `routes.js` loops at load
+  no longer hangs the platform. `SOS_MODULE_RUNNER`: `auto` (default: a
+  process of its own when the instance can do it, `selfTest()` finds out at
+  boot and says so in the log and on `/admin`, else the OLD way inline and
+  `/admin` says THAT in red, so the floor never goes dark because of this
+  file), `process` (own process or the module is not mounted, for an instance
+  holding a second company's real data), `inline` (the old way on purpose, for
+  local work without root or Postgres role rights). Deploy-day safety net
+  (`auto` only, `registry.bootNet`): a tool on the floor that answers 500 from
+  its own process on one of its own smoke paths goes back inside the platform,
+  loudly (`module_kept_inline`, listed on `/admin`), until someone looks. The
+  unit of isolation is company and lane on purpose: two tools of one company
+  already read each other through `ctx.peer` and one manager approves both.
+  Env: `SOS_MODULE_TIMEOUT_MS` (30000, per request), `SOS_MODULE_LOAD_TIMEOUT_MS`
+  (10000, routes.js load), `SOS_ROLE_CONNECTIONS` (12, per role),
+  `SOS_ROLE_STATEMENT_TIMEOUT` (30s). Tables: `platform.runner_ids` (the user
+  id per company; in `backup.js`? no, it is instance-local, so it is NOT
+  backed up and is remade at need). Boot logs one `[runner]` line; company
+  delete drops the processes, both roles and the ids (`runner.deleteCompany`).
+  What only the live instance can settle, and the boot log now reports: whether
+  Railway's Postgres user may make roles, whether the container lets a child
+  run as another user, whether the app folder is readable to that user.
+  Sandbox spike and full suites proved the three locally. Units:
+  `scripts/test-runner.js` (role names, grants, header stripping, permission
+  flags). Boundary: `scripts/e2e/runner-hostile.js` (37, needs Postgres and
+  root): hostile `routes.js` loaded straight into a company's process, then
+  every reach tried, the environment, another company's tables and files, the
+  platform's tables, a Pool it builds by hand, the visitor's cookie, another
+  tool's channel, a crash and an endless loop. Every e2e suite reruns green in
+  process mode; `inline` reruns green too. Known limits: the wall is only as
+  good as the container and the Postgres user (all three checks must read
+  green on Railway, S1-17); the roles share one database, so a role that could
+  exhaust connections is bounded by `CONNECTION LIMIT`, not partitioned; a
+  company's two tools still share a login and a process by design; the API key
+  is still one for the instance (per-company keys were cancelled 2026-09-20,
+  billing is per iteration now).
 - **Staging is a copy of the floor's data, on purpose** (decided 2026-09-19,
   closing the 2026-09-18 review finding "previews show real rows").
   `migrate.cloneSchema` copies structure AND rows from the live schema into
@@ -1312,6 +1393,12 @@ judged), `SOS_CHECK_TIMEOUT_MS` (default 10000, per check step),
 `SOS_AUTO_PROPOSE_PER_HOUR` (default 40: how many requests a company's
 proposer reads on arrival in an hour; past it they wait for the manager's
 button),
+`SOS_MODULE_RUNNER` (default `auto`; `process` = module code in its own
+process or not mounted; `inline` = the old in-platform way),
+`SOS_MODULE_TIMEOUT_MS` (30000, one module request),
+`SOS_MODULE_LOAD_TIMEOUT_MS` (10000, routes.js load), `SOS_ROLE_CONNECTIONS`
+(12, database connections per company role), `SOS_ROLE_STATEMENT_TIMEOUT`
+(30s); `SOS_CONNECTION_KEY` now also keys the per-company database passwords,
 `SOS_CONTEXT_CHARS` (default 400000: the most
 module source a proposal, system review or diagram call is given; files are
 whole below it, see "A model reads a module's files whole"), `SOS_SESSION_DAYS` (default 30; sessions
@@ -1367,6 +1454,16 @@ Passwords live only in Railway; never commit them.
   leaves `POST /api/feedback`'s own answer. The floor's side of it lives under
   `/who/`; the manager's answer, the unlink, the switches and the credit
   routes live on paths the module page policy does not open.
+- Module server code runs in a process of its own per company (option C,
+  `src/runner.js`); `SOS_MODULE_RUNNER=auto` falls back to running it inline
+  when the instance cannot isolate it and says so on /admin. Do not undo the
+  boundary: the child's environment is one variable it deletes on read (never
+  add a second), its database login is `src/dbroles.js` (a new schema or table
+  the platform makes needs `dbroles.grant` called again, which mountLive /
+  mountStaged / restore already do), and a request reaches it WITHOUT the
+  visitor's cookies. A platform feature a module needs is lent on `ctx` over
+  the fork's private channel (add it to both `registry.moduleServices` and the
+  child's `services()`), never by widening what the child can reach directly.
 - Outside systems are connections (`src/connections.js`): declared in
   module.json, set up on the connections page, lent as
   `ctx.connections.<name>`. A new kind gets a surface there, its settings and

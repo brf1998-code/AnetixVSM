@@ -628,6 +628,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
     defaults: agent.DEFAULT_MODELS,
     monthlyCap: agent.MONTHLY_CAP_USD,
     totalSpend: (await agent.monthlySpend(null)).usd,
+    runner: require("./runner").status(),
   });
 });
 
@@ -931,6 +932,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     await datacheck.deleteCompany(co.slug);
     await people.deleteCompany(co.slug);
     await require("./acceptance").deleteCompany(co.slug);
+    await require("./runner").deleteCompany(co.slug);   // its processes, its two database logins, its user ids
     counts.record = await require("./record").deleteCompany(co.slug);
     await q("DELETE FROM platform.companies WHERE slug=$1", [co.slug]);
     await logEvent("company_deleted", co.slug, { name: co.name, modules: mods, counts });
