@@ -115,7 +115,7 @@ async function reproposeFeedback(feedbackId) {
   const fb = (await q("SELECT id, status FROM platform.feedback WHERE id=$1", [feedbackId])).rows[0];
   if (!fb || fb.status !== "reviewing") return null;
   await q("UPDATE platform.proposals SET status='superseded' WHERE feedback_id=$1 AND status='draft'", [feedbackId]);
-  return generateProposal(feedbackId);
+  return generateProposal(feedbackId, { force: true });   // proposing again: a proposal, not a sorting or a question (src/arrival.js)
 }
 async function resolve(id, note, actor) {
   const r = (await q("SELECT * FROM platform.data_requests WHERE id=$1", [id])).rows[0];

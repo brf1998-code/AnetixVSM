@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-19, night)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-20)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -479,9 +479,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   name), and nothing they file reaches the floor without the manager. Fake
   mode: the fake proposer's rationale says "Follow-up context received for
   request #N." when the context arrived. Units: `scripts/test-closeloop.js`,
-  the `answers` cases in `scripts/test-health.js`. Not yet (manager side of
-  item 6): a clarifying question to the reporter; also nothing proposes a
-  follow-up on arrival (item 8). The manager's own answer is the next bullet;
+  the `answers` cases in `scripts/test-health.js`. Not yet at the time (manager side of
+  item 6): a clarifying question to the reporter, and nothing proposed a
+  follow-up on arrival; both built 2026-09-20, see "Propose on arrival". The
+  manager's own answer is the next bullet;
   emails to the manager are OFF the plan (Brendan, 2026-09-19).
 - **The manager's close-out on a shipped tile** (2026-09-19, `src/closeloop.js`
   `managerAnswer` / `mayCloseOut`, the manager side of item 6 as Brendan
@@ -627,6 +628,127 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   floor's ids; a check must not call a route that prints or asks an AI
   persona (guidance only, nothing enforces it); UI builds cannot add checks;
   with no browser an error that only happens when a script runs gets through.
+- **Propose on arrival, with one question instead of a guess** (2026-09-20,
+  `src/arrival.js`, `proposals.generateProposal(id, opts)`, build order item 8
+  built together with the clarifying question left over from item 6, because
+  both live in the proposer's one call). Until this a request sat under
+  Feedback until a manager pressed "Review with AI", the operator could only
+  type, a manager tallied repeats by eye, and ambiguous words got a guess. Now
+  `POST /api/feedback` ends with `arrival.start(id)`: `claim()` is awaited (so
+  the answer already says `arrival: "proposing"` and a button pressed in the
+  same instant gets 409 "being drafted right now"), `work()` runs behind the
+  response, one call at a time per company and module (`inOrder`), so a repeat
+  sent a second later is read after the first. The ONE proposer call may now
+  come back four ways (schema fields `triage`, `duplicate_of`, `triage_note`,
+  `question`, present only when that outcome is allowed): **a proposal** (the
+  ordinary case: the draft is on the card before the manager looks; an earlier
+  undecided draft of the same request becomes `superseded`); **a duplicate**
+  of an open request of the same tool (`arrival.candidates`: open, not itself
+  folded, lower id, at most 40, each with its words and any drafted proposal):
+  `linkDuplicate` sets `feedback.duplicate_of`, the root's `recurrence` is
+  recounted, the board folds the row into the root's card ("Asked 4 times by 3
+  people", `arrival.tally`, the other wordings under it, a manager-only "not
+  the same" = `POST /api/feedback/:id/unlink`, after which it is proposed
+  ALONE so it cannot be folded straight back), and a database trigger
+  (`platform.feedback_dupes_follow`) keeps a folded row's status, outcome,
+  shipped version and the manager's close-out in step with its root, so when
+  the root ships everyone who asked gets "Did it fix it?" and answers for
+  themselves, a decline reaches everyone with the reason, and Done thanks
+  everyone (close-out on a folded row is refused; `closeloop`'s reads join
+  proposals and runs through `COALESCE(duplicate_of, id)` and My requests says
+  "The same thing as request #N, so it was added to it."); **a question**:
+  only when the words can be read two ways that lead to different changes and
+  the source does not settle it, one plain question with two or three answers
+  to tap (`arrival.cleanQuestion`: two to three distinct short options, and
+  the text must pass `plainwords.check`, else it is dropped with a log line
+  and the proposal stands), stored in `feedback.question`, NO proposal yet.
+  It goes to the person who asked, on the screen they are standing at (the
+  widget looks every 3 s while the proposer is reading what this device sent,
+  two minutes at most, and on every page load) and in My
+  requests (state `question`, counted in the "to check" badge), and to the
+  manager's card (answer buttons, "answer in my own words", "Propose anyway").
+  Whoever answers first wins (`arrival.answerQuestion`, one conditional
+  UPDATE), the proposal is then drafted with the answer in the prompt, and
+  there is one question per request, ever. Who may see or answer:
+  `arrival.mayReply`: the signed-in person who asked; for a request sent with
+  nobody signed in, the device that sent it, by the request's `reply_token`
+  (returned once to the sender, kept in `localStorage sos.ask.<co>` for 48 h,
+  never sent to the board or any other page). **A flag**: `not_this_tool` or
+  `new_tool` with one sentence for the manager, who can "Propose anyway" or
+  decline. What the person points at and a photo ride along in the same POST
+  and go to the PROPOSER: "Point at it" puts a glass pane over the page (the
+  page itself is never pressed; `elementFromPoint` under the pane), and sends
+  tag, id, classes, text, label, a short path, the first 400 characters of
+  markup and the box (`arrival.cleanElement` cuts it down again server side,
+  `elementLine` words it for the model); "Add a photo" scales to 1600 px JPEG
+  on the device, the body limit is 6 MB for exactly `POST /api/feedback`, the
+  server takes jpeg, png or webp up to 4 MB into `platform.attachments`
+  (`feedback_id`; `SOS_PHOTOS_PER_DAY`, default 300 a company, past it the
+  words still go through), and it goes to the model as an image block
+  (`arrival.photoBlocks`). The manager's card keeps ONE quiet line ("pointed
+  at ... · photo"). Guards: per-company switches on the Agent settings page
+  (`companies.auto_propose`, `allow_photos`, `POST
+  /api/c/<slug>/agents/arrival`; off = the old board, and the button still
+  sorts and folds); `SOS_AUTO_PROPOSE_PER_HOUR` (default 40 requests a company
+  an hour, past it requests wait for the button and the log says so); the
+  company budget and instance cap as for any proposal; a failure of any kind
+  leaves the request exactly as before this existed (`arrival: failed`, the
+  button works); a call in flight at a restart is reset at boot. The button
+  ("Review with AI" / "Propose anyway") passes `force` when the proposer has
+  already read the request, and `datacheck.reproposeFeedback` always does: no
+  sorting, no question, a proposal. Spend for a call that did not end in a
+  proposal goes to `ai_usage` kind `triage`. Routes, split like `/who` and
+  `/people`: `GET /api/c/<slug>/who/question?id=&token=` and `POST
+  /api/c/<slug>/who/requests/<id>/reply` are open to module pages and answer
+  only the asker (404 / 403 for anyone else, token or not); the manager's
+  `POST /api/feedback/<id>/answer` and `/unlink` sit under the id-addressed
+  path the page policy does NOT open (proven in a headless browser, with the
+  switches and the credit routes). Record kinds: duplicate_linked,
+  duplicate_unlinked, question_asked, question_answered (detail.via = asker |
+  device | manager), request_flagged, arrival_settings; proposal_drafted
+  carries on_arrival, with_answer, pointed, photos. Loop health: `arrival` =
+  proposed, duplicates, questions, answered, answered_by_manager,
+  waiting_answer, flagged, unlinked (the Filed cell on /admin); a folded
+  request is not an open item of its own. Fake mode markers in the feedback:
+  DUPE (the first open request listed), ASKME, ASKMEBADLY (a question that
+  fails the plain-words check), NOTTHISTOOL, NEWTOOL, FAILPROPOSE, CREDITOUT;
+  `SOS_FAKE_PROPOSE_MS` makes a fake proposal call take that long. Units:
+  `scripts/test-arrival.js`. End to end: `scripts/e2e/arrival.js` (89, plus
+  the guard, slow and restarted modes in its header) and
+  `arrival-browser.js` (38); the older suites take the draft left on arrival
+  through `proposalFor` in `scripts/e2e/lib.js`. Known limits: whether the
+  REAL proposer folds, asks and flags well is unread (S1-15: read them, and
+  keep wrongly folded wordings for the brief); every request now costs a
+  proposal call; the question reaches a nameless sender only on the device
+  that sent it; a photo is kept in the company's database with no retention
+  rule yet; the element's markup can carry whatever text was on the screen.
+- **The AI credit glide slope, and "the AI service is out" told apart from
+  "the build is wrong"** (2026-09-20, `src/credit.js`, the top of the Loop
+  health card on /admin). Why: live run 38 died after 170 messages with
+  "Credit balance is too low", nothing had warned of it, and the manager's
+  card showed the raw API message as if the build were at fault. Anthropic
+  does not hand a key its balance, so the ADMIN enters it (`platform.ai_credit`,
+  `POST /api/admin/credit { balance_usd, autofill, note }`); from there the
+  platform subtracts its own spend since (the same five sources as
+  `monthlySpend`), takes the burn from the trailing seven days (fewer when the
+  instance is younger) and projects the day the balance reaches zero:
+  "About $36.30 left, burning $4.74 a day (5 day average): runs out around
+  Sep 28, 7.6 days from now", with the slope drawn under it (solid from the
+  entered balance to today, dashed to zero; `slopeOf`). Amber under 7 days,
+  red under 3, never an alarm for a low balance once "autofill is set up" is
+  ticked (Brendan: autofill when live). Spend by anything else on the same key
+  is invisible here, so the line says "about" and a fresh number re-anchors it.
+  `credit.classify(message)` tells credit / key / busy from everything else;
+  `pipeline.failRun`, the proposer on arrival and the Review button call
+  `credit.noteFailure` (event `ai_unavailable`, shown red on /admin "and
+  nothing has worked since" until any AI call succeeds or a balance is
+  entered), the run gets `evidence.ai_unavailable`, the manager's card and the
+  button read `credit.plain(kind)` ("The AI service was not available ...
+  Nothing is wrong with your request and nothing reached the floor"), the
+  checks log says "AI service unavailable" and loop health counts it as stop
+  kind `ai`, NOT as a gate, reviewer or test stop (so it never resets the
+  quiet stretch that decides on a cheaper build model). `project()` and
+  `slopeOf()` are pure: `scripts/test-credit.js`. `ai_credit` is in the backup.
 - **Staging is a copy of the floor's data, on purpose** (decided 2026-09-19,
   closing the 2026-09-18 review finding "previews show real rows").
   `migrate.cloneSchema` copies structure AND rows from the live schema into
@@ -1068,7 +1190,8 @@ the manager's view of the same line over eight weeks, with Jonah.
 ## Two revision paths, and which one to use
 
 1. **In-app loop (costs API money, runs on the live instance).** Floor feedback
-   on a module page → manager clicks Review with AI → proposal → approve →
+   on a module page → the proposer reads it on arrival (or, with that
+   switched off, the manager clicks Review with AI) → proposal → approve →
    agent builds a new module version into staging → manager deploys. This is
    what participants exercise. It only touches module files stored in the
    database (`platform.module_versions.files`). Several proposals can be
@@ -1186,6 +1309,9 @@ every build's page load go without a browser), `SOS_CHROMIUM_PATH` (where
 Chromium is, when it is not on the PATH as `chromium`), `SOS_PAGE_SETTLE_MS`
 (default 1500: how long a screen is given to load its data before it is
 judged), `SOS_CHECK_TIMEOUT_MS` (default 10000, per check step),
+`SOS_AUTO_PROPOSE_PER_HOUR` (default 40: how many requests a company's
+proposer reads on arrival in an hour; past it they wait for the manager's
+button),
 `SOS_CONTEXT_CHARS` (default 400000: the most
 module source a proposal, system review or diagram call is given; files are
 whole below it, see "A model reads a module's files whole"), `SOS_SESSION_DAYS` (default 30; sessions
@@ -1234,6 +1360,13 @@ Passwords live only in Railway; never commit them.
   (`platform.check_retirements`). The platform's own checks of a staged build
   run as that company's manager (`auth.serviceCookie`), never with the
   internal token: the pages and the smoke list are agent-written.
+- Reading a request on arrival never moves anything toward the floor: it
+  drafts, folds, asks or flags, and the manager's gate is where it always
+  was. A question goes only to the person who asked (or the device that sent
+  a nameless request, by its token) and to the manager; `reply_token` never
+  leaves `POST /api/feedback`'s own answer. The floor's side of it lives under
+  `/who/`; the manager's answer, the unlink, the switches and the credit
+  routes live on paths the module page policy does not open.
 - Outside systems are connections (`src/connections.js`): declared in
   module.json, set up on the connections page, lent as
   `ctx.connections.<name>`. A new kind gets a surface there, its settings and

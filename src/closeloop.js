@@ -101,7 +101,15 @@ function stateOf(r) {
       ? { state: "waiting_data", line: "Waiting on data from the office before it can be built." }
       : { state: "proposed", line: "The manager has a proposal to decide on." };
   }
+  // propose on arrival (src/arrival.js): one question instead of a guess, waiting on the person who asked
+  if (r.question && !r.question.answer && !r.duplicate_of && r.status === "new") return { state: "question", line: "One quick question before this goes further." };
+  if (r.question && r.question.answer && r.status === "new") return { state: "new", line: "On the board. Thank you for the answer." };
   return { state: "new", line: "On the board. The manager has not looked yet." };
+}
+// pure: a request the proposer folded into another one says so; everything else about it follows that request
+function withDuplicate(r, st) {
+  if (!r.duplicate_of || ["fixed", "not_quite", "thanked", "little_left", "live", "rolled_back", "declined"].includes(st.state)) return st;
+  return { ...st, line: `The same thing as request #${r.duplicate_of}, so it was added to it. ${st.line.replace(/^On the board\. The manager has not looked yet\.$/, "It is on the board.")}` };
 }
 // pure: may this person answer "fixed it / not quite" on this request?
 function mayAnswer(r, personId) {
@@ -133,15 +141,18 @@ function followUpContext(original) {
 const SELECT = `
   SELECT f.id, f.kind, f.module, f.page, f.screen, f.message, f.name, f.person_id, f.status, f.outcome, f.created_at, f.follow_up_of,
          f.shipped_version, f.shipped_at, f.floor_answer, f.floor_answer_at, f.floor_answer_by, f.manager_answer, f.manager_answer_at, f.manager_answer_by,
+         f.duplicate_of, f.question,
          p.status AS proposal_status, p.data_check->>'status' AS data_status, r.status AS run_status, r.step AS run_step,
          (SELECT c.id FROM platform.feedback c WHERE c.follow_up_of = f.id ORDER BY c.id DESC LIMIT 1) AS follow_up_id
     FROM platform.feedback f
-    LEFT JOIN LATERAL (SELECT id, status, data_check FROM platform.proposals WHERE feedback_id = f.id AND status <> 'superseded' ORDER BY id DESC LIMIT 1) p ON true
+    LEFT JOIN LATERAL (SELECT id, status, data_check FROM platform.proposals WHERE feedback_id = COALESCE(f.duplicate_of, f.id) AND status <> 'superseded' ORDER BY id DESC LIMIT 1) p ON true
     LEFT JOIN LATERAL (SELECT status, step FROM platform.build_runs WHERE p.id = ANY(COALESCE(proposal_ids, ARRAY[proposal_id])) AND status <> 'cancelled' ORDER BY id DESC LIMIT 1) r ON true`;
 
 const publicRow = (r, personId) => ({
   id: r.id, module: r.module, screen: r.screen || null, words: clip(r.message, 280), created_at: r.created_at,
-  ...stateOf(r), built: r.status === "done" && !rolledBack(r) ? clip(summaryOf(r.outcome), 400) || null : null,
+  ...withDuplicate(r, stateOf(r)), added_to: r.duplicate_of || null,
+  question: stateOf(r).state === "question" ? { text: r.question.text, options: r.question.options || [] } : null,
+  built: r.status === "done" && !rolledBack(r) ? clip(summaryOf(r.outcome), 400) || null : null,
   shipped_at: r.shipped_at || null, follow_up_of: r.follow_up_of || null, follow_up_id: r.follow_up_id || null,
   can_answer: mayAnswer(r, personId),
 });
@@ -151,7 +162,7 @@ async function myRequests(company, personId, { limit = 40 } = {}) {
   if (!personId) return { requests: [], to_answer: 0 };
   const rows = (await q(`${SELECT} WHERE f.company=$1 AND f.person_id=$2 AND f.kind='feedback' ORDER BY f.id DESC LIMIT $3`, [company, personId, Math.min(100, Number(limit) || 40)])).rows;
   const requests = rows.map((r) => publicRow(r, personId));
-  return { requests, to_answer: requests.filter((r) => r.state === "live" && r.can_answer).length };
+  return { requests, to_answer: requests.filter((r) => (r.state === "live" && r.can_answer) || r.state === "question").length };
 }
 
 // What went live in this module lately, newest version first, with who asked.
@@ -214,6 +225,7 @@ async function answer({ company, feedbackId, person, role, answer: ans, what }) 
     [company, fb.module, fb.page, fb.screen, fb.target_file, still, person.name, person.id, fb.id])).rows[0];
   await record("floor_not_quite", { company, module: fb.module, actor, feedback_id: fb.id, version: fb.shipped_version || null, before: fb.floor_answer || null, after: still, detail: { follow_up_id: follow.id, asked_by: fb.name || null } });
   await record("feedback_filed", { company, module: fb.module, actor, feedback_id: follow.id, after: still, detail: { screen: fb.screen, page: fb.page, follow_up_of: fb.id } });
+  await require("./arrival").start(follow.id);   // the proposer reads the follow-up at once, like any request
   return { answer: "not_quite", request: upd.id, follow_up: { id: follow.id, words: clip(still, 280) } };
 }
 
@@ -223,6 +235,7 @@ async function managerAnswer({ company, feedbackId, actor, answer: ans, what }) 
   if (!["done", "little_left"].includes(ans)) throw fail(400, "the answer is done or little_left");
   const fb = (await q("SELECT * FROM platform.feedback WHERE id=$1 AND company=$2", [Number(feedbackId), company])).rows[0];
   if (!fb) throw fail(404, "no such request");
+  if (fb.duplicate_of) throw fail(409, `this one was added to request #${fb.duplicate_of}; close that one out and everyone who asked is told`);
   if (fb.manager_answer) throw fail(409, fb.manager_answer === "done" ? "this one is already marked done" : "you already said a little is left; the follow-up is on the board");
   if (fb.floor_answer) throw fail(409, "the floor already answered this one");
   if (!mayCloseOut(fb)) throw fail(409, "this one is not live through a build, so there is nothing to close out");
@@ -247,6 +260,7 @@ async function managerAnswer({ company, feedbackId, actor, answer: ans, what }) 
     [company, fb.module, fb.page, fb.screen, fb.target_file, left, by, who.person || null, fb.id])).rows[0];
   await record("manager_little_left", { company, module: fb.module, actor: recActor, feedback_id: fb.id, version: fb.shipped_version || null, after: left, detail: { follow_up_id: follow.id, asked_by: fb.name || null, asked_by_person: fb.person_id || null } });
   await record("feedback_filed", { company, module: fb.module, actor: recActor, feedback_id: follow.id, after: left, detail: { screen: fb.screen, page: fb.page, follow_up_of: fb.id, by_manager: true } });
+  await require("./arrival").start(follow.id);
   return { answer: "little_left", request: upd.id, by, follow_up: { id: follow.id, words: clip(left, 280) } };
 }
 
@@ -256,4 +270,4 @@ async function originalOf(fb) {
   return (await q("SELECT id, message, outcome, shipped_version, manager_answer FROM platform.feedback WHERE id=$1 AND company=$2", [fb.follow_up_of, fb.company])).rows[0] || null;
 }
 
-module.exports = { init, SCHEMA, NEWS_DAYS, stateOf, mayAnswer, mayCloseOut, followUpContext, summaryOf, clip, myRequests, news, markShipped, markRolledBack, answer, managerAnswer, originalOf };
+module.exports = { init, SCHEMA, NEWS_DAYS, stateOf, withDuplicate, mayAnswer, mayCloseOut, followUpContext, summaryOf, clip, myRequests, news, markShipped, markRolledBack, answer, managerAnswer, originalOf };

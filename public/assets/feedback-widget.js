@@ -26,6 +26,7 @@
   panel.innerHTML =
     '<div style="font-weight:700;font-size:14px;color:#1c242e;margin-bottom:8px">Something in the way?</div>' +
     '<textarea id="fbw-msg" rows="3" placeholder="What is slowing you down?" style="width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font-size:14px;font-family:inherit;box-sizing:border-box"></textarea>' +
+    '<div id="fbw-extras" style="display:none;margin-top:6px;font-size:12.5px;color:#51606f"></div>' +
     '<div id="fbw-who" style="display:none;font-size:13px;color:#51606f;margin-top:8px"></div>' +
     '<div id="fbw-mine" style="display:none;font-size:13px;margin-top:6px"></div>' +
     '<input id="fbw-name" placeholder="Your name (optional)" style="width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font-size:14px;margin-top:8px;font-family:inherit;box-sizing:border-box">' +
@@ -239,7 +240,7 @@
   const who = { people: [], me: null, listeners: [] };
   const peopleApi = (p, opts) => fetch("/api/c/" + encodeURIComponent(company) + "/who" + p, Object.assign({ credentials: "same-origin" }, opts || {}));
   async function loadWho() {
-    try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; } } catch (e) { /* the list is a nicety; the button works without it */ }
+    try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; who.photos = j.photos !== false; drawExtras(); } } catch (e) { /* the list is a nicety; the button works without it */ }
     renderWho(); who.listeners.forEach((f) => { try { f(who.me); } catch (e) {} });
   }
   function renderWho() {
@@ -306,9 +307,10 @@
   const mine = { requests: [], to_answer: 0 };
   async function loadMine() {
     const el = panel.querySelector("#fbw-mine"); if (!el) return;
-    if (!who.me) { el.style.display = "none"; return; }
+    if (!who.me) { el.style.display = "none"; mine.requests = []; mine.to_answer = 0; checkQuestions(); return; }
     try { const r = await peopleApi("/requests", { cache: "no-store" }); if (r.ok) { const j = await r.json(); mine.requests = j.requests || []; mine.to_answer = j.to_answer || 0; } } catch (e) {}
     drawMineLink();
+    checkQuestions();   // the proposer's one question, if one is waiting on this person
   }
   function drawMineLink() {
     const el = panel.querySelector("#fbw-mine"); if (!el || !who.me) return;
@@ -330,7 +332,7 @@
     document.body.appendChild(picker);
     return card;
   }
-  const STATE_COLOR = { live: "#c2620a", fixed: "#2e7d4f", thanked: "#2e7d4f", not_quite: "#c2620a", little_left: "#c2620a", declined: "#b3261e", rolled_back: "#b3261e" };
+  const STATE_COLOR = { question: "#1f3a5f", live: "#c2620a", fixed: "#2e7d4f", thanked: "#2e7d4f", not_quite: "#c2620a", little_left: "#c2620a", declined: "#b3261e", rolled_back: "#b3261e" };
   // which "marked done" requests this device has already shown its person (per company, so the badge shows once)
   const thankedKey = "sos.thanked." + company;
   function thankedSeen() { try { return JSON.parse(localStorage.getItem(thankedKey) || "[]") || []; } catch (e) { return []; } }
@@ -352,9 +354,13 @@
         row.style.cssText = "border:1px solid #d5dbe3;border-radius:10px;padding:10px 12px;margin:8px 0";
         row.innerHTML = "<div style=\"font-weight:700\">“" + esc(r.words) + "”</div>" +
           "<div style=\"color:#51606f;font-size:12px;margin:2px 0 6px\">#" + r.id + " · " + esc(r.module || "") + (r.screen ? " · " + esc(r.screen) : "") + " · " + new Date(r.created_at).toLocaleDateString() + (r.follow_up_of ? " · follow-up to #" + r.follow_up_of : "") + "</div>" +
-          "<div data-line style=\"color:" + (STATE_COLOR[r.state] || "#1c242e") + ";font-weight:" + (r.state === "live" || r.state === "thanked" ? 700 : 400) + "\">" + (r.state === "thanked" ? TICK : "") + esc(r.line) + (r.follow_up_id && (r.state === "not_quite" || r.state === "little_left") ? " (#" + r.follow_up_id + ")" : "") + "</div>" +
+          "<div data-line style=\"color:" + (STATE_COLOR[r.state] || "#1c242e") + ";font-weight:" + (r.state === "live" || r.state === "thanked" || r.state === "question" ? 700 : 400) + "\">" + (r.state === "thanked" ? TICK : "") + esc(r.line) + (r.follow_up_id && (r.state === "not_quite" || r.state === "little_left") ? " (#" + r.follow_up_id + ")" : "") + "</div>" +
           (r.built ? "<div style=\"color:#51606f;font-size:12.5px;margin-top:4px\">What was built: " + esc(r.built) + "</div>" : "");
         if (r.can_answer) row.appendChild(answerButtons(r, async () => { await loadMine(); draw(); }));
+        if (r.state === "question" && r.question) {
+          const qt = document.createElement("div"); qt.setAttribute("data-qtext", "1"); qt.style.cssText = "font-weight:700;margin-top:6px"; qt.textContent = r.question.text; row.appendChild(qt);
+          row.appendChild(questionButtons({ id: r.id, token: "", question: r.question }, async () => { await loadMine(); draw(); }));
+        }
         card.appendChild(row);
       });
     };
@@ -400,6 +406,142 @@
     ask();
     return box;
   }
+  // ---- propose on arrival (src/arrival.js): point at it, add a photo, and the proposer's one question --------
+  // What the person points at and a photo ride along with the words and go to the proposer, so "this number"
+  // and "that button" mean something. Module pages only.
+  const extra = { element: null, photo: null };
+  const onModule = Boolean(mod && mod !== "platform");
+  const linkBtn = "background:none!important;border:1px solid #d5dbe3!important;border-radius:14px!important;padding:4px 10px!important;margin:0 6px 0 0!important;width:auto!important;min-height:0!important;font:600 12.5px system-ui,sans-serif!important;color:#1f3a5f!important;cursor:pointer";
+  function drawExtras() {
+    const el = panel.querySelector("#fbw-extras"); if (!el) return;
+    if (!onModule) { el.style.display = "none"; return; }
+    el.style.display = "block";
+    el.innerHTML =
+      (extra.element ? "<span id=\"fbw-pointed\">Pointing at: <b>" + esc(String(extra.element.text || extra.element.label || "<" + extra.element.tag + ">").slice(0, 40)) + "</b> <a href=\"#\" id=\"fbw-unpoint\" style=\"color:#b3261e\">remove</a></span><br>" : "") +
+      (extra.photo ? "<span id=\"fbw-photo-on\">Photo added <a href=\"#\" id=\"fbw-unphoto\" style=\"color:#b3261e\">remove</a></span><br>" : "") +
+      (extra.element ? "" : "<button id=\"fbw-point\" style=\"" + linkBtn + "\">Point at it</button>") +
+      (extra.photo || who.photos === false ? "" : "<button id=\"fbw-photo\" style=\"" + linkBtn + "\">Add a photo</button>") +
+      "<input id=\"fbw-file\" type=\"file\" accept=\"image/*\" capture=\"environment\" style=\"display:none\"><span id=\"fbw-extra-err\" style=\"color:#b3261e\"></span>";
+    const on = (id, f) => { const b = el.querySelector(id); if (b) b.onclick = (e) => { e.preventDefault(); f(); }; };
+    on("#fbw-point", pickElement);
+    on("#fbw-unpoint", () => { extra.element = null; drawExtras(); });
+    on("#fbw-unphoto", () => { extra.photo = null; drawExtras(); });
+    on("#fbw-photo", () => el.querySelector("#fbw-file").click());
+    el.querySelector("#fbw-file").onchange = (e) => { const f = e.target.files && e.target.files[0]; if (f) takePhoto(f); };
+  }
+  // What an element is, cut down to what helps a reader who cannot see the screen.
+  function describe(t) {
+    const txt = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+    const name = (n) => n.tagName.toLowerCase() + (n.id ? "#" + n.id : "") + (n.classList && n.classList.length ? "." + [...n.classList].slice(0, 2).join(".") : "");
+    const path = []; for (let n = t; n && n.nodeType === 1 && n !== document.body && path.length < 5; n = n.parentElement) path.unshift(name(n));
+    const lab = t.getAttribute("aria-label") || t.getAttribute("title") || t.getAttribute("alt") || t.getAttribute("placeholder") || (t.id && document.querySelector("label[for=\"" + (window.CSS && CSS.escape ? CSS.escape(t.id) : t.id) + "\"]") || {}).textContent || "";
+    const r = t.getBoundingClientRect();
+    return { tag: t.tagName.toLowerCase(), id: t.id || "", classes: [...(t.classList || [])].slice(0, 6), text: txt(t.innerText || t.value || "").slice(0, 160), label: txt(lab).slice(0, 120), path: path.join(" > "), html: String(t.outerHTML || "").slice(0, 400), rect: { x: r.left, y: r.top, w: r.width, h: r.height, vw: window.innerWidth, vh: window.innerHeight } };
+  }
+  // A glass pane over the page takes the tap, so nothing on the page itself is pressed while pointing.
+  function pickElement() {
+    panel.style.display = "none";
+    const pane = document.createElement("div"); pane.id = "sos-point";
+    pane.style.cssText = "position:fixed;inset:0;z-index:10002;cursor:crosshair;background:rgba(31,58,95,.06)";
+    const ring = document.createElement("div"); ring.style.cssText = "position:fixed;z-index:10003;border:3px solid #c2620a;border-radius:6px;pointer-events:none;display:none;box-sizing:border-box";
+    const tip = document.createElement("div"); tip.textContent = "Tap the thing you mean."; tip.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:10004;background:#1f3a5f;color:#fff;border-radius:20px;padding:10px 16px;font:700 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25)";
+    const cancel = document.createElement("button"); cancel.textContent = "Cancel"; cancel.style.cssText = "margin-left:12px;background:#fff;color:#1f3a5f;border:none;border-radius:12px;padding:4px 10px;font:700 12.5px system-ui,sans-serif;cursor:pointer;min-height:0;width:auto";
+    tip.appendChild(cancel);
+    const under = (x, y) => { pane.style.pointerEvents = "none"; let t = document.elementFromPoint(x, y); pane.style.pointerEvents = ""; while (t && (t === btn || panel.contains(t) || tip.contains(t))) t = null; return t && t !== document.documentElement && t !== document.body ? t : null; };
+    const end = () => { pane.remove(); ring.remove(); tip.remove(); setKeys(null); panel.style.display = "block"; drawExtras(); };
+    pane.onmousemove = (e) => { const t = under(e.clientX, e.clientY); if (!t) { ring.style.display = "none"; return; } const r = t.getBoundingClientRect(); ring.style.cssText += ";display:block;left:" + r.left + "px;top:" + r.top + "px;width:" + r.width + "px;height:" + r.height + "px"; };
+    pane.onclick = (e) => { e.preventDefault(); e.stopPropagation(); const t = under(e.clientX, e.clientY); if (t) extra.element = describe(t); end(); };
+    cancel.onclick = (e) => { e.stopPropagation(); end(); };
+    setKeys((e) => { if (e.key === "Escape") { e.preventDefault(); end(); } });
+    document.body.appendChild(pane); document.body.appendChild(ring); document.body.appendChild(tip);
+  }
+  // One photo, scaled down on the device (1600 px on the long side, JPEG) so it sends quickly from the floor's wifi.
+  function takePhoto(file) {
+    const err = panel.querySelector("#fbw-extra-err"), say = (m) => { if (err) err.textContent = m; };
+    if (!/^image\//.test(file.type || "")) return say(" That is not a photo.");
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      try {
+        const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight, 1));
+        const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        const data = c.toDataURL("image/jpeg", 0.8);
+        extra.photo = { mime: "image/jpeg", data: data.slice(data.indexOf(",") + 1) };
+      } catch (e) { say(" The photo could not be read."); }
+      URL.revokeObjectURL(url); drawExtras();
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); say(" The photo could not be read."); };
+    img.src = url;
+  }
+
+  // The proposer's ONE question: when the words could mean two different changes it asks the person instead of
+  // guessing. It shows here, on the screen they are standing at, and in My requests. A request sent with nobody
+  // signed in is answered from the device that sent it (it holds that request's token).
+  const askKey = "sos.ask." + company;
+  function sentList() { try { return (JSON.parse(localStorage.getItem(askKey) || "[]") || []).filter((x) => x && x.id && Date.now() - x.t < 48 * 3600000); } catch (e) { return []; } }
+  function saveSent(list) { try { localStorage.setItem(askKey, JSON.stringify(list.slice(-5))); } catch (e) {} }
+  let qCard = null, qTimer = null;
+  const laterKey = (id) => "sos.q.later." + id;
+  async function checkQuestions(until) {
+    clearTimeout(qTimer);
+    let open = null, reading = false;
+    const list = sentList();
+    for (const it of list.slice().reverse()) {
+      let j = null;
+      try { const r = await peopleApi("/question?id=" + it.id + "&token=" + encodeURIComponent(it.token || ""), { cache: "no-store" }); if (r.status === 404) { it.gone = true; continue; } if (r.ok) j = await r.json(); } catch (e) {}
+      if (!j) continue;
+      if (j.added_to && !it.told) { it.told = true; banner("Someone already asked for this. Yours was added to request #" + j.added_to + ", so you will hear back when it is done.", "#1f3a5f"); }
+      if (j.reading) reading = true;
+      if (j.question && !open) open = { id: it.id, token: it.token, words: it.words, question: j.question };
+      if (j.proposed || j.added_to) it.gone = true;   // a proposal is drafted, or it was folded in: nothing more to ask this device
+    }
+    saveSent(list.filter((x) => !x.gone));
+    // the signed-in person's own open question, wherever it was sent from
+    if (!open) { const r = mine.requests.find((x) => x.state === "question" && x.question); if (r) open = { id: r.id, token: "", words: r.words, question: r.question }; }
+    let later = false; try { later = open && sessionStorage.getItem(laterKey(open.id)) === "1"; } catch (e) {}
+    if (open && !later) showQuestion(open); else if (qCard && (!open || later)) { qCard.remove(); qCard = null; }
+    // look again every few seconds only while the proposer is reading something this device sent, and not for ever
+    if (reading) { const cap = until || Date.now() + 120000; if (Date.now() < cap) qTimer = setTimeout(() => checkQuestions(cap), 3000); }
+  }
+  // Option buttons and a way to say it in their own words. done(j) runs after the answer is in.
+  function questionButtons(item, done) {
+    const box = document.createElement("div"); box.style.cssText = "margin-top:6px";
+    const err = document.createElement("div"); err.style.cssText = "color:#b3261e;font-size:12.5px";
+    const send = async (answer) => {
+      const res = await peopleApi("/requests/" + item.id + "/reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer, token: item.token || "" }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { err.textContent = j.error || "That did not go through."; if (res.status === 409) setTimeout(() => done(null), 1200); return; }
+      banner("Thanks. That goes with your request."); done(j);
+    };
+    (item.question.options || []).forEach((o, i) => {
+      const b = document.createElement("button"); b.textContent = o; b.setAttribute("data-option", String(i));
+      b.style.cssText = "display:block;width:100%;text-align:left;margin:6px 0;padding:12px;border:1px solid #c9dcf0;border-radius:10px;background:#eef4fb;font:700 14.5px system-ui,sans-serif;color:#1c242e;cursor:pointer;min-height:0";
+      b.onclick = () => send(o); box.appendChild(b);
+    });
+    const own = document.createElement("a"); own.href = "#"; own.textContent = "Say it in my own words"; own.setAttribute("data-own", "1"); own.style.cssText = "color:#1f3a5f;font-size:13px";
+    own.onclick = (e) => {
+      e.preventDefault(); own.remove();
+      const ta = document.createElement("textarea"); ta.rows = 2; ta.maxLength = 500; ta.setAttribute("data-own-text", "1"); ta.style.cssText = "width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font:14px system-ui,sans-serif;box-sizing:border-box;margin-top:4px";
+      const go = document.createElement("button"); go.textContent = "Send"; go.setAttribute("data-own-send", "1"); go.style.cssText = smallBtn("#2e7d4f", "#fff") + ";margin-top:6px";
+      go.onclick = () => { const v = ta.value.trim(); if (!v) { err.textContent = "A few words."; return; } send(v); };
+      box.insertBefore(ta, err); box.insertBefore(go, err); ta.focus();
+    };
+    box.appendChild(own); box.appendChild(err);
+    return box;
+  }
+  function showQuestion(item) {
+    if (qCard && qCard.getAttribute("data-request") === String(item.id)) return;   // already up: do not redraw under a finger
+    if (qCard) qCard.remove();
+    qCard = document.createElement("div"); qCard.id = "sos-question"; qCard.setAttribute("data-request", item.id);
+    qCard.style.cssText = "position:fixed;left:12px;bottom:12px;z-index:9998;background:#fff;color:#1c242e;border:2px solid #1f3a5f;border-radius:12px;padding:12px 14px;width:340px;max-width:calc(100vw - 24px);box-shadow:0 6px 20px rgba(0,0,0,.25);font:14px/1.45 system-ui,sans-serif;box-sizing:border-box";
+    qCard.innerHTML = "<div style=\"font-weight:700\">One quick question about what you sent</div>" + (item.words ? "<div style=\"color:#51606f;margin:4px 0\">“" + esc(item.words) + "”</div>" : "") + "<div data-qtext style=\"font-weight:700;margin-top:6px\">" + esc(item.question.text) + "</div>";
+    qCard.appendChild(questionButtons(item, () => { if (qCard) { qCard.remove(); qCard = null; } saveSent(sentList().filter((x) => x.id !== item.id)); loadMine(); }));
+    const lt = document.createElement("button"); lt.textContent = "Later"; lt.style.cssText = smallBtn("#fff", "#51606f") + ";margin-top:8px";
+    lt.onclick = () => { try { sessionStorage.setItem(laterKey(item.id), "1"); } catch (e) {} qCard.remove(); qCard = null; };
+    qCard.appendChild(lt);
+    document.body.appendChild(qCard);
+  }
+
   // What went live here lately. The person who asked gets the question back; everyone else reads what is new and who asked.
   let askCard = null;
   async function loadNews() {
@@ -468,6 +610,7 @@
     document.body.appendChild(btn);
     document.body.appendChild(panel);
     watchVersion();
+    drawExtras();
     loadWho();
     setTimeout(maybeTour, 400); // give the page's own first render a moment so targets exist
     const nameEl = panel.querySelector("#fbw-name");
@@ -478,9 +621,14 @@
       try { localStorage.setItem("sos.name", nameEl.value); } catch (e) {}
       const res = await fetch("/api/feedback", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, module: mod, page: location.pathname, message: msg, name: who.me ? who.me.name : nameEl.value }),
+        body: JSON.stringify({ company, module: mod, page: location.pathname, message: msg, name: who.me ? who.me.name : nameEl.value, element: extra.element || undefined, photo: extra.photo || undefined }),
       });
       if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
+      if (!res.ok) { const e = panel.querySelector("#fbw-extra-err"); if (e) e.textContent = res.status === 413 ? " The photo is too large to send. Remove it and send again." : " That did not send. Try again."; return; }
+      // the proposer reads it at once and may have ONE question: keep this request's token on the device and look for it while the proposer reads
+      const sent = await res.json().catch(() => null);
+      if (sent && sent.id && onModule) { saveSent(sentList().concat([{ id: sent.id, token: sent.reply_token || "", words: msg.slice(0, 200), t: Date.now() }])); setTimeout(loadMine, 1200); }   // loadMine ends by looking for the question
+      extra.element = null; extra.photo = null; drawExtras();
       panel.querySelector("#fbw-msg").value = "";
       panel.querySelector("#fbw-done").style.display = "block";
       setTimeout(() => { panel.style.display = "none"; panel.querySelector("#fbw-done").style.display = "none"; }, 1500);

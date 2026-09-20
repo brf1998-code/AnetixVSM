@@ -22,10 +22,13 @@ const connections = require("./connections");
 const datacheck = require("./datacheck");
 const people = require("./people");
 const closeloop = require("./closeloop");
+const arrival = require("./arrival");
 
 const router = express.Router();
-// the restore route carries a whole backup and parses its own body
-router.use((req, res, next) => (req.path === "/api/admin/restore" || /^\/api\/c\/[^/]+\/connections\/[^/]+\/[^/]+\/upload$/.test(req.path) ? next() : express.json({ limit: "1mb" })(req, res, next)));
+// the restore route carries a whole backup and parses its own body; a request from the floor may carry one photo
+// (the widget scales it down first), so exactly /api/feedback gets a bigger body and nothing else does
+const smallJson = express.json({ limit: "1mb" }), photoJson = express.json({ limit: "6mb" });
+router.use((req, res, next) => (req.path === "/api/admin/restore" || /^\/api\/c\/[^/]+\/connections\/[^/]+\/[^/]+\/upload$/.test(req.path) ? next() : (req.path === "/api/feedback" && req.method === "POST" ? photoJson : smallJson)(req, res, next)));
 
 async function company(slug) {
   return (await q("SELECT * FROM platform.companies WHERE slug=$1", [slug])).rows[0];
@@ -37,7 +40,7 @@ const SLUG = /^[a-z0-9][a-z0-9-]{1,40}$/;
 // are not built by the in-app agent; Brendan picks them up from Cowork via
 // GET /api/c/:slug/feedback/platform and ships the change through the repo.
 router.post("/api/feedback", async (req, res) => {
-  const { company: slug, module: mod, page, message, name } = req.body || {};
+  const { company: slug, module: mod, page, message, name, element, photo } = req.body || {};
   if (!message || !message.trim()) return res.status(400).json({ error: "message required" });
   // a floor or manager session files into its own company, whatever the body says
   const co = req.sosRole === "admin" ? ((await company(slug || "demo")) || (await company("demo"))) : await company(req.sosCompany);
@@ -54,17 +57,39 @@ router.post("/api/feedback", async (req, res) => {
   }
   // a person signed in on this device (name and PIN) files under their own name; a typed name is only for a device nobody is signed in on
   const mine = req.sosPersonId && req.sosPersonCompany === co.slug;
+  // what the person pointed at, for the proposer (src/arrival.js); a token so the device that sent a nameless request can answer its question
+  const pointed = mod && mod !== "platform" ? arrival.cleanElement(element) : null;
   const r = await q(
-    `INSERT INTO platform.feedback (company, module, page, screen, target_file, message, name, person_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [co.slug, mod || "platform", page || null, screen, target, message.trim().slice(0, 2000), ((mine ? req.sosPerson : name) || "").slice(0, 80) || null, mine ? req.sosPersonId : null]);
-  await logEvent("feedback_submitted", r.rows[0].id, { company: co.slug, module: mod, screen });
-  await record("feedback_filed", { company: co.slug, module: mod || "platform", actor: actor(req, name), feedback_id: r.rows[0].id, after: message.trim(), detail: { screen, page } });
-  res.json(r.rows[0]);
+    `INSERT INTO platform.feedback (company, module, page, screen, target_file, message, name, person_id, element, reply_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [co.slug, mod || "platform", page || null, screen, target, message.trim().slice(0, 2000), ((mine ? req.sosPerson : name) || "").slice(0, 80) || null, mine ? req.sosPersonId : null, pointed ? JSON.stringify(pointed) : null, arrival.newToken()]);
+  const fb = r.rows[0];
+  // one photo, already scaled down by the widget; a company can switch photos off (Agent settings)
+  let photoNote = null;
+  if (photo && photo.data && mod && mod !== "platform") {
+    try {
+      if (co.allow_photos === false) throw new Error("photos are switched off for this company");
+      const mime = String(photo.mime || "image/jpeg").toLowerCase();
+      if (!/^image\/(jpeg|png|webp)$/.test(mime)) throw new Error("a photo is a jpeg, png or webp");
+      const bytes = Buffer.from(String(photo.data).replace(/^data:[^,]*,/, ""), "base64");
+      if (bytes.length < 100 || bytes.length > 4 * 1024 * 1024) throw new Error("the photo is too large");
+      // a bound on what a floor device can put in the database: photos a company a day
+      const today = Number((await q("SELECT count(*) FROM platform.attachments WHERE company=$1 AND feedback_id IS NOT NULL AND created_at > now() - interval '24 hours'", [co.slug])).rows[0].count);
+      if (today >= arrival.PHOTOS_PER_DAY) throw new Error("enough photos for one day; the words went through");
+      await q("INSERT INTO platform.attachments (company, feedback_id, filename, mime, size, bytes) VALUES ($1,$2,$3,$4,$5,$6)", [co.slug, fb.id, `request-${fb.id}.${mime.split("/")[1].replace("jpeg", "jpg")}`, mime, bytes.length, bytes]);
+    } catch (e) { photoNote = e.message; }
+  }
+  await logEvent("feedback_submitted", fb.id, { company: co.slug, module: mod, screen });
+  await record("feedback_filed", { company: co.slug, module: mod || "platform", actor: actor(req, name), feedback_id: fb.id, after: message.trim(), detail: { screen, page, ...(pointed ? { pointed: arrival.clip(`${pointed.tag || ""} ${pointed.text || pointed.id || ""}`, 120) } : {}), ...(photo && photo.data ? { photo: !photoNote } : {}) } });
+  // the proposer reads it now (src/arrival.js): claimed before the answer goes back, worked behind it; never throws
+  const reading = await arrival.start(fb.id);
+  res.json({ ...fb, arrival: reading ? "proposing" : null, photo_note: photoNote });
 });
 
+// a request's reply_token (src/arrival.js) goes back to the device that sent it and to nobody else
+const noToken = (row) => { if (row) delete row.reply_token; return row; };
 router.post("/api/feedback/:id/plusone", async (req, res) => {
   const r = await q("UPDATE platform.feedback SET recurrence = recurrence + 1, updated_at=now() WHERE id=$1 RETURNING *", [req.params.id]);
-  res.json(r.rows[0]);
+  res.json(noToken(r.rows[0]));
 });
 
 // Platform-level feedback, for the Cowork revision loop (plain JSON, newest first).
@@ -81,7 +106,7 @@ router.post("/api/feedback/:id/close", requireManager, async (req, res) => {
   const r = await q("UPDATE platform.feedback SET status=$2, outcome=$3, updated_at=now() WHERE id=$1 RETURNING *",
     [req.params.id, declined ? "declined" : "done", outcome || null]);
   if (r.rows[0]) await record("feedback_closed", { company: r.rows[0].company, module: r.rows[0].module, actor: actor(req), feedback_id: r.rows[0].id, after: outcome || null, detail: { declined: Boolean(declined) } });
-  res.json(r.rows[0]);
+  res.json(noToken(r.rows[0]));
 });
 
 // The manager's close-out on a shipped tile (src/closeloop.js): Done (the asker reads a check mark and a
@@ -267,17 +292,30 @@ function brandPublic(b) {
 router.get("/api/c/:slug/board", async (req, res) => {
   const co = await company(req.params.slug);
   if (!co) return res.status(404).json({ error: "unknown company" });
-  const feedback = (await q(
+  const all = (await q(
     `SELECT f.*, p.id AS proposal_id, p.body AS proposal_body, p.class AS proposal_class,
             p.target_file AS proposal_target, p.rationale AS proposal_rationale, p.status AS proposal_status, p.model AS proposal_model,
             CASE WHEN p.data_check IS NULL THEN NULL ELSE jsonb_build_object('status', p.data_check->'status', 'reason', p.data_check->'reason', 'missing', (SELECT COALESCE(jsonb_agg(m->'what'), '[]'::jsonb) FROM jsonb_array_elements(COALESCE(p.data_check->'missing','[]'::jsonb)) m)) END AS proposal_data,
             (SELECT o.message FROM platform.feedback o WHERE o.id=f.follow_up_of) AS follow_up_words,
             (SELECT o.manager_answer FROM platform.feedback o WHERE o.id=f.follow_up_of) AS follow_up_origin,
-            (SELECT c.id FROM platform.feedback c WHERE c.follow_up_of=f.id ORDER BY c.id DESC LIMIT 1) AS follow_up_id
+            (SELECT c.id FROM platform.feedback c WHERE c.follow_up_of=f.id ORDER BY c.id DESC LIMIT 1) AS follow_up_id,
+            (SELECT a.id FROM platform.attachments a WHERE a.feedback_id=f.id ORDER BY a.id LIMIT 1) AS photo_id
        FROM platform.feedback f
        LEFT JOIN LATERAL (SELECT * FROM platform.proposals WHERE feedback_id=f.id ORDER BY id DESC LIMIT 1) p ON true
       WHERE f.company=$1
       ORDER BY f.recurrence DESC, f.id DESC`, [co.slug])).rows;
+  // propose on arrival (src/arrival.js): a request the proposer folded into another rides on that one's card
+  // ("asked 4 times by 3 people"), never as a card of its own; the token that lets a device answer its own
+  // question never goes to a page
+  const folded = new Map();
+  for (const f of all) { delete f.reply_token; if (f.duplicate_of) { if (!folded.has(f.duplicate_of)) folded.set(f.duplicate_of, []); folded.get(f.duplicate_of).push(f); } }
+  const feedback = all.filter((f) => !f.duplicate_of || !all.some((o) => o.id === f.duplicate_of));
+  for (const f of feedback) {
+    const dupes = (folded.get(f.id) || []).sort((a, b) => a.id - b.id);
+    if (!dupes.length) continue;
+    f.dupes = dupes.map((d) => ({ id: d.id, message: d.message, name: d.name, screen: d.screen, created_at: d.created_at, floor_answer: d.floor_answer || null, note: d.triage_note || null, photo_id: d.photo_id || null, pointed: d.element ? arrival.clip(d.element.text || d.element.label || d.element.id || d.element.tag, 80) : null }));
+    f.asked = arrival.tally(f, dupes);
+  }
   const runs = (await q(
     `SELECT r.*, p.feedback_id,
             (SELECT array_agg(feedback_id ORDER BY id) FROM platform.proposals
@@ -313,9 +351,39 @@ router.get("/api/c/:slug/board", async (req, res) => {
 });
 
 // ---- lifecycle actions (manager only) --------------------------------------
+// "Review with AI" / "Propose anyway". On a request the proposer has already read (it asked a question, or
+// flagged it) the manager is asking for a proposal, so the call drafts one: no sorting, no question.
 router.post("/api/feedback/:id/review", requireManager, async (req, res) => {
-  try { res.json(await generateProposal(Number(req.params.id))); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  try {
+    const fb = (await q("SELECT id, question, triage, arrival FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
+    if (fb && fb.arrival === "proposing") return res.status(409).json({ error: "the proposal for this one is being drafted right now; give it a moment" });
+    res.json(await generateProposal(Number(req.params.id), { force: Boolean(fb && (fb.question || fb.triage || fb.arrival === "done")) }));
+  } catch (e) {
+    // the AI service itself refusing (no credit, a bad key, too busy) is said in plain words and marked for the admin page
+    const credit = require("./credit"), kind = credit.classify(e.message);
+    await credit.noteFailure(e.message, `the proposal for request #${req.params.id}`);
+    res.status(500).json({ error: kind ? credit.plain(kind) : e.message });
+  }
+});
+
+// The manager answers the proposer's one question for the person who asked (whoever answers first wins).
+router.post("/api/feedback/:id/answer", requireManager, async (req, res) => {
+  try {
+    const fb = (await q("SELECT company FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
+    if (!fb) return res.status(404).json({ error: "no such request" });
+    const who = actor(req);
+    res.json(await arrival.answerQuestion({ company: fb.company, feedbackId: req.params.id, answer: (req.body || {}).answer, who: { role: who.role, name: who.name || null, person: who.person || null }, via: "manager" }));
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+// "Not the same": a request the proposer folded into another one stands on its own again.
+router.post("/api/feedback/:id/unlink", requireManager, async (req, res) => {
+  try {
+    const fb = (await q("SELECT company FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
+    if (!fb) return res.status(404).json({ error: "no such request" });
+    const out = await arrival.unlink({ feedbackId: req.params.id, company: fb.company, actor: actor(req) });
+    await arrival.start(out.id, { alone: true });   // proposed on its own this time: nothing to repeat
+    res.json(out);
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 
 // The data check (src/datacheck.js): is any of these proposals waiting on ERP data, or in need of data the ERP cannot give?
@@ -487,6 +555,16 @@ router.post("/api/c/:slug/agents/models", requireManager, async (req, res) => {
   res.json({ ok: true });
 });
 
+// What happens the moment a request arrives (src/arrival.js): the proposer reads it at once, and the floor may send a photo.
+router.post("/api/c/:slug/agents/arrival", requireManager, async (req, res) => {
+  const b = req.body || {};
+  const was = await arrival.settings(req.params.slug);
+  const now = { auto_propose: b.auto_propose === undefined ? was.auto_propose : Boolean(b.auto_propose), allow_photos: b.allow_photos === undefined ? was.allow_photos : Boolean(b.allow_photos) };
+  await q("UPDATE platform.companies SET auto_propose=$2, allow_photos=$3 WHERE slug=$1", [req.params.slug, now.auto_propose, now.allow_photos]);
+  await record("arrival_settings", { company: req.params.slug, actor: actor(req), before: JSON.stringify(was), after: JSON.stringify(now) });
+  res.json({ ok: true, ...now });
+});
+
 router.post("/api/c/:slug/agents/docs", requireManager, async (req, res) => {
   const { module: mod, name, content } = req.body || {};
   if (!name || !/^[A-Za-z0-9_.-]{1,60}$/.test(name)) return res.status(400).json({ error: "name must be a simple filename like NOTES.md" });
@@ -555,6 +633,14 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
 
 // Loop health: the platform's own numbers, per company and across the fleet
 // (src/health.js). ?days=7|30|90|365|0 (0 = all time), default 30.
+// The AI credit glide slope (src/credit.js): the balance the admin entered, the platform's own burn, the projected runout.
+router.get("/api/admin/credit", requireAdmin, async (_req, res) => {
+  try { res.set("Cache-Control", "no-store").json(await require("./credit").status()); } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post("/api/admin/credit", requireAdmin, async (req, res) => {
+  try { const b = req.body || {}; res.json(await require("./credit").setBalance({ balance_usd: b.balance_usd, autofill: b.autofill, note: b.note, by: req.sosPerson || "admin" })); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
 router.get("/api/admin/health", requireAdmin, async (req, res) => {
   try { res.json(await health.forAdmin(req.query.days)); }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -568,7 +654,7 @@ router.get("/api/admin/health", requireAdmin, async (req, res) => {
 // /people is the manager's list: add, new PIN, switch off. ----
 const whoAmI = (req) => (req.sosPersonId && req.sosPersonCompany === req.params.slug ? { id: req.sosPersonId, name: req.sosPerson, role: req.sosPersonRole } : null);
 router.get("/api/c/:slug/who", async (req, res) => {
-  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req) }); }
+  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), photos: (await arrival.settings(req.params.slug)).allow_photos }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.get("/api/c/:slug/people", requireManager, async (req, res) => {
@@ -594,6 +680,28 @@ router.get("/api/c/:slug/who/news", async (req, res) => {
 router.post("/api/c/:slug/who/requests/:id/answer", async (req, res) => {
   try { res.json(await closeloop.answer({ company: req.params.slug, feedbackId: req.params.id, person: whoAmI(req), role: req.sosRole, answer: (req.body || {}).answer, what: (req.body || {}).what })); }
   catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+// The proposer's one question (src/arrival.js). The feedback button asks here right after sending, and the person
+// who asked (or, for a request sent with nobody signed in, the device holding its token) may answer. Nobody else's
+// question is ever shown, and an answer files nothing on the floor: it only lets the proposal be drafted.
+router.get("/api/c/:slug/who/question", async (req, res) => {
+  try {
+    const fb = (await q("SELECT id, status, person_id, question, reply_token, duplicate_of, arrival, triage FROM platform.feedback WHERE id=$1 AND company=$2 AND kind='feedback'", [Number(req.query.id) || 0, req.params.slug])).rows[0];
+    const me = whoAmI(req), token = String(req.query.token || "");
+    const mine = fb && (fb.person_id ? Boolean(me && Number(me.id) === Number(fb.person_id)) : Boolean(token && token === fb.reply_token));
+    if (!mine) return res.status(404).json({ error: "no such request" });
+    const ask = arrival.mayReply(fb, me, token);
+    res.set("Cache-Control", "no-store").json({ id: fb.id, reading: fb.arrival === "proposing", question: ask ? { text: fb.question.text, options: fb.question.options } : null, added_to: fb.duplicate_of || null, proposed: fb.status !== "new" && !fb.duplicate_of });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post("/api/c/:slug/who/requests/:id/reply", async (req, res) => {
+  try {
+    const fb = (await q("SELECT * FROM platform.feedback WHERE id=$1 AND company=$2 AND kind='feedback'", [Number(req.params.id) || 0, req.params.slug])).rows[0];
+    const me = whoAmI(req), token = String((req.body || {}).token || "");
+    if (!fb) return res.status(404).json({ error: "no such request" });
+    if (!arrival.mayReply(fb, me, token)) return res.status(fb.question && fb.question.answer ? 409 : 403).json({ error: fb.question && fb.question.answer ? "that one is already answered, thank you" : "only the person who asked can answer this one" });
+    res.json(await arrival.answerQuestion({ company: req.params.slug, feedbackId: fb.id, answer: (req.body || {}).answer, who: { role: req.sosRole, name: me ? me.name : fb.name || null, person: me ? me.id : null }, via: me ? "asker" : "device" }));
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 router.post("/api/c/:slug/people", requireManager, async (req, res) => {
   try { const out = await people.add(req.params.slug, req.body || {}); await record("person_added", { company: req.params.slug, actor: actor(req), after: out.person.name, detail: { person_id: out.person.id, role: out.person.role } }); res.json(out); }

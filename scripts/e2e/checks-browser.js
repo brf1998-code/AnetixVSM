@@ -2,7 +2,7 @@
 // words, retiring a promise, the line at the deploy gate, and "What this tool promises". Same server as
 // checks.js (fake agent, passwords on, a browser on the instance), fresh database. Needs playwright.
 //   node scripts/e2e/checks-browser.js
-const { BASE, PW, sleep, runner, login, person, waitFor, board } = require("./lib");
+const { BASE, PW, sleep, runner, login, person, waitFor, board, proposalFor } = require("./lib");
 const { chromium } = require("playwright");
 const R = runner(), t = R.t;
 
@@ -12,7 +12,7 @@ const R = runner(), t = R.t;
   const maria = await person(mgr, "demo", "Maria G", "floor"); await floor.post("/api/c/demo/who/sign-in", { id: maria.id, pin: maria.pin });
   const file = async (msg) => (await floor.post("/api/feedback", { company: "demo", module: "paperline", page: "/c/demo/m/paperline/", message: msg })).json.id;
   const runOf = async (id) => (await board(mgr)).runs.find((r) => r.id === id);
-  const start = async (fbId) => { const prop = (await mgr.post(`/api/feedback/${fbId}/review`)).json; const r = (await mgr.post(`/api/proposals/${prop.id}/decide`, { decision: "approve" })).json; return (r.run || r).id; };
+  const start = async (fbId) => { const prop = (await proposalFor(mgr, fbId)); const r = (await mgr.post(`/api/proposals/${prop.id}/decide`, { decision: "approve" })).json; return (r.run || r).id; };
   const settle = async (runId) => waitFor(`run ${runId}`, async () => { const x = await runOf(runId); if (x && x.step === "confirm_requirement" && x.status === "waiting") { await mgr.post(`/api/runs/${runId}/confirm`, {}); return null; } return x && (x.status === "failed" || (x.step === "await_deploy" && x.status === "waiting")) ? x : null; }, 90000);
 
   // a functionality change that leaves a promise behind, shipped

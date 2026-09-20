@@ -3,7 +3,7 @@
 // passwords on, FRESH database: the counts below assume the library modules' own checks and nothing else).
 //   node scripts/e2e/checks.js
 // The fake agent's markers (src/agent.js): BREAKPAGE, BREAKPROMISE, BADCHECK, BADSMOKE, EDITCHECK, NOCHECK.
-const { BASE, PW, runner, client, login, waitFor, rowsOf, person, board, fbRow } = require("./lib");
+const { BASE, PW, runner, client, login, waitFor, rowsOf, person, board, fbRow, proposalFor } = require("./lib");
 const R = runner(), t = R.t;
 const PAGE = "/c/demo/m/paperline/";
 
@@ -17,7 +17,7 @@ const PAGE = "/c/demo/m/paperline/";
   const runOf = async (id) => (await board(mgr)).runs.find((r) => r.id === id);
   // review and approve one request; returns the run id. A functionality change is confirmed on the way.
   const start = async (fbId) => {
-    const prop = (await mgr.post(`/api/feedback/${fbId}/review`)).json;
+    const prop = (await proposalFor(mgr, fbId));
     const r = (await mgr.post(`/api/proposals/${prop.id}/decide`, { decision: "approve" })).json;
     return { runId: (r.run || r).id, cls: prop.class };
   };

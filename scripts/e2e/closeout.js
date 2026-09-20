@@ -8,7 +8,7 @@
 //
 // Kept in the repo on purpose: the earlier end to end suites lived only in a session's sandbox and could not
 // be rerun by the next one (verification pass of 2026-09-19).
-const { PW, runner, login, waitFor, rowsOf, board, fbRow } = require("./lib");
+const { PW, runner, login, waitFor, rowsOf, board, fbRow, proposalFor } = require("./lib");
 const R = runner(), t = R.t;
 
 (async () => {
@@ -41,7 +41,7 @@ const R = runner(), t = R.t;
 
   // ---- the whole-file context (src/modulesource.js): the proposer's context is the whole module
   const props = [];
-  for (const id of [R1, R2, R3, R4, R5, R6, R7]) props.push((await mgr.post(`/api/feedback/${id}/review`)).json);
+  for (const id of [R1, R2, R3, R4, R5, R6, R7]) props.push((await proposalFor(mgr, id)));
   t("setup: seven proposals, all UI", props.every((p) => p && p.id && p.class === "ui"), props.map((p) => p && p.class));
   const drafted = (await mgr.get(`/api/c/demo/record?kind=proposal_drafted&feedback_id=${R1}`)).json;
   const rows = rowsOf(drafted);
@@ -96,7 +96,7 @@ const R = runner(), t = R.t;
   t("Maria reads that a little is left and is not asked about it", m2.state === "little_left" && m2.can_answer === false && m2.follow_up_id === FU && /a little is left/.test(m2.line), m2);
   t("her answer on it is refused in plain words", await (async () => { const x = await floor.post(`/api/c/demo/who/requests/${R2}/answer`, { answer: "not_quite", what: "still small" }); return x.status === 409 && /manager already put/.test(x.json.error); })());
   t("the manager's follow-up is not in Maria's own list", !(await floor.get("/api/c/demo/who/requests")).json.requests.some((x) => x.id === FU));
-  const fuProp = (await mgr.post(`/api/feedback/${FU}/review`)).json;
+  const fuProp = (await proposalFor(mgr, FU));
   t("the proposer is told it is a follow-up", /Follow-up context received for request #/.test(fuProp.rationale) && fuProp.rationale.includes(`#${R2}.`), fuProp.rationale);
 
   // ---- the floor spoke first: the tile already says so
@@ -125,7 +125,7 @@ const R = runner(), t = R.t;
 
   // ---- a change that was taken back off is not closed out
   const r8 = await file(floor, "make the stock table text bigger");
-  const p8 = (await mgr.post(`/api/feedback/${r8.id}/review`)).json;
+  const p8 = (await proposalFor(mgr, r8.id));
   const run8 = (await mgr.post(`/api/proposals/${p8.id}/decide`, { decision: "approve" })).json;
   const run8id = (run8.run || run8).id;
   await waitFor("run 8 at the deploy gate", async () => { const x = (await board(mgr)).runs.find((y) => y.id === run8id); return x && x.step === "await_deploy" && x.status === "waiting"; });

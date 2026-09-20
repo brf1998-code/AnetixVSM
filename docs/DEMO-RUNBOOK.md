@@ -84,15 +84,24 @@ their words, name included. Do not filter or reword for them.
 
 On the improvement board (manager tab):
 
-1. Each item appears under Feedback with the screen it came from ("Station
-   page", "Line board", "Stockroom page"). That screen is where the change
-   will land; if someone filed it from the wrong page, fix it in **Adjust**.
-   If two people report the same thing, use **+1 seen again** instead of a
-   second card. Recurrence is the priority signal.
-2. Click **Review with AI** on the ones worth doing. Read each proposal out
-   loud and point at the UI or FUNCTIONALITY tag: a UI change goes straight to
-   build; a functionality change makes the AI restate the requirement first
-   and you confirm it before anything is built.
+1. Each item appears with the screen it came from ("Station page", "Line
+   board", "Stockroom page"). That screen is where the change will land; if
+   someone filed it from the wrong page, fix it in **Adjust**. Since
+   2026-09-20 the proposer reads every request the moment it is sent, so by
+   the time you look the card is already under Reviewing with a draft
+   proposal. Two people reporting the same thing land on ONE card that says
+   "Asked 2 times by 2 people" (open it to read both wordings; "not the same"
+   splits one off). Recurrence is the priority signal. If a request could
+   mean two things, the person who sent it gets one question on their own
+   screen, with answers to tap; you can answer it for them on the card.
+   Have them tap **Point at it** (and **Add a photo** where it helps) in the
+   feedback panel: the proposer sees what they pointed at.
+2. Read each proposal out loud and point at the UI or FUNCTIONALITY tag: a
+   UI change goes straight to build; a functionality change makes the AI
+   restate the requirement first and you confirm it before anything is built.
+   If you want the room to watch the **Review with AI** click itself, switch
+   "Read it at once" off on the Agent settings page before the session;
+   requests then wait under Feedback for the button, as before.
 3. Build. Either **Approve build** on one card, or tick **add to batch** on
    several and click **Build together as one change**: one agent run, one
    staged demo, one deploy. Only one build runs on the line at a time; anything

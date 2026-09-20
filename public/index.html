@@ -92,6 +92,16 @@
   button.small { padding:5px 11px; min-height:30px; font-size:12px; }
   .leftlink { font-size:12px; color:var(--steel); text-decoration:underline; margin-left:2px; cursor:pointer; }
   .thanks { color:var(--green); font-weight:700; }
+  /* propose on arrival: the proposer's one question, a flag, "asked N times", what the person pointed at */
+  .askbox { background:#eef4fb; border:1px solid #c9dcf0; border-radius:8px; padding:9px 10px; margin:8px 0; font-size:13px; }
+  .askbox .qtext { font-weight:700; margin:4px 0 6px; }
+  .askbox button.opt { display:block; width:100%; text-align:left; margin:4px 0; background:#fff; border:1px solid #c9dcf0; color:var(--ink); font-weight:600; }
+  .askbox input { width:100%; box-sizing:border-box; padding:7px 8px; border:1px solid var(--line); border-radius:6px; font:inherit; margin:4px 0; }
+  .flagbox { background:#f4f1fa; border:1px solid #ddd3ef; border-radius:8px; padding:8px 10px; margin:8px 0; font-size:13px; color:#3d2d63; }
+  details.asked { margin:6px 0; font-size:12.5px; }
+  details.asked summary { cursor:pointer; font-weight:700; color:var(--navy); }
+  details.asked .dupe { border-left:3px solid var(--line); padding:3px 0 3px 8px; margin:5px 0; color:var(--steel); }
+  .pointed { font-size:11.5px; color:var(--steel); margin:3px 0; }
   .thanks .tick { display:inline-block; width:16px; height:16px; line-height:16px; border-radius:50%; background:var(--green); color:#fff; text-align:center; font-size:11px; margin-right:5px; }
   .card.busy button, .card.busy .pick { pointer-events:none; opacity:.5; }
   .working { display:inline-flex; align-items:center; gap:6px; background:var(--amberSoft); color:var(--amber); border-radius:8px; padding:6px 9px; font-size:12.5px; font-weight:700; margin-top:8px; }
@@ -114,7 +124,7 @@
   a.demo { display:inline-block; color:#fff; background:var(--amber); font-weight:700; font-size:12.5px; border-radius:7px; padding:8px 12px; margin-top:8px; text-decoration:none; }
   /* batches: a card in a batch is marked; the column header carries the batch actions */
   .card.inbatch { border-left:4px solid var(--purple); }
-  .chip.batch { background:var(--purple); }
+  .chip.batch { background:var(--purple); } .chip.flag { background:#5b4590; }
   .colbatch { background:#f3eefa; border:1px solid #cdb8e8; border-radius:9px; padding:8px 10px; margin:0 0 10px; font-size:12.5px; }
   .colbatch b { display:block; margin-bottom:4px; }
   .colbatch button { margin:6px 6px 0 0; min-height:32px; padding:6px 10px; }
@@ -221,6 +231,7 @@ const STEP_LABEL = {
 let DATA = null;
 let EDITING = null;            // proposal id being adjusted, "req:<runId>" while a requirement is being edited, or "left:<feedbackId>" while the manager writes what is left; pauses the reload
 const OPEN_STOPS = new Set();   // stopped builds whose "and N more" is open; kept across the 4 s redraw
+const OPEN_ASKED = new Set();   // cards whose "asked N times" list is open; kept across the 4 s redraw
 const OPEN_BATCH = new Set();   // batch tiles whose "See the N changes" is open; kept across the 4 s redraw
 const CHECKED = new Set();     // "runId:i" boxes the manager has ticked at the requirement gate (survives the 4s reload)
 const MGR = () => DATA && (DATA.role === "manager" || DATA.role === "admin");
@@ -367,7 +378,7 @@ async function declineReview(id) {
 // Every button click is acknowledged at once: the card it belongs to greys out
 // with a "working" line until the server answers, and the header shows a pill.
 const PENDING = new Map(); // key ("fb:12" or "run:7") -> label
-const ACTION_LABELS = { closeout: "Closing it out", retire: "Retiring the promise and checking the build again", review: "Sending to the AI for a proposal", decide: "Recording your decision", confirm: "Confirming, the agent starts building", deploy: "Deploying to the floor", cancel: "Cancelling", retry: "Restarting the build", fix: "Sending the findings back to the agent", override: "Overriding the review, running tests", rollback: "Rolling back", plusone: "Counting it again", close: "Closing", batch: "Starting the batch build" };
+const ACTION_LABELS = { answer: "Passing the answer to the proposer", unlink: "Putting it back as its own request", closeout: "Closing it out", retire: "Retiring the promise and checking the build again", review: "Sending to the AI for a proposal", decide: "Recording your decision", confirm: "Confirming, the agent starts building", deploy: "Deploying to the floor", cancel: "Cancelling", retry: "Restarting the build", fix: "Sending the findings back to the agent", override: "Overriding the review, running tests", rollback: "Rolling back", plusone: "Counting it again", close: "Closing", batch: "Starting the batch build" };
 function pendingKey(url) {
   let m;
   if ((m = /\/api\/feedback\/(\d+)\/(\w+)/.exec(url))) return ["fb:" + m[1], ACTION_LABELS[m[2]] || "Working"];
@@ -529,6 +540,7 @@ function failedHtml(run, cancelNote) {
   let html = "";
   if (platformStop) html += `<div class="findings"><b>The platform's own checks stopped it. Nothing from this build ran or reached the floor.</b>${esc(cc.summary || "")}</div>`;
   else if (cc) html += `<div class="findings"><b>Independent review (${esc(modelLabel(cc.model))}) failed it. Findings:</b>${esc(cc.summary || "")}</div>`;
+  else if (ev.ai_unavailable) html += `<div class="fail-note" data-ai-down="${esc(ev.ai_unavailable)}">${ev.ai_unavailable === "busy" ? "The AI service was too busy to finish this. Nothing is wrong with your request and nothing reached the floor. Try again in a few minutes." : "The AI service was not available, so this stopped partway. Nothing is wrong with your request and nothing reached the floor. This is on Anetix's side to fix, not yours; try again later."}</div>`;
   else if (ev.checks && ev.checks.ok === false) html += checksStopHtml(run, ev.checks);
   else html += `<div class="fail-note">Stopped: ${esc(last ? last.note : "see log")}</div>`;
   if (failedCheck && !platformStop) html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;
@@ -763,6 +775,45 @@ async function closeOutAll(runId, ids) {
   PENDING.delete(key); renderBusy();
   await load();
 }
+// ---- propose on arrival (src/arrival.js) ------------------------------------------------------------------
+// "Asked 4 times by 3 people": the requests the proposer folded into this one, in their own words. The manager
+// can say "not the same" and that one becomes its own card again.
+function askedHtml(fb) {
+  if (!fb.dupes || !fb.dupes.length) return "";
+  const a = fb.asked || { times: fb.dupes.length + 1, people: 1 };
+  const openNow = ["new", "reviewing", "in_progress"].includes(fb.status);
+  return `<details class="asked" ${OPEN_ASKED.has(fb.id) ? "open" : ""} ontoggle="this.open?OPEN_ASKED.add(${fb.id}):OPEN_ASKED.delete(${fb.id})"><summary>Asked ${a.times} times by ${a.people} ${a.people === 1 ? "person" : "people"}</summary>`
+    + fb.dupes.map(d => `<div class="dupe">"${esc(d.message)}"<br>#${d.id} · ${esc(d.name || "anonymous")}${d.pointed ? ` · pointed at "${esc(d.pointed)}"` : ""}${d.photo_id && MGR() ? ` · <a href="/api/attachments/${d.photo_id}" target="_blank" rel="noopener">photo</a>` : ""}${d.floor_answer ? ` · says: ${d.floor_answer === "fixed" ? "fixed it" : "not quite"}` : ""}${d.note ? `<br><small>${esc(d.note)}</small>` : ""}${MGR() && openNow ? ` <a class="leftlink" href="#" onclick="if(confirm('Make this its own request again?'))act('/api/feedback/${d.id}/unlink');return false">not the same</a>` : ""}</div>`).join("")
+    + `</details>`;
+}
+// What the person pointed at and the photo they took went to the proposer; the card keeps one quiet line.
+function pointedHtml(fb) {
+  const el = fb.element, bits = [];
+  if (el) bits.push(`pointed at ${el.text || el.label ? `"${esc(String(el.text || el.label).slice(0, 80))}"` : esc("<" + (el.tag || "something") + ">")}`);
+  if (fb.photo_id) bits.push(MGR() ? `<a href="/api/attachments/${fb.photo_id}" target="_blank" rel="noopener">photo</a>` : "a photo");
+  return bits.length ? `<div class="pointed">${bits.join(" · ")} <span title="The proposer saw this with the words.">(the proposer saw it)</span></div>` : "";
+}
+// The proposer asked ONE question instead of guessing. It is with the person who sent the request; the manager may
+// answer for them, or ask for a proposal anyway.
+function questionHtml(fb) {
+  const qn = fb.question;
+  if (!MGR()) return `<div class="askbox">One question went back to ${esc(fb.name || "the person who sent this")} before a proposal is drafted:<div class="qtext">${esc(qn.text)}</div></div>`;
+  let h = `<div class="askbox">Before proposing, one question went to ${esc(fb.name || "the person who sent this")}. Whoever answers first, the proposal is drafted with it:<div class="qtext">${esc(qn.text)}</div>`;
+  h += (qn.options || []).map((o, i) => `<button class="small opt" onclick="answerQuestion(${fb.id}, ${i})">${esc(o)}</button>`).join("");
+  h += EDITING === "ans:" + fb.id
+    ? `<input id="ans-${fb.id}" maxlength="500" placeholder="The answer, in your own words" onkeydown="if(event.key==='Enter')answerQuestion(${fb.id}, -1)"><button class="small go" onclick="answerQuestion(${fb.id}, -1)">Send the answer</button><a class="leftlink" href="#" onclick="EDITING=null;render();return false">cancel</a>`
+    : `<a class="leftlink" href="#" onclick="EDITING='ans:${fb.id}';render();const i=document.getElementById('ans-${fb.id}');if(i)i.focus();return false">answer in my own words</a>`;
+  return h + `</div>`;
+}
+function answerQuestion(id, i) {
+  const fb = DATA.feedback.find(f => f.id === id); if (!fb || !fb.question) return;
+  let answer = i >= 0 ? (fb.question.options || [])[i] : ((document.getElementById("ans-" + id) || {}).value || "").trim();
+  if (!answer) { const el = document.getElementById("ans-" + id); if (el) { el.style.borderColor = "var(--red)"; el.focus(); } return; }
+  EDITING = null;
+  act(`/api/feedback/${id}/answer`, { answer });
+}
+const FLAG_WORDS = { not_this_tool: "NOT ABOUT THIS TOOL", new_tool: "A NEW TOOL" };
+
 function card(fb) {
   if (fb.kind === "module_request") return requestCard(fb);
   const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
@@ -771,8 +822,9 @@ function card(fb) {
   let html = `<div class="card ${PENDING.has(pk) ? "busy" : ""} ${inBatch(fb) ? "inbatch" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
   html += `<div class="meta">#${fb.id} · ${isPlatform ? '<span class="chip platform">PLATFORM</span>' : esc(fb.module)} · ${esc(fb.name || "anonymous")}`
-       + (fb.recurrence > 1 ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "") + (inBatch(fb) ? ' · <span class="chip batch">IN BATCH</span>' : "") + `</div>`;
+       + (fb.recurrence > 1 && !(fb.dupes && fb.dupes.length) ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "") + (inBatch(fb) ? ' · <span class="chip batch">IN BATCH</span>' : "") + `</div>`;
   html += `<div class="meta"><span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
+  html += pointedHtml(fb) + askedHtml(fb);
   if (fb.follow_up_of) html += fb.follow_up_origin === "little_left"
     ? `<div class="meta" style="background:#fff4e5;border-radius:8px;padding:8px;color:#7a4a00"><b>Follow-up to #${fb.follow_up_of}: a little left.</b> ${esc(fb.name || "The manager")} checked what went live and says this is left to finish. First asked: "${esc(String(fb.follow_up_words || "").slice(0, 200))}"</div>`
     : `<div class="meta" style="background:#fff4e5;border-radius:8px;padding:8px;color:#7a4a00"><b>Follow-up to #${fb.follow_up_of}: not quite.</b> ${esc(fb.name || "The person who asked")} tried what went live and says this is still off. First asked: "${esc(String(fb.follow_up_words || "").slice(0, 200))}"</div>`;
@@ -787,9 +839,19 @@ function card(fb) {
     return html + "</div>";
   }
 
-  if (fb.status === "new" && MGR()) {
-    html += `<button class="primary" ${inBatch(fb) ? "disabled title=\"in the batch: use the batch panel at the top of the column\"" : ""} onclick="act('/api/feedback/${fb.id}/review')">Review with AI</button>`;
-    html += batchBtns(fb);
+  // propose on arrival: the proposer is reading it right now, asked a question, or flagged it
+  const reading = fb.status === "new" && fb.arrival === "proposing";
+  const asking = fb.status === "new" && fb.question && !fb.question.answer;
+  const flagged = fb.status === "new" && FLAG_WORDS[fb.triage];
+  if (reading) html += `<div class="working"><span class="spin"></span>The proposer is reading this…</div>`;
+  else if (asking) html += questionHtml(fb);
+  else if (flagged) html += `<div class="flagbox"><span class="chip flag">${FLAG_WORDS[fb.triage]}</span> ${esc(fb.triage_note || "")}${fb.triage === "new_tool" && MGR() ? ` <small>"+ New module" on the line above starts one.</small>` : ""}</div>`;
+  else if (fb.status === "new" && fb.arrival === "failed" && MGR()) html += `<div class="pointed">The proposer could not read this one when it arrived. The button below still works.</div>`;
+  if (fb.status === "new" && fb.question && fb.question.answer) html += `<div class="pointed">Asked: "${esc(fb.question.text)}" Answer${fb.question.answered_by ? ` from ${esc(fb.question.answered_by)}` : ""}: "${esc(fb.question.answer)}"</div>`;
+
+  if (fb.status === "new" && MGR() && !reading) {
+    html += `<button class="${asking || flagged ? "quiet" : "primary"}" ${inBatch(fb) ? "disabled title=\"in the batch: use the batch panel at the top of the column\"" : ""} onclick="act('/api/feedback/${fb.id}/review')">${asking || flagged ? "Propose anyway" : "Review with AI"}</button>`;
+    if (!asking && !flagged) html += batchBtns(fb);
     html += `<button class="no" onclick="closeItem(${fb.id}, true)">Decline</button>`;
   }
 
@@ -797,6 +859,7 @@ function card(fb) {
     if (EDITING === fb.proposal_id) { html += editForm(fb); return html + "</div>"; }
     html += `<div class="prop"><span class="chip ${fb.proposal_class}">${fb.proposal_class === "ui" ? "UI CHANGE" : "FUNCTIONALITY"}</span><span class="chip screen">Will change: ${esc(screenLabel(fb.module, fb.proposal_target))}</span><br>${esc(fb.proposal_body)}</div>`;
     if (fb.proposal_rationale) html += `<div class="meta">${esc(fb.proposal_rationale)}${fb.proposal_model ? " · proposed by " + esc(modelLabel(fb.proposal_model)) : ""}</div>`;
+    if (fb.question && fb.question.answer) html += `<div class="pointed">Asked first: "${esc(fb.question.text)}" Answer${fb.question.answered_by ? ` from ${esc(fb.question.answered_by)}` : ""}: "${esc(fb.question.answer)}"</div>`;
     const pd = fb.proposal_data || {};
     if (pd.status === "waiting") {
       // the data check: the ERP connection cannot give this yet; Anetix has the request, the manager has nothing to do

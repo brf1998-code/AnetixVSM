@@ -40,10 +40,17 @@ async function person(mgr, company, name, role) {
 }
 const board = async (c, company = "demo") => (await c.get(`/api/c/${company}/board`)).json;
 const fbRow = async (c, id, company = "demo") => (await board(c, company)).feedback.find((f) => f.id === id);
+// The proposal on a request. Since propose on arrival (src/arrival.js) the proposer has usually drafted it before
+// anyone asks: wait out the reading, take the draft that is there, and only press "Review with AI" when there is none.
+async function proposalFor(mgr, id, company = "demo") {
+  const f = await waitFor(`request ${id} to be read`, async () => { const x = await fbRow(mgr, id, company); return x && x.arrival !== "proposing" ? x : null; });
+  if (f.status === "reviewing" && f.proposal_id && f.proposal_status === "draft") return { id: f.proposal_id, feedback_id: f.id, body: f.proposal_body, class: f.proposal_class, target_file: f.proposal_target, rationale: f.proposal_rationale, model: f.proposal_model, on_arrival: true };
+  return (await mgr.post(`/api/feedback/${id}/review`)).json;
+}
 // review, approve and deploy a list of requests; one run (a batch when there are several)
 async function ship(mgr, ids, company = "demo") {
   const props = [];
-  for (const id of ids) props.push((await mgr.post(`/api/feedback/${id}/review`)).json);
+  for (const id of ids) props.push(await proposalFor(mgr, id, company));
   let runId;
   if (props.length > 1) runId = (await mgr.post("/api/runs/batch", { proposal_ids: props.map((p) => p.id) })).json.run.id;
   else { const r = (await mgr.post(`/api/proposals/${props[0].id}/decide`, { decision: "approve" })).json; runId = (r.run || r).id; }
@@ -57,4 +64,4 @@ async function ship(mgr, ids, company = "demo") {
   return { runId, props };
 }
 
-module.exports = { BASE, PW, sleep, runner, client, login, waitFor, rowsOf, person, board, fbRow, ship };
+module.exports = { BASE, PW, sleep, runner, client, login, waitFor, rowsOf, person, board, fbRow, proposalFor, ship };

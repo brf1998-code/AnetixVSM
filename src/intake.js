@@ -515,7 +515,7 @@ router.delete("/api/intakes/:id/attach/:aid", requireManager, async (req, res) =
 router.get("/api/attachments/:id", requireManager, async (req, res) => {
   const a = await attachments.get(Number(req.params.id));
   if (!a) return res.status(404).end();
-  res.set("Content-Type", a.mime).set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
+  res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
 });
 
 module.exports = { router, create, answer, next, think, adjust, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, INTAKE_MODEL, estimateUsd };

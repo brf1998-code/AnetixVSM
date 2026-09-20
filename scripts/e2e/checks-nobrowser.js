@@ -3,7 +3,7 @@
 //   SOS_BROWSER=off ...node server.js                 then  SOS_E2E_EXPECT=off    node scripts/e2e/checks-nobrowser.js
 //   SOS_CHROMIUM_PATH=/bin/false ...node server.js    then  SOS_E2E_EXPECT=broken node scripts/e2e/checks-nobrowser.js
 // Either way builds must go on, looked at without a browser, and the run log must say so.
-const { PW, runner, login, waitFor, board } = require("./lib");
+const { PW, runner, login, waitFor, board, proposalFor } = require("./lib");
 const R = runner(), t = R.t;
 const EXPECT = process.env.SOS_E2E_EXPECT || "off";
 
@@ -11,7 +11,7 @@ const EXPECT = process.env.SOS_E2E_EXPECT || "off";
   const mgr = await login(PW.manager, "demo"), floor = await login(PW.floor, "demo");
   const file = async (msg) => (await floor.post("/api/feedback", { company: "demo", module: "paperline", page: "/c/demo/m/paperline/", message: msg })).json.id;
   const runOf = async (id) => (await board(mgr)).runs.find((r) => r.id === id);
-  const start = async (fbId) => { const prop = (await mgr.post(`/api/feedback/${fbId}/review`)).json; const r = (await mgr.post(`/api/proposals/${prop.id}/decide`, { decision: "approve" })).json; return (r.run || r).id; };
+  const start = async (fbId) => { const prop = (await proposalFor(mgr, fbId)); const r = (await mgr.post(`/api/proposals/${prop.id}/decide`, { decision: "approve" })).json; return (r.run || r).id; };
   const settle = async (runId) => waitFor(`run ${runId}`, async () => { const x = await runOf(runId); return x && (x.status === "failed" || (x.step === "await_deploy" && x.status === "waiting")) ? x : null; }, 90000);
   const lastErr = (x) => ((x.log || []).filter((l) => l.step === "error").slice(-1)[0] || {}).note || "";
 

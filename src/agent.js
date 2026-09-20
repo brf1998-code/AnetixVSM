@@ -206,12 +206,39 @@ function fakeRunAgent({ dir, prompt }) {
   return { text: `- Fake agent applied a marker change to ${target || "every page"}\n- Added one additive migration and one check (functionality lane only)\n- No real AI was involved (SOS_FAKE_AGENT=1)`, costUsd: 0 };
 }
 
-function fakeStructured(toolName, prompt) {
+// Propose on arrival in fake mode (src/arrival.js), steered by a word in the feedback: DUPE = the same thing as the
+// first open request listed, ASKME = one question instead of a guess (a proposal once the answer is in the prompt),
+// NOTTHISTOOL and NEWTOOL = the two flags, FAILPROPOSE = the call itself fails, CREDITOUT = it fails the way an
+// empty credit balance does. Each only when the prompt allowed it (the sorting brief, the asking brief).
+function fakeTriage(quoted, prompt, blocks) {
+  const out = {}, notes = [];
+  const maySort = /First decide what this request is \(triage\)/.test(prompt), mayAsk = /You may ask ONE question instead of guessing/.test(prompt);
+  if (maySort) {
+    out.triage = "change"; out.duplicate_of = 0; out.triage_note = "";
+    const first = (/\n#(\d+) \[(?:waiting|proposal drafted|being built)\]/.exec(prompt) || [])[1];
+    if (/DUPE/.test(quoted) && first) { out.triage = "duplicate"; out.duplicate_of = Number(first); out.triage_note = `Fake mode: this asks for the same thing as request #${first}.`; }
+    else if (/NOTTHISTOOL/.test(quoted)) { out.triage = "not_this_tool"; out.triage_note = "Fake mode: this is about the building, not about this tool."; }
+    else if (/NEWTOOL/.test(quoted)) { out.triage = "new_tool"; out.triage_note = "Fake mode: this asks for a whole new tool, not a change to this one."; }
+  }
+  if (mayAsk) out.question = /ASKME/.test(quoted) ? (/ASKMEBADLY/.test(quoted) ? { text: "Which API endpoint should the frontend call?", options: ["The database", "The backend"] } : { text: "Which one do you mean?", options: ["The count on the left", "The list on the right"] }) : { text: "", options: [] };
+  const ans = /The answer(?:, from [^:]+)?: "([^"]*)"/.exec(prompt);
+  if (ans) notes.push(`Answer received: ${ans[1]}.`);
+  const el = /The person POINTED at one thing on the screen while writing this: (<[^>]*>)/.exec(prompt);
+  if (el) notes.push(`Pointed element received: ${el[1]}.`);
+  const photos = (blocks || []).filter((b) => b && b.type === "image").length;
+  if (photos) notes.push(`Photo received (${photos}).`);
+  return { out, notes: notes.length ? " " + notes.join(" ") : "" };
+}
+
+function fakeStructured(toolName, prompt, blocks) {
   const quoted = (/\n\n"([^"]{1,500})"\n\n/.exec(prompt) || [])[1] || prompt.slice(0, 200);
   const screenLine = (prompt.split("\n").find((l) => l.startsWith("Screen:")) || "");
   const target = (/\(([^()]+)\)\s*$/.exec(screenLine) || [])[1] || null;
+  if (toolName === "proposal" && /CREDITOUT/.test(quoted)) throw new Error("400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"}}");
+  if (toolName === "proposal" && /FAILPROPOSE/.test(quoted)) throw new Error("fake mode: the proposal call failed (FAILPROPOSE)");
+  const sorted = toolName === "proposal" ? fakeTriage(quoted, prompt, blocks) : { out: {}, notes: "" };
   const canned = {
-    proposal: { erp_data: (() => { const need = /ERPNEED:([a-z_0-9]*)/.exec(quoted); const lk = ((/ERP lookups available to this module: ([^\n]+)/.exec(prompt) || [])[1] || "").split(",")[0].trim(); return need && lk ? [{ what: `fake need: ${need[1] || "something the ERP does not give"}`, lookup: lk, field: need[1] }] : []; })(), proposal: "Fake-mode proposal: apply the requested change as described in the feedback. (SOS_FAKE_AGENT=1)", class: /color|copy|text|label|layout|style|bigger|smaller|show|display|legend|see/i.test(quoted) ? "ui" : "functionality", target_file: target, rationale: "Deterministic fake classification for machinery testing." + ((/This is a follow-up to request #(\d+)\./.exec(prompt) || [])[1] ? ` Follow-up context received for request #${/This is a follow-up to request #(\d+)\./.exec(prompt)[1]}.` : "") },
+    proposal: { ...sorted.out, erp_data: (() => { const need = /ERPNEED:([a-z_0-9]*)/.exec(quoted); const lk = ((/ERP lookups available to this module: ([^\n]+)/.exec(prompt) || [])[1] || "").split(",")[0].trim(); return need && lk ? [{ what: `fake need: ${need[1] || "something the ERP does not give"}`, lookup: lk, field: need[1] }] : []; })(), proposal: "Fake-mode proposal: apply the requested change as described in the feedback. (SOS_FAKE_AGENT=1)", class: /color|copy|text|label|layout|style|bigger|smaller|show|display|legend|see/i.test(quoted) ? "ui" : "functionality", target_file: target, rationale: "Deterministic fake classification for machinery testing." + ((/This is a follow-up to request #(\d+)\./.exec(prompt) || [])[1] ? ` Follow-up context received for request #${/This is a follow-up to request #(\d+)\./.exec(prompt)[1]}.` : "") + sorted.notes },
     requirement: {
       bluf: "Fake-mode requirement: the change in the feedback is applied and nothing else moves.",
       items: (prompt.match(/^Change \d+ of \d+/gm) || ["Approved proposal"]).map((h, i) => ({ change: i + 1, summary: `Fake-mode item ${i + 1}: apply that change on its screen, nothing else.` })),
@@ -359,7 +386,12 @@ const noForcedTool = new Set();
 // `blocks`: optional content blocks (images, pdf documents, extra text) that
 // go in front of the prompt text, for callers that hand the model attachments.
 async function runStructured({ model, system, prompt, schema, toolName, maxTokens, blocks }) {
-  if (fakeMode()) return fakeStructured(toolName, prompt);
+  if (fakeMode()) {
+    // SOS_FAKE_PROPOSE_MS: how long a fake proposal call takes, so "the proposer is reading this" can be seen and tested
+    const wait = toolName === "proposal" ? Number(process.env.SOS_FAKE_PROPOSE_MS || 0) : 0;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    return fakeStructured(toolName, prompt, blocks);
+  }
   if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured on this instance");
   const Anthropic = require("@anthropic-ai/sdk");
   const client = new Anthropic();

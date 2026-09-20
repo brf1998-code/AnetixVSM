@@ -25,6 +25,8 @@ async function main() {
   await record.init();   // the interaction record: insert-only, what everyone said and decided
   await people.init();        // operator identity: names and PINs per company
   await require("./src/closeloop").init();   // close the loop: my requests, what went live, fixed it / not quite
+  await require("./src/arrival").init();     // propose on arrival: duplicates folded in, one question instead of a guess, what the person pointed at (after closeloop: its trigger names closeloop's columns)
+  await require("./src/credit").init();       // the AI credit glide slope on /admin (the balance the admin enters, projected from the platform's own spend)
   await require("./src/acceptance").init();   // acceptance checks that accumulate: the promises a manager retired (the checks themselves live in the module's files)
   await connections.init();   // what modules reach outside through: spreadsheets, label printers (src/connections.js)
   await require("./src/datacheck").init();   // the review-time check that a change's ERP data is available, and the admin's data requests

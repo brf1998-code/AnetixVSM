@@ -40,6 +40,7 @@ function testStopKind(note) {
 }
 function stopKind(note) {
   const n = String(note || "");
+  if (require("./credit").classify(n)) return "ai";   // the AI service refused (credit, key, busy): counted apart, it says nothing about the builds
   if (/^platform checks failed/.test(n)) return "gate";
   if (/^cross-check failed/.test(n)) return "reviewer";
   if (/^(internal tests|visual check) failed/.test(n)) return "tests";
@@ -76,7 +77,7 @@ function metrics(g, now, windowDays) {
 
   // feedback
   const filed = g.feedback.filter((f) => inWin(f.created_at));
-  const open = g.feedback.filter((f) => OPEN_FEEDBACK.has(f.status));
+  const open = g.feedback.filter((f) => OPEN_FEEDBACK.has(f.status) && !f.duplicate_of);   // a request folded into another one is that one's card, not an open item of its own
   const oldestOpen = open.length ? Math.max(...open.map((f) => hours(f.created_at, now))) : null;
 
   // decisions
@@ -101,7 +102,7 @@ function metrics(g, now, windowDays) {
   const started = timed.filter((x) => inWin(x.r.created_at));
   const shipped = timed.filter((x) => inWin(x.t.deployed));
   const rolledBack = timed.filter((x) => inWin(x.t.rolledBack));
-  const stops = { gate: 0, reviewer: 0, tests: 0, other: 0 };
+  const stops = { gate: 0, reviewer: 0, tests: 0, other: 0, ai: 0 };
   const testStops = { promise: 0, own_check: 0, page: 0, smoke: 0 };
   for (const x of timed) for (const s of x.t.stops) if (inWin(s.t)) { stops[s.kind]++; if (s.test) testStops[s.test]++; }
   // the pile of promises: checks that changes left behind in the window, and the ones a manager retired
@@ -153,12 +154,28 @@ function metrics(g, now, windowDays) {
   const missed = spoken.filter((f) => f.floor_answer === "not_quite" || f.manager_answer === "little_left").length;
   const followUpsOpen = g.feedback.filter((f) => f.follow_up_of && OPEN_FEEDBACK.has(f.status)).length;
 
+  // propose on arrival (src/arrival.js): what the proposer did the moment requests landed. A high duplicate share
+  // means the floor keeps asking for something that is not moving; questions that sit unanswered mean the question
+  // is not reaching the person (or is a bad question).
+  const recIn = (kind) => g.record.filter((r) => r.kind === kind && inWin(r.created_at));
+  const arrivalNums = {
+    proposed: recIn("proposal_drafted").filter((r) => r.on_arrival).length,
+    duplicates: g.feedback.filter((f) => f.duplicate_of && inWin(f.created_at)).length,
+    questions: recIn("question_asked").length,
+    answered: recIn("question_answered").length,
+    answered_by_manager: recIn("question_answered").filter((r) => r.via === "manager").length,
+    waiting_answer: g.feedback.filter((f) => f.question_open && f.status === "new" && !f.duplicate_of).length,
+    flagged: recIn("request_flagged").length,
+    unlinked: recIn("duplicate_unlinked").length,
+  };
+
   // intakes (new modules)
   const intakes = g.intakes.filter((i) => inWin(i.created_at));
   const spendWindow = Number(g.spend_window || 0), spendMonth = Number(g.spend_month || 0);
 
   return {
     feedback: { filed: filed.length, open: open.length, oldest_open_hours: round1(oldestOpen) },
+    arrival: arrivalNums,
     decisions: {
       approved: approved.length, declined: declined.length,
       edited: approved.filter((d) => editedIds.has(d.p.id)).length,
@@ -234,10 +251,10 @@ async function load(windowDays) {
   const since = windowDays === 0 ? new Date(0) : new Date(now.getTime() - windowDays * DAY);
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const companies = (await q("SELECT slug, name, monthly_cap_usd FROM platform.companies ORDER BY created_at")).rows;
-  const feedback = (await q("SELECT id, company, status, created_at, outcome, person_id, follow_up_of, shipped_at, floor_answer, floor_answer_at, manager_answer, manager_answer_at FROM platform.feedback")).rows;
+  const feedback = (await q("SELECT id, company, status, created_at, outcome, person_id, follow_up_of, shipped_at, floor_answer, floor_answer_at, manager_answer, manager_answer_at, duplicate_of, (question IS NOT NULL AND NOT (question ? 'answer')) AS question_open FROM platform.feedback")).rows;
   const proposals = (await q("SELECT p.id, p.feedback_id, f.company, p.status, p.created_at, p.data_check->>'status' AS data_status FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id")).rows;
   const runs = (await q("SELECT id, company, module, lane, status, step, model, proposal_id, proposal_ids, created_at, evidence, log FROM platform.build_runs ORDER BY id DESC LIMIT 5000")).rows;
-  const record = (await q("SELECT company, kind, proposal_id, created_at FROM platform.record WHERE kind IN ('proposal_edited','proposal_approved','proposal_declined','check_added','promise_retired') ORDER BY id")).rows;
+  const record = (await q("SELECT company, kind, proposal_id, created_at, (detail->>'on_arrival')::boolean AS on_arrival, detail->>'via' AS via FROM platform.record WHERE kind IN ('proposal_edited','proposal_approved','proposal_declined','check_added','promise_retired','question_asked','question_answered','request_flagged','duplicate_unlinked') OR (kind='proposal_drafted' AND detail ? 'on_arrival') ORDER BY id")).rows;
   const intakes = (await q("SELECT company, status, created_at FROM platform.module_intakes")).rows;
   const [w, m] = await Promise.all([spendSince(since), spendSince(monthStart)]);
   const spend = {}; for (const c of companies) spend[c.slug] = { window: w[c.slug] || 0, month: m[c.slug] || 0 };

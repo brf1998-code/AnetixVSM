@@ -35,6 +35,7 @@ function reasonFor(run) {
   if (ev.checks && ev.checks.ok === false && ev.checks.kind) return { promise: "broke an earlier promise", own_check: "its own check failed", page: "a screen broke on opening", smoke: "an endpoint did not answer" }[ev.checks.kind] || "tests failed";
   if (/^internal tests failed/i.test(last) || run.step === "test_run") return "tests failed";
   if (/^visual check failed/i.test(last)) return "visual check failed";
+  if (ev.ai_unavailable) return "AI service unavailable";   // no credit, a bad key, too busy (src/credit.js): not the build's fault
   if (/cost passed|safety budget|monthly AI cap/i.test(last)) return "cost cap";
   if (/build agent failed|agent run ended|API answered with an error/i.test(last)) return "agent died";
   if (/platform restarted/i.test(last)) return "restart";

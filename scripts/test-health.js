@@ -71,7 +71,7 @@ const demo = (out) => out.companies.find((c) => c.slug === "demo");
   const r = run("demo", p, 48, { status: "failed", step: "cross_check", stops: [[47, "platform checks failed: routes.js line 3"], [40, "cross-check failed: the label moved"], [30, "internal tests failed: 500 on /api/items"], [20, "visual check failed: blank"], [10, "agent stopped: boom"]], evidence: { fix_round: 2, cross_check: { overridden: true } } });
   const c = run("demo", prop(fb("demo", 5, "reviewing"), 4), 3, { status: "cancelled", step: "build" });
   const d = demo(go(bundle({ feedback: [f], proposals: [p], runs: [r, c] })));
-  t("stops are sorted: gate 1, reviewer 1, tests 2, other 1", j(d.builds.stops) === j({ gate: 1, reviewer: 1, tests: 2, other: 1 }), j(d.builds.stops));
+  t("stops are sorted: gate 1, reviewer 1, tests 2, other 1", j(d.builds.stops) === j({ gate: 1, reviewer: 1, tests: 2, other: 1, ai: 0 }), j(d.builds.stops));
   t("fix rounds and overrides come from the run's evidence", d.builds.fix_rounds === 2 && d.builds.overrides === 1, j(d.builds));
   t("a cancelled run is counted", d.builds.cancelled === 1, j(d.builds));
   t("quiet stretch: last check stop 20h ago (0.8 days), last gate stop 47h ago (2 days), never a rollback", d.quiet.check_stop_days === 0.8 && d.quiet.gate_stop_days === 2 && d.quiet.rollback_days === null && d.quiet.other_stop_days === 0.4, j(d.quiet));
@@ -191,6 +191,7 @@ const demo = (out) => out.companies.find((c) => c.slug === "demo");
   t("its own check", h.testStopKind('internal tests failed: the check that came with this change does not pass: "x" (GET /a: answered 404, expected a 2xx)') === "own_check");
   t("a screen that breaks", h.testStopKind("visual check failed: Stockroom page: a script error on the screen: y is not a function") === "page" && h.testStopKind("visual check failed: Line board: the screen answered 404") === "page");
   t("an endpoint that does not answer", h.testStopKind("internal tests failed: /api/state answered 404") === "smoke");
+  t("the AI service refusing (no credit, a bad key, too busy) is counted apart: it says nothing about the builds", h.stopKind("build agent failed: the model's API answered with an error: Credit balance is too low (after 170 messages)") === "ai" && h.stopKind("build agent failed: overloaded_error") === "ai" && h.stopKind("build agent failed: the agent process died right after starting") === "other");
   t("all four are still tests to the stop counter", ["internal tests failed: x", "visual check failed: y"].every((n) => h.stopKind(n) === "tests"));
 }
 

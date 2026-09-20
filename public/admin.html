@@ -60,6 +60,7 @@
   <div class="card" id="health-card">
     <h2>Loop health <small>the platform's own numbers: is the loop turning, how fast, where it stops</small>
       <select id="h-days" onchange="loadHealth()"><option value="7">last 7 days</option><option value="30" selected>last 30 days</option><option value="90">last 90 days</option><option value="365">last year</option><option value="0">all time</option></select></h2>
+    <div id="credit" style="margin:8px 0 10px;padding:9px 12px;border-radius:9px;background:var(--fog);font-size:13px;line-height:1.45"></div>
     <div class="grid" id="h-fleet"></div>
     <div class="hwrap"><table class="health" id="h-table"></table></div>
     <p class="sub" id="h-note" style="margin-top:8px">Counts are for the window; open items, what is waiting, and the quiet stretch are as of now. Same shift means feedback to floor within 8 hours. To floor runs from the feedback item to the deploy (the oldest item in a batch). Manager wait is proposal drafted to decided, then ready to deployed. Stops are where builds stopped: the platform's own checks (gate), the reviewer, the tests, or something else. Quiet is days since the last reviewer or test stop, gate stop, and rollback; a long quiet stretch is the signal to try a cheaper build model. Edited is how many approved proposals the manager changed first (on the record since Sept 19). Decision times before the record use the run's start.</p>
@@ -133,13 +134,24 @@ function testStopsLine(b) {
   const pile = (b.checks_added || b.promises_retired) ? `<br><small>promises: ${b.checks_added || 0} added${b.promises_retired ? ` · <span class="warn">${b.promises_retired} retired</span>` : ""}</small>` : "";
   return (parts.length ? `<br><small>tests: ${parts.join(" · ")}</small>` : "") + pile;
 }
+// what the proposer did the moment requests landed (build order item 8): folded into an open request, asked one question, flagged
+function arrivalLine(a) {
+  if (!a) return "";
+  const parts = [];
+  if (a.proposed) parts.push(`${a.proposed} proposed on arrival`);
+  if (a.duplicates) parts.push(`${a.duplicates} added to an open one${a.unlinked ? ` (${a.unlinked} undone)` : ""}`);
+  if (a.questions) parts.push(`${a.questions} asked a question, ${a.answered} answered${a.answered_by_manager ? ` (${a.answered_by_manager} by the manager)` : ""}`);
+  if (a.waiting_answer) parts.push(`<span class="warn">${a.waiting_answer} waiting on an answer</span>`);
+  if (a.flagged) parts.push(`${a.flagged} flagged`);
+  return parts.length ? `<br><small>${parts.join(" · ")}</small>` : "";
+}
 function healthRow(c) {
   const stops = c.builds.stops, nstops = stops.gate + stops.reviewer + stops.tests + stops.other;
   const waiting = c.decisions.waiting + c.builds.waiting_deploy + c.builds.waiting_confirm;
   const decided = c.decisions.approved + c.decisions.declined;
   return `<tr>
     <td class="co">${esc(c.name)}${c.builds.in_flight ? ` <small>· ${c.builds.in_flight} building</small>` : ""}<br><small>${modelsCell(c.builds.models)}</small></td>
-    <td>${c.feedback.filed}</td>
+    <td>${c.feedback.filed}${arrivalLine(c.arrival)}</td>
     <td>${c.feedback.open}${c.feedback.open ? `<br><small>oldest ${hrs(c.feedback.oldest_open_hours)}</small>` : ""}</td>
     <td class="${waiting || c.decisions.waiting_data ? "warn" : ""}">${waiting}${waiting ? `<br><small>${c.decisions.waiting} to decide${c.decisions.waiting ? ` (oldest ${hrs(c.decisions.oldest_waiting_hours)})` : ""}<br>${c.builds.waiting_confirm} to confirm, ${c.builds.waiting_deploy} to deploy</small>` : ""}${c.decisions.waiting_data ? `<br><small class="warn">${c.decisions.waiting_data} on us (ERP data, oldest ${hrs(c.decisions.oldest_waiting_data_hours)})</small>` : ""}</td>
     <td><b>${c.builds.shipped}</b>${c.builds.rolled_back ? `<br><small class="warn">${c.builds.rolled_back} rolled back</small>` : ""}${c.builds.cancelled ? `<br><small>${c.builds.cancelled} cancelled</small>` : ""}${answersCell(c.answers)}</td>
@@ -147,12 +159,59 @@ function healthRow(c) {
     <td>${hrs(c.floor.median_hours)}${c.floor.n > 1 ? `<br><small>p90 ${hrs(c.floor.p90_hours)}</small>` : ""}</td>
     <td>${hrs(c.decisions.wait_median_hours)}${c.floor.deploy_wait_n ? `<br><small>then ${hrs(c.floor.deploy_wait_median_hours)} to deploy</small>` : ""}</td>
     <td>${decided ? `${c.decisions.approved} approved<br><small>${c.decisions.edited} edited first · ${c.decisions.declined} declined</small>` : "<small>none</small>"}</td>
-    <td class="${nstops ? "warn" : ""}">${nstops}${nstops ? `<br><small>gate ${stops.gate} · reviewer ${stops.reviewer} · tests ${stops.tests}${stops.other ? ` · other ${stops.other}` : ""}</small>` : ""}${testStopsLine(c.builds)}${c.builds.fix_rounds || c.builds.overrides ? `<br><small>${c.builds.fix_rounds} fix round${c.builds.fix_rounds === 1 ? "" : "s"}${c.builds.overrides ? `, ${c.builds.overrides} overridden` : ""}</small>` : ""}</td>
+    <td class="${nstops ? "warn" : ""}">${nstops}${nstops ? `<br><small>gate ${stops.gate} · reviewer ${stops.reviewer} · tests ${stops.tests}${stops.other ? ` · other ${stops.other}` : ""}</small>` : ""}${stops.ai ? `<br><small class="warn">${stops.ai} stopped by the AI service, not counted</small>` : ""}${testStopsLine(c.builds)}${c.builds.fix_rounds || c.builds.overrides ? `<br><small>${c.builds.fix_rounds} fix round${c.builds.fix_rounds === 1 ? "" : "s"}${c.builds.overrides ? `, ${c.builds.overrides} overridden` : ""}</small>` : ""}</td>
     <td>${usd(c.spend.window_usd)}${c.spend.per_shipped_usd != null ? `<br><small>${usd(c.spend.per_shipped_usd)} a change</small>` : ""}<br><small>${usd(c.spend.month_usd)} this month${c.spend.cap_usd ? ` of ${usd(c.spend.cap_usd)}` : ""}</small></td>
     <td>${quietCell(c.quiet, c.builds.shipped)}</td>
   </tr>`;
 }
+// The AI credit glide slope (src/credit.js): the balance the admin entered minus what the platform has spent
+// since, the trailing seven day burn, and the day it runs out. Red when the AI service last refused a call for
+// credit or key reasons and nothing has worked since.
+async function loadCredit() {
+  const r = await fetch("/api/admin/credit"); if (!r.ok) return;
+  const c = await r.json(), el = document.getElementById("credit");
+  const color = { red: "var(--red)", amber: "#c2620a", ok: "var(--green)", unknown: "var(--steel)" }[c.level] || "var(--steel)";
+  const out = c.outage ? `<div style="color:var(--red);font-weight:700">The AI service refused a call at ${new Date(c.outage.at).toLocaleString()} (${c.outage.kind === "key" ? "the key was not accepted" : "no credit left"}${c.outage.where ? `, during ${esc(c.outage.where)}` : ""}) and nothing has worked since. No proposal or build will run until it is fixed.</div>` : "";
+  el.style.borderLeft = `4px solid ${color}`;
+  el.innerHTML = out + `<b style="color:${color}">AI credit</b> · <span id="credit-line">${esc(c.line)}</span>`
+    + (c.known ? ` <small style="color:var(--steel)">By the platform's own count since ${new Date(c.anchor.noted_at).toLocaleDateString()} ($${c.anchor.balance_usd.toFixed(2)} then, $${c.spent_since.toFixed(2)} spent since)${c.anchor.autofill ? " · autofill is on" : ""}. Anything else spending on the same key is not seen here.</small>` : ` <small style="color:var(--steel)">Burning $${Number(c.burn_per_day).toFixed(2)} a day over the last ${c.burn_days} day${c.burn_days === 1 ? "" : "s"}.</small>`)
+    + ` <a href="#" onclick="creditForm();return false" style="white-space:nowrap">${c.known ? "update the balance" : "enter the balance"}</a>`
+    + slopeSvg(c);
+}
+// The glide slope itself: what is left, day by day since the balance was entered (solid), then down the burn rate
+// to zero on the projected day (dashed). Drawn only when there is a runout day to show.
+function slopeSvg(c) {
+  const s = c.slope; if (!c.known || !s || !s.projected.length) return "";
+  const pts = s.actual.concat(s.projected.slice(1)), t0 = +new Date(pts[0].t), t1 = +new Date(pts[pts.length - 1].t), top = Math.max(...pts.map(p => p.usd), 0.01);
+  const W = 640, H = 96, L = 8, Rr = 8, T = 16, B = 22, x = (t) => L + (W - L - Rr) * ((+new Date(t) - t0) / Math.max(1, t1 - t0)), y = (v) => T + (H - T - B) * (1 - Math.max(0, v) / top);
+  const line = (arr) => arr.map(p => `${x(p.t).toFixed(1)},${y(p.usd).toFixed(1)}`).join(" ");
+  const color = { red: "#b3261e", amber: "#c2620a", ok: "#2e7d4f" }[c.level] || "#51606f", now = s.actual[s.actual.length - 1], end = s.projected[1];
+  const dm = (t) => new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `<svg id="credit-slope" viewBox="0 0 ${W} ${H}" style="display:block;width:100%;max-width:${W}px;height:auto;margin-top:6px" role="img" aria-label="AI credit glide slope">
+    <line x1="${L}" y1="${y(0)}" x2="${W - Rr}" y2="${y(0)}" stroke="#d5dbe3"/>
+    <polyline points="${line(s.actual)}" fill="none" stroke="${color}" stroke-width="2.5"/>
+    <polyline points="${line(s.projected)}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="5 4"/>
+    <circle cx="${x(now.t)}" cy="${y(now.usd)}" r="3.5" fill="${color}"/>
+    <text x="${L}" y="11" font-size="10.5" fill="#51606f">$${s.actual[0].usd.toFixed(2)} on ${dm(s.actual[0].t)}</text>
+    <text x="${Math.min(W - 150, Math.max(L, x(now.t) - 30))}" y="${Math.max(11, y(now.usd) - 7)}" font-size="10.5" fill="${color}" font-weight="700">$${now.usd.toFixed(2)} today</text>
+    <text x="${W - Rr}" y="${H - 6}" font-size="10.5" fill="${color}" text-anchor="end" font-weight="700">runs out around ${dm(end.t)}</text>
+  </svg>`;
+}
+function creditForm() {
+  openModal(`<h2>AI credit balance</h2><p class="sub">Read it off the Anthropic console (Plans and billing) and type it here. The platform subtracts what it spends from now on and projects the day it runs out.</p>
+    <input id="cr-bal" type="number" min="0" step="0.01" placeholder="Balance in dollars, as of now">
+    <label style="display:block;margin-top:10px;font-size:13px"><input id="cr-auto" type="checkbox" style="width:auto"> Autofill is set up on the key (a low balance is then not an alarm)</label>
+    <input id="cr-note" placeholder="Note (optional)">
+    <div style="margin-top:12px"><button class="primary" onclick="creditSave()">Save</button><button onclick="closeModal()">Cancel</button></div>`);
+}
+async function creditSave() {
+  const balance_usd = document.getElementById("cr-bal").value;
+  if (balance_usd === "") return;
+  await post("/api/admin/credit", { balance_usd, autofill: document.getElementById("cr-auto").checked, note: document.getElementById("cr-note").value });
+  closeModal(); loadCredit();
+}
 async function loadHealth() {
+  loadCredit().catch((e) => console.error("credit:", e));
   const days = document.getElementById("h-days").value;
   const r = await fetch(`/api/admin/health?days=${days}`);
   if (!r.ok) { document.getElementById("h-fleet").innerHTML = `<div class="sub fail">could not load loop health (${r.status})</div>`; return; }

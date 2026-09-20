@@ -157,6 +157,10 @@ async function failRun(runId, err) {
   console.error(`run ${runId} failed:`, err);
   if (err && err.diag) await log(runId, { step: "diag", note: JSON.stringify(err.diag) });
   await log(runId, { step: "error", note: String(err.message || err) });
+  // the AI service itself refusing (no credit, a bad key, too busy) is not the build's fault and not the manager's
+  // problem: the card says so in plain words (src/credit.js) and /admin shows it red
+  const aiDown = await require("./credit").noteFailure(String(err.message || err), `build run #${runId}`);
+  if (aiDown) await setRun(runId, { evidence: { ...((before && before.evidence) || {}), ai_unavailable: aiDown } });
   await setRun(runId, { status: "failed" });
   const run = await getRun(runId);
   if (run) kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
