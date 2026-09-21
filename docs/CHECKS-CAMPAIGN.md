@@ -57,7 +57,8 @@ five or more changes are where the agent skips or over-reaches; the board's
 
 ## The log
 
-`/c/<slug>/checks` (manager, linked from the board header as "checks log"):
+`/c/<slug>/checks` (manager, linked from the admin company card as "Checks
+log"; until 2026-09-20 from the board header):
 every build run, why it stopped where it stopped (one of the reasons above,
 computed by `src/checks.js reasonFor`), the reviewer's findings with the diff
 lines they quote, the change that was asked for, and three buttons: Right,

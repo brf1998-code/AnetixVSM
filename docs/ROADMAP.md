@@ -1,169 +1,142 @@
-# Symbiotic Operating System — Product Vision and Roadmap
+# Symbiotic Operating System: Product Vision and Roadmap
 
-*Drafted 2026-08-13. Working doc, update aggressively. Decisions from Brendan same day: thin working slice first, one runtime with managed modules, product under Finn Operations for now (rename likely later), simulated factory with the backend and process as the thing being proven.*
+*Rewritten 2026-09-20. Supersedes the 2026-08-13 draft, whose five phases are built and folded in below. Working doc, update aggressively. The company is Anetix (Delaware C-corp forming); the product name is still Symbiotic OS. Decisions carry a date; the log at the end is the record.*
 
 ---
 
 ## 1. What this is
 
-Symbiotic OS is an operating system for factories. It forms around how a company actually runs instead of forcing the company into the mold of an enterprise system. A production manager with process knowledge and no software background selects a module type, describes what the floor needs, and the system builds it. From then on, every point of friction on the floor feeds a continuous improvement loop: feedback comes in, the AI drafts a proposal, the manager reviews and redirects it, the AI builds the revision and shows a demo, and the manager approves deployment. The whole loop lives in one application. No GitHub, no Railway, no accounts to wire together, no git to understand.
+Symbiotic OS is an operating system for factories that forms around how a company actually runs, instead of forcing the company into the mold of an enterprise system. A production manager with process knowledge and no software background describes what the floor needs, and the system builds it. From then on every point of friction on the floor feeds one continuous improvement loop: a request comes in, the AI reads it and drafts a proposal, the manager reviews and redirects, the AI builds the change onto a staged copy and shows it working, the manager approves, it is on the floor, and the person who asked is told and asked whether it fixed anything. The whole loop lives in one application. No GitHub, no Railway, no accounts to wire together, no git to understand.
 
-The bar for usability: if someone can run their team on Teams, they can run their factory's software on this.
+The objective, in Brendan's words from the 2026-09-18 product review: **a floor operator with no technical experience builds and develops their own system through the CI loop, so the system molds to their operation and significantly improves it.** The bar for usability has not moved: if someone can run their team on Teams, they can run their factory's software on this.
+
+The pitch underneath it: as models get better, what grows is the size of change the gate can safely carry. Verification is the limit, not generation. So the product is built as a verification machine with a model in the middle, and the model is swappable.
 
 ## 2. Why this wins
 
-The Langmuir deployment already proved the method: an operator-grade system built in weeks, adopted by the floor (4.91/5 ease of use, 100% would recommend), at a running cost in the hundreds of dollars per year, with measured value around $220K/yr. The method is replicable by a skilled person. What is not replicable is the delivery machinery, and today that machinery is the expensive part. The Langmuir workspace docs are a catalog of the friction a technical operator has to absorb:
+The Langmuir deployment proved the method: an operator-grade system built in weeks, adopted by the floor, at a running cost in the hundreds of dollars a year, with measured value around $220K a year. Most skilled people could replicate the method. What is not replicable is the delivery machinery, and that machinery was the expensive part: pull before every edit, per-machine git transport, stale lock files, a day lost on a retired repo, deploy config, cache masking deploys. Every one of those is a reason a nontechnical manager cannot run that stack. Symbiotic OS deletes the list by making build, stage, review, deploy and rollback native operations of one application. The moat is not the AI. It is a delivery loop so well defined that using it is easier than not using it.
 
-- Pull before every edit or a fix gets silently reverted; two people pushing ten repos
-- Per-machine git transport differences (SSH alias vs HTTPS), PATs dropped in gitignored files, clone-and-graft push procedures
-- Stale index.lock files from sandboxed git; "never run git from the sandbox"
-- A day of work lost editing a retired repo because nothing says which repo serves a feature
-- Railway env vars, browser cache masking deploys, Apps Script deployment versioning
+This is also the productization of the operator-as-builder question from the thesis work. If a floor operator can grow their own system through this loop, the market moves from "we send a team in" to "we equip the person who already knows the process."
 
-Every one of those is a reason a nontechnical production manager cannot run the current stack. Symbiotic OS deletes the entire list by making build, stage, review, deploy, and rollback native operations of one application. The moat is not the AI. It is a delivery loop so well defined that using it is easier than not using it.
+## 3. What exists today (2026-09-20)
 
-This is also the productization of the operator-as-builder hypothesis from the thesis work (Mindell's question: can an operator build their own system?). If the answer is yes, the market expands from "we send a team in" to "we equip the person with process knowledge."
+Everything below is built, live at sos.finnoperations.com, and covered by the suites in `scripts/` and `scripts/e2e/` (about 800 checks across units, end to end and headless browser). The 2026-09-18 review's build order, items 1 to 9, is delivered. `CLAUDE.md` is the engineering reference; this section is the shape.
 
-## 3. Product concept
+**The loop.** Feedback from a button on every module page, with the screen it came from recorded. The proposer reads every request the moment it arrives: it drafts a proposal, or folds a repeat into the request it repeats ("asked 4 times by 3 people"), or asks the person ONE plain question with answers to tap instead of guessing, or flags a request that is not about the tool. The manager's board has four columns and a gate at each: approve, adjust or decline the proposal; confirm the restated requirement on a functionality change; deploy after the preview. Two lanes: a UI change gets a visual check and the page load; a functionality change gets a requirement restated and confirmed, an independent cross-check by a second model on the diff, and the module's own accumulated checks. Nothing reaches the floor without a manager's click. Rollback is one click and restores data.
 
-### The CI loop is the spine
+**The operator's half.** A name and a PIN per person, on shared tablets. My requests, with one plain line per request saying where it is. When a change ships, the floor page says what is new and who asked; the person who asked gets "Did it fix it?" and a not quite goes round the loop again as a follow-up the proposer is told about. The manager's close-out on the shipped tile: Done, with a thank-you by name, or "a little left". Point at it and a photo ride along with a request, for the proposer, not for the manager's card.
 
-The product's home screen is the improvement board, run exactly like the Langmuir CI board's lifecycle, with the AI wired into two of the stages:
+**What holds it up.** The module gate, a no-token text check of every file before anything loads it. A browser policy that locks a module's pages to their own module. Checks that accumulate: each functionality change leaves a promise file the module keeps forever, every build runs every promise, a manager retires one deliberately or not at all. A real headless browser opens every screen of every build before the gate. And since 2026-09-20 the wall: module code runs in a process of its own per company, as its own unprivileged user, with a database login that reaches only that company's tables; a staged preview runs under a login that can read the floor and cannot write it.
 
-| Stage | Who acts | What happens |
+**The record and the numbers.** Every word said and decided, insert-only, tied to the build it led to and how it turned out; the plant owns it. Loop health on the admin side: time to floor, same-shift share, manager wait, stops by kind, fixed-it share, spend per shipped change, the quiet stretch. Not the manager's KPIs, by design.
+
+**Making new tools.** A guided intake in plain words (fixed questions, at most two generated rounds), a design the manager confirms item by item, a skeleton the platform writes without a model, then the same build and deploy loop. Two library modules ship in the repo: the paper airplane line (the demo) and Plant KPIs with Jonah, a chat persona for managers.
+
+**Connections.** The platform owns every connection and lends it to a module. Spreadsheet upload into a module table. Zebra labels from the device that asked. Read-only ERP lookups (SAP OData, Epicor BAQ REST, plain JSON) built wide once, published as a field catalog the agents read, with the whole ERP side kept on the admin's screen and a data check at review so a manager never sees a lookup or a field. Two stand-in ERPs in the product for the showroom.
+
+**Running it.** One instance hosts many companies, each with its own passwords, budget, brand, model choices, agent docs and now its own processes and database roles. Backup and restore of the whole instance. An AI credit glide slope so the admin sees the runout date.
+
+**What is not there.** A pattern library or any cross-plant learning (the record is the raw material; nothing reads it across plants yet). Per-plant memory from adjusted and declined proposals. Notifications of any kind (emails were taken off the plan on 2026-09-19: "they will get so annoyed"; the board is the notification surface). The bridge transport for an on-prem ERP. A second factor on delete and restore. A runtime and database per customer (option D below). Module code cannot be told which person is at the device yet. The real proposer's judgement on folding, asking and flagging is unread; fake mode proves the machinery.
+
+## 4. Principles that held, and the ones that changed
+
+Held from August: the manager gate is structural, not procedural; the AI's write surface is staging only; close the loop visibly back to the person who reported the friction; principles as readable files the AI and the humans both use; one runtime with managed modules; boring stack.
+
+Learned or decided since:
+
+- **Do not overload the manager.** Photo and element detail are for the AI to parse. A stopped build leads with what needs a decision and folds the rest. The ERP lives on the admin's screen, never the manager's.
+- **Plain words are a rule, not a tone.** A word list the generated text is checked against, a rewrite pass, and a question that still fails is dropped rather than shown.
+- **Verification is where the product is.** The gate, the page policy, the cross-check, the promises, the page load and the process boundary are the product; the builder is a component.
+- **Run top models first, optimize on evidence.** Fable everywhere now. Shift a lane down only after a long quiet stretch with no reviewer or test stops and no rollbacks that frustrate the floor; the replay harness over labeled stops, then an A/B run, decides. The human cost of a build going wrong is far worse than the marginal cost of a better model.
+- **The plant owns its record.** Anetix uses it to improve that plant by default. Anonymized cross-plant use is an opt-in clause. Defense tenants stay out.
+- **One repo for every customer, permanently.** Never fork per customer. Tenancy hardens in steps (section 5) and the trigger is production data, not customer count.
+- **Staging is a copy of the floor's data, on purpose.** It never leaves the company's database, the build agent has no database access, and a preview with real rows is what lets a manager judge a change.
+- **One Anthropic key for the instance.** Per-company keys were in the trade study and were cancelled on 2026-09-20; billing is per iteration, so the platform meters and the key stays Anetix's.
+
+## 5. Architecture as built
+
+One instance, many companies, one repo. A company's live and staged module versions are files in the database, materialized to disk at boot; deploy repoints the live mount, rollback points it back and restores a snapshot. Module code has one door to the world, `ctx`, and the platform lends it a query function on its own tables, read-only peers, connections, a chat call and its docs. The build agent (Claude Agent SDK, Read/Write/Edit/Glob/Grep and nothing else, an allow-list environment) writes into one draft version directory and nowhere else.
+
+The tenancy sequence from the 2026-09-17 trade study, and where it stands:
+
+| Step | What it is | State |
 |---|---|---|
-| **Feedback** | The floor | Friction reports from a widget on every module page, plus manager-entered items. Recurrence counts, not votes. |
-| **Reviewing** | AI, then manager | The AI reads the item and drafts a proposal: what it would change, in which module, why, and what it would look like. Manager approves, adjusts, redirects, or declines. Nothing builds without this gate. |
-| **In Progress** | AI | The approved proposal gets built against a staged copy of the module. When done, the card shows a description of the change and a live demo link to the staged version. |
-| **Deploy approval** | Manager | Manager clicks through the demo, then approves. Deploy is one click; rollback is one click. |
-| **Done** | System | The card records the "you said / we did" outcome, visible to the floor. |
+| A | Shared instance, shared logins | Replaced 2026-09-19 |
+| B | Shared instance, hardened: company in the session, per-company passwords and budgets, the module gate, the page lock | Live |
+| C | A process per company and lane with its own unprivileged user and its own database role; a preview cannot write the floor | Live 2026-09-20; green on the live instance |
+| D | A runtime and a database per customer under a control plane; same image for GovCloud and on-prem | Not started. Trigger: the first customer security questionnaire, or enterprise production data |
 
-Two design rules carried over from what worked at Langmuir: the manager gate before anything reaches production is structural, not procedural (the AI's write surface is staging only), and closing the loop visibly back to the person who reported the friction is what keeps feedback coming.
+The stopgap between C and D, if pilots overlap before D is worth building: a second Railway service from the same repo, by hand.
 
-### Module creation
+The model sits behind one interface (`src/agent.js`): structured calls with a tool-choice fallback, agent runs through the SDK, plain chat for personas. Pointing it at Bedrock, Claude in GovCloud or a local model is a change in that one file, not in any module.
 
-Same loop, bigger grain. The manager picks a general module type from a library, each type backed by a reference format distilled from builds that already worked:
+## 6. The roadmap from here
 
-- Production line board (line status, takt, andon)
-- Inventory pull / pick queue / stow
-- Receiving and shipping (scan-verified)
-- KPI board
-- Request board (tooling-style intake and fulfillment)
-- CI / support intake (the board itself is a module)
-- Blank module (describe it from scratch)
+Gates, not dates, with one dated forcing function: the MIT summit on innovation in operations in December 2026, where Brendan and Taylor demo to a room of Fortune 500 executives. The plan is local pilot sites live and LOIs in hand before it, and the product has to back what the deck says by then. Effort is nights and weekends alongside the final LGO year until the raise changes that.
 
-The reference format plays the role DESIGN.md plays in the module playbook: it names the data model, state machine, and pages before code, and the AI walks the manager through the handful of decisions that matter in plain language (who uses it, on what device, what states a thing moves through). Then the module goes through the same propose, build, demo, deploy flow. Rev 1 ships deliberately small and gets iterated through floor feedback, which is the phase arc from MODULE_PLAYBOOK.md with the phases automated.
+### Now to the summit
 
-### Governing principles as files
+**1. The end of rollout test campaign.** Everything the sandbox and the fake agent cannot prove, run together from `docs/TEST-CAMPAIGN.md`: the first real checks Fable writes read against their requirements; what the real proposer folds, asks and flags on arrival; a live "not quite" follow-up; a proposal that depends on the later half of a server file; the label preview and a real Zebra print; the ERP rehearsals against both stand-ins and the first live lookup draft; the name-and-PIN flow on a phone; a build asked to read the environment stopping at the gate; the credit count against the console; and now a real build through the staged then the live process. Fix what it finds. Gate: every live check in the campaign has a result, and the ones that failed have a fix on the board or a decision written down.
 
-The product ships with its principles as readable MD files that both the AI and the humans use, mirroring how docs/knowledge/ works at Langmuir:
+**2. The board, simplified.** The manager's board has grown a control for every feature (batches, reviews, versions, diagrams, checks, people, connections, the record, the filter, the QR sign). Cut it back to what a manager touches in a normal week and move the rest behind one door, without losing a gate. Built 2026-09-20 (push 16): no model and no cost on the board, one Settings door, one big button per card with the rest under "more", "Build these N together" instead of batch controls on every card. Gate, still to run: a manager who has never seen it takes a request from Feedback to the floor without asking what a button does.
 
-- PRINCIPLES.md — operator-first rules (one prominent action per role, phone/tablet-first, role-specific views, never make operators navigate)
-- Module reference formats (one per module type)
-- STYLE.md — one visual language across every module
-- GUARDRAILS.md — what the AI may and may not touch, approval gates, cost caps
-- Per-factory knowledge files the system accumulates: the decisions and gotchas that are not derivable from the code, written as it builds
+**3. The first pilot site live.** New England Wire Products is the prospect; the fit is the new area they are ramping. What it needs from the product: connections in the field (a spreadsheet, a printer, the read-only SAP lookups built with their IT from the drafted definitions), tablets and a pace board on the floor, provisioning that is repeatable (a company on the instance with its own passwords in minutes; a second service by hand if the isolation step has to be stronger before D). Commercial shape per the pilot doc: a fixed end date, the customer pays hardware and API, a sustaining rate after. Gate: a floor person at the pilot files a request from a tablet, and the change is on their floor the same shift with the manager's click and nobody from Anetix in the loop.
 
-These files are the portable form of the methodology. They are also what makes the AI swappable: Claude first because it is proven, but the instructions live in the product, not in the model.
+**4. Demo readiness for the summit.** The runbook dry-run cold, fake mode off, with the proposer reading on arrival (or switched off for the "Review with AI" moment, the runbook says which). A three minute recorded loop. Gate: the demo runs in front of a stranger and the loop lands without narration.
 
-## 4. Architecture direction
+**5. Model evidence.** Label every stop on the checks log as right, wrong or unsure. Replay the labeled cases through the current brief whenever the brief changes. When a lane's quiet stretch is long enough, run the first A/B of a cheaper build model on that lane, with the not-quite rate as the miss signal. Gate: a written answer, with numbers, to "can Sonnet build UI changes at this plant".
 
-Decision: **one runtime, managed modules.** A single application per factory hosts every module. This matches the observed gravity at Langmuir (modules kept migrating into pms) and is the only shape that keeps the Teams-easy bar, because there is exactly one thing to run, back up, and move.
+**6. Deck honesty.** The deck claims the pattern library compounds and teaches every other site, same-shift turnaround, under ten engineer-days to onboard, and 50 to 100 plants per engineer. Same shift is measured now (loop health). Onboarding days will be measured at the pilot. The pattern library does not exist. Before the summit, either the slide matches the product or the slide says "next". Gate: every claim on the deck maps to a measured number or a dated item on this roadmap.
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Symbiotic OS instance (one per factory)            │
-│                                                     │
-│  Improvement board  ·  Module library  ·  Admin     │
-│                                                     │
-│  Module runtime                                     │
-│    modules/<name>/<version>/   manifest, routes,    │
-│    pages — live version mounted at /<name>,         │
-│    staged version at /staging/<name>                │
-│                                                     │
-│  Build service (sandboxed)                          │
-│    Claude via Agent SDK · write surface = staging   │
-│    dirs only · cost logging on every run            │
-│                                                     │
-│  Postgres: module registry, versions, feedback,     │
-│  proposals, build runs, audit events                │
-└─────────────────────────────────────────────────────┘
-```
+### After the summit (the review's item 10 and what the pilot teaches)
 
-The pieces:
+- **Per-plant memory.** What this plant's manager adjusted, declined and said "a little left" about, distilled from the record into the proposer's and builder's guidance for that plant. The first use of the record beyond reading it back.
+- **The pattern library.** Anonymized, opt-in, cross-plant: what changes were asked for, what was built, what held. A module reference format per module type, distilled from builds that worked, so the intake starts from a shape. This is the deck's compounding claim; it is built after there is more than one plant to compound.
+- **Role-by-role replay and A/B.** The harness from item 5 turned into a standing practice: a lane at a time, with the quiet stretch as the trigger.
+- **Option D.** A control plane, a runtime and database per customer, the same image for cloud, GovCloud and on-prem, when the trigger fires. The isolation built in C is the design of the runtime.
+- **Connections, as real systems ask.** The bridge transport for an on-prem ERP; SAP Business One; an unattended file push; automatic BAQ creation only if a pilot shows it is real. A Teams notification through a Workflows webhook only if a pilot asks; email stays off.
+- **Small things the review noted.** An operator's idea filed as a module request from the floor. A first-week mode for a new module (more questions, smaller changes). A governed data-correction lane (a manager fixing a row through the loop, not through SQL). Housekeeping reviews once a module's checks pile up. A second factor on company delete and restore. Handing the person at the device to module code on `ctx`. Photo retention.
 
-- **Module registry and version store.** A module is a directory with a manifest, server routes, and pages. Every build produces a new immutable version. Deploy means repointing the live mount; rollback means pointing it back. Git still exists underneath as the version substrate, but no user ever sees it.
-- **Staging is a first-class mount, not a second environment.** The staged version runs in the same instance at a staging path, which is what makes "view the demo" a link instead of a deployment.
-- **The build service is the only place AI touches code.** It runs the Agent SDK in a sandbox whose write surface is the staged module directory, with the principle files and the module's own knowledge file as context. It cannot write to live versions, the platform core, or the database schema outside its module. Cost is logged per run from day one (playbook lesson).
-- **Boring, proven stack.** Node + Express + plain HTML pages + Postgres, the same decision matrix the playbook already settled. No frontend framework unless a real reason appears.
-- **Portability by construction.** The whole instance is one container image plus a Postgres database. That is what makes local install, commercial cloud, and GovCloud the same product with a different host, and it keeps the defense story honest: air-gapped-friendly later means the only required external call is the model API, isolated behind one interface so it can be pointed at Claude in GovCloud or at a locally hosted model without touching modules.
+### Further out
 
-What is deliberately deferred: multi-tenancy (one instance per factory is the model for a long time), marketplace/sharing of modules across factories (the cross-ecosystem conduit idea — real, but not v1), and any Epicor/ERP integration (read-only integrations come after the loop is proven, following the integrate-read-only pattern).
+The defense story: the same image in GovCloud and on-prem, the model behind the interface pointed at a hosted or local model, tenants that never join the cross-plant library. Module marketplace or sharing across factories is still deliberately deferred; the pattern library is the honest first form of it.
 
-## 5. Roadmap
+## 7. Decisions
 
-Gates, not dates, per the playbook. Rough effort in parentheses assuming nights-and-weekends pace alongside school.
-
-### Phase 0 — Design docs (now)
-
-This document, plus PRINCIPLES.md, GUARDRAILS.md, and the first module reference format written before any code. Batch the remaining consequential decisions (below, §6) and answer them in one sitting.
-**Gate:** docs reviewed, decisions logged.
-
-### Phase 1 — The loop, end to end, on one toy module (the thin slice) (≈3–5 weeks)
-
-The simulated factory: a small fictional shop with plausible parts, orders, and a couple of weeks of seeded activity. One pre-built module (a simple line board). The full loop working: feedback widget on the module page → item on the board → AI proposal card → approve → build runs in the sandbox → staged demo link → deploy click → new version live → rollback click works. Single manager login, one AI provider, ugly is fine everywhere except the board.
-**Gate:** a nontechnical person, unassisted, takes one feedback item from submission to deployed change and can explain what happened at each step. This gate is the whole product thesis in miniature, and it is also the demo.
-
-### Phase 2 — Module creation flow (≈3–4 weeks)
-
-The module library with 2–3 reference formats. Plain-language guided intake → generated design summary the manager confirms → Rev 1 built and deployed through the same loop. The simulated factory gains its second and third modules this way, which is itself the transferability rehearsal.
-**Gate:** a new module goes from "selected from the library" to live without anyone opening a code editor.
-
-### Phase 3 — Hardening the loop (≈3–4 weeks)
-
-The parts that make it trustworthy rather than impressive: full audit trail of every AI action (agent_events pattern), per-run and monthly cost caps with a visible budget badge, build failure handling that produces a card comment instead of a stuck state, ambiguous feedback getting a clarifying question instead of a guess, version diff summaries in manager language ("adds a priority column to the pick queue"), automated smoke checks on staged versions before the demo link is offered, backup/restore of the whole instance.
-**Gate:** an ambiguous, a conflicting, and a malformed feedback item all resolve without a developer touching anything.
-
-### Phase 4 — Showability (≈2 weeks, overlaps 3)
-
-The slice is the demo, so this phase is packaging, not building: a guided tour mode over the simulated factory, a 3-minute recorded loop walkthrough, and a one-pager. Fold into the Finn Operations showroom and materials. This is the "communicate and show what the idea is" deliverable, and it lands after Phase 1 makes it honest, not before.
-**Gate:** the demo runs cold in front of a stranger and the loop lands without narration from you.
-
-### Phase 5 — Pilot readiness and portability proof (≈4–6 weeks)
-
-Deploy the same image three ways: hosted cloud, a local machine, and a second cloud region as a GovCloud stand-in. Multi-user auth matched to trust level (PIN for floor actions, real accounts for manager gates). Instance provisioning made repeatable. Then the named-pilot conversation: an LFM portfolio company, DYC, or (post-internship, clean-room boundaries respected) Langmuir. Decide the rename before pilot paperwork, since the pilot's contract, URL, and materials should carry the permanent name.
-**Gate:** a fresh instance stands up for a new simulated customer in under an hour, and one real pilot conversation is scheduled with the working slice as the demo.
-
-## 6. Decisions
-
-Made:
-
-| Decision | Call | Why |
+| Date | Decision | Call |
 |---|---|---|
-| First build | Thin working slice | Doubles as demo and foundation; nothing throwaway |
-| Module runtime | One runtime, managed modules | Teams-easy requires one thing to run; matches pms gravity |
-| Brand | Under Finn Operations for now | Rename likely as it gets real; decide by Phase 5 |
-| Environment | Simulated factory | Clean-room safe, demoable to anyone; backend and process are what is being proven |
-| AI | Claude / Anthropic first | Known to work; provider isolated behind one interface |
-| Stack | Node + Express + plain HTML + Postgres | Settled decision matrix; boring is a feature |
-| IP posture | Clean-room build, no Langmuir code or data | Thesis decision 2026-05-05, NDA §8(a) |
+| 2026-08-13 | First build | Thin working slice, doubles as demo |
+| 2026-08-13 | Runtime | One runtime, managed modules |
+| 2026-08-13 | Stack | Node, Express, plain HTML, Postgres; boring is a feature |
+| 2026-08-13 | Environment | A simulated factory; backend and process are what is proven |
+| 2026-08-13 | IP posture | Clean-room; no Langmuir code, data, names or branding |
+| 2026-08-21 | Two lanes | UI changes light; functionality changes get a confirmed requirement, a second-model cross-check and tests; ambiguity goes to the heavier lane |
+| 2026-09-16 | Pace | Maximum speed ramp: LOIs first, then a VC raise, with the December summit as the forcing function |
+| 2026-09-17 | Tenancy | One repo forever; shared and hardened now (B); a process and role per company before a second company's production data (C); a runtime per customer at the first questionnaire or enterprise data (D) |
+| 2026-09-17 | Builder model | Fable 5.1 for module creation and everywhere; the Agent SDK moved to 0.3.x for it |
+| 2026-09-17 | Cost caps | Off in development; spend what the work needs; per-company budgets exist for pilots |
+| 2026-09-18 | Objective | A floor operator with no technical experience builds and develops their own system through the loop |
+| 2026-09-18 | Record | Every interaction word for word, insert-only; the plant owns it; cross-plant use opt-in; defense out |
+| 2026-09-18 | Manager's card | No photo, no element, no before-and-after screenshots; the AI parses those |
+| 2026-09-18 | Duplicates and questions | Linked by the proposer, never tallied by hand; one multiple-choice question with free text, answered by the reporter or the manager |
+| 2026-09-19 | Notifications | No emails for every change. A small Done button and an "a little left" link on the shipped tile instead. Teams and SMS parked |
+| 2026-09-19 | Staging data | A copy of the floor's rows, on purpose, with the reasons written down |
+| 2026-09-19 | ERP | Admin side only; the manager never sees a lookup or a field; the data check at review says whether the data is there |
+| 2026-09-19 | Item 7 | A real browser on the instance with a fallback; a manager may retire a promise, with a confirm |
+| 2026-09-20 | Credit | A glide slope on the admin page from a balance the admin enters; autofill when live |
+| 2026-09-20 | API keys | One key for the instance; billing is per iteration; per-company keys cancelled |
+| 2026-09-20 | Isolation posture | `auto`: a process of its own when the instance can, the old way with a red line on the admin page when it cannot; `process` (strict) before a second company's production data |
 
-To batch for Phase 0 (answer in one sitting, playbook-style):
+## 8. Risks worth naming
 
-1. Sandbox mechanics for the build service: container-per-build vs process isolation with a restricted filesystem. Affects local-install story.
-2. Module code shape: what exactly a manifest guarantees the runtime (routes, pages, migrations?) and how module-local schema changes are applied and rolled back. The hardest technical problem in the product; deserves its own design doc in Phase 0.
-3. Demo artifact on In Progress cards: live staged link only, or link plus auto-captured screenshots/short clip.
-4. Where instances run commercially in v1: your Railway account behind the scenes (fastest), or a small orchestrator from the start.
-5. Name shortlist and trademark check timing (before pilot paperwork).
+- **A check is only as good as the agent that wrote it.** The promises a module keeps are written by the builder. The first live ones have to be read (campaign). Mitigation: the manager retires bad promises; the cross-check reads the check; housekeeping reviews later.
+- **The proposer's judgement on arrival is unread.** A wrong fold or a bad question costs a person's patience on the floor. Mitigation: the switch on the Agent settings page, "not the same" on every fold, the plain-words drop, and reading the first live ones before the pilot.
+- **The wall depends on the host.** The process and role boundary reads green on Railway today; it must be checked on every new instance and is the first thing to verify on GovCloud or on-prem. Until D, every company shares one database and one key.
+- **The deck is ahead of the product on compounding.** Section 6, item 6.
+- **Time.** A full-time student until May 2027, a cofounder, and a raise that has not happened. The campaign and the pilot are the highest-value stopping points: with those done the product is honest and demonstrable even if everything after the summit slips.
+- **IP boundary.** No Langmuir code, data or names in the repo; the provisional patent effort is under Anetix; keep the TLO conversation ahead of any commercial pilot paperwork.
+- **Incumbent framing.** "AI builds your factory software" invites the Ignition and Tulip comparison. The answer: they sell toolkits that need someone who knows what to build; this sells the loop that turns floor friction into deployed software with the process knowledge the customer already has, and the verification that makes a nontechnical manager's click safe.
 
-## 7. Risks worth naming
+## 9. What is measured
 
-- **The module-schema problem.** Letting AI evolve a module's data model safely, with rollback, is genuinely hard, and it is where "one runtime" could get strained. Mitigation: Phase 0 design doc, additive-only migrations at first, the Sheet-as-backend escape hatch the methodology already trusts.
-- **AI output quality without a technical reviewer.** The manager gate reviews behavior (the demo), not code. Mitigation: smoke checks before demo links, guardrail files, capped blast radius (staging only, one module per build), and honesty that early deployments have you behind the curtain.
-- **Time.** Full-time student until May 2027; the phases above are a school-year of nights and weekends. The thin slice is deliberately the highest-value stopping point: if everything pauses after Phase 1, you still hold the demo that communicates the product.
-- **IP boundary.** The product must not contain Langmuir code, data, or branding. Patterns and methodology, per the thesis IP framing, are the transferable layer; keep the TLO conversation ahead of any commercial pilot.
-- **Incumbent framing.** "AI builds your factory software" invites the Ignition/Tulip comparison. The positioning answer already exists in the Finn Ops docs: they sell toolkits that require knowing what to build; this sells the loop that turns floor friction into deployed software with the process knowledge the customer already has.
-
-## 8. What to measure from day one
-
-Loop cycle time (feedback submitted → deployed), proposals approved without adjustment vs adjusted vs declined (measures proposal quality), builds that pass demo review first try, AI cost per shipped change, rollbacks, and weekly feedback volume (the health metric of the whole flywheel: if the floor stops reporting friction, the loop is dying regardless of everything else).
+All of these are on the admin page now, per company and across the fleet, from the primary tables and the record: requests filed and open; time to floor (filed to deployed, median and p90) and the same-shift share; manager wait (drafted to decided, then ready to deployed); proposals approved, edited first, declined, waiting; builds started, shipped, rolled back, cancelled; stops by kind (gate, reviewer, tests, AI service) and fix rounds and overrides; checks added and promises retired; fixed it, not quite, done and a little left, and the met share; what the proposer did on arrival (proposed, folded, asked, answered, flagged); AI spend in the window and per shipped change; the quiet stretch. The one number that says whether the flywheel is alive is still weekly feedback volume: if the floor stops reporting friction, the loop is dying regardless of everything else.

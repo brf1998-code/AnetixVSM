@@ -270,7 +270,8 @@ window.Intake = (() => {
     h += items.map((it, i) => `<label class="ik-item"><input type="checkbox" ${CHECKS.has(i) ? "checked" : ""} onchange="Intake.tick(${i}, this.checked)"><span>${esc(it.summary)}</span></label>`).join("");
     h += `<div class="ik-gate">${all ? "Every point checked." : "Tick each point to confirm you read it; then the build can be approved."}</div>`;
     if ((d.flags || []).length) h += `<div class="ik-flag">A few lines use words we try to avoid (${esc(d.flags.map((f) => `${f.where}: ${f.words.join(", ")}`).join("; "))}). Adjust the text if you want them changed.</div>`;
-    h += `<div class="ik-est">About $${Number(d.estimate_usd || 0).toFixed(2)} to build the first version (${(d.screens || []).length} screens, ${(d.connections || []).length} connections).${V.cost_usd ? ` The questions and this design cost $${Number(V.cost_usd).toFixed(2)} so far.` : ""}</div>`;
+    // what it costs is not shown here (Brendan, 2026-09-20: no cost on the board); the estimate stays on the intake record and the admin page
+    h += `<div class="ik-est">The first version: ${(d.screens || []).length} screen${(d.screens || []).length === 1 ? "" : "s"}, ${(d.connections || []).length} connection${(d.connections || []).length === 1 ? "" : "s"}.</div>`;
     h += `<details><summary style="cursor:pointer;font-weight:700;color:var(--navy)">Read the full reference</summary><div class="ik-ref" style="margin-top:8px">${esc(d.reference_md || "")}</div></details>`;
     return h;
   }

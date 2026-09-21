@@ -71,9 +71,9 @@ const R = runner(), t = R.t;
   // the batch tile: one Done for the lot; the list of changes stays open across the redraw
   const tileSel = `[data-key="run:${batch.runId}"]`;
   t("a batch tile offers one Done for everything in it", (await b.locator(`${tileSel} [data-closeout-all]`).count()) === 1 && /Done, all 2/.test(await b.locator(`${tileSel} [data-closeout-all]`).innerText()));
-  await b.locator(`${tileSel} details > summary`).click();
+  await b.locator(`${tileSel} details:not(.more) > summary`).click();   // the list of changes, not the "more" fold
   await sleep(4600);
-  t("its list of changes stays open across the reload, with a Done and a link per request", (await b.locator(`${tileSel} details[open]`).count()) === 1 && (await b.locator(`${tileSel} [data-closeout="${B3}"]`).count()) === 1 && (await b.locator(`${tileSel} [data-left="${B4}"]`).count()) === 1);
+  t("its list of changes stays open across the reload, with a Done and a link per request", (await b.locator(`${tileSel} details:not(.more)[open]`).count()) === 1 && (await b.locator(`${tileSel} [data-closeout="${B3}"]`).count()) === 1 && (await b.locator(`${tileSel} [data-left="${B4}"]`).count()) === 1);
   await b.locator(`${tileSel} [data-closeout-all]`).click();
   await b.waitForFunction((sel) => document.querySelectorAll(`${sel} .thanks`).length === 2, tileSel, { timeout: 10000 });
   t("one tap closed both, each with its thank-you, and the button is gone", (await fbRow(mgr, B3)).manager_answer === "done" && (await fbRow(mgr, B4)).manager_answer === "done" && (await b.locator(`${tileSel} [data-closeout-all]`).count()) === 0);

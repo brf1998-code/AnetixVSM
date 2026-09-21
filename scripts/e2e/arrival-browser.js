@@ -119,7 +119,8 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFklEQVR
   await b.waitForSelector(`#col-reviewing [data-key="fb:${A3.id}"] .prop`, { timeout: 10000 });
   t("answering moves it to a drafted proposal that shows what was asked and answered", /Asked first: "Which one do you mean\?" Answer from .*: "she means the takt clock"/.test(await b.locator(`[data-key="fb:${A3.id}"]`).innerText()), await b.locator(`[data-key="fb:${A3.id}"]`).innerText());
   const flag = b.locator(`[data-key="fb:${N1.id}"]`);
-  t("a flagged request says what it is in one sentence and offers Propose anyway", /NOT ABOUT THIS TOOL/.test(await flag.innerText()) && /about the building/.test(await flag.innerText()) && /Propose anyway/.test(await flag.innerText()) && /Decline/.test(await flag.innerText()));
+  // one button for what the card waits on, Decline under "more" (the board simplification, 2026-09-20)
+  t("a flagged request says what it is in one sentence and offers Propose anyway, with Decline under more", /NOT ABOUT THIS TOOL/.test(await flag.innerText()) && /about the building/.test(await flag.innerText()) && /Propose anyway/.test(await flag.innerText()) && (await flag.locator("details.more button", { hasText: "Decline" }).count()) === 1);
   await flag.locator("button", { hasText: "Propose anyway" }).click();
   await b.waitForSelector(`#col-reviewing [data-key="fb:${N1.id}"] .prop`, { timeout: 10000 });
   t("Propose anyway drafts one and the flag is gone", !/NOT ABOUT THIS TOOL/.test(await b.locator(`[data-key="fb:${N1.id}"]`).innerText()));
@@ -140,11 +141,11 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFklEQVR
   await fb.locator("#col-reviewing button", { hasText: "Show the other" }).click().catch(() => {});
   t("a floor device sees no photo link, no answer buttons, no not-the-same", (await fb.locator(`a[href^="/api/attachments/"]`).count()) === 0 && (await fb.locator(".askbox button, details.asked a.leftlink").count()) === 0);
 
-  // ---- the two switches
-  const ag = await ctxM.newPage(); watch(ag, "agent settings");
-  await ag.goto(BASE + "/c/demo/agents"); await ag.waitForSelector("#a-auto");
+  // ---- the two switches, on the manager's Settings page (people, printers and spreadsheets, the wall sign, arrival)
+  const ag = await ctxM.newPage(); watch(ag, "settings");
+  await ag.goto(BASE + "/c/demo/settings"); await ag.waitForSelector("#a-auto");
   await sleep(600);
-  t("Agent settings shows both switches on", (await ag.isChecked("#a-auto")) && (await ag.isChecked("#a-photos")));
+  t("Settings shows both switches on, the wall sign and the way to people and connections", (await ag.isChecked("#a-auto")) && (await ag.isChecked("#a-photos")) && (await ag.locator("#qr").count()) === 1 && (await ag.locator('a[href="/c/demo/people"]').count()) === 1 && (await ag.locator('a[href="/c/demo/connections"]').count()) === 1);
   await ag.uncheck("#a-photos"); await ag.waitForFunction(() => document.getElementById("a-ok").textContent === "saved");
   t("unticking photos saves", (await floor.get("/api/c/demo/who")).json.photos === false);
   await tab.reload(); await tab.waitForSelector("#sos-fb-btn"); await sleep(1000); await tab.click("#sos-fb-btn");

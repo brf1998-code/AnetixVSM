@@ -20,10 +20,14 @@ Devices: everyone opens https://sos.finnoperations.com on their phone, signs
 in with the floor password, and picks a station. You (manager) open the same
 site on a laptop with the manager password and keep two tabs: the line board
 (`/c/demo/m/paperline/`) on a projector if you have one, and the improvement
-board (`/c/demo/`). Before the session, check `/c/demo/agents`: which model
+board (`/c/demo/`). Before the session, check `/c/demo/agents` (from the
+admin page; the board itself names no model and shows no cost): which model
 builds (Sonnet 5 is the default; Opus 5 for functionality-heavy sessions) and
 what the agents read (COMPANY.md is yours to fill in with the room's
-vocabulary).
+vocabulary). The board's top right is the person chip, **Settings** (people,
+printers and spreadsheets, the wall sign, the arrival switches) and sign out;
+every card has one big button for what it waits on and the rest under
+**more**.
 
 Headcount: 5 stations plus 1 stockroom plus you is the full setup. Fewer
 people means fewer stations (set it in Demo setup, the folds merge). With
@@ -100,11 +104,11 @@ On the improvement board (manager tab):
    UI change goes straight to build; a functionality change makes the AI
    restate the requirement first and you confirm it before anything is built.
    If you want the room to watch the **Review with AI** click itself, switch
-   "Read it at once" off on the Agent settings page before the session;
-   requests then wait under Feedback for the button, as before.
-3. Build. Either **Approve build** on one card, or tick **add to batch** on
-   several and click **Build together as one change**: one agent run, one
-   staged demo, one deploy. Only one build runs on the line at a time; anything
+   "Read it at once" off on the Settings page before the session; requests
+   then wait under Feedback for the button, as before.
+3. Build. Either **Approve build** on one card, or, when two or more
+   proposals of the module are waiting, click **Build these N together** at
+   the top of Reviewing: one agent run, one staged demo, one deploy. Only one build runs on the line at a time; anything
    approved while a build is running queues and starts on its own when the
    first one deploys or fails (a queued card shows "Queued" and a Cancel
    button). A batch shows as one tile with the changes folded under "See
@@ -138,9 +142,9 @@ next to the button is for the review call only, roughly half a dollar for
 this module). It reads every screen, the agent docs, the feedback and build
 history, and the live line data, then files 3 to 12 recommendations as held
 proposals tagged REVIEW #N with a priority. Nothing builds on its own. Decline
-or Adjust items one by one, then "Select all held items for one batch" and
-build them as one change, with whichever model the batch bar shows. The
-review's summary stays on the board above the columns.
+or Adjust items one by one, then **Build all N together** on the review bar
+(or **Build by screen** when they touch several screens, one run after
+another). The review's summary stays on the board above the columns.
 
 **Tour (before the session, or for a newcomer).** `/admin` lists the module
 library; **Start tour** opens the line with a step-by-step walk through the
@@ -192,8 +196,8 @@ is saved before every jump, so a wrong jump is itself undoable.
   tests and the deploy gate if you have looked at the preview and disagree
   with the reviewer. The override is written on the run.
 - A build stops on cost: each change gets $1.50 of agent time, a batch gets
-  that times its size up to $6, and the batch bar shows the figure before you
-  start. A big batch that trips it is better split in two.
+  that times its size up to $6 (the caps are Railway variables; the board
+  does not show figures). A big batch that trips it is better split in two.
 - Someone got locked out: the floor password is on the whiteboard, not in the app.
 - The line is in a weird state: manager can **End shift now** and, at worst,
   **Reset demo** (wipes shifts and travelers, restocks the line).

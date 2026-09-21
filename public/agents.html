@@ -48,12 +48,7 @@
     <div class="why" style="margin-top:6px">Prices are per million tokens, input / output. A typical UI build on Sonnet 5 runs 5 to 30 cents; the same on Fable 5.1 about five times that. Per-run and monthly caps still apply.</div>
   </div>
 
-  <h2>When a request arrives</h2>
-  <div class="card">
-    <div class="row"><b>Read it at once</b><div><label><input type="checkbox" id="a-auto" onchange="saveArrival()"> The proposer reads every request the moment it is sent</label><div class="why">The draft proposal is on the card before you look. A request that repeats an open one is added to it ("asked 4 times by 3 people") instead of making a new card. When the words can be read two ways, the person who sent it gets ONE question to tap an answer to, instead of a guess. Switch this off and requests wait for your "Review with AI" button, as before (a guided demo wants it off).</div></div></div>
-    <div class="row"><b>Photos</b><div><label><input type="checkbox" id="a-photos" onchange="saveArrival()"> People may add a photo to a request</label><div class="why">The photo goes to the proposer with the words, and to nobody outside this company. Your card carries one quiet link to it. Switch it off where cameras are not allowed on the floor.</div></div></div>
-    <span class="ok" id="a-ok"></span>
-  </div>
+  <p class="sub">What happens when a request arrives (read it at once, photos) is on the company's <a id="settings" href="#">Settings page</a>, with people, printers and the wall sign.</p>
 
   <h2>What the agents read</h2>
   <p class="sub">Sent with every proposal and build, in this order: platform principles, then this company's docs, then the module's reference doc. Plain markdown. Keep them short and concrete; the agent follows what is written here more reliably than anything in the feedback text.</p>
@@ -83,9 +78,8 @@ async function load() {
   D = await r.json();
   document.getElementById("coname").textContent = D.company.name;
   document.getElementById("back").href = `/c/${SLUG}/`;
+  document.getElementById("settings").href = `/c/${SLUG}/settings`;
   for (const role of ["propose", "build", "review"]) document.getElementById("m-" + role).innerHTML = opts(D.models[role], role === "build");
-  document.getElementById("a-auto").checked = D.company.auto_propose !== false;
-  document.getElementById("a-photos").checked = D.company.allow_photos !== false;
   document.getElementById("prices").innerHTML = `<tr><th>Model</th><th>In</th><th>Out</th><th>When</th></tr>` +
     D.models.list.map(m => `<tr><td><b>${m.label}</b> <span class="sub">${m.id}</span></td><td>$${m.in}</td><td>$${m.out}</td><td class="sub">${esc(m.note)}</td></tr>`).join("");
   document.getElementById("platformdocs").innerHTML = D.platformDocs.map(d => `<details class="doc card"><summary>${esc(d.name)}<span class="tag">platform, read-only</span></summary><pre>${esc(d.content)}</pre></details>`).join("");
@@ -97,10 +91,6 @@ async function load() {
 async function saveModels() {
   await post(`/api/c/${SLUG}/agents/models`, { propose: v("m-propose"), build: v("m-build"), review: v("m-review") });
   document.getElementById("m-ok").textContent = "saved"; setTimeout(() => document.getElementById("m-ok").textContent = "", 2000);
-}
-async function saveArrival() {
-  await post(`/api/c/${SLUG}/agents/arrival`, { auto_propose: document.getElementById("a-auto").checked, allow_photos: document.getElementById("a-photos").checked });
-  document.getElementById("a-ok").textContent = "saved"; setTimeout(() => document.getElementById("a-ok").textContent = "", 2000);
 }
 const v = (id) => document.getElementById(id).value;
 async function saveDoc(id, mod, name) {

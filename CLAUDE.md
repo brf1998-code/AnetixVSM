@@ -8,8 +8,11 @@ https://sos.finnoperations.com (Railway project `symbiotic-os`, service
 ## Shape of the instance (since 2026-09-11)
 
 One instance hosts many **companies**. Everything is scoped by company slug:
-- `/c/<slug>/` improvement board, `/c/<slug>/agents` model choices and agent
-  docs, `/c/<slug>/m/<module>/` live module pages,
+- `/c/<slug>/` improvement board, `/c/<slug>/settings` the manager's one
+  settings page (people, printers and spreadsheets, the wall sign, what
+  happens when a request arrives), `/c/<slug>/agents` model choices and agent
+  docs (reached from the admin page since 2026-09-20, not the board),
+  `/c/<slug>/m/<module>/` live module pages,
   `/c/<slug>/staging/m/<module>/` the preview of a build (amber bar on every
   staged page, reloads/leaves when the staged version changes).
 - `/admin` (admin role, `SOS_ADMIN_PASSWORD`; manager password doubles as
@@ -24,8 +27,11 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   cross-check fails a diff that lands on another screen. The manager can
   change the target in the Adjust form.
 - Three model roles per company (propose / build / review), chosen on the
-  Agent settings page, with a per-run override in Adjust and in the batch bar.
-  `src/agent.js MODELS` is the price table; keep it current with
+  Agent settings page. The board names no model and no cost anywhere since
+  2026-09-20 (the per-run override in Adjust, the batch bar's model select
+  and the system review's model select are gone; the API still accepts
+  `model` and falls back to the company's build model). `src/agent.js
+  MODELS` is the price table; keep it current with
   platform.claude.com/docs/en/models/overview.
 - Agent docs: repo `principles/*.md` are platform-wide and read-only in the
   app; each company has editable docs in `platform.agent_docs` (COMPANY.md
@@ -108,9 +114,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `SOS_MONTHLY_CAP_USD` unset or 0 mean no cap; set them to bring caps back
   (per change, per batch run, per month). With no cap the runner passes no
   `maxBudgetUsd` to the SDK either; `maxTurns` (40 for a change,
-  `SOS_MODULE_MAX_TURNS` 150 for a module build) is the only bound. The KPI
-  tile says "no caps set", the batch bars drop their "stops itself past"
-  note. The live instance had SOS_MAX_RUN_USD=1.50 and SOS_MONTHLY_CAP_USD=25
+  `SOS_MODULE_MAX_TURNS` 150 for a module build) is the only bound. (The KPI
+  tile and the batch bars that said "no caps set" and "stops itself past"
+  left the board on 2026-09-20; the admin page carries the spend.) The live instance had SOS_MAX_RUN_USD=1.50 and SOS_MONTHLY_CAP_USD=25
   as Railway variables; they must be removed or set to 0 AFTER this code is
   deployed (the old code read 0 as a zero-dollar cap).
 - **Pending feedback on the board**: `act()` marks the card (greyed, spinner
@@ -181,7 +187,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   commit). The `last_at` workaround in the kpis module is no longer needed.
   (2) Stops have five different causes and the board showed them all the
   same; `src/checks.js reasonFor` names them. (3) The checks log at
-  `/c/<slug>/checks` (manager; "checks log" in the board header): every run
+  `/c/<slug>/checks` (manager; "Checks log" on the admin company card since
+  2026-09-20, before that in the board header): every run
   with its reason, the reviewer's findings and quoted evidence, and Right /
   Wrong / Unsure labels with a note in `platform.check_labels`; "Download
   the checks log" exports cases with before/after files
@@ -382,8 +389,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   throws: a failed write logs `[record]` and the loop goes on. Read back:
   `GET /api/c/<slug>/record?kind=&feedback_id=&run_id=&limit=&before_id=`
   (manager) and `GET /api/c/<slug>/record/export` (a JSON download, linked
-  as "record" in the board header and "Download the record" on the admin
-  card). In `backup.js PLATFORM_TABLES`, so a backup carries it and a restore
+  as "Download the record" on the admin card; until 2026-09-20 also as
+  "record" in the board header). In `backup.js PLATFORM_TABLES`, so a backup carries it and a restore
   brings it back. Data terms decided 2026-09-18: the plant owns its record,
   Anetix uses it to improve that plant, anonymized cross-plant use is an
   opt-in clause; the cross-plant copy does not exist yet, and defense tenants
@@ -1055,6 +1062,45 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   and edits, and a decision before the record uses the run's start.
   `compute()` is pure and unit tested (`scripts/test-health.js`, synthetic
   rows, fixed clock); `forAdmin()` is the one call the page makes.
+- **Board simplified** (2026-09-20, Brendan: "so intuitive", "keep it a
+  little black box like"; `public/index.html`, `public/settings.html`,
+  `scripts/e2e/board-browser.js` 22 checks). What left the board: every
+  model name and every dollar figure (run lines, review bars, the cross-check
+  line, "proposed by", "Approve build (model)", the Adjust form's "Build
+  with", the batch bar's model select, the system review's model select and
+  estimate, the intake popout's estimate, the "guided by: docs" line); the
+  KPI strip; the header links (people, agent settings, checks log,
+  connections, record, wall sign); "Add to batch" on every card and the two
+  batch panels; the wall-sign modal. What the board has now: top right is
+  "signed in as <role> · <person chip> · Settings · sign out" (admin also
+  "admin"); the module strip as before (Open live, Preview, Diagrams,
+  Versions, + New module); the system review toolbar with the module picker
+  and the button only; one panel at the top of Reviewing per module with two
+  or more proposals waiting, "Build these N together" (`renderTogether`,
+  `POST /api/runs/batch` with the proposal ids, so the same run a batch made;
+  the server-side batch routes stay for the API and are unused by the board);
+  on every card ONE big button for what it waits on and the rest under a
+  small "more" (`actions(key, primary, [rest])`, a `<details class="more">`
+  drawn as a dropdown, `OPEN_MORE` keeps it open across the 4 s reload, a tap
+  elsewhere or on one of its buttons closes it): new = Review with AI (or
+  Propose anyway, quiet, when a question or a flag is what the card waits on)
+  + more(Decline); reviewing = Approve build + more(Adjust, Decline), or
+  Adjust as the primary when the ERP cannot provide the data; requirement
+  gate = Confirm + more(Adjust the requirement, Cancel); running =
+  more(Abort build); deploy gate = Deploy / Put it on the floor +
+  more(Discard); stopped = the reason first, then Send findings back (else
+  Retry from scratch) + more(Override where allowed, Retry, Cancel), the
+  retire buttons stay inside their findings; shipped = the close-out Done as
+  before + more(Roll back); module request = the one step it is on +
+  more(Withdraw, the design). Every gate is unchanged; nothing was removed
+  from the API. `/c/<slug>/settings` (manager, `settings.html`): People
+  (link), Printers and spreadsheets (link), the wall sign (QR inline, Print
+  the sign prints just the sign, Copy link), and the two arrival switches
+  (moved off the agents page, same `/api/c/<slug>/agents/arrival`). The
+  admin company card links Settings, Agent settings and docs, Checks log,
+  People, Connections and the record. Left as is on purpose: "Fable" in the
+  module request card and popout (the designer's name in the intake flow),
+  to be renamed only if Brendan wants it.
 - **Board band** (2026-09-19): one title row and one quiet module line
   (`.band`, `.modstrip`, `.modcard`), 70px on a desktop against roughly a
   third of the screen before. Module names are the filter toggles, versions
@@ -1110,13 +1156,14 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   every module = all) and always written back to both, so the URL shows the
   pick in force and can be linked. Clicking a title from "all" shows only
   that module; clicking again adds or removes. `visible(module)` gates the
-  four columns, the KPI counts, batch tiles, the batch panels, the review
-  bars and the system review default (first visible module); spend, build
-  model and the Platform requests strip ignore it. `load()` fetches and
+  four columns, batch tiles, the "Build these N together" panels, the review
+  bars and the system review default (first visible module); the Platform
+  requests strip ignores it. `load()` fetches and
   `render()` draws from `DATA`, so a toggle redraws without a fetch.
-- **Board layout** (`public/index.html`): header band, module strip (Open
-  live / Preview vN / Diagrams per module), KPI strip, system review toolbar,
-  four columns. The band's top right holds the company's **board QR code**
+- **Board layout** (`public/index.html`; the KPI strip, the QR tile and the
+  batch panels below are history since 2026-09-20, see "Board simplified"):
+  header band, module strip (Open live / Preview vN / Diagrams per module),
+  KPI strip, system review toolbar, four columns. The band's top right holds the company's **board QR code**
   (`GET /api/c/<slug>/qr.svg?px=N`, drawn by `src/qrcode.js`, a dependency-free
   byte-mode encoder at error correction M, versions 1 to 10). It encodes
   `<proto>://<host>/c/<slug>/` from the request headers, so each company's code
@@ -1127,7 +1174,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   spanning both on the right). Platform feedback (about the tool itself,
   shipped from Cowork) sits in a collapsed "Platform requests" strip under
   the columns, not a column of its own.
-- **Batches are server state** (`platform.batches`, `feedback.batch_id`,
+- **Batches are server state** (the board stopped using them on 2026-09-20,
+  "Build these N together" posts to `/api/runs/batch`; the routes remain)
+  (`platform.batches`, `feedback.batch_id`,
   routes `POST /api/c/<slug>/batch/add|remove` with `feedback_ids`,
   `POST /api/c/<slug>/batch/<id>/clear|build`): one open batch per module
   (`run_id IS NULL`). Cards join or leave at the New or Reviewing station

@@ -76,6 +76,7 @@ async function main() {
   app.get("/c/:slug/checks", auth.requireManager, (_req, res) => res.sendFile(page("checks.html")));
   app.get("/c/:slug/connections", auth.requireManager, (_req, res) => res.sendFile(page("connections.html")));
   app.get("/c/:slug/people", auth.requireManager, (_req, res) => res.sendFile(page("people.html")));
+  app.get("/c/:slug/settings", auth.requireManager, (_req, res) => res.sendFile(page("settings.html")));   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
   app.use(intake.router);    // /api/c/:slug/intakes, /api/intakes/*, /api/attachments/* (before platformApi: the attach route parses a bigger body)
