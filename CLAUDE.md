@@ -458,7 +458,12 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   new password. Making an account, switching one on, and resetting a factor or
   a password need a fresh code from the person doing it; switching off and
   signing out do not (they are what you press when something is wrong). An
-  account cannot switch itself off. Routes: `/api/admin/accounts*`
+  account cannot switch itself off. **Remove** (2026-09-21, the same evening:
+  a name typed wrong had no way out): `POST /api/admin/accounts/:id/remove`,
+  only an account that is already switched off, never your own, a fresh code;
+  the row goes and the factor and recovery codes cascade with it; the sign-in
+  log keeps its lines under the old id and login and adds `account_removed`
+  with who did it. The Remove button sits next to Switch on. Routes: `/api/admin/accounts*`
   (`accounts.router`, mounted before the platform router; the platform's
   internal token is refused there). **Step-up**: `auth.checkAdminCode(req,
   { code, password }, what)` replaced `checkAdminPassword` at company delete

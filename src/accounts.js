@@ -359,6 +359,18 @@ async function resetFactor(id, by, ip) {
   forget(a.id);
   await event("factor_reset", { account_id: a.id, login: a.login, ip, detail: { by } });
 }
+// Gone for good: the row, and with it the password hash, the authenticator secret and the recovery codes (the two
+// tables cascade). Only an account that is switched off, so nothing can be removed in one press, and never your own.
+// The sign-in log keeps every line it wrote under the account's id and login: that history is the instance's, not the
+// account's.
+async function remove(id, by, ip) {
+  const a = await byId(id); if (!a) throw new Error("no such account");
+  if (a.status !== "disabled") throw new Error("switch the account off first, then remove it");
+  const enrolled = Boolean(await verifiedFactor(a.id));
+  await q("DELETE FROM platform.accounts WHERE id=$1", [a.id]);
+  forget(a.id);
+  await event("account_removed", { account_id: a.id, login: a.login, ip, detail: { by, had_authenticator: enrolled } });
+}
 async function setPassword(id, password, by, ip, { made = false } = {}) {
   const a = await byId(id); if (!a) throw new Error("no such account");
   const next = made ? makePassword() : String(password || "");
@@ -439,9 +451,11 @@ router.post("/api/admin/accounts/:id(\\d+)/:action", (req, res, next) => authLib
     await setStatus(id, "disabled", who(req), ip); return res.json({ ok: true });
   }
   if (action === "signout") { await signOutEverywhere(id, who(req), ip); return res.json({ ok: true, signed_out: self }); }
-  if (!["enable", "reset-factor", "reset-password"].includes(action)) return res.status(404).json({ error: "no such action" });
+  if (!["enable", "reset-factor", "reset-password", "remove"].includes(action)) return res.status(404).json({ error: "no such action" });
+  if (action === "remove" && self) return res.status(400).json({ error: "you cannot remove the account you are signed in with" });
   if (!(await needStepUp(req, res, `${action}:${id}`))) return;
   if (action === "enable") { await setStatus(id, "active", who(req), ip); return res.json({ ok: true }); }
+  if (action === "remove") { await remove(id, who(req), ip); return res.json({ ok: true }); }
   if (action === "reset-factor") { await resetFactor(id, who(req), ip); return res.json({ ok: true, signed_out: self }); }
   if (self) return res.status(400).json({ error: "change your own password with Change my password" });
   res.set("Cache-Control", "no-store");
@@ -450,6 +464,6 @@ router.post("/api/admin/accounts/:id(\\d+)/:action", (req, res, next) => authLib
 
 module.exports = {
   init, router, signIn, stepUp, sessionState, legacyOpen, forget, twoFaOff, keyPinned, event, list, create,
-  enrollStart, enrollVerify, useCode, useRecoveryCode, signOutEverywhere, setStatus, resetFactor, setPassword,
+  enrollStart, enrollVerify, useCode, useRecoveryCode, signOutEverywhere, setStatus, resetFactor, setPassword, remove,
   cleanLogin, validLogin, passwordProblem, makeRecoveryCodes, recoveryHash, MAX_FAILS, LOCK_MINUTES,
 };

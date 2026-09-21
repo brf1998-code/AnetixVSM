@@ -226,6 +226,32 @@ async function main() {
   const { c: t3 } = await signIn(TAYLOR, np.json.password);
   t("switching an account off signs it out and keeps it out", (await b2.post(`/api/admin/accounts/${idT}/disable`, {})).status === 200 && (await t3.get("/api/admin/accounts/me")).status === 401 && (await tryLogin({ name: TAYLOR, password: np.json.password })).status === 401);
   t("switching it back on needs a fresh code", (await b2.post(`/api/admin/accounts/${idT}/enable`, {})).status === 403 && (await b2.post(`/api/admin/accounts/${idT}/enable`, { code: await codeFor(secretB, 1) })).status === 200);
+
+  // ---- removing an account for good (a name typed wrong, someone who left)
+  await freshSteps(BRENDAN);
+  const wrongName = "taylorpearlman.e2e@anetix.test";
+  const mw = await b2.post("/api/admin/accounts", { login: wrongName, display_name: "Typo", generate: true, code: await codeFor(secretB, -1) });
+  t("(setup: an account made under a name typed wrong)", mw.status === 200, mw.text);
+  const idW = mw.json.account.id;
+  t("an account that is switched on cannot be removed, code or not", (await b2.post(`/api/admin/accounts/${idW}/remove`, { code: await codeFor(secretB, 0) })).status === 400);
+  t("you cannot remove your own account", (await b2.post(`/api/admin/accounts/${idB}/remove`, { code: await codeFor(secretB, 1) })).status === 400);
+  t("(setup: switched off)", (await b2.post(`/api/admin/accounts/${idW}/disable`, {})).status === 200);
+  await freshSteps(BRENDAN);
+  t("removing a switched-off account needs a fresh code", (await b2.post(`/api/admin/accounts/${idW}/remove`, {})).status === 403 && (await b2.post(`/api/admin/accounts/${idW}/remove`, { code: "000000" })).status === 403);
+  await unlock(BRENDAN);
+  // give the doomed account a factor and recovery codes, so the cascade has something to take
+  await q("INSERT INTO platform.account_factors (account_id, kind, secret_enc, verified_at) VALUES ($1,'totp',$2,now())", [idW, Buffer.from("x")]);
+  await q("INSERT INTO platform.account_recovery_codes (account_id, code_hash) VALUES ($1,'abc')", [idW]);
+  const rm = await b2.post(`/api/admin/accounts/${idW}/remove`, { code: await codeFor(secretB, -1) });
+  t("with one, the account is gone", rm.status === 200 && rm.json.ok === true && !(await b2.get("/api/admin/accounts")).json.accounts.some((a) => a.id === idW), rm.text);
+  t("and its authenticator and recovery codes went with it", (await q("SELECT count(*)::int AS n FROM platform.account_factors WHERE account_id=$1", [idW])).rows[0].n === 0 && (await q("SELECT count(*)::int AS n FROM platform.account_recovery_codes WHERE account_id=$1", [idW])).rows[0].n === 0);
+  t("the sign-in log keeps its lines, and says who removed it", (await q("SELECT count(*)::int AS n FROM platform.auth_events WHERE account_id=$1", [idW])).rows[0].n >= 3 && (await events("account_removed")).some((e) => e.account_id === idW && e.login === wrongName && e.detail.by === BRENDAN && e.detail.had_authenticator === true));
+  t("the name is free to be used again", (await b2.post("/api/admin/accounts", { login: wrongName, display_name: "Typo again", generate: true, code: await codeFor(secretB, 0) })).status === 200);
+  t("removing what is already gone is 404", (await b2.post(`/api/admin/accounts/${idW}/remove`, { code: await codeFor(secretB, 1) })).status === 404);
+  const idW2 = (await b2.get("/api/admin/accounts")).json.accounts.find((a) => a.login === wrongName).id;
+  await b2.post(`/api/admin/accounts/${idW2}/disable`, {}); await freshSteps(BRENDAN);
+  t("(cleanup: the second one removed too)", (await b2.post(`/api/admin/accounts/${idW2}/remove`, { code: await codeFor(secretB, -1) })).status === 200);
+  await freshSteps(BRENDAN);
   // Taylor enrolls again for the restore mode
   const { c: t4 } = await signIn(TAYLOR, np.json.password);
   const secretT2 = (await t4.post("/api/admin/accounts/me/enroll/start", {})).json.secret;
