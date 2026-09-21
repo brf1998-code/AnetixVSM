@@ -4,35 +4,62 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Symbiotic OS · Admin</title>
+<link rel="stylesheet" href="/assets/admin-shell.css">
 <style>
-  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --green:#2e7d4f; --red:#b3261e; }
-  * { box-sizing:border-box; margin:0; }
-  body { font-family:system-ui,sans-serif; background:var(--fog); color:var(--ink); padding:18px; padding-bottom:56px; max-width:1240px; margin:0 auto; }
-  h1 { font-size:21px; margin-bottom:4px; }
+  /* The admin page: five tabs, one job each (the header and the tab row are /assets/admin-shell.*).
+     Health: is the loop turning, and what is waiting on us. Companies: one company open at a time.
+     Library: every separate module, then the instances of it. Accounts: Anetix's own people.
+     Instance: AI credit, spend and defaults, isolation, the edge check, backup and restore. */
   .sub { color:var(--steel); font-size:13px; line-height:1.5; }
-  a { color:var(--navy); }
   .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin:12px 0; font-size:13px; }
-  .card h2 { font-size:17px; } .card h2 small { font-weight:400; color:var(--steel); font-size:12px; margin-left:6px; }
+  .card h2 { font-size:16px; } .card h2 small { font-weight:400; color:var(--steel); font-size:12px; margin-left:6px; }
+  .card h3 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--steel); font-weight:700; margin:0 0 6px; }
   .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:10px 0; }
   .kpi { background:var(--fog); border-radius:8px; padding:8px; } .kpi b { display:block; font-size:20px; } .kpi span { font-size:11px; color:var(--steel); text-transform:uppercase; letter-spacing:.05em; }
+  .kpi small { display:block; font-size:11px; color:var(--steel); text-transform:none; letter-spacing:0; margin-top:1px; }
   ul { margin:6px 0 0 18px; } li { margin:3px 0; }
-  select, input { font-family:inherit; font-size:13px; border:1px solid var(--line); border-radius:7px; padding:7px; }
-  button { border:none; border-radius:7px; padding:8px 12px; font-size:12.5px; font-weight:700; cursor:pointer; margin:8px 6px 0 0; min-height:36px; }
-  .go { background:var(--green); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); }
-  .links a { margin-right:12px; font-weight:600; }
-  .lib { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; margin-top:10px; }
-  .mod { border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--fog); }
-  .mod h3 { font-size:15px; margin-bottom:4px; } .mod .desc { font-size:13px; line-height:1.45; margin:4px 0 8px; }
-  .mod .facts { font-size:12px; color:var(--steel); margin-bottom:6px; }
-  .mod .screens span { display:inline-block; background:#fff; border:1px solid var(--line); border-radius:12px; padding:2px 8px; font-size:11.5px; margin:2px 4px 2px 0; }
-  .mod .tour { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:12.5px; }
-  .mod .tour a { background:var(--navy); color:#fff; text-decoration:none; border-radius:14px; padding:6px 11px; font-weight:700; font-size:12.5px; }
-  .mod .tour .none { color:var(--steel); }
+  select, input { font-family:inherit; font-size:13px; border:1px solid var(--line); border-radius:7px; padding:7px; max-width:100%; }
+  button { border:none; border-radius:7px; padding:8px 12px; font-size:12.5px; font-weight:700; cursor:pointer; margin:8px 6px 0 0; min-height:36px; font-family:inherit; }
+  .go { background:var(--green); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); } .primary { background:var(--navy); color:#fff; }
   .danger { background:#fff; color:var(--red); border:1px solid var(--red); }
+  a.btn { display:inline-block; border-radius:7px; padding:8px 12px; font-size:12.5px; font-weight:700; text-decoration:none; background:var(--navy); color:#fff; }
+  .links { display:flex; flex-wrap:wrap; gap:6px; }
+  .links a { font-weight:600; background:var(--fog); border:1px solid var(--line); border-radius:14px; padding:4px 11px; text-decoration:none; font-size:12.5px; }
+  .links a:hover { border-color:var(--navy); }
+  /* companies: the list on the left, one company open on the right */
+  .split { display:grid; grid-template-columns:250px minmax(0,1fr); gap:14px; align-items:start; }
+  #co-list { position:sticky; top:132px; margin-top:12px; display:flex; flex-direction:column; gap:6px; }
+  #co-list a { display:block; background:#fff; border:1px solid var(--line); border-radius:10px; padding:9px 11px; text-decoration:none; color:var(--ink); font-size:13px; }
+  #co-list a b { display:block; font-size:14px; } #co-list a small { color:var(--steel); font-size:11.5px; }
+  #co-list a.on { border-color:var(--navy); box-shadow:inset 3px 0 0 var(--navy); }
+  #co-list a.add { background:transparent; border-style:dashed; color:var(--navy); font-weight:700; text-align:center; }
+  #co-list a.add.on { background:#fff; }
+  .cohead { display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; } .cohead h2 { font-size:19px; flex:1; min-width:200px; }
+  .secs { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:10px; margin-top:12px; }
+  .sec { border:1px solid var(--line); border-radius:9px; padding:11px 12px; font-size:13px; line-height:1.5; min-width:0; }
+  .sec.wide { grid-column:1 / -1; }
+  .sec.dz { border-color:#e6c4c1; } .sec.dz h3 { color:var(--red); }
+  .sec button { margin-top:6px; }
+  table.list { border-collapse:collapse; width:100%; font-size:13px; }
+  table.list th, table.list td { text-align:left; padding:6px 10px 6px 0; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.list th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; }
+  table.list tr:last-child td { border-bottom:none; }
+  table.list button { margin:2px 4px 2px 0; min-height:30px; padding:5px 9px; }
+  /* library */
+  .lib { display:grid; grid-template-columns:repeat(auto-fill,minmax(420px,1fr)); gap:12px; margin-top:10px; }
+  .mod { border:1px solid var(--line); border-radius:10px; padding:12px; background:#fff; min-width:0; }
+  .mod h3 { font-size:15px; margin-bottom:4px; text-transform:none; letter-spacing:0; color:var(--ink); } .mod .desc { font-size:13px; line-height:1.45; margin:4px 0 8px; }
+  .mod .facts { font-size:12px; color:var(--steel); margin-bottom:6px; }
+  .mod .screens span { display:inline-block; background:var(--fog); border:1px solid var(--line); border-radius:12px; padding:2px 8px; font-size:11.5px; margin:2px 4px 2px 0; }
+  .mod .inst { margin-top:10px; border-top:1px solid var(--line); padding-top:8px; }
+  .mod .tour a, a.tourlink { background:var(--navy); color:#fff; text-decoration:none; border-radius:14px; padding:4px 10px; font-weight:700; font-size:12px; white-space:nowrap; }
+  .chip { display:inline-block; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; vertical-align:2px; margin-left:6px; background:#e5e9ee; color:var(--steel); }
+  .chip.own { background:#e6f1ea; color:var(--green); }
   .swatch { display:inline-block; width:14px; height:14px; border-radius:4px; vertical-align:-2px; border:1px solid rgba(0,0,0,.15); margin-right:3px; }
-  .brand { margin-top:8px; padding:8px 10px; background:var(--fog); border-radius:8px; font-size:12.5px; line-height:1.5; }
+  .brand { font-size:12.5px; line-height:1.5; }
   .brand img { width:22px; height:22px; border-radius:5px; vertical-align:middle; margin-right:6px; background:#fff; }
-  .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:#c2620a; margin-right:5px; animation:p 1s infinite alternate; }
+  .req { margin-top:8px; padding:8px 10px; background:var(--fog); border-radius:8px; font-size:12.5px; line-height:1.5; }
+  .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--amber); margin-right:5px; animation:p 1s infinite alternate; }
   @keyframes p { from { opacity:.3 } to { opacity:1 } }
   #modal { display:none; position:fixed; inset:0; background:rgba(28,36,46,.55); z-index:20; align-items:center; justify-content:center; padding:20px; }
   #modal.on { display:flex; }
@@ -49,76 +76,137 @@
   table.health td.co { font-weight:700; white-space:nowrap; }
   table.health td:last-child span { white-space:nowrap; display:inline-block; }
   table.health small { color:var(--steel); font-weight:400; }
-  .ok { color:var(--green); font-weight:700; } .warn { color:#c2620a; font-weight:700; }
-  #h-days { float:right; font-size:12px; padding:5px 7px; margin-top:-3px; }
-  .kpi small { display:block; font-size:11px; color:var(--steel); text-transform:none; letter-spacing:0; margin-top:1px; }
+  .ok { color:var(--green); font-weight:700; } .warn { color:var(--amber); font-weight:700; }
+  #h-days { font-size:12.5px; padding:6px 8px; }
+  details > summary { cursor:pointer; font-size:12.5px; color:var(--navy); }
   /* an account with no authenticator yet sees the setup and nothing else (the server refuses the rest anyway) */
-  body.enroll-only > *:not(h1):not(#enroll-card):not(#modal) { display:none; }
+  body.enroll-only main, body.enroll-only main *, body.enroll-only #sos-fb-btn { display:none !important; }
+  #enroll-card { max-width:760px; margin:18px auto; }
   table.acc { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; }
   table.acc th, table.acc td { text-align:left; padding:6px 8px 6px 0; border-bottom:1px solid var(--line); vertical-align:middle; }
   table.acc th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; }
   table.acc button { margin:2px 4px 2px 0; min-height:30px; padding:5px 9px; }
   .note { margin-top:8px; padding:9px 12px; border-radius:9px; background:var(--fog); font-size:13px; line-height:1.45; border-left:4px solid var(--steel); }
-  .note.bad { border-left-color:var(--red); } .note.good { border-left-color:var(--green); } .note.amber { border-left-color:#c2620a; }
+  .note.bad { border-left-color:var(--red); } .note.good { border-left-color:var(--green); } .note.amber { border-left-color:var(--amber); }
   .qr { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; margin-top:10px; }
   .qr code, .codes { font-family:ui-monospace,monospace; font-size:14px; }
   .codes { columns:2; margin:10px 0; line-height:1.9; }
-  .primary { background:var(--navy); color:#fff; }
+  .two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 14px; }
+  @media (max-width:820px) {
+    .split { grid-template-columns:minmax(0,1fr); gap:0; }
+    #co-list { position:static; flex-direction:row; overflow-x:auto; padding-bottom:4px; } #co-list a { flex:none; min-width:150px; }
+    .lib, .two { grid-template-columns:minmax(0,1fr); }
+    .secs { grid-template-columns:minmax(0,1fr); }
+  }
 </style>
 </head>
 <body>
-  <h1>Admin</h1>
-  <p class="sub" id="top"></p>
-  <div class="card" id="health-card">
-    <h2>Loop health <small>the platform's own numbers: is the loop turning, how fast, where it stops</small>
-      <select id="h-days" onchange="loadHealth()"><option value="7">last 7 days</option><option value="30" selected>last 30 days</option><option value="90">last 90 days</option><option value="365">last year</option><option value="0">all time</option></select></h2>
-    <div id="credit" style="margin:8px 0 10px;padding:9px 12px;border-radius:9px;background:var(--fog);font-size:13px;line-height:1.45"></div>
-    <div id="isolation" style="margin:8px 0 10px;padding:9px 12px;border-radius:9px;background:var(--fog);font-size:13px;line-height:1.45"></div>
-    <div class="grid" id="h-fleet"></div>
-    <div class="hwrap"><table class="health" id="h-table"></table></div>
-    <p class="sub" id="h-note" style="margin-top:8px">Counts are for the window; open items, what is waiting, and the quiet stretch are as of now. Same shift means feedback to floor within 8 hours. To floor runs from the feedback item to the deploy (the oldest item in a batch). Manager wait is proposal drafted to decided, then ready to deployed. Stops are where builds stopped: the platform's own checks (gate), the reviewer, the tests, or something else. Quiet is days since the last reviewer or test stop, gate stop, and rollback; a long quiet stretch is the signal to try a cheaper build model. Edited is how many approved proposals the manager changed first (on the record since Sept 19). Decision times before the record use the run's start.</p>
-  </div>
-  <div class="card" id="data-card" style="display:none">
-    <h2>Data requests <small>changes the floor asked for that need ERP data the connection does not give yet. The manager only sees "waiting on data".</small></h2>
-    <div id="data-list"></div>
-  </div>
-  <div class="card" id="library-card">
-    <h2>Module library <small>what ships in the repo, before any company changes it</small></h2>
-    <p class="sub">Every module starts here as version 1. Start tour opens the module on a company's floor and walks a new operator through its screens, step by step, with the feedback button as the last stop. The tour is <code>tour.json</code> inside the module; agents can keep it current as the screens change.</p>
-    <div class="lib" id="library"></div>
-  </div>
-  <div id="companies"></div>
-  <div class="card">
-    <h2>Add a company</h2>
-    <p class="sub">Each company gets its own improvement board, modules, agent docs, and model choices at <code>/c/&lt;slug&gt;/</code>. Same passwords for now. Give the company's website and the platform reads it, writes the company's own STYLE.md (colors, type, icon, wording) which replaces the platform default style for every agent run, and restyles each module you add to it before the manager sees the preview.</p>
-    <input id="c-slug" placeholder="slug (e.g. acme)" style="max-width:200px"> <input id="c-name" placeholder="Company name" style="max-width:300px">
-    <input id="c-url" placeholder="https://www.company.com (optional, for the brand guide)" style="max-width:420px">
-    <select id="c-model"></select>
-    <button class="go" onclick="addCompany()">Create</button>
-  </div>
+  <header id="shell"></header>
   <div class="card" id="enroll-card" style="display:none"></div>
-  <div class="card" id="accounts-card">
-    <h2>Admin accounts <small>Anetix's own people. Each has a login of their own and a code from an authenticator app. Floor and manager logins are not these.</small></h2>
-    <div id="acc-notes"></div>
-    <table class="acc" id="acc-list"></table>
-    <div id="acc-me" style="margin-top:6px"></div>
-    <div style="margin-top:12px"><b>Add an account</b><br>
-      <input id="a-login" type="email" placeholder="email address (the name they sign in with)" autocomplete="off" style="width:280px;max-width:100%">
-      <input id="a-name" placeholder="Their name" autocomplete="off" style="width:180px;max-width:100%">
-      <button class="quiet" onclick="addAccount()">Add, and make up a first password</button></div>
-    <details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px">Sign-in log <span class="sub">(the last 60 things: who tried what, from where)</span></summary><div class="hwrap"><table class="health" id="acc-events"></table></div></details>
-    <div class="sub" id="edge-line" style="margin-top:10px"></div>
-  </div>
-  <div class="card">
-    <h2>Backup and restore</h2>
-    <p class="sub">The backup is one JSON file with every platform table (companies, module versions and their files, feedback, runs, docs, reviews, diagrams) and every company's live module data, plus the admin accounts (passwords and recovery codes as hashes, authenticator secrets encrypted). The sign-in log is left out. Take one before every demo. Restore replaces everything on the instance with the file and restarts the platform; it asks for a fresh code from your authenticator, and every admin signs in again afterwards.</p>
-    <a href="/api/admin/backup" download><button class="go">Download backup</button></a>
-    <button class="quiet" onclick="openRestore()">Restore from a backup file</button>
-    <span class="sub" id="backup-note"></span>
-  </div>
+  <main>
+  <!-- ================= Health: is the loop turning, and what is waiting on us ================= -->
+  <section class="tabpanel" id="tab-health">
+    <div class="tabhead"><h2>Loop health</h2><p class="sub">The platform's own numbers: is the loop turning, how fast, where it stops.</p>
+      <select id="h-days" onchange="loadHealth()"><option value="7">last 7 days</option><option value="30" selected>last 30 days</option><option value="90">last 90 days</option><option value="365">last year</option><option value="0">all time</option></select></div>
+    <div class="card" id="data-card" style="display:none">
+      <h2>Waiting on us: data requests <small>changes the floor asked for that need ERP data the connection does not give yet. The manager only sees "waiting on data".</small></h2>
+      <div id="data-list"></div>
+    </div>
+    <div class="card" id="health-card">
+      <h3>The fleet</h3>
+      <div class="grid" id="h-fleet"></div>
+      <h3 style="margin-top:14px">By company</h3>
+      <div class="hwrap"><table class="health" id="h-table"></table></div>
+      <details style="margin-top:10px"><summary>How to read these numbers</summary>
+      <p class="sub" id="h-note" style="margin-top:6px">Counts are for the window; open items, what is waiting, and the quiet stretch are as of now. Same shift means feedback to floor within 8 hours. To floor runs from the feedback item to the deploy (the oldest item in a batch). Manager wait is proposal drafted to decided, then ready to deployed. Stops are where builds stopped: the platform's own checks (gate), the reviewer, the tests, or something else. Quiet is days since the last reviewer or test stop, gate stop, and rollback; a long quiet stretch is the signal to try a cheaper build model. Edited is how many approved proposals the manager changed first (on the record since Sept 19). Decision times before the record use the run's start.</p></details>
+    </div>
+  </section>
+
+  <!-- ================= Companies: the list, and one company open at a time ================= -->
+  <section class="tabpanel" id="tab-companies">
+    <div class="tabhead"><h2>Companies</h2><p class="sub">Pick a company to work on it: its pages, modules, sign-in, budget, brand. One open at a time.</p></div>
+    <div class="split">
+      <aside id="co-list" aria-label="Companies"></aside>
+      <div>
+        <div id="companies"></div>
+        <div class="card" id="add-card" style="display:none">
+          <h2>Add a company</h2>
+          <p class="sub" style="margin:4px 0 8px">Each company gets its own improvement board, modules, agent docs, and model choices at <code>/c/&lt;slug&gt;/</code>, and its own floor and manager passwords, made up now and shown once. Give the company's website and the platform reads it, writes the company's own STYLE.md (colors, type, icon, wording) which replaces the platform default style for every agent run, and restyles each module you add to it before the manager sees the preview.</p>
+          <input id="c-slug" placeholder="slug (e.g. acme)" style="width:200px"> <input id="c-name" placeholder="Company name" style="width:300px">
+          <div style="margin-top:8px"><input id="c-url" placeholder="https://www.company.com (optional, for the brand guide)" style="width:420px">
+          <select id="c-model"></select></div>
+          <button class="go" onclick="addCompany()">Create</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= Library: every separate module, then the instances of it ================= -->
+  <section class="tabpanel" id="tab-library">
+    <div class="tabhead"><h2>Module library</h2><p class="sub">Every separate module on this instance, and under each one the companies running it. Start tour opens the module on a company's floor and walks a new operator through its screens, with the feedback button as the last stop.</p></div>
+    <div id="library-card">
+      <div class="card"><h2>Ships with the platform <small>in the repo; every company that adds one starts from it as version 1, then changes its own copy</small></h2><div class="lib" id="library"></div></div>
+      <div class="card"><h2>Made by companies <small>built through module creation on a company's board; each lives at the company that made it</small></h2><div class="lib" id="library-own"></div></div>
+    </div>
+  </section>
+
+  <!-- ================= Accounts: Anetix's own people ================= -->
+  <section class="tabpanel" id="tab-accounts">
+    <div class="tabhead"><h2>Admin accounts</h2><p class="sub">Anetix's own people. Each has a login of their own and a code from an authenticator app. Floor and manager logins are not these; those are on each company, under Sign-in.</p></div>
+    <div class="card" id="accounts-card">
+      <div id="acc-notes"></div>
+      <table class="acc" id="acc-list"></table>
+      <div class="two" style="margin-top:14px">
+        <div><h3>My account</h3><div id="acc-me"></div></div>
+        <div><h3>Add an account</h3>
+          <input id="a-login" type="email" placeholder="email address (the name they sign in with)" autocomplete="off" style="width:280px;max-width:100%">
+          <input id="a-name" placeholder="Their name" autocomplete="off" style="width:180px;max-width:100%"><br>
+          <button class="quiet" onclick="addAccount()">Add, and make up a first password</button></div>
+      </div>
+      <details style="margin-top:14px"><summary>Sign-in log <span class="sub">(the last 60 things: who tried what, from where)</span></summary><div class="hwrap"><table class="health" id="acc-events"></table></div></details>
+    </div>
+  </section>
+
+  <!-- ================= Instance: the box itself ================= -->
+  <section class="tabpanel" id="tab-instance">
+    <div class="tabhead"><h2>Instance</h2><p class="sub">The platform itself, across every company: what it can spend, how it isolates module code, how it is reached, and its backup.</p></div>
+    <div class="two">
+      <div class="card"><h2>AI credit <small>the balance on the Anthropic key, by the platform's own count</small></h2><div id="credit" class="note"></div></div>
+      <div class="card"><h2>Spend and default models</h2><div id="top" style="margin-top:8px;line-height:1.7"></div></div>
+      <div class="card"><h2>Module isolation <small>where agent-written module code runs</small></h2><div id="isolation" class="note"></div></div>
+      <div class="card"><h2>Edge check <small>requests must come through Cloudflare</small></h2><div class="note" id="edge-line"></div></div>
+    </div>
+    <div class="card">
+      <h2>Backup and restore</h2>
+      <p class="sub" style="margin-top:4px">The backup is one JSON file with every platform table (companies, module versions and their files, feedback, runs, docs, reviews, diagrams) and every company's live module data, plus the admin accounts (passwords and recovery codes as hashes, authenticator secrets encrypted). The sign-in log is left out. Take one before every demo. Restore replaces everything on the instance with the file and restarts the platform; it asks for a fresh code from your authenticator, and every admin signs in again afterwards.</p>
+      <a href="/api/admin/backup" download><button class="go">Download backup</button></a>
+      <button class="quiet" onclick="openRestore()">Restore from a backup file</button>
+      <span class="sub" id="backup-note"></span>
+    </div>
+  </section>
+  </main>
   <div id="modal" onclick="if(event.target===this)closeModal()"><div class="mcard" id="mcard"></div></div>
+<script src="/assets/admin-shell.js"></script>
 <script>
 let D = null;
+// ---- the standard header (/assets/admin-shell.js): pills that stay on every tab, and a dot on a tab that wants a look.
+// Each loader drops what it learned into P and calls drawPills(); nothing here fetches.
+const P = {};
+function drawPills() {
+  const lv = (x) => (x === "unknown" ? "" : x);
+  AdminShell.setPills([
+    P.credit && { id: "credit", label: "AI credit", value: P.credit.value, level: lv(P.credit.level), href: "#instance", title: P.credit.title },
+    P.spend && { id: "spend", label: "AI spend", value: P.spend.value, level: P.spend.level, href: "#instance", title: "This month, every company, against the instance cap" },
+    P.data && { id: "data", label: "Waiting on us", value: P.data.value, level: P.data.level, href: "#health", title: "Data requests: changes that need ERP data the connection does not give yet" },
+    P.isolation && { id: "isolation", label: "Isolation", value: P.isolation.value, level: P.isolation.level, href: "#instance", title: "Whether module code runs in a process of its own with a database login of its own" },
+    P.edge && { id: "edge", label: "Edge", value: P.edge.value, level: P.edge.level, href: "#instance", title: "Whether a request that did not come through Cloudflare is refused" },
+    P.signin && { id: "signin", label: "Sign-in", value: P.signin.value, level: P.signin.level, href: "#accounts", title: P.signin.title },
+  ]);
+  const worst = (...xs) => (xs.some((x) => x && x.level === "red") ? "red" : xs.some((x) => x && x.level === "amber") ? "amber" : null);
+  AdminShell.setBadge("health", { level: worst(P.data) });
+  AdminShell.setBadge("accounts", { level: worst(P.signin) });
+  AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null) });
+}
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
 function ml(id) { const m = D.models.find(x => x.id === id); return m ? m.label : id; }
 async function post(url, body) {
@@ -198,6 +286,8 @@ async function loadCredit() {
   const c = await r.json(), el = document.getElementById("credit");
   const color = { red: "var(--red)", amber: "#c2620a", ok: "var(--green)", unknown: "var(--steel)" }[c.level] || "var(--steel)";
   const out = c.outage ? `<div style="color:var(--red);font-weight:700">The AI service refused a call at ${new Date(c.outage.at).toLocaleString()} (${c.outage.kind === "key" ? "the key was not accepted" : "no credit left"}${c.outage.where ? `, during ${esc(c.outage.where)}` : ""}) and nothing has worked since. No proposal or build will run until it is fixed.</div>` : "";
+  P.credit = { level: c.level, title: c.line, value: c.outage ? "refused, nothing runs" : !c.known ? "balance not entered" : `$${Number(c.balance_usd).toFixed(2)} left${c.days_left != null ? `, ${c.days_left} day${c.days_left === 1 ? "" : "s"}` : ""}${c.anchor && c.anchor.autofill ? " (autofill)" : ""}` };
+  drawPills();
   el.style.borderLeft = `4px solid ${color}`;
   el.innerHTML = out + `<b style="color:${color}">AI credit</b> · <span id="credit-line">${esc(c.line)}</span>`
     + (c.known ? ` <small style="color:var(--steel)">By the platform's own count since ${new Date(c.anchor.noted_at).toLocaleDateString()} ($${c.anchor.balance_usd.toFixed(2)} then, $${c.spent_since.toFixed(2)} spent since)${c.anchor.autofill ? " · autofill is on" : ""}. Anything else spending on the same key is not seen here.</small>` : ` <small style="color:var(--steel)">Burning $${Number(c.burn_per_day).toFixed(2)} a day over the last ${c.burn_days} day${c.burn_days === 1 ? "" : "s"}.</small>`)
@@ -243,6 +333,10 @@ function drawIsolation(rn) {
   const el = document.getElementById("isolation"); if (!el || !rn) return;
   const ok = rn.effective === "process" && rn.roles.ok;
   const color = ok ? "var(--green)" : "var(--red)";
+  const onPurpose = rn.effective === "inline" && rn.mode === "inline";
+  const partly = ok && ((rn.inline_modules || []).length || !rn.user.ok || !rn.flags.ok);
+  P.isolation = ok ? { value: (rn.inline_modules || []).length ? "on, some kept inside" : partly ? "on, not in full" : "on", level: partly ? "amber" : "ok" } : { value: onPurpose ? "off on purpose" : "OFF", level: onPurpose ? "amber" : "red" };
+  drawPills();
   el.style.borderLeft = `4px solid ${color}`;
   let body;
   if (rn.effective === "inline" && rn.mode === "inline") body = "Set to run module code inside the platform's own process on purpose (SOS_MODULE_RUNNER=inline). Fine for one company; do not put a second company's real data here.";
@@ -283,7 +377,9 @@ async function loadData() {
   const r = await fetch("/api/admin/data-requests"); if (!r.ok) return;
   const rows = (await r.json()).requests; const cardEl = document.getElementById("data-card");
   cardEl.style.display = rows.length ? "" : "none";
-  document.getElementById("data-list").innerHTML = rows.map(x => `<div class="brand" style="margin-top:8px">
+  P.data = { value: rows.length ? `${rows.length} data request${rows.length === 1 ? "" : "s"}` : "nothing", level: rows.length ? "amber" : "ok" };
+  drawPills();
+  document.getElementById("data-list").innerHTML = rows.map(x => `<div class="req">
     <b>${esc(x.company_name || x.company)}</b> · ${esc(x.module_title || x.module)} · asked ${new Date(x.created_at).toLocaleString()}<br>
     Needs: <b>${esc(x.what)}</b>${x.lookup ? ` <span class="sub">(the agent expected it from the lookup <code>${esc(x.lookup)}</code>)</span>` : ""}<br>
     <span class="sub">The floor said: "${esc(x.message || "")}"${x.reporter ? ` (${esc(x.reporter)})` : ""}</span><br>
@@ -306,6 +402,7 @@ async function dataSend(id, what, note) {
 }
 async function load() {
   if (!(await loadMe())) return;
+  AdminShell.setWho(ME.me ? (ME.me.name || ME.me.login) : ME.shared_password ? "the shared admin password" : "");
   if (ME.enroll_required) return enrollOnly();
   loadAccounts().catch((e) => console.error("accounts:", e));
   loadData().catch((e) => console.error("data requests:", e));
@@ -316,48 +413,121 @@ async function load() {
   drawIsolation(D.runner);
   loadHealth().catch((e) => console.error("loop health:", e));
   const fable = D.models.find(m => m.id === "claude-fable-5-1") ? "claude-fable-5-1" : D.defaults.propose;
-  document.getElementById("c-model").innerHTML = D.models.filter(m => m.agent !== false || m.id === fable).map(m => `<option value="${m.id}" ${m.id === fable ? "selected" : ""}>guide by ${m.label} ($${m.in}/$${m.out} per M tokens)</option>`).join("");
-  document.getElementById("top").textContent = `${D.companies.length} compan${D.companies.length === 1 ? "y" : "ies"} · AI spend this month $${D.totalSpend.toFixed(2)}${D.monthlyCap ? ` of $${D.monthlyCap.toFixed(2)} cap` : " (no instance-wide cap)"} · defaults: propose ${ml(D.defaults.propose)}, build ${ml(D.defaults.build)}, review ${ml(D.defaults.review)}`;
-  document.getElementById("library").innerHTML = D.library.map(l => `<div class="mod">
-    <h3>${esc(l.title)} <small class="sub">(${l.name})</small></h3>
-    <div class="desc">${esc(l.description || "No description in module.json yet.")}</div>
-    <div class="facts">${l.screens.length} screens · ${l.migrations} migration file${l.migrations === 1 ? "" : "s"} · ${l.smoke} smoke checks · ${l.deployed.length ? "live at " + l.deployed.map(d => `${esc((D.companies.find(c => c.slug === d.company) || {}).name || d.company)} (v${d.live_version})`).join(", ") : "not deployed anywhere yet"}</div>
+  const pick = document.getElementById("c-model"), had = pick.value;
+  pick.innerHTML = D.models.filter(m => m.agent !== false || m.id === fable).map(m => `<option value="${m.id}" ${m.id === (had || fable) ? "selected" : ""}>guide by ${m.label} ($${m.in}/$${m.out} per M tokens)</option>`).join("");
+  drawInstance(); drawLibrary(); drawCompanies();
+  if (D.companies.some(c => c.brand && c.brand.status === "building")) setTimeout(load, 5000);
+}
+const coName = (slug) => (D.companies.find(c => c.slug === slug) || {}).name || slug;
+const day = (t) => t ? new Date(t).toLocaleDateString() : "";
+
+// ---- Instance tab: spend against the cap, and the models a new company starts on
+function drawInstance() {
+  const cap = D.monthlyCap, over = cap && D.totalSpend >= cap, near = cap && D.totalSpend >= 0.8 * cap;
+  P.spend = { value: `$${D.totalSpend.toFixed(2)}${cap ? ` of $${cap.toFixed(2)}` : ""} this month`, level: over ? "red" : near ? "amber" : "ok" };
+  drawPills();
+  document.getElementById("top").innerHTML = `<b>This month:</b> $${D.totalSpend.toFixed(2)} across ${D.companies.length} compan${D.companies.length === 1 ? "y" : "ies"}${cap ? `, of a $${cap.toFixed(2)} cap for the whole instance (SOS_MONTHLY_CAP_USD). At the cap, no proposal or build runs anywhere.` : " (no instance-wide cap)."}<br>
+    <b>Default models:</b> propose ${esc(ml(D.defaults.propose))}, build ${esc(ml(D.defaults.build))}, review ${esc(ml(D.defaults.review))} <span class="sub">(a company's own choices are on its agent settings page; its own budget is on the company, under AI budget and models)</span>
+    <table class="list" style="margin-top:8px"><tr><th>Company</th><th>This month</th><th>Its own cap</th></tr>${D.companies.map(c => `<tr><td><a href="#companies/${c.slug}">${esc(c.name)}</a></td><td>$${c.spend_usd.toFixed(2)}</td><td>${c.monthly_cap_usd ? "$" + Number(c.monthly_cap_usd).toFixed(2) : '<span class="sub">none</span>'}</td></tr>`).join("")}</table>`;
+}
+
+// ---- Library tab: every separate module once, then the instances of it (feedback.js libraryView).
+// origin "repo": ships in modules/<name>/, any company can add it. origin "company": made through module creation at
+// one company, lives there only.
+function instanceRows(l) {
+  if (!l.instances.length) return `<div class="sub">Not at any company yet.</div>`;
+  return `<div class="hwrap" style="margin-top:0"><table class="list"><tr><th>Company</th><th>On the floor</th><th>Versions</th><th>Last change</th><th></th></tr>${l.instances.map(i => `<tr>
+    <td><a href="#companies/${i.company}">${esc(coName(i.company))}</a></td>
+    <td>${i.live_version ? `v${i.live_version}` : '<span class="warn">not live yet</span>'}${i.staged_version ? ` <small class="sub">v${i.staged_version} staged</small>` : ""}</td>
+    <td>${i.versions}${i.built ? ` <small class="sub">${i.built} built here</small>` : ""}</td>
+    <td>${day(i.last_change)}</td>
+    <td style="white-space:nowrap">${i.live_version ? `<a href="/c/${i.company}/m/${l.name}/">Open</a>${l.tourSteps ? ` <a class="tourlink" href="/c/${i.company}/m/${l.name}/?tour=1" style="margin-left:6px">Start tour</a>` : ""}` : `<a href="/c/${i.company}/">On its board</a>`}</td></tr>`).join("")}</table></div>`;
+}
+function modCard(l) {
+  const without = l.origin === "repo" ? D.companies.filter(c => !l.instances.some(i => i.company === c.slug)) : [];
+  return `<div class="mod" data-module="${esc(l.key)}">
+    <h3>${esc(l.title)} <small class="sub">(${esc(l.name)})</small>${l.origin === "company" ? `<span class="chip own">made at ${esc(coName(l.made_at))}</span>` : ""}</h3>
+    <div class="desc">${esc(l.description || (l.origin === "company" ? "No description in its module.json yet." : "No description in module.json yet."))}</div>
+    <div class="facts">${l.screens.length} screen${l.screens.length === 1 ? "" : "s"} · ${l.migrations} migration file${l.migrations === 1 ? "" : "s"} · ${l.smoke} smoke check${l.smoke === 1 ? "" : "s"} · ${l.tourSteps ? `tour of ${l.tourSteps} steps` : "no tour.json yet"}</div>
     <div class="screens">${l.screens.map(s => `<span>${esc(s.label)}</span>`).join("")}</div>
-    <div class="tour">${l.tourSteps
-      ? `<b>Tour:</b> ${l.tourSteps} steps` + (l.deployed.length ? l.deployed.map(d => ` <a href="/c/${d.company}/m/${l.name}/?tour=1">Start tour at ${esc((D.companies.find(c => c.slug === d.company) || {}).name || d.company)}</a>`).join("") : ' <span class="none">(add it to a company to run the tour)</span>')
-      : '<span class="none">No tour.json in this module yet.</span>'}</div>
-  </div>`).join("") || '<div class="sub">No modules in the repo library.</div>';
-  document.getElementById("companies").innerHTML = D.companies.map(c => `<div class="card">
-    <h2>${esc(c.name)} <small>/c/${c.slug}/ · since ${new Date(c.created_at).toLocaleDateString()}</small></h2>
-    <div class="links"><a href="/c/${c.slug}/">Improvement board</a><a href="/c/${c.slug}/settings" title="What the manager sees: people, printers and spreadsheets, the wall sign, what happens when a request arrives">Settings</a><a href="/c/${c.slug}/agents">Agent settings and docs</a><a href="/c/${c.slug}/checks" title="Every build the platform's checks stopped, labeled right, wrong or unsure">Checks log</a><a href="/c/${c.slug}/people">People</a><a href="/c/${c.slug}/connections">Connections</a><a href="/api/c/${c.slug}/record/export" download title="The interaction record: everything said and decided, word for word, insert-only">Download the record</a>${c.modules.map(m => `<a href="/c/${c.slug}/m/${m.name}/">${esc(m.title)} (v${m.live_version})</a>`).join("")}</div>
+    <div class="inst"><h3>${l.instances.length} instance${l.instances.length === 1 ? "" : "s"}</h3>${instanceRows(l)}
+      ${without.length ? `<div style="margin-top:6px"><select id="libadd-${esc(l.name)}">${without.map(c => `<option value="${c.slug}">${esc(c.name)}</option>`).join("")}</select> <button class="quiet" style="margin-top:0" onclick="addModuleTo(document.getElementById('libadd-${esc(l.name)}').value, '${esc(l.name)}')">Add to this company</button></div>` : ""}</div>
+  </div>`;
+}
+function drawLibrary() {
+  const repo = D.library.filter(l => l.origin !== "company"), own = D.library.filter(l => l.origin === "company");
+  AdminShell.setBadge("library", { n: D.library.length });
+  document.getElementById("library").innerHTML = repo.map(modCard).join("") || '<div class="sub">No modules in the repo library.</div>';
+  document.getElementById("library-own").innerHTML = own.map(modCard).join("") || '<div class="sub">None yet. A company makes one with New module, on its card under Companies or on its own board.</div>';
+}
+
+// ---- Companies tab: the list on the left, one company open on the right. Which one is the address:
+// #companies/<slug>, or #companies/new for the add form. With nothing named, the first company.
+function openSlug() {
+  const cur = AdminShell.current(), want = cur.id === "companies" ? cur.rest : "";
+  if (want === "new" || !D.companies.length) return "new";
+  return (D.companies.find(c => c.slug === want) || D.companies.find(c => c.slug === LAST_CO) || D.companies[0]).slug;
+}
+let LAST_CO = null;
+function coFlag(c) {
+  const a = c.access || {};
+  if (a.legacy_login || !(a.own_floor && a.own_manager)) return '<span class="fail">sign-in needs setting</span>';
+  if (c.brand && c.brand.status === "building") return '<span class="warn">brand guide building</span>';
+  return "";
+}
+function drawCompanies() {
+  if (!D) return;
+  const open = openSlug(); if (open !== "new") LAST_CO = open;
+  AdminShell.setBadge("companies", { n: D.companies.length });
+  document.getElementById("co-list").innerHTML = D.companies.map(c => `<a href="#companies/${c.slug}" class="${c.slug === open ? "on" : ""}"><b>${esc(c.name)}</b>
+    <small>${c.feedback.open} open · ${c.modules.length} module${c.modules.length === 1 ? "" : "s"} · $${c.spend_usd.toFixed(2)} this month${coFlag(c) ? "<br>" + coFlag(c) : ""}</small></a>`).join("")
+    + `<a href="#companies/new" class="add ${open === "new" ? "on" : ""}">+ Add a company</a>`;
+  document.getElementById("add-card").style.display = open === "new" ? "" : "none";
+  const c = D.companies.find(x => x.slug === open);
+  document.getElementById("companies").innerHTML = c ? companyCard(c) : "";
+}
+function companyCard(c) {
+  const addable = D.library.filter(l => l.origin !== "company" && !c.modules.some(m => m.name === l.name));
+  const hasTour = (name) => (D.library.find(l => l.name === name && (l.origin !== "company" || l.made_at === c.slug)) || {}).tourSteps;
+  return `<div class="card" data-company="${esc(c.slug)}">
+    <div class="cohead"><h2>${esc(c.name)} <small>/c/${c.slug}/ · since ${day(c.created_at)}</small></h2><a class="btn" href="/c/${c.slug}/">Open the improvement board</a></div>
     <div class="grid">
       <div class="kpi"><b>${c.feedback.open}</b><span>open feedback</span></div>
       <div class="kpi"><b>${c.feedback.total}</b><span>feedback total</span></div>
       <div class="kpi"><b>${c.runs.deployed} / ${c.runs.n}</b><span>builds deployed / started</span></div>
       <div class="kpi"><b>$${c.spend_usd.toFixed(2)}</b><span>AI spend this month</span></div>
     </div>
-    <div class="sub"><b>Login:</b> ${accessText(c)} <button class="quiet" style="margin-top:0" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button></div>
-    <div class="sub" style="margin-top:6px"><b>AI budget:</b> ${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "none of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}
-      <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="max-width:150px;display:inline-block"> <button class="quiet" style="margin-top:0" onclick="setCap('${c.slug}')">Save</button></div>
-    <div class="sub" style="margin-top:6px"><b>Models:</b> propose ${ml(c.models.propose)}, build ${ml(c.models.build)}, review ${ml(c.models.review)}</div>
-    <div class="sub" style="margin-top:6px"><b>Agent docs:</b>${c.docs.length ? "<ul>" + c.docs.map(d => `<li>${esc(d.name)} <span class="sub">(${d.module ? "module " + esc(d.module) : "company-wide"}, ${d.bytes} bytes, ${d.source === "repo" ? "seeded" : "edited"})</span></li>`).join("") + "</ul>" : " none"}</div>
-    <div class="sub" style="margin-top:6px"><b>Modules:</b>${c.modules.length ? "<ul>" + c.modules.map(m => `<li>${esc(m.title)} (${m.name}) v${m.live_version}${m.staged_version ? `, v${m.staged_version} staged` : ""}</li>`).join("") + "</ul>" : " none"}</div>
-    ${brandHtml(c)}
-    <div style="margin-top:6px"><select id="lib-${c.slug}">${D.library.filter(l => !c.modules.some(m => m.name === l.name)).map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
-      <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
-      <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; Fable designs it">New module</button>
-      <button class="danger" style="float:right" onclick="openDelete('${c.slug}', '${esc(c.name)}')">Delete company</button></div>
-  </div>`).join("");
-  if (D.companies.some(c => c.brand && c.brand.status === "building")) setTimeout(load, 5000);
+    <h3>Go to</h3>
+    <div class="links"><a href="/c/${c.slug}/">Improvement board</a><a href="/c/${c.slug}/settings" title="What the manager sees: people, printers and spreadsheets, the wall sign, what happens when a request arrives">Settings</a><a href="/c/${c.slug}/agents">Agent settings and docs</a><a href="/c/${c.slug}/checks" title="Every build the platform's checks stopped, labeled right, wrong or unsure">Checks log</a><a href="/c/${c.slug}/people">People</a><a href="/c/${c.slug}/connections">Connections</a><a href="/api/c/${c.slug}/record/export" download title="The interaction record: everything said and decided, word for word, insert-only">Download the record</a></div>
+    <div class="secs">
+      <div class="sec wide"><h3>Modules</h3>
+        ${c.modules.length ? `<table class="list"><tr><th>Module</th><th>On the floor</th><th></th></tr>${c.modules.map(m => `<tr><td><b>${esc(m.title)}</b> <small class="sub">(${esc(m.name)})</small></td>
+          <td>${m.live_version ? `v${m.live_version}` : '<span class="warn">not live yet</span>'}${m.staged_version ? ` <small class="sub">v${m.staged_version} staged</small>` : ""}</td>
+          <td style="white-space:nowrap">${m.live_version ? `<a href="/c/${c.slug}/m/${m.name}/">Open</a>${hasTour(m.name) ? ` <a class="tourlink" style="margin-left:6px" href="/c/${c.slug}/m/${m.name}/?tour=1">Start tour</a>` : ""}` : ""}</td></tr>`).join("")}</table>` : '<div class="sub">None yet.</div>'}
+        <div style="margin-top:8px"><select id="lib-${c.slug}">${addable.map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
+          <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
+          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; Fable designs it">New module</button></div></div>
+      <div class="sec"><h3>Sign-in</h3>${accessText(c)}<br><button class="quiet" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button>
+        <div class="sub" style="margin-top:6px">Names and PINs for the people on the floor are on its <a href="/c/${c.slug}/people">People</a> page.</div></div>
+      <div class="sec"><h3>AI budget and models</h3>${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "No budget of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}<br>
+        <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="width:150px;margin-top:6px"> <button class="quiet" onclick="setCap('${c.slug}')">Save</button>
+        <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
+      <div class="sec wide"><h3>Brand</h3>${brandHtml(c)}</div>
+      <div class="sec"><h3>Agent docs</h3>${c.docs.length ? `<details><summary>${c.docs.length} doc${c.docs.length === 1 ? "" : "s"} the agents read</summary><ul>` + c.docs.map(d => `<li>${esc(d.name)} <span class="sub">(${d.module ? "module " + esc(d.module) : "company-wide"}, ${d.bytes} bytes, ${d.source === "repo" ? "seeded" : "edited"})</span></li>`).join("") + `</ul></details>` : "None."}
+        <div class="sub" style="margin-top:6px">Read and edit them on <a href="/c/${c.slug}/agents">agent settings and docs</a>.</div></div>
+      <div class="sec dz"><h3>Danger zone</h3>Everything this company owns goes, with no undo apart from a backup file. Asks for the slug and a fresh code.<br>
+        <button class="danger" onclick="openDelete('${c.slug}', '${esc(c.name)}')">Delete company</button></div>
+    </div>
+  </div>`;
 }
 function brandHtml(c) {
   const b = c.brand;
   const form = (label) => `<div style="margin-top:6px"><input id="burl-${c.slug}" placeholder="https://www.company.com" value="${esc(b && b.url || "")}" style="max-width:360px"> <select id="bmodel-${c.slug}">${D.models.filter(m => m.agent !== false || m.id === "claude-fable-5-1").map(m => `<option value="${m.id}" ${m.id === (b && b.model || "claude-fable-5-1") ? "selected" : ""}>${m.label}</option>`).join("")}</select> <button class="quiet" style="margin-top:0" onclick="buildBrand('${c.slug}')">${label}</button></div>`;
-  if (!b) return `<div class="brand"><b>Brand:</b> none yet. Give the company's site and the platform writes its styling guide.${form("Build the brand guide")}</div>`;
-  if (b.status === "building") return `<div class="brand"><b>Brand:</b> <span class="pulse"></span>reading ${esc(b.url)} and writing the guide with ${ml(b.model || "claude-fable-5-1")}…</div>`;
-  if (b.status === "failed") return `<div class="brand"><b>Brand:</b> <span class="fail">failed: ${esc(b.error || "unknown error")}</span>${form("Try again")}</div>`;
+  if (!b) return `<div class="brand">None yet. Give the company's site and the platform writes its styling guide.${form("Build the brand guide")}</div>`;
+  if (b.status === "building") return `<div class="brand"><span class="pulse"></span>Reading ${esc(b.url)} and writing the guide with ${ml(b.model || "claude-fable-5-1")}…</div>`;
+  if (b.status === "failed") return `<div class="brand"><span class="fail">failed: ${esc(b.error || "unknown error")}</span>${form("Try again")}</div>`;
   const col = b.colors || {};
-  return `<div class="brand">${b.has_icon ? `<img src="/api/c/${c.slug}/icon" alt="">` : ""}<b>Brand:</b> ${esc(b.company_name || c.name)} · from ${esc(b.url)} · ${ml(b.model)} · $${Number(b.cost_usd || 0).toFixed(2)} · ${new Date(b.built_at).toLocaleDateString()}<br>
+  return `<div class="brand">${b.has_icon ? `<img src="/api/c/${c.slug}/icon" alt="">` : ""}${esc(b.company_name || c.name)} · from ${esc(b.url)} · ${ml(b.model)} · $${Number(b.cost_usd || 0).toFixed(2)} · ${new Date(b.built_at).toLocaleDateString()}<br>
     ${["primary", "accent", "background", "ink"].map(k => `<span class="swatch" style="background:${esc(col[k])}"></span>${k} ${esc(col[k])}`).join(" · ")} · font ${esc(b.font || "")}${b.tone ? ` · voice: ${esc(b.tone)}` : ""}<br>
     Style file: <a href="/c/${c.slug}/agents">STYLE.md on the agent settings page</a> (edit it there; it replaces the platform default for every build of this company).
     ${c.modules.map(m => ` <button class="quiet" style="margin-top:6px" onclick="restyle('${c.slug}','${m.name}')">Restyle ${esc(m.title)} to brand</button>`).join("")}
@@ -379,6 +549,7 @@ async function addCompany() {
   const brand_url = document.getElementById("c-url").value.trim(), brand_model = document.getElementById("c-model").value;
   const j = await post("/api/admin/companies", { slug, name, brand_url, brand_model });
   if (j.passwords) showPasswords(slug, name, j.passwords);
+  if (j.passwords || j.ok || j.company) { for (const id of ["c-slug", "c-name", "c-url"]) document.getElementById(id).value = ""; LAST_CO = slug; AdminShell.go("companies/" + slug); }
   load();
 }
 // ---- a company's own login: floor and manager passwords, kept as hashes; shown once when the platform makes them up
@@ -414,12 +585,17 @@ async function setCap(slug) {
   await post(`/api/admin/companies/${slug}/cap`, { usd: document.getElementById("cap-" + slug).value });
   load();
 }
-async function addModule(slug) {
+function addModule(slug) {
   const mod = document.getElementById("lib-" + slug).value; if (!mod) return;
+  return addModuleTo(slug, mod);
+}
+// from a company's Modules section, or from the module's card in the library
+async function addModuleTo(slug, mod) {
+  if (!slug || !mod) return;
   const c = D.companies.find(x => x.slug === slug);
   const j = await post(`/api/admin/companies/${slug}/modules`, { module: mod });
   if (j.restyle_run) alert(`Added. A brand restyle build (run #${j.restyle_run}) started; deploy it from the improvement board.`);
-  else if (c && c.brand && c.brand.status === "done") alert("Added. The restyle build could not start; use the Restyle button.");
+  else if (j.ok && c && c.brand && c.brand.status === "done") alert("Added. The restyle build could not start; use the Restyle button.");
   load();
 }
 // A new module starts as a request card on the company's board; the popout opens there.
@@ -513,6 +689,10 @@ async function loadAccounts() {
   else if (A.shared_password_open) notes.push(`<div class="note amber">The shared admin password still opens admin, because no account has a working authenticator yet.</div>`);
   else notes.push(`<div class="note good">The shared admin password no longer opens admin. If SOS_ADMIN_PASSWORD is still a Railway variable, it can go.</div>`);
   document.getElementById("acc-notes").innerHTML = notes.join("");
+  P.signin = ME.two_fa_off ? { value: "2FA is OFF", level: "red", title: "SOS_ADMIN_2FA=off: accounts sign in with a password alone" }
+    : !A.key_pinned ? { value: "SOS_CONNECTION_KEY not set", level: "red", title: "Authenticator setup is refused until it exists" }
+    : (ME.shared_password || A.shared_password_open) ? { value: "shared password still opens admin", level: "amber", title: "No account has a working authenticator yet" }
+    : { value: "accounts with 2FA", level: "ok", title: "The shared admin password no longer opens admin" };
   const mine = ME.me ? ME.me.id : null;
   document.getElementById("acc-list").innerHTML = A.accounts.length ? `<tr><th>Name</th><th>Signs in as</th><th>Authenticator</th><th>Last sign-in</th><th></th></tr>` + A.accounts.map(a => `<tr>
     <td><b>${esc(a.display_name)}</b>${a.id === mine ? ' <small class="sub">(you)</small>' : ""}${a.status !== "active" ? ' <span class="fail">switched off</span>' : ""}${a.locked ? ' <span class="warn">locked for now</span>' : ""}</td>
@@ -524,7 +704,11 @@ async function loadAccounts() {
   document.getElementById("acc-me").innerHTML = ME.me ? `<button class="quiet" onclick="changePassword()">Change my password</button>${ME.me.enrolled ? "" : `<button class="go" onclick="enrollStart(false)">Set up my authenticator</button>`}` : "";
   document.getElementById("acc-events").innerHTML = `<tr><th>When</th><th>What</th><th>Who</th><th>From</th><th>Detail</th></tr>` + A.events.map(e => `<tr><td style="text-align:left;white-space:nowrap">${when(e.at)}</td><td style="text-align:left" class="${/bad_|fail|refused|locked|replayed|break_glass|unreadable/.test(e.event) ? "warn" : ""}">${esc(e.event)}</td><td style="text-align:left">${esc(e.login || "")}</td><td style="text-align:left">${esc(e.ip || "")}</td><td style="text-align:left"><small>${esc(e.detail ? JSON.stringify(e.detail) : "")}</small></td></tr>`).join("");
   const g = A.edge || {};
-  document.getElementById("edge-line").innerHTML = `<b>Edge check</b> (requests must come through Cloudflare): ` + (g.mode === "off" ? `<span class="warn">off</span>. SOS_EDGE_SECRET is not set, so a request sent straight to Railway is answered.`
+  P.edge = g.mode === "off" ? { value: "off", level: "amber" } : g.mode === "report" ? { value: "report only", level: "amber" } : { value: "enforced", level: g.this_request_carried_it ? "ok" : "red" };
+  drawPills();
+  const edgeEl = document.getElementById("edge-line");
+  edgeEl.className = "note " + (g.mode === "off" || g.mode === "report" ? "amber" : g.this_request_carried_it ? "good" : "bad");
+  edgeEl.innerHTML = `<b>Edge check</b>: ` + (g.mode === "off" ? `<span class="warn">off</span>. SOS_EDGE_SECRET is not set, so a request sent straight to Railway is answered.`
     : `${g.mode === "report" ? '<span class="warn">report only</span>, nothing is refused yet' : '<span class="ok">enforced</span>'}. This request ${g.this_request_carried_it ? '<span class="ok">carried the edge header</span>' : '<span class="fail">did NOT carry the edge header</span> (do not enforce until it does)'}. Since ${when(g.since)}: ${g.with_secret} with it, ${g.without_secret} without${g.refused ? `, ${g.refused} refused` : ""}${g.last_without ? `; last without: ${esc(g.last_without.path)} from ${esc(g.last_without.ip)} at ${when(g.last_without.at)}` : ""}.`)
     + ` <span class="sub">You appear to come from ${esc(g.client_ip || "")}.</span>`;
 }
@@ -606,11 +790,16 @@ async function enrollVerify(inCard) {
   const html = `<p><b>Done. Now save these ten recovery codes</b> somewhere that is not your phone (a password manager, a printed page).</p>
     <p class="sub" style="margin-top:4px">Each one signs you in once in place of the app's code, for the day the phone is lost. They are shown this once and never again.</p>
     <div class="codes">${j.recovery_codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
-    <div><button class="quiet" id="rc-copy">Copy them</button><a id="rc-dl" download="anetix-sos-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.href='/admin'">I have saved them</button></div>`;
+    <div><button class="quiet" id="rc-copy">Copy them</button><a id="rc-dl" download="anetix-sos-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.hash='accounts';location.reload()">I have saved them</button></div>`;
   if (inCard) document.getElementById("enroll-body").innerHTML = html; else openModal(`<h2>Your authenticator is set up</h2>${html}`);
   document.getElementById("rc-dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix SOS recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
   document.getElementById("rc-copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(text);
 }
+AdminShell.mount({
+  title: "Admin",
+  tabs: [{ id: "health", label: "Health" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
+  onShow(id) { if (id === "companies") drawCompanies(); window.scrollTo(0, 0); },
+});
 load();
 </script>
 <script src="/assets/feedback-widget.js" data-module="platform"></script>

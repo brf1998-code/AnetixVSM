@@ -1,0 +1,45 @@
+/* The standard header for Anetix's own pages (the admin side): the navy band with who is signed in, the status
+   pills that stay on every tab, and the tab row. Used by /admin today; written as its own file so the other
+   admin-side pages can take the same header later. Goes with admin-shell.js. Nothing here is a secret: /assets
+   is served before the login. */
+:root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --green:#2e7d4f; --red:#b3261e; --amber:#c2620a; }
+* { box-sizing:border-box; margin:0; }
+body { font-family:system-ui,sans-serif; background:var(--fog); color:var(--ink); padding:0 0 64px; }
+a { color:var(--navy); }
+
+#shell { position:sticky; top:0; z-index:10; background:var(--navy); color:#fff; box-shadow:0 1px 0 rgba(0,0,0,.15); }
+#shell .inner { max-width:1240px; margin:0 auto; padding:0 18px; }
+#shell .top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding-top:10px; min-height:40px; }
+#shell h1 { font-size:17px; font-weight:800; letter-spacing:.01em; }
+#shell h1 small { font-size:12.5px; font-weight:500; opacity:.75; margin-left:6px; }
+#shell .who { margin-left:auto; font-size:12px; opacity:.92; white-space:nowrap; }
+#shell .who a { color:#fff; margin-left:10px; }
+#shell .pills { display:flex; gap:6px; flex-wrap:wrap; padding:8px 0 2px; }
+#shell .pill { display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,.1); color:#fff; border-radius:14px; padding:3px 10px 3px 8px; font-size:12px; text-decoration:none; line-height:1.5; border:1px solid transparent; }
+#shell .pill:hover { background:rgba(255,255,255,.18); }
+#shell .pill i { width:8px; height:8px; border-radius:50%; background:#9fb0c4; flex:none; }
+#shell .pill b { font-weight:600; opacity:.75; }
+#shell .pill.ok i { background:#5fd08a; }
+#shell .pill.amber i { background:#ffb454; } #shell .pill.amber { border-color:rgba(255,180,84,.55); }
+#shell .pill.red i { background:#ff7a70; } #shell .pill.red { border-color:#ff7a70; background:rgba(179,38,30,.45); }
+#shell nav { display:flex; gap:2px; margin-top:8px; overflow-x:auto; scrollbar-width:none; }
+#shell nav::-webkit-scrollbar { display:none; }
+#shell nav a { color:#fff; opacity:.78; text-decoration:none; font-size:13.5px; font-weight:700; padding:9px 14px 8px; border-radius:8px 8px 0 0; white-space:nowrap; border-bottom:3px solid transparent; }
+#shell nav a:hover { opacity:1; background:rgba(255,255,255,.08); }
+#shell nav a.on { opacity:1; background:var(--fog); color:var(--navy); }
+#shell nav a .n { font-weight:500; opacity:.7; margin-left:4px; }
+#shell nav a .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-left:6px; vertical-align:1px; }
+#shell nav a .dot.amber { background:#ffb454; } #shell nav a .dot.red { background:#ff7a70; }
+#shell nav a.on .dot.amber { background:var(--amber); } #shell nav a.on .dot.red { background:var(--red); }
+/* a page that is only the authenticator setup shows the band and nothing to click in it */
+body.enroll-only #shell .pills, body.enroll-only #shell nav { display:none; }
+body.enroll-only #shell .top { padding-bottom:10px; }
+
+main { max-width:1240px; margin:0 auto; padding:6px 18px 0; }
+.tabpanel { display:none; } .tabpanel.on { display:block; }
+.tabhead { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin:14px 0 2px; }
+.tabhead h2 { font-size:19px; } .tabhead .sub { flex:1; min-width:240px; }
+@media (max-width:640px) {
+  #shell { position:static; } #shell .inner, main { padding-left:12px; padding-right:12px; } #shell .who { margin-left:0; white-space:normal; }
+  #shell .pills { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; } #shell .pill { flex:none; white-space:nowrap; }
+}

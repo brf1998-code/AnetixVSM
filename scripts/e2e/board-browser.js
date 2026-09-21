@@ -87,7 +87,7 @@ const R = runner(), t = R.t;
   t("a floor device gets no buttons and no more on the cards", (await fb.locator(".card button, .card details.more, #together .together, #toolbar button").count()) === 0);
 
   // ---- the admin page reaches what left the board header
-  const a = await ctxA.newPage(); watch(a, "admin"); await a.goto(BASE + "/admin"); await a.waitForSelector("#companies .card .links", { timeout: 10000 });
+  const a = await ctxA.newPage(); watch(a, "admin"); await a.goto(BASE + "/admin#companies"); await a.waitForSelector("#companies .card .links", { timeout: 10000 });   // the Companies tab: one company open at a time
   const links = await a.locator("#companies .card .links").first().innerText();
   t("the company card on the admin page links to Settings, the agent settings, the checks log, people, connections and the record", ["Settings", "Agent settings", "Checks log", "People", "Connections", "Download the record"].every((x) => links.includes(x)), links);
 

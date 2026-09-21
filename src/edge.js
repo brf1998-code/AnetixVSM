@@ -17,12 +17,18 @@
 //    nothing and only counts and logs, which is how to find out the rule works
 //    BEFORE it can lock every plant out: set the secret with report, look at
 //    /admin, then take report away. Unset secret: no check at all (local dev).
-// 2. The hop. Railway's edge sets X-Real-IP to whoever connected to it. When
-//    that address is one of Cloudflare's, CF-Connecting-IP is believed;
-//    otherwise the request came round the side and X-Real-IP itself is the
-//    client. This is the second line: it matters in report mode and for
-//    /health, and it is only as good as Railway overwriting a forged
-//    X-Real-IP, which is why the secret is the gate and this is not.
+// 2. The hop. Written on the belief that Railway's edge sets X-Real-IP to
+//    whoever connected to it: when that address is one of Cloudflare's,
+//    CF-Connecting-IP is believed, otherwise X-Real-IP itself is the client.
+//    SEEN LIVE 2026-09-21: it does not. Requests that came through Cloudflare
+//    arrived with the VISITOR's address in X-Real-IP, so Railway fills it from
+//    the forwarded chain, the range check never matches there, and nothing
+//    says a sender cannot forge it. So on Railway THE SECRET IS THE WHOLE
+//    GATE. Once it is enforced every request that gets in is proven and reads
+//    CF-Connecting-IP, which Cloudflare sets itself; this second line is only
+//    what names an address while the check is off or in report mode, and it is
+//    no better than the header it replaced. Kept for a host whose edge does
+//    report the connecting peer.
 //
 // No dependency: net.BlockList takes CIDR ranges for v4 and v6.
 const net = require("net");
@@ -66,7 +72,7 @@ function clientIp(req) {
   const h = req.headers || {}, socket = bare(req.socket && req.socket.remoteAddress);
   const cf = bare(h["cf-connecting-ip"]), real = bare(h["x-real-ip"]);
   if (req.sosViaEdge) return cf || real || socket || "unknown";       // proven to have come through Cloudflare
-  if (real) return isCloudflare(real) && cf ? cf : real;                // Railway's edge says who connected to it
+  if (real) return isCloudflare(real) && cf ? cf : real;                // not proven: the edge's word for who it is (on Railway the forwarded visitor address, see 2 above)
   if (isLoopback(socket)) return socket;                                // the platform calling itself
   return cf || bare(req.ip) || socket || "unknown";                     // nothing better to go on (no Railway edge in front): as before
 }

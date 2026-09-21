@@ -19,6 +19,43 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   2026-09-21, see "Named admin accounts"; `SOS_ADMIN_PASSWORD` opens it only
   until the first authenticator is set up) lists companies, their modules,
   docs, spend, and adds companies or library modules to them.
+- **The admin page is five tabs, one job each** (2026-09-21, `public/admin.html`
+  plus the standard header `public/assets/admin-shell.js` and
+  `admin-shell.css`; Brendan: the page had become fix stacked on fix and he got
+  lost in it). The header is on every tab: the navy band, who is signed in,
+  sign out, a row of status pills (AI credit, AI spend against the instance
+  cap, Waiting on us = open data requests, Isolation, Edge, Sign-in; each is a
+  link to the tab that holds the detail, amber or red when it wants a look) and
+  the tab row, where a tab carries a count (Companies, Library) or a dot when
+  something on it wants looking at. The tab in view is the address's hash, so it
+  can be linked, reloaded and reached with the back button: `/admin#health`
+  (the default), `#companies/<slug>`, `#companies/new`, `#library`,
+  `#accounts`, `#instance`. **Health**: data requests first when there are any
+  ("waiting on us"), then the fleet tiles and the per-company table; the long
+  "how to read these numbers" text is folded. **Companies**: a list on the left
+  (open feedback, modules, spend this month, a red line when sign-in needs
+  setting) and ONE company open on the right, in sections: Go to (the links
+  that left the board), Modules (open, tour, add from the library, New module),
+  Sign-in, AI budget and models, Brand, Agent docs, Danger zone. Add a company
+  is the last entry of the list and opens in the same pane. **Library**: see
+  "Module library and tours". **Accounts**: the admin accounts, My account, Add
+  an account, the sign-in log. **Instance**: AI credit and the glide slope,
+  spend and default models (with each company's spend and own cap), module
+  isolation, the edge check, backup and restore. Older bullets below that say
+  "the top card on /admin" or "the accounts card says whether this request
+  carried the header" mean these tabs: loop health is Health, AI credit and
+  isolation and the edge check are Instance. No API changed apart from the
+  library in `/api/admin/overview`. Every loader drops what it learned into `P`
+  and calls `drawPills()`; a new instance-wide warning belongs there as a pill,
+  not as another card on top of a tab. The ids the e2e suites hold on to are
+  unchanged (`#health-card`, `#h-table`, `#credit`, `#credit-line`,
+  `#companies .card .links`, `#accounts-card`, `#acc-list`, `#acc-events`,
+  `#enroll-card`, `#edge-line`); a suite that needs a tab goes to its hash.
+  An account with no authenticator still sees the setup and nothing else: the
+  band without pills or tabs, `#enroll-card` outside `<main>`, and everything
+  in `<main>` hidden. The shell is its own two files so the other admin-side
+  pages can take the same header later (decided: /admin only for now); /assets
+  is served before the login, so nothing secret goes in them.
 - Module schemas are `mod_<company>_<module>` / `stg_...` / `snap_...`. The
   first boot after this change renamed the old `mod_paperline` schema and
   moved everything under company `demo` (`src/db.js upgradeSingleTenant`).
@@ -126,10 +163,25 @@ One instance hosts many **companies**. Everything is scoped by company slug:
 - **Run diagnostics**: when the agent process dies, the run log gets a `diag`
   entry (model, message count, whether init was seen, stderr tail, prompt
   sizes) and the error says at what stage it died.
-- **Module library and tours** (`/admin` top card, `registry.libraryModules`,
-  `registry.tourFor`, `GET /api/c/<slug>/modules/<m>/tour`): the repo's
-  `modules/*` listed with description (module.json `description`), screens,
-  migrations, where it is live, and a Start tour link
+- **Module library and tours** (the Library tab of `/admin`,
+  `registry.libraryModules`, `libraryView` in `src/feedback.js`,
+  `registry.tourFor`, `GET /api/c/<slug>/modules/<m>/tour`): every SEPARATE
+  module once, then the instances of it (Brendan, 2026-09-21). Two kinds of
+  entry in `overview.library`. `origin: "repo"`: the repo's `modules/*` with
+  description (module.json `description`), screens, migrations, smoke checks,
+  tour; its `instances` are the companies that have it (live version, staged
+  version, how many versions and how many built there, last change, Open and
+  Start tour links), and the card can add it to a company that lacks it (the
+  same `POST /api/admin/companies/<slug>/modules` as the company's own Modules
+  section). `origin: "company"`: a module a company made through module
+  creation; it has no repo copy, so it is an entry of its own (`key`
+  `<company>/<name>`, `made_at`), what it is comes from the module.json and
+  tour.json of the version on the floor (else the staged one, else v1), and it
+  has one instance. Two companies that each made a module with the same slug
+  are two entries, never merged; a name that is in the repo library always
+  belongs to the repo entry. There is no way yet to copy a company-made module
+  to another company or to promote it into the repo library; the card only
+  shows it. `deployed` is kept on each entry for older callers. Start tour link
   (`/c/<slug>/m/<m>/?tour=1`). The tour engine lives in
   `public/assets/feedback-widget.js`: steps from the module's `tour.json`
   (the live version's copy if it has one, else the library copy), state in
@@ -461,7 +513,22 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   edge) is the client unless it is one of Cloudflare's published ranges
   (`net.BlockList`, the 15 + 7 ranges checked 2026-09-21, `SOS_CF_RANGES`
   overrides); with no Railway edge in front it reads as before. Never
-  `X-Forwarded-For`. Unit: `scripts/test-edge.js`.
+  `X-Forwarded-For`. Unit: `scripts/test-edge.js`. **Live since 2026-09-21,
+  enforced**: the side door was real (a curl straight at the Railway edge
+  answered 200 from `railway-hikari` with no `cf-ray`), the Cloudflare rule is
+  "Request Header Transform Rule", hostname equals `sos.finnoperations.com`,
+  Set static `X-SOS-Edge`; it was proven in report mode first (the 11 requests
+  without the header were one page load in the seconds before the rule
+  reached Cloudflare's edge), then `SOS_EDGE_MODE` came out and the same curl
+  against `/login` answers 403 (`[edge] refused` in the deploy log). Test the
+  gate against `/login`, never `/health`, which is exempt and answers 200
+  forever. A variable change on Railway takes about two minutes to serve: the
+  old container answers until the new one passes its health check. Seen the
+  same day: Railway fills `X-Real-IP` with the VISITOR's address for requests
+  that came through Cloudflare, so the range check never matches there and
+  the secret is the whole gate; rotating it means changing the Cloudflare rule
+  and `SOS_EDGE_SECRET` together, with `SOS_EDGE_MODE=report` set while the
+  two disagree.
 - **Per-company AI budget** (2026-09-19). `assertUnderCap(company)` now checks
   the company's own monthly cap (`platform.companies.monthly_cap_usd`, set on
   the admin page) against that company's own spend AND the instance cap, so one

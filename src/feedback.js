@@ -593,9 +593,57 @@ router.get("/api/c/:slug/record/export", requireManager, async (req, res) => {
 });
 
 // ---- admin: companies across the instance ------------------------------------
+// The module library as the admin page shows it: every separate module once, then the instances of it.
+// Two kinds of entry. "repo": a module that ships in modules/<name>/ and is added to companies from there; its
+// instances are the companies that have it. "company": a module a company made through module creation
+// (src/modulebuild.js); it lives in that company's versions only, so it is an entry of its own with one instance,
+// and what it is (description, screens, tour, smoke checks) is read from the version on the floor, else the staged
+// one, else the first. Two companies that each made a module with the same slug are two entries, never merged.
+async function libraryView(modules) {
+  const stats = (await q(`SELECT company, module, count(*)::int AS versions, count(*) FILTER (WHERE source='build')::int AS built, max(created_at) AS last_change
+    FROM platform.module_versions GROUP BY company, module`)).rows;
+  const instance = (x) => {
+    const st = stats.find((v) => v.company === x.company && v.module === x.name) || {};
+    return { company: x.company, live_version: x.live_version, staged_version: x.staged_version, versions: st.versions || 0, built: st.built || 0, last_change: st.last_change || x.created_at || null };
+  };
+  const lib = registry.libraryModules();
+  const out = lib.map((m) => {
+    const instances = modules.filter((x) => x.name === m.name).map(instance);
+    return {
+      key: m.name, origin: "repo", made_at: null,
+      name: m.name, title: m.title, description: m.description || "", screens: m.screens, migrations: m.migrations,
+      tourSteps: m.tour && m.tour.steps ? m.tour.steps.length : 0, tourTitle: m.tour ? m.tour.title : null,
+      smoke: (m.smoke || []).length,
+      instances, deployed: instances.filter((i) => i.live_version).map((i) => ({ company: i.company, live_version: i.live_version })),
+    };
+  });
+  const own = modules.filter((x) => !lib.some((m) => m.name === x.name));
+  if (own.length) {
+    const facts = (await q(`SELECT m.company, m.name, v.files->>'module.json' AS manifest, v.files->>'tour.json' AS tour,
+        (SELECT count(*)::int FROM jsonb_object_keys(COALESCE(v.files, '{}'::jsonb)) k WHERE k LIKE 'migrations/%.sql') AS migrations
+      FROM platform.modules m LEFT JOIN platform.module_versions v
+        ON v.company = m.company AND v.module = m.name AND v.version = COALESCE(m.live_version, m.staged_version, 1)
+      WHERE m.name <> ALL($1::text[])`, [lib.map((m) => m.name)])).rows;
+    const parse = (t) => { try { return t ? JSON.parse(t) : null; } catch (e) { return null; } };
+    const screensOf = (mf) => { try { return registry.pageEntries(mf); } catch (e) { return []; } };   // an agent-written manifest, so never trusted to be well formed
+    for (const x of own) {
+      const f = facts.find((r) => r.company === x.company && r.name === x.name) || {};
+      const manifest = parse(f.manifest) || {}, tour = parse(f.tour), inst = instance(x);
+      out.push({
+        key: `${x.company}/${x.name}`, origin: "company", made_at: x.company,
+        name: x.name, title: manifest.title || x.title, description: manifest.description || "", screens: screensOf(manifest), migrations: f.migrations || 0,
+        tourSteps: tour && tour.steps ? tour.steps.length : 0, tourTitle: tour ? tour.title : null,
+        smoke: (manifest.smoke || []).length,
+        instances: [inst], deployed: inst.live_version ? [{ company: inst.company, live_version: inst.live_version }] : [],
+      });
+    }
+  }
+  return out;
+}
+
 router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   const companies = (await q("SELECT * FROM platform.companies ORDER BY created_at")).rows;
-  const modules = (await q("SELECT company, name, title, live_version, staged_version FROM platform.modules ORDER BY company, name")).rows;
+  const modules = (await q("SELECT company, name, title, live_version, staged_version, created_at FROM platform.modules ORDER BY company, name")).rows;
   const docs = (await q("SELECT company, module, name, source, updated_at, length(content) AS bytes FROM platform.agent_docs ORDER BY company, module NULLS FIRST, name")).rows;
   const counts = (await q(`SELECT company, count(*) FILTER (WHERE status='new')::int AS open, count(*)::int AS total FROM platform.feedback GROUP BY company`)).rows;
   const spend = (await q(`
@@ -618,12 +666,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       access: auth.accessPublic(access.find((a) => a.company === c.slug)),
       brand: brandPublic(c.brand),
     })),
-    library: registry.libraryModules().map((m) => ({
-      name: m.name, title: m.title, description: m.description || "", screens: m.screens, migrations: m.migrations,
-      tourSteps: m.tour && m.tour.steps ? m.tour.steps.length : 0, tourTitle: m.tour ? m.tour.title : null,
-      smoke: (m.smoke || []).length,
-      deployed: modules.filter((x) => x.name === m.name).map((x) => ({ company: x.company, live_version: x.live_version })),
-    })),
+    library: await libraryView(modules),
     models: agent.MODELS,
     defaults: agent.DEFAULT_MODELS,
     monthlyCap: agent.MONTHLY_CAP_USD,

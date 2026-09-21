@@ -61,11 +61,16 @@ async function codeFor(secretText, delta = 0) {
   t("a good code shows the ten recovery codes", codes.length === 10 && codes.every((c) => /^[a-z2-9]{4}(-[a-z2-9]{4}){3}$/.test(c)), codes);
   t("with a download and a copy button", (await page.locator("#rc-dl").getAttribute("href")).startsWith("data:text/plain") && (await page.locator("#rc-copy").count()) === 1);
   await page.locator("#enroll-card button.go").click(); await page.waitForSelector("#acc-list tr td");
-  t("then the whole admin page opens", await page.locator("#health-card").isVisible() && await page.locator("#accounts-card").isVisible());
+  t("then the whole admin page opens, on the accounts tab, with the five tabs in the header", /#accounts$/.test(page.url()) && await page.locator("#accounts-card").isVisible() && (await page.locator("#shell nav a").count()) === 5);
+  await page.click('#shell nav a[data-tab="health"]'); await page.waitForSelector("#h-table tr td");
+  t("a tab shows its own work and nothing of the others", await page.locator("#health-card").isVisible() && !(await page.locator("#accounts-card").isVisible()));
+  await page.click('#shell nav a[data-tab="accounts"]');
   const card = await page.locator("#accounts-card").innerText();
   t("the accounts card lists the account as set up, with ten recovery codes left", /Browser E2E/.test(card) && /\(you\)/.test(card) && /set up/.test(card) && /10 recovery codes left/.test(card), card.slice(0, 600));
   t("and says the shared admin password no longer opens admin", /shared admin password no longer opens admin/.test(card));
-  t("and that the edge check is off here", /Edge check/.test(card) && /SOS_EDGE_SECRET is not set/.test(card));
+  const edgeText = await page.locator("#edge-line").innerText();   // the edge check lives on the Instance tab; the header carries its pill on every tab
+  t("and the instance tab says the edge check is off here, with a pill for it in the header", /Edge check/.test(edgeText) && /SOS_EDGE_SECRET is not set/.test(edgeText) && /off/.test(await page.locator("#pill-edge").innerText()));
+  t("the header says who is signed in", /Browser E2E/.test(await page.locator("#shell-who").innerText()));
   t("the recovery codes are not on the page any more", !codes.some((c) => card.includes(c)) && !(await page.content()).includes(codes[0]));
 
   // ---- the delete prompt asks for a fresh code, not a password
@@ -86,14 +91,14 @@ async function codeFor(secretText, delta = 0) {
   t("a wrong code says so", /code did not match/i.test(await page.locator("#err").innerText()));
   await q("UPDATE platform.accounts SET failed_count=0 WHERE login=$1", [NAME]);
   await page.fill("#code", await codeFor(secret, 0)); await page.click("button[type=submit]"); await page.waitForURL(/\/admin$/);
-  await page.waitForSelector("#acc-list tr td");
+  await page.goto(BASE + "/admin#accounts"); await page.waitForSelector("#acc-list tr td");
   t("the right code signs in to the admin page", await page.locator("#accounts-card").isVisible());
   // a recovery code in place of the app
   await page.goto(BASE + "/logout"); await page.goto(BASE + "/admin"); await page.waitForURL(/\/login/);
   await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]");
   await page.waitForSelector("#codebox", { state: "visible" }); await page.click("#userec");
   t("'use a recovery code' turns the box into a text box", (await page.locator("#code").getAttribute("placeholder")) === "recovery code");
-  await page.fill("#code", codes[3]); await page.click("button[type=submit]"); await page.waitForURL(/\/admin$/); await page.waitForSelector("#acc-list tr td");
+  await page.fill("#code", codes[3]); await page.click("button[type=submit]"); await page.waitForURL(/\/admin$/); await page.goto(BASE + "/admin#accounts"); await page.waitForSelector("#acc-list tr td");
   t("a recovery code signs in, and the card says nine left", /9 recovery codes left/.test(await page.locator("#accounts-card").innerText()));
   await page.locator("#accounts-card summary").click();
   const log = await page.locator("#acc-events").innerText();
