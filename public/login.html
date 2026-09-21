@@ -14,6 +14,10 @@
   input { width:100%; font-size:18px; padding:12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; }
   button { width:100%; margin-top:12px; background:var(--navy); color:#fff; border:none; border-radius:8px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; }
   .err { color:var(--red); font-size:13px; margin-top:10px; display:none; }
+  .staff { display:block; margin-top:16px; font-size:12px; color:var(--steel); text-align:center; }
+  #code { letter-spacing:.2em; text-align:center; }
+  .hint { color:var(--steel); font-size:12.5px; margin:10px 0 6px; line-height:1.45; }
+  .hint a { color:var(--navy); }
 </style>
 </head>
 <body>
@@ -21,9 +25,16 @@
     <h1>Symbiotic OS</h1>
     <div class="sub" id="sub">Enter the password you were given. Floor and manager passwords both work here.</div>
     <input id="co" type="text" placeholder="Company code" autocomplete="organization" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
+    <input id="nm" type="email" placeholder="Your name (email address)" autocomplete="username" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
     <input id="pw" type="password" placeholder="Password" autofocus autocomplete="current-password">
+    <div id="codebox" style="display:none">
+      <div class="hint" id="codehint">Type the 6 digit code your authenticator app shows for Anetix SOS.</div>
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digit code" maxlength="24" spellcheck="false">
+      <div class="hint"><a href="#" id="userec">Phone not with you? Use a recovery code</a></div>
+    </div>
     <button type="submit">Sign in</button>
     <div class="err" id="err">That password did not match.</div>
+    <a href="#" class="staff" id="staff">Anetix staff sign in</a>
   </form>
 <script>
 // A login belongs to one company. The link or the wall code that brought the
@@ -33,18 +44,41 @@ const next = params.get("next");
 const fromNext = /^\/c\/([a-z0-9][a-z0-9-]{1,40})(?:\/|$)/.exec(next || "");
 let company = (params.get("c") || (fromNext && fromNext[1]) || "").toLowerCase();
 const co = document.getElementById("co"), err = document.getElementById("err");
-if (company) document.getElementById("sub").textContent = "Signing in to " + company + ". Enter the password you were given. Floor and manager passwords both work here.";
+const nm = document.getElementById("nm"), code = document.getElementById("code"), codebox = document.getElementById("codebox"), sub = document.getElementById("sub");
+if (company) sub.textContent = "Signing in to " + company + ". Enter the password you were given. Floor and manager passwords both work here.";
+// Anetix's own people sign in by name, with a code from an authenticator app after the password. The floor never
+// needs this, so it stays behind a small link (and opens by itself when the link that brought you here was /admin).
+let staff = false;
+function staffMode() {
+  staff = true; nm.style.display = "block"; co.style.display = "none"; document.getElementById("staff").style.display = "none";
+  sub.textContent = "Anetix staff: your own name and password, then the code from your authenticator app.";
+  nm.focus();
+}
+document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); };
+if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
+document.getElementById("userec").onclick = (e) => {
+  e.preventDefault(); code.value = ""; code.inputMode = "text"; code.style.letterSpacing = "normal"; code.placeholder = "recovery code";
+  document.getElementById("codehint").textContent = "Type one of the recovery codes you saved when you set the app up. Each works once."; code.focus();
+};
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
-  if (co.style.display !== "none") company = co.value.trim().toLowerCase();
-  const res = await fetch("/login", { method:"POST", headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({ password: document.getElementById("pw").value, company }) });
+  if (!staff && co.style.display !== "none") company = co.value.trim().toLowerCase();
+  const body = staff ? { name: nm.value.trim(), password: document.getElementById("pw").value, code: codebox.style.display === "none" ? "" : code.value.trim() }
+    : { password: document.getElementById("pw").value, company };
+  const res = await fetch("/login", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
   const j = await res.json().catch(() => ({}));
+  if (staff && (j.need_code || !res.ok)) {
+    // the password was right and the account has an authenticator: ask for the code, then send all three together
+    if (j.need_code) { const first = codebox.style.display === "none"; codebox.style.display = "block"; code.focus(); code.select(); if (first && res.ok) { err.style.display = "none"; return; } }
+    err.textContent = j.error ? j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : ".") : "That did not match.";
+    err.style.display = "block"; return;
+  }
   if (!res.ok) {
     if (j.need_company) { co.style.display = "block"; co.focus(); }
     err.textContent = res.status === 429 ? (j.error || "Too many tries. Wait a few minutes.") : j.need_company ? "Which company is this login for? Type its code, the word after /c/ in its address." : "That password did not match.";
     err.style.display = "block"; return;
   }
+  if (staff) { location.href = next && /^\/(?!\/)/.test(next) && !j.enroll ? next : "/admin"; return; }
   // a company login lands on its own board unless the link asked for a page inside that company
   const own = j.company ? "/c/" + j.company + "/" : "/";
   location.href = next && next.startsWith("/") && !next.startsWith("//") && (!j.company || next.startsWith(own)) ? next : own;

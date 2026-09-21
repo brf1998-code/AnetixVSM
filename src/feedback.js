@@ -10,7 +10,7 @@ const agent = require("./agent");
 const review = require("./review");
 const diagrams = require("./diagrams");
 const auth = require("./auth");
-const { requireManager, requireAdmin, checkAdminPassword } = auth;
+const { requireManager, requireAdmin } = auth;
 const qrcode = require("./qrcode");
 const brand = require("./brand");
 const backup = require("./backup");
@@ -898,16 +898,18 @@ router.post("/api/admin/companies/:slug/modules/:module/restyle", requireAdmin, 
 });
 
 // ---- admin: delete a company ----------------------------------------------------
-// Two gates: the slug typed back, and the admin password again (checked here).
+// Two gates: the slug typed back, and a fresh code from the admin's authenticator
+// (auth.checkAdminCode; the shared admin password again while that still exists).
 // Refused while any build of that company is running or queued. Everything the
 // company owns goes: module schemas and snapshots, versions, feedback, runs,
 // docs, reviews, diagrams, batches, the mounts, the materialized files.
 router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) => {
-  const { confirm_slug, password } = req.body || {};
+  const { confirm_slug, password, code } = req.body || {};
   const co = await company(req.params.slug);
   if (!co) return res.status(404).json({ error: "unknown company" });
   if (String(confirm_slug || "") !== co.slug) return res.status(400).json({ error: "type the company slug exactly to confirm" });
-  if (!checkAdminPassword(password)) { await logEvent("company_delete_refused", co.slug, { reason: "wrong password" }); return res.status(403).json({ error: "wrong admin password" }); }
+  const gate = await auth.checkAdminCode(req, { code, password }, `delete_company:${co.slug}`);
+  if (!gate.ok) { await logEvent("company_delete_refused", co.slug, { reason: gate.error, by: req.sosAccount ? req.sosAccount.login : null }); return res.status(403).json({ error: gate.error }); }
   const busy = (await q("SELECT count(*)::int AS n FROM platform.build_runs WHERE company=$1 AND status IN ('running','queued','waiting')", [co.slug])).rows[0].n;
   if (busy) return res.status(409).json({ error: `${busy} build(s) still open on this company; cancel them first` });
   try {
@@ -935,7 +937,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     await require("./runner").deleteCompany(co.slug);   // its processes, its two database logins, its user ids
     counts.record = await require("./record").deleteCompany(co.slug);
     await q("DELETE FROM platform.companies WHERE slug=$1", [co.slug]);
-    await logEvent("company_deleted", co.slug, { name: co.name, modules: mods, counts });
+    await logEvent("company_deleted", co.slug, { name: co.name, modules: mods, counts, by: req.sosAccount ? req.sosAccount.login : null });
     res.json({ ok: true, counts });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -952,13 +954,14 @@ router.get("/api/admin/backup", requireAdmin, async (_req, res) => {
 // Restore replaces everything and then exits the process (Railway restarts it;
 // boot rebuilds versions and mounts from the restored rows).
 router.post("/api/admin/restore", requireAdmin, express.json({ limit: "300mb" }), async (req, res) => {
-  const { password, backup: doc } = req.body || {};
-  if (!checkAdminPassword(password)) return res.status(403).json({ error: "wrong admin password" });
+  const { password, code, backup: doc } = req.body || {};
+  const gate = await auth.checkAdminCode(req, { code, password }, "restore_backup");
+  if (!gate.ok) return res.status(403).json({ error: gate.error });
   const busy = (await q("SELECT count(*)::int AS n FROM platform.build_runs WHERE status='running'")).rows[0].n;
   if (busy) return res.status(409).json({ error: "a build is running; abort it first" });
   try {
     await backup.restore(doc);
-    await logEvent("backup_restored", null, { taken_at: doc.taken_at });
+    await logEvent("backup_restored", null, { taken_at: doc.taken_at, by: req.sosAccount ? req.sosAccount.login : null });
     res.json({ ok: true, restarting: true });
     console.log("[backup] restored; exiting so the platform reboots on the restored data");
     setTimeout(() => process.exit(1), 800);

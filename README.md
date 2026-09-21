@@ -33,7 +33,9 @@ manager (local dev). Set both for anything reachable from the internet.
 | `DATABASE_URL` | Postgres connection (default `postgres://sos:sos@localhost:5432/sos`) |
 | `ANTHROPIC_API_KEY` | enables real proposals and builds |
 | `SOS_MODEL_PROPOSE`, `SOS_MODEL_BUILD`, `SOS_MODEL_REVIEW` | instance defaults (`claude-sonnet-5`, `claude-sonnet-5`, `claude-opus-5`); companies override in the app |
-| `SOS_FLOOR_PASSWORD`, `SOS_MANAGER_PASSWORD`, `SOS_ADMIN_PASSWORD` | three-role access (admin falls back to the manager password) |
+| `SOS_FLOOR_PASSWORD`, `SOS_MANAGER_PASSWORD`, `SOS_ADMIN_PASSWORD` | the old shared passwords: floor and manager only for a company still on `legacy_login`; admin only until the first named admin account has set up its authenticator (`src/accounts.js`), then take `SOS_ADMIN_PASSWORD` out |
+| `SOS_CONNECTION_KEY` | the key stored secrets are encrypted under (ERP logins, admin authenticator secrets); required before an authenticator can be set up; never change it |
+| `SOS_EDGE_SECRET`, `SOS_EDGE_MODE` | the value Cloudflare's Transform Rule puts in `X-SOS-Edge`; requests without it are refused (`report` = count only) (`src/edge.js`) |
 | `SESSION_SECRET` | signs the session cookie |
 | `SOS_MAX_RUN_USD` | per build run cap (default 1.50); the run is aborted past it |
 | `SOS_MONTHLY_CAP_USD` | no new proposals or runs past this (default 25) |

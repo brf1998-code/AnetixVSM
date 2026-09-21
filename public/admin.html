@@ -52,6 +52,18 @@
   .ok { color:var(--green); font-weight:700; } .warn { color:#c2620a; font-weight:700; }
   #h-days { float:right; font-size:12px; padding:5px 7px; margin-top:-3px; }
   .kpi small { display:block; font-size:11px; color:var(--steel); text-transform:none; letter-spacing:0; margin-top:1px; }
+  /* an account with no authenticator yet sees the setup and nothing else (the server refuses the rest anyway) */
+  body.enroll-only > *:not(h1):not(#enroll-card):not(#modal) { display:none; }
+  table.acc { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; }
+  table.acc th, table.acc td { text-align:left; padding:6px 8px 6px 0; border-bottom:1px solid var(--line); vertical-align:middle; }
+  table.acc th { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; }
+  table.acc button { margin:2px 4px 2px 0; min-height:30px; padding:5px 9px; }
+  .note { margin-top:8px; padding:9px 12px; border-radius:9px; background:var(--fog); font-size:13px; line-height:1.45; border-left:4px solid var(--steel); }
+  .note.bad { border-left-color:var(--red); } .note.good { border-left-color:var(--green); } .note.amber { border-left-color:#c2620a; }
+  .qr { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; margin-top:10px; }
+  .qr code, .codes { font-family:ui-monospace,monospace; font-size:14px; }
+  .codes { columns:2; margin:10px 0; line-height:1.9; }
+  .primary { background:var(--navy); color:#fff; }
 </style>
 </head>
 <body>
@@ -84,9 +96,22 @@
     <select id="c-model"></select>
     <button class="go" onclick="addCompany()">Create</button>
   </div>
+  <div class="card" id="enroll-card" style="display:none"></div>
+  <div class="card" id="accounts-card">
+    <h2>Admin accounts <small>Anetix's own people. Each has a login of their own and a code from an authenticator app. Floor and manager logins are not these.</small></h2>
+    <div id="acc-notes"></div>
+    <table class="acc" id="acc-list"></table>
+    <div id="acc-me" style="margin-top:6px"></div>
+    <div style="margin-top:12px"><b>Add an account</b><br>
+      <input id="a-login" type="email" placeholder="email address (the name they sign in with)" autocomplete="off" style="width:280px;max-width:100%">
+      <input id="a-name" placeholder="Their name" autocomplete="off" style="width:180px;max-width:100%">
+      <button class="quiet" onclick="addAccount()">Add, and make up a first password</button></div>
+    <details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px">Sign-in log <span class="sub">(the last 60 things: who tried what, from where)</span></summary><div class="hwrap"><table class="health" id="acc-events"></table></div></details>
+    <div class="sub" id="edge-line" style="margin-top:10px"></div>
+  </div>
   <div class="card">
     <h2>Backup and restore</h2>
-    <p class="sub">The backup is one JSON file with every platform table (companies, module versions and their files, feedback, runs, docs, reviews, diagrams) and every company's live module data. Take one before every demo. Restore replaces everything on the instance with the file and restarts the platform; it asks for the admin password.</p>
+    <p class="sub">The backup is one JSON file with every platform table (companies, module versions and their files, feedback, runs, docs, reviews, diagrams) and every company's live module data, plus the admin accounts (passwords and recovery codes as hashes, authenticator secrets encrypted). The sign-in log is left out. Take one before every demo. Restore replaces everything on the instance with the file and restarts the platform; it asks for a fresh code from your authenticator, and every admin signs in again afterwards.</p>
     <a href="/api/admin/backup" download><button class="go">Download backup</button></a>
     <button class="quiet" onclick="openRestore()">Restore from a backup file</button>
     <span class="sub" id="backup-note"></span>
@@ -280,6 +305,9 @@ async function dataSend(id, what, note) {
   await post(`/api/admin/data-requests/${id}/${what}`, { note }); closeModal(); loadData(); loadHealth();
 }
 async function load() {
+  if (!(await loadMe())) return;
+  if (ME.enroll_required) return enrollOnly();
+  loadAccounts().catch((e) => console.error("accounts:", e));
   loadData().catch((e) => console.error("data requests:", e));
   const r = await fetch("/api/admin/overview");
   if (r.status === 401) { location.href = "/login?next=/admin"; return; }
@@ -399,21 +427,21 @@ async function newModule(slug) {
   const j = await post(`/api/c/${slug}/intakes`, {});
   if (j && j.id) location.href = `/c/${slug}/?intake=${j.id}`;
 }
-// ---- delete a company: slug typed back plus the admin password, checked server-side
+// ---- delete a company: slug typed back plus a fresh authenticator code, checked server-side
 function openModal(html) { document.getElementById("mcard").innerHTML = html; document.getElementById("modal").classList.add("on"); }
 function closeModal() { document.getElementById("modal").classList.remove("on"); }
 function openDelete(slug, name) {
   openModal(`<h2>Delete ${esc(name)}?</h2>
     <p class="sub">Everything this company owns goes: its modules and their data, every version, all feedback, builds, docs, reviews and diagrams. There is no undo apart from a backup file. Refused while a build is open.</p>
     <input id="del-slug" placeholder="type the slug: ${esc(slug)}" autocomplete="off">
-    <input id="del-pw" type="password" placeholder="admin password" autocomplete="current-password">
+    ${stepField("del")}
     <div><button class="danger" onclick="doDelete('${slug}')">Delete this company</button><button class="quiet" onclick="closeModal()">Keep it</button></div>`);
-  setTimeout(() => document.getElementById("del-slug").focus(), 50);
+  setTimeout(() => { const el = document.getElementById("del-slug"); if (el) el.focus(); }, 50);
 }
 async function doDelete(slug) {
-  const confirm_slug = document.getElementById("del-slug").value.trim(), password = document.getElementById("del-pw").value;
+  const confirm_slug = document.getElementById("del-slug").value.trim();
   if (confirm_slug !== slug) return alert("the slug does not match");
-  const r = await fetch(`/api/admin/companies/${slug}/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm_slug, password }) });
+  const r = await fetch(`/api/admin/companies/${slug}/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm_slug, ...stepValue("del") }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) return alert(j.error || "failed");
   closeModal(); load();
@@ -423,22 +451,165 @@ function openRestore() {
   openModal(`<h2>Restore from a backup</h2>
     <p class="sub">Replaces every company, module, version and feedback item on this instance with the file, then restarts the platform (about a minute). Take a fresh backup first if anything here matters.</p>
     <input id="rs-file" type="file" accept="application/json,.json">
-    <input id="rs-pw" type="password" placeholder="admin password" autocomplete="current-password">
+    ${stepField("rs")}
     <div><button class="danger" onclick="doRestore()">Restore and restart</button><button class="quiet" onclick="closeModal()">Cancel</button></div>
     <div class="sub" id="rs-note"></div>`);
 }
 async function doRestore() {
-  const f = document.getElementById("rs-file").files[0], password = document.getElementById("rs-pw").value;
+  const f = document.getElementById("rs-file").files[0];
   if (!f) return alert("pick the backup file");
   let doc;
   try { doc = JSON.parse(await f.text()); } catch (e) { return alert("that file is not valid JSON"); }
   if (!confirm(`Restore the backup taken ${doc.taken_at || "(unknown time)"}? Everything on the instance is replaced.`)) return;
   document.getElementById("rs-note").textContent = "Restoring…";
-  const r = await fetch("/api/admin/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password, backup: doc }) });
+  const r = await fetch("/api/admin/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...stepValue("rs"), backup: doc }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { document.getElementById("rs-note").textContent = ""; return alert(j.error || "failed"); }
   document.getElementById("rs-note").textContent = "Restored. The platform is restarting; this page reloads in a minute.";
   setTimeout(() => location.reload(), 60000);
+}
+// ---- admin accounts and the authenticator (src/accounts.js) -------------------------------------------------
+// ME: who is signed in. step_up says what a destructive action asks for: "code" (a fresh one from the authenticator),
+// "password" (the account's own, only under SOS_ADMIN_2FA=off) or "shared_password" (the old shared admin password,
+// which works only until the first authenticator is set up).
+let ME = null;
+async function loadMe() {
+  const r = await fetch("/api/admin/accounts/me");
+  if (r.status === 401) { location.href = "/login?next=/admin"; return null; }
+  if (r.status === 403) { document.body.innerHTML = "<p style='padding:20px'>Admin login required.</p>"; return null; }
+  ME = await r.json(); return ME;
+}
+function stepField(id) {
+  if (!ME || ME.open) return "";
+  if (ME.step_up === "code") return `<input id="${id}-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="a fresh 6 digit code from your authenticator"><p class="sub" style="margin-top:4px">The code you signed in with does not count. If it is refused, wait for the app to show the next one.</p>`;
+  if (ME.step_up === "password") return `<input id="${id}-pw" type="password" placeholder="your own password (2FA is switched off on this instance)" autocomplete="current-password">`;
+  return `<input id="${id}-pw" type="password" placeholder="the shared admin password" autocomplete="current-password">`;
+}
+function stepValue(id) {
+  const c = document.getElementById(id + "-code"), p = document.getElementById(id + "-pw");
+  return { ...(c ? { code: c.value.trim() } : {}), ...(p ? { password: p.value } : {}) };
+}
+// Ask for the step-up in a modal, then run the call with it. A session on the shared password (or local dev) is not asked.
+function withStepUp(title, text, run) {
+  if (!ME.me || ME.open) return run({});
+  openModal(`<h2>${esc(title)}</h2><p class="sub">${esc(text)}</p>${stepField("su")}
+    <div><button class="primary" id="su-go">Go ahead</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+  document.getElementById("su-go").onclick = () => run(stepValue("su"));
+  setTimeout(() => { const el = document.getElementById("su-code") || document.getElementById("su-pw"); if (el) el.focus(); }, 50);
+}
+async function accPost(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "failed"); return null; }
+  return j;
+}
+const when = (t) => t ? new Date(t).toLocaleString() : "never";
+async function loadAccounts() {
+  const r = await fetch("/api/admin/accounts"); if (!r.ok) return;
+  const A = await r.json(), notes = [];
+  if (ME.two_fa_off) notes.push(`<div class="note bad"><b>2FA is switched off on this instance</b> (SOS_ADMIN_2FA=off in Railway): accounts sign in with a password alone and every sign-in is logged as break glass. Set the authenticator up again, then take the variable out.</div>`);
+  if (!A.key_pinned) notes.push(`<div class="note bad"><b>SOS_CONNECTION_KEY is not set.</b> Authenticator secrets are encrypted under it, and setup is refused until it exists (without it they would hang off SESSION_SECRET, and rotating that would lock every admin out). Add it in Railway: any long random string, never changed afterwards.</div>`);
+  if (ME.shared_password) notes.push(`<div class="note amber"><b>You are signed in with the shared admin password.</b> Add an account for yourself below, sign out, sign in with it ("Anetix staff sign in" on the login page) and set up the authenticator. The moment one account has a working authenticator the shared password stops opening admin, and SOS_ADMIN_PASSWORD can leave Railway.</div>`);
+  else if (A.shared_password_open) notes.push(`<div class="note amber">The shared admin password still opens admin, because no account has a working authenticator yet.</div>`);
+  else notes.push(`<div class="note good">The shared admin password no longer opens admin. If SOS_ADMIN_PASSWORD is still a Railway variable, it can go.</div>`);
+  document.getElementById("acc-notes").innerHTML = notes.join("");
+  const mine = ME.me ? ME.me.id : null;
+  document.getElementById("acc-list").innerHTML = A.accounts.length ? `<tr><th>Name</th><th>Signs in as</th><th>Authenticator</th><th>Last sign-in</th><th></th></tr>` + A.accounts.map(a => `<tr>
+    <td><b>${esc(a.display_name)}</b>${a.id === mine ? ' <small class="sub">(you)</small>' : ""}${a.status !== "active" ? ' <span class="fail">switched off</span>' : ""}${a.locked ? ' <span class="warn">locked for now</span>' : ""}</td>
+    <td>${esc(a.login)}</td>
+    <td>${a.enrolled ? `<span class="ok">set up</span> <small class="sub">${a.recovery_left} recovery code${a.recovery_left === 1 ? "" : "s"} left</small>` : '<span class="warn">not set up yet</span>'}</td>
+    <td>${when(a.last_sign_in)}</td>
+    <td><button class="quiet" onclick="accSignOut(${a.id}, ${a.id === mine})" title="Ends every session of this account, on every device, within ten seconds">Sign out everywhere</button>${a.enrolled ? `<button class="quiet" onclick="accAct(${a.id},'reset-factor','${esc(a.login)}')">Reset authenticator</button>` : ""}${a.id !== mine ? `<button class="quiet" onclick="accAct(${a.id},'reset-password','${esc(a.login)}')">New password</button>` + (a.status === "active" ? `<button class="danger" onclick="accDisable(${a.id},'${esc(a.login)}')">Switch off</button>` : `<button class="quiet" onclick="accAct(${a.id},'enable','${esc(a.login)}')">Switch on</button>`) : ""}</td></tr>`).join("")
+    : `<tr><td class="sub">No accounts yet.</td></tr>`;
+  document.getElementById("acc-me").innerHTML = ME.me ? `<button class="quiet" onclick="changePassword()">Change my password</button>${ME.me.enrolled ? "" : `<button class="go" onclick="enrollStart(false)">Set up my authenticator</button>`}` : "";
+  document.getElementById("acc-events").innerHTML = `<tr><th>When</th><th>What</th><th>Who</th><th>From</th><th>Detail</th></tr>` + A.events.map(e => `<tr><td style="text-align:left;white-space:nowrap">${when(e.at)}</td><td style="text-align:left" class="${/bad_|fail|refused|locked|replayed|break_glass|unreadable/.test(e.event) ? "warn" : ""}">${esc(e.event)}</td><td style="text-align:left">${esc(e.login || "")}</td><td style="text-align:left">${esc(e.ip || "")}</td><td style="text-align:left"><small>${esc(e.detail ? JSON.stringify(e.detail) : "")}</small></td></tr>`).join("");
+  const g = A.edge || {};
+  document.getElementById("edge-line").innerHTML = `<b>Edge check</b> (requests must come through Cloudflare): ` + (g.mode === "off" ? `<span class="warn">off</span>. SOS_EDGE_SECRET is not set, so a request sent straight to Railway is answered.`
+    : `${g.mode === "report" ? '<span class="warn">report only</span>, nothing is refused yet' : '<span class="ok">enforced</span>'}. This request ${g.this_request_carried_it ? '<span class="ok">carried the edge header</span>' : '<span class="fail">did NOT carry the edge header</span> (do not enforce until it does)'}. Since ${when(g.since)}: ${g.with_secret} with it, ${g.without_secret} without${g.refused ? `, ${g.refused} refused` : ""}${g.last_without ? `; last without: ${esc(g.last_without.path)} from ${esc(g.last_without.ip)} at ${when(g.last_without.at)}` : ""}.`)
+    + ` <span class="sub">You appear to come from ${esc(g.client_ip || "")}.</span>`;
+}
+async function addAccount() {
+  const login = document.getElementById("a-login").value.trim(), display_name = document.getElementById("a-name").value.trim();
+  if (!login) return alert("give the email address they will sign in with");
+  withStepUp("Add an admin account", `${login} will be able to do everything on this instance, across every company.`, async (step) => {
+    const j = await accPost("/api/admin/accounts", { login, display_name, generate: true, ...step }); if (!j) return;
+    document.getElementById("a-login").value = ""; document.getElementById("a-name").value = "";
+    showAccountPassword(j.account.login, j.password); loadAccounts();
+  });
+}
+function showAccountPassword(login, password) {
+  openModal(`<h2>${esc(login)}: hand this over now</h2>
+    <p class="sub">It is shown this once and kept scrambled from here on. They sign in with "Anetix staff sign in" on the login page, are taken straight to setting up their authenticator, and should then change this password to one only they know.</p>
+    <p style="font-size:16px;line-height:1.9">Password: <b style="font-family:ui-monospace,monospace">${esc(password)}</b></p>
+    <div><button class="go" onclick="closeModal()">I have it</button></div>`);
+}
+const ACC_ACTIONS = {
+  "reset-factor": (l) => [`Reset the authenticator of ${l}?`, "Their app stops working for this account, their recovery codes too, and they are signed out. At their next sign-in they set it up again; until then the account is a password alone."],
+  "reset-password": (l) => [`Make up a new password for ${l}?`, "The old one stops working and they are signed out. The new one is shown once."],
+  "enable": (l) => [`Switch ${l} back on?`, "They can sign in again with the password and authenticator they had."],
+};
+function accAct(id, action, login) {
+  const [title, text] = ACC_ACTIONS[action](login);
+  withStepUp(title, text, async (step) => {
+    const j = await accPost(`/api/admin/accounts/${id}/${action}`, step); if (!j) return;
+    if (j.signed_out) { location.href = "/login?next=/admin"; return; }
+    if (j.password) showAccountPassword(login, j.password); else closeModal();
+    loadAccounts();
+  });
+}
+async function accDisable(id, login) {
+  if (!confirm(`Switch off ${login}? They are signed out everywhere at once and cannot sign in until someone switches them back on.`)) return;
+  if (await accPost(`/api/admin/accounts/${id}/disable`, {})) loadAccounts();
+}
+async function accSignOut(id, self) {
+  if (!confirm(self ? "Sign out every session of your account, this one included?" : "Sign this account out on every device?")) return;
+  const j = await accPost(`/api/admin/accounts/${id}/signout`, {}); if (!j) return;
+  if (j.signed_out) location.href = "/login?next=/admin"; else loadAccounts();
+}
+function changePassword() {
+  openModal(`<h2>Change my password</h2><p class="sub">At least 12 characters. Changing it signs you out everywhere, this session included; sign in again with the new one.</p>
+    <input id="cp-cur" type="password" placeholder="current password" autocomplete="current-password">
+    <input id="cp-new" type="password" placeholder="new password" autocomplete="new-password">
+    <input id="cp-new2" type="password" placeholder="new password again" autocomplete="new-password">
+    <div><button class="primary" onclick="doChangePassword()">Change it</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+}
+async function doChangePassword() {
+  const current = document.getElementById("cp-cur").value, next = document.getElementById("cp-new").value;
+  if (next !== document.getElementById("cp-new2").value) return alert("the two new passwords are not the same");
+  if (await accPost("/api/admin/accounts/me/password", { current, next })) location.href = "/login?next=/admin";
+}
+// Setting up the authenticator. In enroll-only mode it fills its own card and the rest of the page stays hidden;
+// otherwise it opens in the modal.
+function enrollOnly() {
+  document.body.classList.add("enroll-only");
+  const card = document.getElementById("enroll-card"); card.style.display = "";
+  card.innerHTML = `<h2>Set up your authenticator <small>${esc(ME.me.login)}</small></h2>
+    <p class="sub" style="margin-top:6px">Before this account can do anything it needs a second factor: an authenticator app on your phone (Google Authenticator, 1Password, Authy or the like) that shows a new 6 digit code every 30 seconds. From then on you sign in with your password and the code.</p>
+    ${ME.key_pinned ? "" : `<div class="note bad"><b>SOS_CONNECTION_KEY is not set on this instance</b>, so setup is refused for now. Add it in Railway (any long random string, never changed afterwards), let the instance restart, then come back.</div>`}
+    <div id="enroll-body"><button class="go" onclick="enrollStart(true)">Start</button> <a href="/logout" style="margin-left:8px">sign out</a></div>`;
+}
+async function enrollStart(inCard) {
+  const j = await accPost("/api/admin/accounts/me/enroll/start", {}); if (!j) return;
+  const html = `<div class="qr">${j.qr_svg}<div style="flex:1;min-width:220px">
+      <p><b>1.</b> In the app, add an account and scan this code.</p>
+      <p class="sub" style="margin-top:4px">Cannot scan? Choose "enter a setup key" and type: <code>${esc(j.secret)}</code> (time based, 6 digits).</p>
+      <p style="margin-top:10px"><b>2.</b> Type the 6 digit code the app shows now.</p>
+      <input id="en-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="6 digit code" style="font-size:18px;letter-spacing:.2em;width:170px;margin-top:6px">
+      <div><button class="primary" onclick="enrollVerify(${inCard ? "true" : "false"})">Check the code</button>${inCard ? "" : '<button class="quiet" onclick="closeModal()">Cancel</button>'}</div>
+    </div></div>`;
+  if (inCard) document.getElementById("enroll-body").innerHTML = html; else openModal(`<h2>Set up my authenticator</h2>${html}`);
+  setTimeout(() => { const el = document.getElementById("en-code"); if (el) el.focus(); }, 50);
+}
+async function enrollVerify(inCard) {
+  const j = await accPost("/api/admin/accounts/me/enroll/verify", { code: document.getElementById("en-code").value.trim() }); if (!j) return;
+  const text = j.recovery_codes.join("\n");
+  const html = `<p><b>Done. Now save these ten recovery codes</b> somewhere that is not your phone (a password manager, a printed page).</p>
+    <p class="sub" style="margin-top:4px">Each one signs you in once in place of the app's code, for the day the phone is lost. They are shown this once and never again.</p>
+    <div class="codes">${j.recovery_codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
+    <div><button class="quiet" id="rc-copy">Copy them</button><a id="rc-dl" download="anetix-sos-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.href='/admin'">I have saved them</button></div>`;
+  if (inCard) document.getElementById("enroll-body").innerHTML = html; else openModal(`<h2>Your authenticator is set up</h2>${html}`);
+  document.getElementById("rc-dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix SOS recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
+  document.getElementById("rc-copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(text);
 }
 load();
 </script>

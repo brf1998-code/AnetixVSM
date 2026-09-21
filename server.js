@@ -16,12 +16,15 @@ const checks = require("./src/checks");
 const record = require("./src/record");
 const connections = require("./src/connections");
 const people = require("./src/people");
+const accounts = require("./src/accounts");
+const edge = require("./src/edge");
 
 const PORT = process.env.PORT || 3000;
 const page = (name) => path.join(__dirname, "public", name);
 
 async function main() {
   await initPlatformSchema();
+  await accounts.init();      // named admin accounts, their authenticators and recovery codes, the sign-in log (src/accounts.js)
   await record.init();   // the interaction record: insert-only, what everyone said and decided
   await people.init();        // operator identity: names and PINs per company
   await require("./src/closeloop").init();   // close the loop: my requests, what went live, fixed it / not quite
@@ -35,6 +38,9 @@ async function main() {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", true);
+  // Nothing is answered that did not come through Cloudflare, once SOS_EDGE_SECRET is set (src/edge.js). First in
+  // line on purpose: before the static files, before the login route. /health and the platform's own calls pass.
+  app.use(edge.gate);
 
   // no-cache on HTML so deploys are visible immediately (playbook lesson)
   app.use((req, res, next) => {
@@ -79,6 +85,7 @@ async function main() {
   app.get("/c/:slug/settings", auth.requireManager, (_req, res) => res.sendFile(page("settings.html")));   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
+  app.use(accounts.router);  // /api/admin/accounts*: the admin accounts, authenticator setup, sign out everywhere
   app.use(intake.router);    // /api/c/:slug/intakes, /api/intakes/*, /api/attachments/* (before platformApi: the attach route parses a bigger body)
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(platformApi);      // /api/*

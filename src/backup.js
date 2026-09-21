@@ -21,6 +21,12 @@ const PLATFORM_TABLES = [
   "module_intakes", "attachments", "check_labels", "check_replays", "record",
   "connections", "connection_uploads", "print_jobs", "erp_cache", "data_requests", "people", "check_retirements", "ai_credit",
 ];
+// The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
+// so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under
+// SOS_CONNECTION_KEY, recovery codes as hashes. Restored only when the file carries them (see restore()).
+const ACCOUNT_TABLES = ["accounts", "account_factors", "account_recovery_codes"];
+// Never in the file: who tried to sign in from where. It is a log of this instance, and it names addresses.
+const NOT_IN_BACKUP = ["auth_events"];
 
 async function columnInfo(schema, table) {
   return (await q(
@@ -37,7 +43,8 @@ function typeSql(c) {
 }
 
 async function dumpSchema(schema, withDdl) {
-  const tables = (await q("SELECT tablename FROM pg_tables WHERE schemaname=$1 ORDER BY tablename", [schema])).rows.map((r) => r.tablename);
+  const tables = (await q("SELECT tablename FROM pg_tables WHERE schemaname=$1 ORDER BY tablename", [schema])).rows.map((r) => r.tablename)
+    .filter((t) => schema !== "platform" || !NOT_IN_BACKUP.includes(t));
   const out = { tables: {} };
   if (withDdl) {
     out.sequences = (await q("SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema=$1", [schema])).rows.map((r) => r.sequence_name);
@@ -117,8 +124,15 @@ async function restore(doc) {
     }
     // platform tables: wipe and refill (the schema itself stays; columns the
     // backup lacks keep their defaults, columns it has that we lack are skipped)
-    await client.query(`TRUNCATE ${PLATFORM_TABLES.map((t) => "platform." + t).join(", ")}`);
-    for (const t of PLATFORM_TABLES) {
+    // A backup from before named accounts has no account rows: the accounts on this instance stay as they are,
+    // rather than a restore locking every admin out. A file that has them replaces them. Either way every account's
+    // generation ends up above both what the file says and what this instance had, so a session that was signed out
+    // everywhere after the backup was taken does not come back to life, and every admin signs in again after a restore.
+    const withAccounts = Array.isArray(doc.platform.accounts);
+    const restored = withAccounts ? PLATFORM_TABLES.concat(ACCOUNT_TABLES) : PLATFORM_TABLES;
+    const generations = (await client.query("SELECT login, generation FROM platform.accounts")).rows;
+    await client.query(`TRUNCATE ${restored.map((t) => "platform." + t).join(", ")}`);
+    for (const t of restored) {
       let rows = doc.platform[t] || [];
       // a backup from before per-company passwords has no login rows: its companies go back on the shared passwords
       if (t === "company_access" && !doc.platform[t]) rows = (doc.platform.companies || []).map((c) => ({ company: c.slug, legacy_login: true }));
@@ -127,6 +141,8 @@ async function restore(doc) {
       await insertRows(client, "platform", t, rows, cols);
     }
     // snapshots referenced schemas we just dropped
+    for (const g of generations) await client.query("UPDATE platform.accounts SET generation=GREATEST(generation, $2) WHERE login=$1", [g.login, g.generation]);
+    await client.query("UPDATE platform.accounts SET generation=generation+1");
     await client.query("TRUNCATE platform.schema_snapshots");
     await client.query("UPDATE platform.modules SET staged_version=NULL");
     await resetSequences(client, "platform");

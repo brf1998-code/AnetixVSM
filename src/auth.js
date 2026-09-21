@@ -10,8 +10,14 @@
 //   hashes in platform.company_access and set from the admin page. Nothing in
 //   platform.companies carries them, so "SELECT * FROM companies" can never
 //   leak one to a page.
-//   SOS_ADMIN_PASSWORD is the admin password (the manager password doubles as
-//   admin when it is unset, as before).
+//   Admin is a NAMED ACCOUNT since 2026-09-21 (src/accounts.js): a personal
+//   login, a password of its own and a code from an authenticator app. The
+//   login page sends a name only for those; no name is the company password
+//   path below, untouched. SOS_ADMIN_PASSWORD (the manager password when it
+//   is unset) is the old shared admin password. It opens admin ONLY while no
+//   admin account has a working authenticator, which is how the first
+//   accounts get made; every use is on the record (legacy_admin_password).
+//   After that it is refused and the variable can leave Railway.
 //   SOS_FLOOR_PASSWORD / SOS_MANAGER_PASSWORD are the old instance-wide
 //   passwords. They still open a company only while its access row says
 //   legacy_login, which is how companies that existed before this change keep
@@ -19,8 +25,15 @@
 //   never accepts them.
 //
 // Session
-//   A signed cookie carries role, company, the company's password generation
-//   and issue time. Changing a company's password raises its generation, which
+//   A signed cookie carries role, company, a generation and issue time. For
+//   an admin the company slot is "*<account id>" and the generation is the
+//   ACCOUNT's, checked on every request (ten second cache), so one admin can
+//   be signed out everywhere without touching a plant; the id 0 is the shared
+//   admin password's session, good only while that password still opens
+//   admin. Admin sessions last SOS_ADMIN_SESSION_HOURS (12); floor and
+//   manager sessions SOS_SESSION_DAYS (30), as before. An account with no
+//   authenticator yet reaches the admin page's setup and nothing else.
+//   For floor and manager the generation is the company's password generation. Changing a company's password raises its generation, which
 //   signs everyone at that company out (the reason to change one is usually
 //   that somebody who knew it should no longer get in). `companyGuard` is the
 //   one place that ties a request to a company: a /c/<slug>/ or /api/c/<slug>/
@@ -30,6 +43,8 @@
 //   all (local dev) every request is admin so the loop stays walkable.
 const crypto = require("crypto");
 const { q } = require("./db");
+const accounts = require("./accounts");
+const edge = require("./edge");
 
 const FLOOR = process.env.SOS_FLOOR_PASSWORD || "";
 const MANAGER = process.env.SOS_MANAGER_PASSWORD || "";
@@ -38,6 +53,8 @@ const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(24).toString("he
 const COOKIE = "sos_session";
 // sessions expire server-side after this long, regardless of what the browser does with Max-Age
 const SESSION_SECONDS = Number(process.env.SOS_SESSION_DAYS || 30) * 24 * 60 * 60;
+// an admin session is shorter on purpose (a tablet on the floor should not log out mid shift; an admin's laptop should)
+const ADMIN_SESSION_SECONDS = Math.round(Number(process.env.SOS_ADMIN_SESSION_HOURS || 12) * 60 * 60);
 // failed logins per client IP before /login answers 429 for the rest of the window
 const LOGIN_MAX_FAILS = Number(process.env.SOS_LOGIN_MAX_FAILS || 10);
 const LOGIN_WINDOW_MS = Number(process.env.SOS_LOGIN_WINDOW_MIN || 15) * 60 * 1000;
@@ -142,12 +159,16 @@ function verify(token) {
   if (mac.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
   const issued = parseInt(ts, 36);
   if (!Number.isFinite(issued)) return null;
-  const age = Date.now() - issued;
-  if (age < 0 || age > SESSION_SECONDS * 1000) return null;  // expired (or forged timestamp)
   if (!["admin", "manager", "floor"].includes(role)) return null;
-  if (role === "admin" ? company !== ALL : !SLUG.test(company)) return null;
-  return { role, company, gen: Number(gen) || 0 };
+  const age = Date.now() - issued;
+  if (age < 0 || age > (role === "admin" ? ADMIN_SESSION_SECONDS : SESSION_SECONDS) * 1000) return null;  // expired (or forged timestamp)
+  if (role !== "admin") return SLUG.test(company) ? { role, company, gen: Number(gen) || 0 } : null;
+  // admin: "*<account id>". The admin cookie from before named accounts ("*" alone) is no longer accepted: sign in again.
+  const m = /^\*(\d{1,9})$/.exec(company);
+  return m ? { role, company: ALL, gen: Number(gen) || 0, account: Number(m[1]) } : null;
 }
+// The cookie value for an admin session. accountId 0: the shared admin password's session.
+function signAdmin(accountId, gen) { return sign("admin", `${ALL}${Number(accountId) || 0}`, gen); }
 
 // A MAC under the session secret, for other platform cookies (src/people.js). The secret itself stays in this file.
 function hmac(payload) { return crypto.createHmac("sha256", SECRET).update(String(payload)).digest("base64url"); }
@@ -173,7 +194,14 @@ async function resolveCompany(named) {
 async function sessionFor(password, companyNamed) {
   password = String(password || "");
   if (!password) return null;
-  if (ADMIN ? same(password, ADMIN) : same(password, MANAGER)) return { role: "admin", company: ALL };
+  // The shared admin password: only while no admin account has a working authenticator (src/accounts.js legacyOpen).
+  // Asked only when the answer matters, so a floor login never waits on (or fails with) the accounts tables.
+  let answer = null;
+  const sharedOpen = async () => (answer === null ? (answer = await accounts.legacyOpen()) : answer);
+  if (ADMIN ? same(password, ADMIN) : same(password, MANAGER)) {
+    if (await sharedOpen()) return { role: "admin", company: ALL, shared: true };
+    if (ADMIN) return { refused_shared: true };   // without ADMIN set it is the manager password too, and goes on to be one below
+  }
   const company = await resolveCompany(companyNamed);
   if (!company) return null;
   const row = await accessRow(company);
@@ -181,7 +209,8 @@ async function sessionFor(password, companyNamed) {
   if (row && row.manager_hash && checkHash(password, row.manager_hash)) return { role: "manager", company, gen };
   if (row && row.floor_hash && checkHash(password, row.floor_hash)) return { role: "floor", company, gen };
   if (row && row.legacy_login) {
-    if (!row.manager_hash && ADMIN && same(password, MANAGER)) return { role: "manager", company, gen };
+    // (while the manager password doubles as the shared admin password it was taken as admin above, as before)
+    if (!row.manager_hash && same(password, MANAGER) && (ADMIN || !(await sharedOpen()))) return { role: "manager", company, gen };
     if (!row.floor_hash && same(password, FLOOR)) return { role: "floor", company, gen };
   }
   return null;
@@ -192,14 +221,30 @@ function middleware(req, res, next) {
   if (OPEN) { req.sosRole = "admin"; req.sosCompany = ALL; return next(); }
   const p = req.path;
   if (p === "/login" || p === "/health" || p.startsWith("/assets/")) return next();
-  if (req.headers["x-sos-internal"] === INTERNAL) { req.sosRole = "admin"; req.sosCompany = ALL; return next(); }
+  if (req.headers["x-sos-internal"] === INTERNAL) { req.sosRole = "admin"; req.sosCompany = ALL; req.sosInternal = true; return next(); }   // the platform's own calls; never the accounts (src/accounts.js)
   const session = verify(parseCookies(req)[COOKIE]);
   if (!session) return toLogin(req, res, 401, "login required");
   const accept = () => { req.sosRole = session.role; req.sosCompany = session.company; next(); };
-  if (session.role === "admin") return accept();
+  if (session.role === "admin") {
+    // the shared admin password's session ends the moment that password stops opening admin
+    if (!session.account) return accounts.legacyOpen().then((open) => (open ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
+    // a named account: still there, still switched on, and not signed out everywhere since this cookie was made
+    return accounts.sessionState(session.account).then((st) => {
+      if (!st || st.role !== "admin" || st.status !== "active" || st.generation !== session.gen) return toLogin(req, res, 401, "login required");
+      req.sosAccount = { id: st.id, login: st.login, name: st.name, enrolled: st.enrolled };
+      if (!st.enrolled && !accounts.twoFaOff() && !ENROLL_PATHS.test(p)) {
+        if (req.method === "GET" && !/(^|\/)api\//.test(p)) return res.redirect("/admin");
+        return res.status(403).json({ error: "set up your authenticator app first", enroll_required: true });
+      }
+      accept();
+    }).catch(next);
+  }
   // a company's password changed since this cookie was signed: sign in again
   generationOf(session.company).then((gen) => (gen && gen === session.gen ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
 }
+// All an admin account may reach before its authenticator is set up: the admin page (which shows the setup and
+// nothing else), who-am-I, and the two setup calls.
+const ENROLL_PATHS = /^\/(?:admin|logout|api\/admin\/accounts\/me(?:\/enroll\/(?:start|verify))?)$/;
 function toLogin(req, res, status, error) {
   const p = req.path;
   if (req.method === "GET" && !p.startsWith("/api/") && !/\/api\//.test(p)) return res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
@@ -238,12 +283,20 @@ async function companyGuard(req, res, next) {
 // For the few routes that name their company in the body instead of the path.
 function ownsCompany(req, slug) { return OPEN || req.sosRole === "admin" || (slug && slug === req.sosCompany); }
 
-// Second factor for destructive admin actions (delete a company, restore a
-// backup): the admin password typed again and checked here, never on the
-// client. With no passwords set (local dev) anything passes.
-function checkAdminPassword(password) {
-  if (OPEN) return true;
-  return same(password, ADMIN || MANAGER);
+// Step-up for destructive admin actions (delete a company, restore a backup),
+// checked here, never on the client. A named account gives a FRESH code from
+// its authenticator: the step is claimed the same way a sign-in claims it, so
+// the code that signed the person in a few seconds ago does not count (its
+// password instead under SOS_ADMIN_2FA=off). The shared admin password's
+// session, which exists only until the first authenticator is set up, types
+// that password again, as before. With no passwords set (local dev) anything
+// passes. -> { ok, error }
+async function checkAdminCode(req, { code, password } = {}, what) {
+  if (OPEN) return { ok: true };
+  if (req.sosAccount && req.sosAccount.id) return accounts.stepUp(req.sosAccount, { code, password }, edge.clientIp(req), what);
+  const ok = (await accounts.legacyOpen()) && same(password, ADMIN || MANAGER);
+  await accounts.event(ok ? "legacy_admin_password" : "step_up_fail", { ip: edge.clientIp(req), detail: { at: "step_up", what } });
+  return ok ? { ok: true } : { ok: false, error: "wrong admin password" };
 }
 
 function requireManager(req, res, next) {
@@ -256,13 +309,13 @@ function requireAdmin(req, res, next) {
 }
 
 // Login rate limit: in-memory, per client IP, failures only. Enough to stop a
-// password guesser; resets on a successful login. Cloudflare sits in front, so
-// prefer its header over X-Forwarded-For (the leftmost XFF entry is
-// client-supplied and spoofable).
+// password guesser; resets on a successful login. The address comes from
+// src/edge.js, the one place it is read: Cloudflare's header when the request
+// provably came through Cloudflare, never the client-supplied X-Forwarded-For.
+// A named account has a lock of its own on top of this (src/accounts.js), so
+// a guesser who rotates addresses still gets five tries per fifteen minutes.
 const loginFails = new Map();  // ip -> { count, first }
-function clientIp(req) {
-  return String(req.headers["cf-connecting-ip"] || req.ip || req.socket?.remoteAddress || "unknown");
-}
+const clientIp = edge.clientIp;
 function loginBlocked(ip) {
   const rec = loginFails.get(ip);
   if (!rec) return 0;
@@ -287,8 +340,24 @@ async function loginHandler(req, res) {
     return res.status(429).json({ error: `too many failed logins; try again in ${Math.ceil(wait / 60)} min` });
   }
   try {
-    const { password, company } = req.body || {};
-    const session = await sessionFor(password, company);
+    const { password, company, name, code } = req.body || {};
+    const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+    // A name means a named account: password, then a code from the authenticator. Nothing is kept between the two
+    // requests: the page sends name, password and code together the second time.
+    if (String(name || "").trim()) {
+      const r = await accounts.signIn({ login: name, password, code, ip });
+      if (r.need_code && !r.error) return res.json({ need_code: true });
+      if (!r.ok) {
+        noteLoginFail(ip);
+        if (r.retry_after) res.set("Retry-After", String(r.retry_after));
+        return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code) });
+      }
+      loginFails.delete(ip);
+      res.set("Set-Cookie", `${COOKIE}=${signAdmin(r.account.id, r.account.generation)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ADMIN_SESSION_SECONDS}${secure}`);
+      return res.json({ ok: true, role: "admin", company: null, enroll: r.enroll });
+    }
+    let session = await sessionFor(password, company);
+    if (session && session.refused_shared) { await accounts.event("legacy_admin_refused", { ip }); session = null; }
     if (!session) {
       noteLoginFail(ip);
       // say when the missing piece is the company, so the page can ask for it
@@ -296,8 +365,9 @@ async function loginHandler(req, res) {
       return res.status(401).json({ error: needCompany ? "which company is this login for?" : "wrong password", need_company: needCompany });
     }
     loginFails.delete(ip);
-    const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
-    res.set("Set-Cookie", `${COOKIE}=${sign(session.role, session.company, session.gen)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_SECONDS}${secure}`);
+    if (session.shared) await accounts.event("legacy_admin_password", { ip, detail: { at: "sign_in" } });
+    const value = session.role === "admin" ? signAdmin(0, 0) : sign(session.role, session.company, session.gen);
+    res.set("Set-Cookie", `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.role === "admin" ? ADMIN_SESSION_SECONDS : SESSION_SECONDS}${secure}`);
     res.json({ ok: true, role: session.role, company: session.company === ALL ? null : session.company });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
@@ -308,6 +378,7 @@ function logoutHandler(_req, res) {
 }
 
 module.exports = {
-  middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminPassword,
-  setPasswords, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, verify, OPEN, ALL, hmac, parseCookies,
+  middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
+  setPasswords, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, verify, OPEN, ALL, hmac, parseCookies,
+  clientIp, ENROLL_PATHS, ADMIN_SESSION_SECONDS, SESSION_SECONDS,
 };

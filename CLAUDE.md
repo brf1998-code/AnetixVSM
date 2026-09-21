@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-20)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-21)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -15,9 +15,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `/c/<slug>/m/<module>/` live module pages,
   `/c/<slug>/staging/m/<module>/` the preview of a build (amber bar on every
   staged page, reloads/leaves when the staged version changes).
-- `/admin` (admin role, `SOS_ADMIN_PASSWORD`; manager password doubles as
-  admin when unset) lists companies, their modules, docs, spend, and adds
-  companies or library modules to them.
+- `/admin` (admin role: a named account with an authenticator app since
+  2026-09-21, see "Named admin accounts"; `SOS_ADMIN_PASSWORD` opens it only
+  until the first authenticator is set up) lists companies, their modules,
+  docs, spend, and adds companies or library modules to them.
 - Module schemas are `mod_<company>_<module>` / `stg_...` / `snap_...`. The
   first boot after this change renamed the old `mod_paperline` schema and
   moved everything under company `demo` (`src/db.js upgradeSingleTenant`).
@@ -350,6 +351,117 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   its people out. `SOS_ADMIN_PASSWORD` is unchanged (manager password doubles
   as admin when unset). Cookies from before this change (no company) are
   rejected, so everyone signs in once after the deploy.
+- **Named admin accounts with an authenticator app** (2026-09-21,
+  `src/accounts.js`, `src/totp.js`, the admin half of `src/auth.js`; scoped in
+  the project file `claude/auth-2fa-and-network-access.md`). Until this, admin
+  was one shared password, its cookie carried no generation and was never
+  re-checked (an admin session could not be ended without rotating
+  `SESSION_SECRET`, which signs out every plant), and the second gate on
+  delete and restore was the same password typed again. Now admin is a personal
+  login: `platform.accounts` (login = an email address, scrypt hash,
+  `generation`, `status`, `failed_count`, `locked_until`; `role` is only
+  `admin` for now and `company` is NULL, the shape managers inherit later),
+  `platform.account_factors` (the TOTP secret, AES-256-GCM under
+  `SOS_CONNECTION_KEY` through `connections.encrypt`, `verified_at`,
+  `last_step`), `platform.account_recovery_codes` (ten, single use, sha256
+  of an 80 bit code, shown once), `platform.auth_events` (who tried what from
+  where; kept `SOS_AUTH_EVENT_DAYS` = 400 days, shown on /admin under
+  "Sign-in log"). The tables are made by `accounts.init()` like every other
+  platform table (NOT `src/migrate.js`, which is module migrations only).
+  **Login**: the login page has a quiet "Anetix staff sign in" link (it opens
+  by itself when the link that brought you was /admin) that shows a name box.
+  A name means the account path, no name means the company password path,
+  which is untouched. `POST /login {name, password}` answers `{need_code:
+  true}` with no cookie when the account has an authenticator; the page shows
+  the 6 digit box and sends name, password and code together (no server-side
+  pending state). `src/totp.js`: RFC 6238, HMAC-SHA1, 30 s, 6 digits, steps
+  -1/0/+1, constant time, vectors runnable with `node src/totp.js`. A code is
+  CLAIMED with one `UPDATE ... SET last_step=$2 WHERE last_step < $2`; zero
+  rows is a replay and is refused, so the same code never works twice and the
+  code that signed you in does not count as a step-up. A recovery code is
+  taken in place of the app's code. Five wrong passwords or codes lock the
+  account for fifteen minutes (`SOS_ACCOUNT_MAX_FAILS`, `SOS_ACCOUNT_LOCK_MIN`),
+  on top of the per-address throttle; an unknown name gets the same words, the
+  same scrypt work and the same lock (in memory), so neither the answer nor
+  the lock says which names exist. **Session**: still five parts so plant
+  cookies survived the deploy; an admin cookie is `admin.*<account
+  id>.<account generation>.<time>.<mac>` (`auth.signAdmin`), `verify` parses
+  the id and still answers company `*`, the middleware sets `req.sosAccount =
+  { id, login, name, enrolled }` and checks the account's generation and
+  status on every request (ten second cache, `accounts.sessionState`), which is
+  the revocation admin never had. `SOS_ADMIN_SESSION_HOURS` (12) for admin;
+  floor and manager stay at 30 days. The old admin cookie (`admin.*.0...`) no
+  longer verifies. An account with NO authenticator signs in with its password
+  and reaches `auth.ENROLL_PATHS` only (the admin page, which shows the setup
+  and nothing else, who-am-I and the two enroll calls); everything else is 403
+  `enroll_required` or a redirect to /admin. **Enrollment** on /admin: a 20
+  byte secret, `otpauth://totp/Anetix%20SOS:<login>?secret=..&issuer=..` drawn
+  by `src/qrcode.js` plus the base32 text, one good code before `verified_at`
+  is set, then the ten recovery codes once (copy, download). Refused while
+  `SOS_CONNECTION_KEY` is unset (the fallback key is `SESSION_SECRET`, and
+  rotating that would make every secret unreadable). **The accounts card** on
+  /admin: add (the platform makes up a first password, shown once; the person
+  changes it with "Change my password", which signs them out everywhere),
+  switch off / on, sign out everywhere (generation + 1), reset authenticator,
+  new password. Making an account, switching one on, and resetting a factor or
+  a password need a fresh code from the person doing it; switching off and
+  signing out do not (they are what you press when something is wrong). An
+  account cannot switch itself off. Routes: `/api/admin/accounts*`
+  (`accounts.router`, mounted before the platform router; the platform's
+  internal token is refused there). **Step-up**: `auth.checkAdminCode(req,
+  { code, password }, what)` replaced `checkAdminPassword` at company delete
+  and restore; admin.html asks for the code. **The shared admin password**
+  (`SOS_ADMIN_PASSWORD`, else the manager password) opens admin ONLY while no
+  active admin account has an authenticator that decrypts
+  (`accounts.legacyOpen`): that is how the first accounts are made, every use
+  is logged `legacy_admin_password`, its session is account 0 and dies within
+  ten seconds of the first enrollment, and after that it is refused with the
+  ordinary "wrong password" (logged `legacy_admin_refused`). Then take the
+  variable out of Railway; with it gone the shared MANAGER password goes back
+  to being a manager of a `legacy_login` company (e2e mode `noadminvar`). A
+  factor that cannot be decrypted (a backup restored under another key) does
+  not count, so a restore to a fresh instance does not lock everyone out.
+  **Break glass**: `SOS_ADMIN_2FA=off` lets an account in with its password
+  alone (and a step-up takes that password), logged `break_glass` every time,
+  shouted at boot and on /admin. It needs Railway, which is behind 2FA.
+  **Backup**: `accounts`, `account_factors` and `account_recovery_codes`
+  travel in the file (hashes and encrypted secrets; the recovery codes had to
+  come too or a restore would leave one account's codes under another's id);
+  `auth_events` never does. A restore leaves every generation above both the
+  file's and the instance's, so a session signed out after the backup stays
+  dead and every admin signs in again; a file from before accounts leaves the
+  instance's accounts alone. **Module code's database logins** have no rights
+  on the platform schema, so none on these tables (checked in the e2e).
+  Units: `node src/totp.js`, `scripts/test-accounts.js`. End to end:
+  `scripts/e2e/accounts.js` (90; plus modes `restore` 11, `breakglass` 9,
+  `noadminvar` 6, commands in its header) and `accounts-browser.js` (26,
+  playwright; the QR was also decoded from a screenshot and matched the key).
+  Known limits: a per-account lock lets anyone who knows an admin's email keep
+  that account locked (the named fix is the edge check below plus Cloudflare
+  rate limiting; the lock clears itself in fifteen minutes and "Switch on"
+  clears it at once); TOTP is not phishing resistant (passkeys later, and a
+  passkey is bound to the domain it was made on); `OPEN` (no password
+  variables at all) still makes every request admin, so never take ALL of
+  `SOS_FLOOR_PASSWORD`, `SOS_MANAGER_PASSWORD` and `SOS_ADMIN_PASSWORD` out of
+  Railway at once. Admin actions in the interaction record still say "Anetix",
+  not the account's name (a floor-facing wording choice, left for Brendan).
+- **Requests must come through Cloudflare** (2026-09-21, `src/edge.js`,
+  first middleware in server.js). Railway's edge routes by host name, so a
+  request sent straight to it with `Host: sos.finnoperations.com` skipped
+  Cloudflare and could carry any `CF-Connecting-IP`, which is what the login
+  throttle keyed on. (1) `SOS_EDGE_SECRET`: a Cloudflare request-header
+  Transform Rule adds `X-SOS-Edge: <the same value>`; with the variable set,
+  anything without it gets 403, apart from `/health` (Railway's health check)
+  and loopback (the platform's own calls to a staged build). `SOS_EDGE_MODE=
+  report` refuses nothing and counts, and the accounts card on /admin says
+  whether THIS request carried the header, so the rule is proven before it can
+  lock every plant out. Unset: no check. (2) `edge.clientIp(req)` is the one
+  place an address is read (`auth.clientIp` is it): a request that carried the
+  secret believes `CF-Connecting-IP`; otherwise `X-Real-IP` (set by Railway's
+  edge) is the client unless it is one of Cloudflare's published ranges
+  (`net.BlockList`, the 15 + 7 ranges checked 2026-09-21, `SOS_CF_RANGES`
+  overrides); with no Railway edge in front it reads as before. Never
+  `X-Forwarded-For`. Unit: `scripts/test-edge.js`.
 - **Per-company AI budget** (2026-09-19). `assertUnderCap(company)` now checks
   the company's own monthly cap (`platform.companies.monthly_cap_usd`, set on
   the admin page) against that company's own spend AND the instance cap, so one
@@ -1453,7 +1565,15 @@ module source a proposal, system review or diagram call is given; files are
 whole below it, see "A model reads a module's files whole"), `SOS_SESSION_DAYS` (default 30; sessions
 expire server-side, not just via cookie Max-Age), `SOS_LOGIN_MAX_FAILS`
 (default 10) and `SOS_LOGIN_WINDOW_MIN` (default 15) for the per-IP login
-limiter (in-memory, uses `cf-connecting-ip`).
+limiter (in-memory, address from `edge.clientIp`). Admin accounts:
+`SOS_ADMIN_SESSION_HOURS` (12), `SOS_ACCOUNT_MAX_FAILS` (5),
+`SOS_ACCOUNT_LOCK_MIN` (15), `SOS_AUTH_EVENT_DAYS` (400), `SOS_ADMIN_2FA=off`
+(break glass only), and `SOS_CONNECTION_KEY` is now REQUIRED before an
+authenticator can be set up. Edge: `SOS_EDGE_SECRET` (the value the Cloudflare
+Transform Rule puts in `X-SOS-Edge`), `SOS_EDGE_MODE=report` while proving the
+rule, `SOS_CF_RANGES` if Cloudflare's ranges move. `SOS_ADMIN_PASSWORD` comes
+OUT once the first authenticator is set up (never together with both of the
+other two password variables: see `OPEN` under "Named admin accounts").
 Passwords live only in Railway; never commit them.
 
 ## Hard rules
@@ -1484,6 +1604,12 @@ Passwords live only in Railway; never commit them.
   the body scopes itself with `auth.ownsCompany(req, slug)`.
 - A new platform table that belongs to a company goes in `backup.js`
   `PLATFORM_TABLES` and, if it holds secrets, stays out of `platform.companies`.
+- A secret, a one-time code or a recovery code is never logged and never
+  returned, apart from the one enrollment answer that shows a person their
+  own. A new destructive admin action takes `auth.checkAdminCode`. A new admin
+  route that an account with no authenticator must reach goes in
+  `auth.ENROLL_PATHS`, and that list stays as short as it is. Anything that
+  throttles, locks or logs by address reads it through `edge.clientIp`.
 - Module code reaches nothing but `ctx`. The module gate holds agent builds
   and repo imports to the same rule. If a library module needs something new
   (hashing, a clock, an outside system), lend it on `ctx` in
