@@ -6,10 +6,19 @@
 //     module reference) as system prompt
 //   - file tools only; no Bash, no network
 //
-// Three model roles, each selectable per company (Agent settings page):
-//   propose  one structured call that drafts + classifies a proposal (small context)
+// Every model call runs on one of two models, Fable 5.1 or Opus 5.5
+// (Brendan, 2026-09-22), apart from Haiku's plain summaries and plain-words
+// rewrites. Which of the two is the baseline is decided by the assessment on
+// /admin#models (src/assess.js). Four jobs:
+//   propose  reading a request and drafting the proposal; also the requirement
+//            restatement, diagrams, ERP lookups and a module's chat agent
 //   build    the agentic multi-turn run that edits files (most of the spend)
 //   review   one structured call that reviews the diff independently
+//   design   a new module (the intake's questions and design, its first build
+//            and that build's check), system reviews, brand guides
+// A company can pin propose, build and review on its Agent settings page;
+// otherwise a job runs on the instance's model for it (the baseline unless
+// /admin#models gives the job its own), or on its arm of the live A/B.
 //
 // Cost controls (all optional; unset or 0 = no cap):
 //   SOS_MAX_RUN_USD      per build run; the run is aborted past this
@@ -20,7 +29,7 @@
 // low / medium / high / xhigh / max). Decided 2026-09-17: high everywhere.
 const fs = require("fs");
 const path = require("path");
-const { q, getSetting } = require("./db");
+const { q, getSetting, setSetting } = require("./db");
 
 const PRINCIPLES_DIR = process.env.PRINCIPLES_DIR || path.join(__dirname, "..", "principles");
 // Caps are off unless set (Brendan, 2026-09-17: development mode, spend what
@@ -37,40 +46,122 @@ const runCapUsd = (changes) => {
 };
 const MONTHLY_CAP_USD = capEnv("SOS_MONTHLY_CAP_USD");
 
-// Current Claude lineup (platform.claude.com/docs/en/models/overview, Sept 2026).
-// Prices are USD per million tokens, in / out.
+// The two models (platform.claude.com/docs/en/models/overview, Sept 2026).
+// Prices are USD per million tokens, in / out. Both refuse a forced
+// tool_choice (runStructured asks with auto from the first call).
 const MODELS = [
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", in: 1, out: 5, note: "cheapest and fastest; fine for classifying feedback, weak for builds" },
-  { id: "claude-sonnet-5", label: "Sonnet 5", in: 2, out: 10, note: "the default: good builds at a low price" },
-  { id: "claude-opus-5", label: "Opus 5", in: 5, out: 25, note: "about 2.5x Sonnet 5; stronger on functionality builds and as an independent reviewer" },
-  { id: "claude-fable-5-1", label: "Fable 5.1", in: 10, out: 50, note: "about 5x Sonnet 5; most capable, for builds, proposals, system reviews and cross-checks alike" },
+  { id: "claude-fable-5-1", label: "Fable 5.1", in: 10, out: 50, forcedTool: false, note: "the most capable; the first baseline, until the assessment says otherwise" },
+  { id: "claude-opus-5-5", label: "Opus 5.5", in: 4, out: 20, forcedTool: false, note: "40% of Fable's price; ahead of Fable 5.1 on Anthropic's agentic coding benchmarks (released 2026-09-22)" },
 ];
-// Models the build agent (Claude Code) can run: all of them since the Agent SDK
-// upgrade of 2026-09-17 (0.1.77 predated Fable and died on it). `agent: false`
-// on a MODELS row still keeps a model out of builds, should that ever be needed.
+// Priced, never offered as a choice. Haiku writes the plain summaries and the
+// plain-words rewrites (about a cent each, text only). Sonnet 5 and Opus 5 ran
+// jobs before 2026-09-22 and stay here only so old rows price and label right.
+const PRICE_ONLY = [
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", in: 1, out: 5, utility: true, note: "plain summaries and plain-words rewrites only" },
+  { id: "claude-sonnet-5", label: "Sonnet 5", in: 2, out: 10, retired: true, note: "no longer runs any job (2026-09-22)" },
+  { id: "claude-opus-5", label: "Opus 5", in: 5, out: 25, retired: true, note: "no longer runs any job (2026-09-22)" },
+];
+const JOBS = ["propose", "build", "review", "design"];
+const COMPANY_JOBS = ["propose", "build", "review"];   // the ones a company can pin on its Agent settings page
+const AB_JOBS = ["propose", "build", "design"];        // the ones the live A/B splits; a build's review follows the build's arm
+const FIRST_BASELINE = "claude-fable-5-1";
+const inTier = (id) => MODELS.some((m) => m.id === id);
+// Before 2026-09-22 these environment variables picked the instance's models.
+// They are read no more: the baseline and a job's own model are set on
+// /admin#models. The admin page lists any still set, so they can be deleted.
+const RETIRED_ENV = ["SOS_MODEL_PROPOSE", "SOS_MODEL_BUILD", "SOS_MODEL_REVIEW", "SOS_MODEL", "SOS_MODEL_INTAKE"];
+const retiredEnvSet = () => RETIRED_ENV.filter((k) => process.env[k]);
+
+// Models the build agent (Claude Code) can run: both, on Agent SDK 0.3.280
+// (2026-09-22: 0.3.274 bundled a CLI that predates Opus 5.5, the same trap
+// 0.1.77 was for Fable). `agent: false` on a MODELS row would keep a model out
+// of builds, should that ever be needed.
 const canBuild = (id) => { const m = MODELS.find((x) => x.id === id); return !m || m.agent !== false; };
 // Pick the model for the build agent: the requested one if it can build,
 // otherwise the company's build model. Returns { model, substituted }.
 async function buildModelFor(company, requested) {
-  if (requested && canBuild(requested)) return { model: requested, substituted: null };
+  if (requested && inTier(requested) && canBuild(requested)) return { model: requested, substituted: null };
   let fallback = await modelFor(company, "build");
-  if (!canBuild(fallback)) fallback = "claude-sonnet-5";
+  if (!canBuild(fallback)) fallback = MODELS.find((m) => canBuild(m.id)).id;
   return { model: fallback, substituted: requested || null };
 }
-const DEFAULT_MODELS = {
-  propose: process.env.SOS_MODEL_PROPOSE || "claude-sonnet-5",
-  build: process.env.SOS_MODEL_BUILD || process.env.SOS_MODEL || "claude-sonnet-5",
-  review: process.env.SOS_MODEL_REVIEW || "claude-opus-5",
-};
-function modelInfo(id) { return MODELS.find((m) => m.id === id) || { id, label: id, in: 3, out: 15, note: "" }; }
-function priceOf(id) { const m = modelInfo(id); return { inTok: m.in / 1e6, outTok: m.out / 1e6 }; }
 
-// Effective model for a role: company override -> env/default.
-async function modelFor(company, role) {
-  const row = company ? (await q("SELECT model_propose, model_build, model_review FROM platform.companies WHERE slug=$1", [company])).rows[0] : null;
-  const pick = row && row[`model_${role}`];
-  return pick && MODELS.some((m) => m.id === pick) ? pick : DEFAULT_MODELS[role];
+// The instance's model settings, in platform.settings under "models":
+//   { baseline, jobs: { <job>: id }, ab: { on, jobs: [...], since, by, ended } }
+// baseline: what every job runs on unless the job has its own or a company
+// pins it. SOS_MODEL_BASELINE only matters until the first save on the page.
+function cleanSettings(raw) {
+  let s = {};
+  try { s = typeof raw === "string" ? (raw ? JSON.parse(raw) : {}) : (raw || {}); } catch (e) { s = {}; }
+  const first = inTier(process.env.SOS_MODEL_BASELINE) ? process.env.SOS_MODEL_BASELINE : FIRST_BASELINE;
+  const baseline = inTier(s.baseline) ? s.baseline : first;
+  const jobs = {};
+  for (const j of JOBS) if (s.jobs && inTier(s.jobs[j])) jobs[j] = s.jobs[j];
+  const a = s.ab || {};
+  const ab = a.on
+    ? { on: true, jobs: (Array.isArray(a.jobs) ? a.jobs : AB_JOBS).filter((j) => AB_JOBS.includes(j)), since: a.since || new Date().toISOString(), by: a.by || null, ended: null }
+    : { on: false, jobs: [], since: a.since || null, by: a.by || null, ended: a.ended || null };
+  return { baseline, jobs, ab, set_at: s.set_at || null, set_by: s.set_by || null };
 }
+async function instanceModels() { return cleanSettings(await getSetting("models", "")); }
+async function setInstanceModels(next, by) {
+  const s = cleanSettings({ ...next, set_at: new Date().toISOString(), set_by: by || null });
+  await setSetting("models", JSON.stringify(s));
+  return s;
+}
+// What each job runs on when no company pins it and no A/B arm applies.
+async function defaultModels(settings) {
+  const s = settings || await instanceModels();
+  const out = {};
+  for (const j of JOBS) out[j] = s.jobs[j] || s.baseline;
+  return out;
+}
+// A company's own pins (null = follows the instance).
+async function companyPins(company) {
+  const row = company ? (await q("SELECT model_propose, model_build, model_review FROM platform.companies WHERE slug=$1", [company])).rows[0] : null;
+  const out = {};
+  for (const j of COMPANY_JOBS) out[j] = row && inTier(row[`model_${j}`]) ? row[`model_${j}`] : null;
+  return out;
+}
+
+// Effective model for a job: the company's pin, then the instance's model for
+// the job, then the baseline. Unknown roles count as propose.
+async function modelFor(company, role) {
+  const job = JOBS.includes(role) ? role : "propose";
+  if (COMPANY_JOBS.includes(job)) { const pin = (await companyPins(company))[job]; if (pin) return pin; }
+  return (await defaultModels())[job];
+}
+
+// The live A/B (/admin#models). A job in the test that the company has not
+// pinned gets the model that has had fewer of that job since the test began
+// (a coin decides a tie). The pick is kept in platform.model_arms under a
+// reference ("run:12", "feedback:40", "intake:3"), so asking again for the
+// same thing while the test runs gives the same model. Returns
+// { model, arm } where arm is true when the A/B chose it.
+async function pickModel(company, job, ref) {
+  if (COMPANY_JOBS.includes(job)) { const pin = (await companyPins(company))[job]; if (pin) return { model: pin, arm: false }; }
+  const s = await instanceModels();
+  if (!s.ab.on || !s.ab.jobs.includes(job)) return { model: s.jobs[job] || s.baseline, arm: false };
+  if (ref) {
+    const had = (await q("SELECT model FROM platform.model_arms WHERE job=$1 AND ref=$2 AND created_at >= $3", [job, ref, s.ab.since])).rows[0];
+    if (had && inTier(had.model)) return { model: had.model, arm: true, since: s.ab.since };
+  }
+  const counts = (await q("SELECT model, count(*)::int AS n FROM platform.model_arms WHERE job=$1 AND created_at >= $2 GROUP BY model", [job, s.ab.since])).rows;
+  const n = (id) => (counts.find((c) => c.model === id) || {}).n || 0;
+  const least = Math.min(...MODELS.map((m) => n(m.id)));
+  const pool = MODELS.map((m) => m.id).filter((id) => n(id) === least);
+  const model = pool[Math.floor(Math.random() * pool.length)];
+  if (ref) await keepArm(job, company, ref, model);
+  return { model, arm: true, since: s.ab.since };
+}
+// Record an arm once the thing it belongs to has an id (a run is inserted with its model already chosen).
+async function keepArm(job, company, ref, model) {
+  await q("INSERT INTO platform.model_arms (job, company, ref, model) VALUES ($1,$2,$3,$4) ON CONFLICT (job, ref) DO UPDATE SET model=EXCLUDED.model, created_at=now()", [job, company || null, ref, model]);
+}
+
+const ALL_MODELS = [...MODELS, ...PRICE_ONLY];
+function modelInfo(id) { return ALL_MODELS.find((m) => m.id === id) || { id, label: id, in: 10, out: 50, note: "" }; }
+function priceOf(id) { const m = modelInfo(id); return { inTok: m.in / 1e6, outTok: m.out / 1e6 }; }
 
 function readIfExists(p) {
   return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
@@ -377,12 +468,13 @@ async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, 
 }
 
 // One-shot structured call (no file tools) for proposals/classification/verdicts.
-// Some models (Fable 5.1 at the time of writing) reject a forced tool_choice
-// ("type tool and any are not supported for this model"). For those we ask
-// with tool_choice auto plus an explicit instruction, and accept a JSON body
-// in plain text as a last resort. The set of models that refused is cached
-// for the life of the process so the second call does not pay for the 400.
-const noForcedTool = new Set();
+// Fable 5.1 and Opus 5.5 both reject a forced tool_choice ("type tool and
+// any are not supported for this model"). For those we ask with tool_choice
+// auto plus an explicit instruction, and accept a JSON body in plain text as a
+// last resort. MODELS rows marked forcedTool: false start in the set; any
+// other model that refuses is added for the life of the process, so the
+// second call does not pay for the 400.
+const noForcedTool = new Set(MODELS.filter((m) => m.forcedTool === false).map((m) => m.id));
 // `blocks`: optional content blocks (images, pdf documents, extra text) that
 // go in front of the prompt text, for callers that hand the model attachments.
 async function runStructured({ model, system, prompt, schema, toolName, maxTokens, blocks }) {
@@ -497,5 +589,6 @@ async function assertUnderCap(company) {
 
 module.exports = {
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
-  MODELS, DEFAULT_MODELS, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT,
+  MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
+  RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT,
 };

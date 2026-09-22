@@ -490,13 +490,13 @@ router.get("/api/runs/:id", async (req, res) => {
 
 // ---- system review: re-baseline a whole module (manager) --------------------
 router.get("/api/c/:slug/reviews/estimate", requireManager, async (req, res) => {
-  try { res.json(await review.estimate(req.params.slug, String(req.query.module), String(req.query.model || "claude-fable-5-1"))); }
+  try { res.json(await review.estimate(req.params.slug, String(req.query.module), agent.inTier(req.query.model) ? req.query.model : await agent.modelFor(req.params.slug, "design"))); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post("/api/c/:slug/reviews", requireManager, async (req, res) => {
   await record("review_started", { company: req.params.slug, module: (req.body || {}).module || null, actor: actor(req), detail: { model: (req.body || {}).model || null } });
   const { module: mod, model, requested_by } = req.body || {};
-  try { res.json(await review.startReview(req.params.slug, mod, model || "claude-fable-5-1", requested_by)); }
+  try { res.json(await review.startReview(req.params.slug, mod, agent.inTier(model) ? model : await agent.modelFor(req.params.slug, "design"), requested_by)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.get("/api/c/:slug/reviews", requireManager, async (req, res) => {
@@ -531,10 +531,12 @@ router.get("/api/c/:slug/agents", requireManager, async (req, res) => {
     company: coPublic, brand: brandPublic(b),
     models: {
       list: agent.MODELS,
-      defaults: agent.DEFAULT_MODELS,
+      defaults: await agent.defaultModels(),   // what each job runs on when the company leaves it to the instance
+      pins: await agent.companyPins(co.slug),   // the company's own choices; null = follows the instance
       propose: await agent.modelFor(co.slug, "propose"),
       build: await agent.modelFor(co.slug, "build"),
       review: await agent.modelFor(co.slug, "review"),
+      ab: (await agent.instanceModels()).ab.on,
     },
     platformDocs: agent.platformDocs(),
     docs, modules,
@@ -644,6 +646,8 @@ async function libraryView(modules) {
 router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   const companies = (await q("SELECT * FROM platform.companies ORDER BY created_at")).rows;
   const modules = (await q("SELECT company, name, title, live_version, staged_version, created_at FROM platform.modules ORDER BY company, name")).rows;
+  const settings = await agent.instanceModels(), defs = await agent.defaultModels(settings);
+  const eff = (c, job) => (agent.inTier(c[`model_${job}`]) ? c[`model_${job}`] : defs[job]);
   const docs = (await q("SELECT company, module, name, source, updated_at, length(content) AS bytes FROM platform.agent_docs ORDER BY company, module NULLS FIRST, name")).rows;
   const counts = (await q(`SELECT company, count(*) FILTER (WHERE status='new')::int AS open, count(*)::int AS total FROM platform.feedback GROUP BY company`)).rows;
   const spend = (await q(`
@@ -656,7 +660,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   res.json({
     companies: companies.map((c) => ({
       ...c,
-      models: { propose: c.model_propose || agent.DEFAULT_MODELS.propose, build: c.model_build || agent.DEFAULT_MODELS.build, review: c.model_review || agent.DEFAULT_MODELS.review },
+      models: { propose: eff(c, "propose"), build: eff(c, "build"), review: eff(c, "review"), pinned: agent.COMPANY_JOBS.filter((j) => agent.inTier(c[`model_${j}`])) },
       modules: modules.filter((m) => m.company === c.slug),
       docs: docs.filter((d) => d.company === c.slug),
       feedback: counts.find((x) => x.company === c.slug) || { open: 0, total: 0 },
@@ -668,7 +672,9 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
     })),
     library: await libraryView(modules),
     models: agent.MODELS,
-    defaults: agent.DEFAULT_MODELS,
+    labels: agent.ALL_MODELS,   // every model a row may name, retired ones included, for labels only
+    defaults: defs,
+    modelSettings: settings,
     monthlyCap: agent.MONTHLY_CAP_USD,
     totalSpend: (await agent.monthlySpend(null)).usd,
     runner: require("./runner").status(),
@@ -970,7 +976,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     counts.runs = (await q("DELETE FROM platform.build_runs WHERE company=$1", [co.slug])).rowCount;
     counts.proposals = (await q("DELETE FROM platform.proposals WHERE feedback_id = ANY($1::int[])", [fbIds])).rowCount;
     counts.feedback = (await q("DELETE FROM platform.feedback WHERE company=$1", [co.slug])).rowCount;
-    for (const t of ["batches", "agent_docs", "reviews", "diagrams", "module_versions", "modules", "schema_snapshots", "attachments", "module_intakes", "company_access"]) {
+    for (const t of ["batches", "agent_docs", "reviews", "diagrams", "module_versions", "modules", "schema_snapshots", "attachments", "module_intakes", "company_access", "model_arms", "assessment_trials", "assessment_picks"]) {
       counts[t] = (await q(`DELETE FROM platform.${t} WHERE company=$1`, [co.slug])).rowCount;
     }
     await connections.deleteCompany(co.slug);

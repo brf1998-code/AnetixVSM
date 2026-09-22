@@ -34,6 +34,7 @@ async function main() {
   await require("./src/runner").init();      // module code in a process of its own per company (tenancy option C): the user ids
   await connections.init();   // what modules reach outside through: spreadsheets, label printers (src/connections.js)
   await require("./src/datacheck").init();   // the review-time check that a change's ERP data is available, and the admin's data requests
+  await require("./src/assess").init();      // which model is the baseline: the head-to-head assessment and the live A/B arms (/admin#models)
 
   const app = express();
   app.disable("x-powered-by");
@@ -88,6 +89,7 @@ async function main() {
   app.use(accounts.router);  // /api/admin/accounts*: the admin accounts, authenticator setup, sign out everywhere
   app.use(intake.router);    // /api/c/:slug/intakes, /api/intakes/*, /api/attachments/* (before platformApi: the attach route parses a bigger body)
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
+  app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module and /c/:slug/staging/m/:module
 

@@ -52,14 +52,14 @@ const SLUG = location.pathname.split("/")[2];
 document.getElementById("back").href = `/c/${SLUG}/`;
 let D = null, FILTER = null;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
-const modelLabel = (id) => ((D.models || []).find((m) => m.id === id) || {}).label || id || "";
+const modelLabel = (id) => ((D.labels || D.models || []).find((m) => m.id === id) || {}).label || id || "";
 async function load() {
   const r = await fetch(`/api/c/${SLUG}/checks`);
   if (r.status === 401 || r.status === 403) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
   D = await r.json();
   document.getElementById("co").textContent = SLUG;
   const sel = document.getElementById("rmodel");
-  if (!sel.options.length) sel.innerHTML = (D.models || []).map((m) => `<option value="${m.id}" ${m.id === "claude-fable-5-1" ? "selected" : ""}>${esc(m.label)} ($${m.in}/$${m.out})</option>`).join("");
+  if (!sel.options.length) sel.innerHTML = (D.models || []).map((m) => `<option value="${m.id}" ${m.id === (D.review_model || "claude-fable-5-1") ? "selected" : ""}>${esc(m.label)} ($${m.in}/$${m.out})</option>`).join("");
   render();
 }
 // A replay runs the CURRENT brief on the run's original diff with the chosen

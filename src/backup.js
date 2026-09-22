@@ -20,6 +20,7 @@ const PLATFORM_TABLES = [
   "agent_docs", "reviews", "diagrams", "events", "schema_snapshots", "batches", "ai_usage",
   "module_intakes", "attachments", "check_labels", "check_replays", "record",
   "connections", "connection_uploads", "print_jobs", "erp_cache", "data_requests", "people", "check_retirements", "ai_credit",
+  "model_arms", "assessments", "assessment_trials", "assessment_picks",
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under

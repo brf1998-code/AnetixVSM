@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-21)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-22)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -19,7 +19,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   2026-09-21, see "Named admin accounts"; `SOS_ADMIN_PASSWORD` opens it only
   until the first authenticator is set up) lists companies, their modules,
   docs, spend, and adds companies or library modules to them.
-- **The admin page is five tabs, one job each** (2026-09-21, `public/admin.html`
+- **The admin page is six tabs, one job each** (2026-09-21, `public/admin.html`
   plus the standard header `public/assets/admin-shell.js` and
   `admin-shell.css`; Brendan: the page had become fix stacked on fix and he got
   lost in it). The header is on every tab: the navy band, who is signed in,
@@ -30,7 +30,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   something on it wants looking at. The tab in view is the address's hash, so it
   can be linked, reloaded and reached with the back button: `/admin#health`
   (the default), `#companies/<slug>`, `#companies/new`, `#library`,
-  `#accounts`, `#instance`. **Health**: data requests first when there are any
+  `#models`, `#accounts`, `#instance` (Models since 2026-09-22, see "Two
+  models, one baseline"). **Health**: data requests first when there are any
   ("waiting on us"), then the fleet tiles and the per-company table; the long
   "how to read these numbers" text is folded. **Companies**: a list on the left
   (open feedback, modules, spend this month, a red line when sign-in needs
@@ -64,12 +65,14 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   carry `target_file`; the build prompt pins the change to that file; the
   cross-check fails a diff that lands on another screen. The manager can
   change the target in the Adjust form.
-- Three model roles per company (propose / build / review), chosen on the
-  Agent settings page. The board names no model and no cost anywhere since
+- Model jobs: propose / build / review / design; a company can pin the first
+  three on its Agent settings page, everything else follows the instance
+  (see "Two models, one baseline", 2026-09-22). The board names no model and no cost anywhere since
   2026-09-20 (the per-run override in Adjust, the batch bar's model select
   and the system review's model select are gone; the API still accepts
   `model` and falls back to the company's build model). `src/agent.js
-  MODELS` is the price table; keep it current with
+  MODELS` is the two models on offer and `PRICE_ONLY` prices Haiku and the
+  retired ones; keep both current with
   platform.claude.com/docs/en/models/overview.
 - Agent docs: repo `principles/*.md` are platform-wide and read-only in the
   app; each company has editable docs in `platform.agent_docs` (COMPANY.md
@@ -101,8 +104,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   Snapshot retention `SOS_KEEP_SNAPSHOTS` (default 10). The Done card's Roll
   back is one restore step to the nearest older snapshot.
 - **Structured calls** (`agent.runStructured`): forced `tool_choice` is
-  rejected by Fable 5.1; the runner falls back to `auto` plus an instruction
-  and remembers which models refuse. Review and diagram calls use a 16k
+  rejected by Fable 5.1 and Opus 5.5; both are marked `forcedTool: false` in
+  `MODELS` and asked with `auto` plus an instruction from the first call
+  (any other model that refuses is remembered for the process). Review and diagram calls use a 16k
   output budget.
 - **Batch tiles**: a run with several proposals renders as ONE card on the
   board (in progress and done), with the changes collapsed under "See the N
@@ -137,6 +141,94 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   === false` still works to keep a model out of builds; nothing uses it now.
   Structured calls keep the `tool_choice` fallback (Fable still rejects a
   forced tool).
+- **Two models, one baseline** (2026-09-22, `src/agent.js`, `src/assess.js`,
+  `health.abSplit`, `public/assets/admin-models.js`, the Models tab of
+  `/admin`; Brendan: every request structure on Fable 5.1 or Opus 5.5, and an
+  assessment to decide which is the baseline). Opus 5.5 came out that day
+  (`claude-opus-5-5`, $4 / $20, ahead of Fable 5.1 on Anthropic's agentic
+  coding numbers; like Fable it refuses a forced `tool_choice`). **The tier**:
+  `MODELS` is exactly the two; `PRICE_ONLY` keeps Haiku 4.5 (plain summaries
+  and plain-words rewrites, `SOS_MODEL_SUMMARY`) and prices Sonnet 5 and Opus
+  5 for old rows only; `inTier(id)` is the one test, so every
+  `MODELS.some(...)` check in the code now refuses a retired model. **Jobs**
+  (`JOBS`): propose (the proposal on arrival, the requirement before a
+  functionality build, diagrams, ERP lookup drafts, a module's chat default),
+  build, review (the cross-check), design (a new module's intake questions
+  and design, its first build and that build's check, system reviews, brand
+  guides). **Resolution** (`modelFor(company, job)`): the company's pin
+  (propose / build / review only, `platform.companies.model_*`, and only if in
+  the tier) then the instance's model for that job then the baseline. The
+  instance side is ONE row, `platform.settings` key `models` = `{ baseline,
+  jobs: { <job>: id }, ab: { on, jobs, since, by, ended }, set_at, set_by }`
+  (`instanceModels` / `setInstanceModels`, cleaned by `cleanSettings`);
+  `SOS_MODEL_BASELINE` only seeds the first baseline (Fable). The old per-role
+  variables are not read (`RETIRED_ENV`; boot logs `[models] ... no longer
+  read` and the tab shows them to delete). Boot also clears any company pin on
+  a retired model (the old Agent settings page pinned whatever was in force
+  every time it was saved; the page now offers "Platform's model (now X)"
+  first and "Pin <model>" after, and saving untouched pins nothing). Hard-coded
+  Fable defaults are gone from intake, module build, brand, system review and
+  the checks replay: each asks `modelFor(..., "design")` or `"review"`.
+  **The live A/B** (`pickModel(company, job, ref)`, `keepArm`,
+  `platform.model_arms`): for a job in the test (`AB_JOBS`: propose, build,
+  design) that the company has not pinned, the model that has had FEWER of
+  that job since the test began, a coin on a tie; kept under a ref
+  (`feedback:<id>` for a proposal, so a redraft keeps its arm; `run:<id>`;
+  `intake:<id>`). A build's arm is kept on the run (`evidence.ab = { arm,
+  since }`) and `pipeline.modelForRun` puts that run's requirement and
+  cross-check on the same arm (company pin first): an A/B run is one model end
+  to end. `health.abSplit` (pure) runs `metrics()` over each arm's runs,
+  proposals and feedback only (builds started / shipped / rolled back, stops
+  by kind, fix rounds, met / missed once live, start to the deploy gate, spend
+  per run and per shipped), plus proposals drafted / approved / edited /
+  declined and intakes per arm; `AB_MIN_RUNS` = 10 builds an arm before the
+  page reads anything into it. Stopping keeps `since` and sets `ended`, so the
+  last test's numbers stay. **The head-to-head** (`platform.assessments`,
+  `assessment_trials`, `assessment_picks`; routes `/api/admin/assess*`,
+  admin only): stored work done again by both models with the brief a real
+  call gets (`pipeline.buildPrompt` and `proposals.proposalRequest` were
+  pulled out of `advance` and `generateProposal` for this, byte for byte the
+  same prompts), nothing written anywhere a company sees. Kinds: `crosscheck`
+  (runs labeled Right / Wrong on the checks page; `crossCheckCall` on
+  `diffForRun`; scored against the label the way the checks page reads it),
+  `proposal` (requests whose proposal was approved, drafted again forced (no
+  sorting, no question) against the module version the build started from,
+  `moduleContext({ version })`; scored on class and screen against what the
+  manager approved), `design` (intakes that reached a design;
+  `intake.generateDesign(it with the model, null, { usageKind: false })`;
+  scored by plain-words flags), `build` (deployed runs, built again in a
+  scratch folder `os.tmpdir()/sos-assess-<trial>/versions/<from|to>`, then the
+  module gate and a cross-check by BOTH models, so no build is graded only by
+  its own model; UI builds are cross-checked here too, which the pipeline does
+  not do). One trial at a time in the background, the two models take turns
+  going first, spend is `ai_usage` kind `assess` (company budgets, the
+  instance cap and the credit slope all see it), an assessment has its own
+  `budget_usd` and stops at it, and stops on an AI-service or budget refusal
+  rather than failing every trial after; a running one resumes after a
+  restart. Blind picks: proposal, design and build cases show Left and Right
+  with no model, cost or time (`blindView`), the side a fixed sha256 coin per
+  case (`sides`), the pick reveals the models afterwards and can be changed.
+  The scorecard (`scorecard`, pure) and its reading (`reading`, rules in
+  `RULES`, shown on the page): a kind counts at 5 cases done on both (and 5
+  picks when blind); the non-baseline model is worse on a kind when it lost 2
+  or more picks than it won or its objective share is 15 points or more under;
+  one kind worse keeps the baseline; nothing worse and cheaper suggests the
+  switch, with a "Make X the baseline" button. The admin changes the baseline;
+  nothing changes it on its own. Method and how to read it:
+  `docs/MODEL-ASSESSMENT.md`. **Agent SDK 0.3.280**: 0.3.274's bundled CLI has
+  no `claude-opus-5-5` in it (the same trap 0.1.77 was for Fable); 0.3.280
+  (published the same day) has it, and a one-turn agent run on each model
+  came back reporting that model (`modelsSeen`). Tests:
+  `scripts/test-models.js` (35, no database), `scripts/e2e/models.js` (59,
+  fake mode, fresh database, started with `SOS_MODEL_PROPOSE=claude-sonnet-5`
+  so the retired warning shows) and `scripts/e2e/models-browser.js` (22,
+  playwright, right after models.js on the same database). The tables are in
+  the backup and in company delete. Known limits: the cost estimate per case
+  is rough (fixed token sizes); a build trial runs the gate and the reviewers
+  but not the acceptance checks or the page load (those need a staged mount,
+  the live A/B covers them); a proposal trial reads today's company docs;
+  "Fable" is still the name of the designer in the intake flow whichever
+  model runs it.
 - **Boot id**: `SOS_BOOT_ID` is set at process start and returned by the
   board API; the board reloads itself when it changes, so an open tab picks
   up a redeploy instead of running old page code against new data.
@@ -1306,8 +1398,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   modules; answer shapes documented at the top of that file). Answers save
   one at a time (`POST /api/intakes/:id/answer`); `next` checks the open
   round is complete (409 with the missing ids), sets status `thinking` and
-  runs `intake.think` in the background: Fable (`SOS_MODEL_INTAKE`, default
-  claude-fable-5-1) returns either a round of up to 6 questions (ids
+  runs `intake.think` in the background: the design job's model (chosen at
+  create and kept on the intake row; `SOS_MODEL_INTAKE` is no longer read)
+  returns either a round of up to 6 questions (ids
   `r2q1`..., at most two generated rounds, or `enough`) or the design
   (`DESIGN_SCHEMA`: bluf, check items, reference_md in the module-formats
   shape, screens, connections, starting data, leaves_out, change guidance,
@@ -1604,9 +1697,13 @@ tool list, 401 from the API) proves the CLI itself starts.
 
 `DATABASE_URL` (reference to Postgres), `ANTHROPIC_API_KEY`,
 `SOS_FLOOR_PASSWORD`, `SOS_MANAGER_PASSWORD`, `SOS_ADMIN_PASSWORD`,
-`SESSION_SECRET`, `SOS_MODEL_PROPOSE` / `SOS_MODEL_BUILD` / `SOS_MODEL_REVIEW`
-(instance defaults: claude-sonnet-5 / claude-sonnet-5 / claude-opus-5;
-companies override on their Agent settings page), `SOS_MAX_RUN_USD` (per
+`SESSION_SECRET`, `SOS_MODEL_BASELINE` (optional: the first baseline,
+`claude-fable-5-1` by default, until one is saved on `/admin#models`;
+`SOS_MODEL_PROPOSE` / `SOS_MODEL_BUILD` / `SOS_MODEL_REVIEW` / `SOS_MODEL` /
+`SOS_MODEL_INTAKE` are no longer read since 2026-09-22 and the admin page
+names any still set), `SOS_MODEL_SUMMARY` (the utility model, Haiku by
+default), `SOS_ASSESS_RESUME_MS` (15000: how long after boot a head-to-head
+that was running picks up again), `SOS_MAX_RUN_USD` (per
 build run, default 1.50), `SOS_MONTHLY_CAP_USD` (default 25),
 `SOS_FAKE_AGENT` (0/1). `SOS_FLOOR_PASSWORD` and `SOS_MANAGER_PASSWORD` are
 now only the fallback for companies created before 2026-09-19 that have not

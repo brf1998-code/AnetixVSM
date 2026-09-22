@@ -1,7 +1,7 @@
 // Proposal engine: feedback item -> AI proposal + UI/functionality classification
 // + the file the change lands in (pinned to the screen the feedback came from).
 const { q, logEvent } = require("./db");
-const { runStructured, haveKey, assertUnderCap, modelFor, guidanceFor, recordUsage } = require("./agent");
+const { runStructured, haveKey, assertUnderCap, pickModel, guidanceFor, recordUsage } = require("./agent");
 const registry = require("./registry");
 const { record } = require("./record");
 const datacheck = require("./datacheck");
@@ -44,16 +44,19 @@ function proposalSchema(files, erpLookups, { triage = false, ask = false } = {})
 // written from under half of routes.js. `first` names the files this reader needs most (the screen the
 // feedback came from); it only matters when a module is over the overall budget, and then `cut` says what
 // was cut so the caller can put it on the record.
-async function moduleContext(company, mod, { first = [] } = {}) {
+// `version`: read that version instead of the live one (the head-to-head assessment, src/assess.js, re-drafts an
+// old request against the module as it was when the request came in).
+async function moduleContext(company, mod, { first = [], version = null } = {}) {
   const row = await registry.getModule(company, mod);
   if (!row) return { text: "(unknown module)", files: [], screens: [], cut: [] };
-  const files = (await registry.versionFiles(company, mod, row.live_version)) || {};
+  const v = version || row.live_version;
+  const files = (await registry.versionFiles(company, mod, v)) || {};
   const manifest = JSON.parse(files["module.json"] || "{}");
   const screens = registry.pageEntries(manifest);
   const src = sourceText(files, { first: first.filter(Boolean) });
   const screenList = screens.map((s) => `- ${s.label}: ${s.file} (route ${s.route})`).join("\n");
   return {
-    text: `Module "${row.title}" (${mod}), live version ${row.live_version}.\nScreens in this module:\n${screenList}\n- server logic: routes.js\nSource:\n${src.text}`,
+    text: `Module "${row.title}" (${mod}), ${v === row.live_version ? "live version" : "version"} ${v}.\nScreens in this module:\n${screenList}\n- server logic: routes.js\nSource:\n${src.text}`,
     files: Object.keys(files).filter((f) => f.startsWith("pages/") || f === "routes.js"),
     screens, cut: src.cut, chars: src.chars,
   };
@@ -71,6 +74,38 @@ For anything but change, write one plain sentence in triage_note for the manager
 const ASK_BRIEF = `
 
 You may ask ONE question instead of guessing. Ask only when the words can be read two ways that lead to DIFFERENT changes and the source below does not settle which. Then fill question with one plain question and two or three short answers, each a different reading; the person taps one or answers in their own words. Never ask what the source already answers, never ask how to build it, never ask two things. Most requests need no question: leave question.text empty and draft the proposal. When you do ask, keep proposal and rationale to one short sentence each (they are not shown).`;
+
+// Everything the proposer is handed for one request: the system brief, the prompt, the schema and the attached
+// photo. A function of its own so the head-to-head assessment (src/assess.js) asks both models exactly what a
+// real proposal asks. opts carries what generateProposal already worked out (mayTriage, mayAsk, answered, ctx,
+// screenLine); the assessment passes { force: true } and a version and lets the rest be worked out here.
+async function proposalRequest(fb, opts = {}) {
+  const arrival = require("./arrival");
+  const answered = opts.answered != null ? opts.answered : Boolean(fb.question && fb.question.answer);
+  const mayTriage = opts.mayTriage != null ? opts.mayTriage : !opts.force && !opts.answered && !answered && !fb.triage;
+  const mayAsk = opts.mayAsk != null ? opts.mayAsk : mayTriage && !fb.question;
+  const ctx = opts.ctx || await moduleContext(fb.company, fb.module, { first: [fb.target_file], version: opts.version || null });
+  const screenLine = opts.screenLine || (fb.screen ? `Screen: ${fb.screen} (${fb.target_file})` : `Screen: unknown (page ${fb.page || "?"})`);
+  const guidance = await guidanceFor(fb.company, fb.module);
+  // the data check: a module with an ERP connection is asked what ERP data the change needs
+  const erpLookups = Object.keys(await datacheck.erpState(fb.company, fb.module).catch(() => ({})));
+  const erpAsk = erpLookups.length ? `\n\nThis module can read the company's ERP through these lookups: ${erpLookups.join(", ")}. ERP-FIELDS.md above lists every field each one can give. List under erp_data every piece of ERP data this change needs, naming the listed field that covers it; when no listed field covers it, leave its field empty and still write the proposal as it will work once the data is there. Do not tell the manager about lookups or fields.\nERP lookups available to this module: ${erpLookups.join(", ")}` : "";
+  // a follow-up ("not quite" on something that shipped): the proposer is told what was built before and that this is what is still off
+  const closeloop = require("./closeloop");
+  const followUp = closeloop.followUpContext(await closeloop.originalOf(fb).catch(() => null));
+  // what the person pointed at, a photo they took, the answer to the one question, and the open requests this might repeat
+  const pointed = arrival.elementLine(fb.element);
+  const blocks = await arrival.photoBlocks(fb.id).catch((e) => { console.error("[arrival] photo:", e.message); return []; });
+  const qa = answered ? `\nBefore drafting, the person was asked: "${fb.question.text}" (the choices: ${(fb.question.options || []).join(" / ")}). The answer${fb.question.answered_by ? `, from ${fb.question.answered_by}` : ""}: "${fb.question.answer}". Read the answer as part of the request.` : "";
+  const open = mayTriage && !opts.alone ? await arrival.candidates(fb).catch(() => []) : [];   // alone: the manager said "not the same", so nothing to repeat
+  const extras = [followUp, pointed, blocks.length ? "\nThe person also took a photo; it is attached above." : "", qa].map((x) => String(x || "").trim()).filter(Boolean).join("\n");
+  return {
+    system: "You draft improvement proposals for a factory operations platform. The reader is a production manager with no software background. Be concrete and short. Never mention code internals in the proposal text. Prefer the smallest change that removes the reported friction. The feedback was filed from a specific screen; the change belongs on that screen unless the feedback clearly says otherwise.\n\n" + guidance.text,
+    prompt: `Floor feedback (reported by ${fb.name || "anonymous"}, reported ${fb.recurrence} time(s))\n${screenLine}\n\n"${fb.message}"${extras ? `\n\n${extras}` : ""}${arrival.candidatesBlock(open)}${mayTriage ? TRIAGE_BRIEF : ""}${mayAsk ? ASK_BRIEF : ""}\n\nCurrent module for context:\n${ctx.text}\n\nDraft the proposal, classify it, and name the target file.${erpAsk}`,
+    schema: proposalSchema(ctx.files.length ? ctx.files : ["routes.js"], erpLookups, { triage: mayTriage, ask: mayAsk }),
+    blocks, erpLookups, ctx, mayTriage, mayAsk,
+  };
+}
 
 // opts.arrival: the call made the moment a request lands (src/arrival.js). opts.answered: the person answered
 // the question, draft with the answer. opts.force: the manager asked for a proposal on something the proposer
@@ -100,28 +135,11 @@ async function generateProposal(feedbackId, opts = {}) {
   }
   await assertUnderCap(fb.company);
 
-  const model = await modelFor(fb.company, "propose");
-  const guidance = await guidanceFor(fb.company, fb.module);
-  // the data check: a module with an ERP connection is asked what ERP data the change needs
-  const erpLookups = Object.keys(await datacheck.erpState(fb.company, fb.module).catch(() => ({})));
-  const erpAsk = erpLookups.length ? `\n\nThis module can read the company's ERP through these lookups: ${erpLookups.join(", ")}. ERP-FIELDS.md above lists every field each one can give. List under erp_data every piece of ERP data this change needs, naming the listed field that covers it; when no listed field covers it, leave its field empty and still write the proposal as it will work once the data is there. Do not tell the manager about lookups or fields.\nERP lookups available to this module: ${erpLookups.join(", ")}` : "";
-  // a follow-up ("not quite" on something that shipped): the proposer is told what was built before and that this is what is still off
-  const closeloop = require("./closeloop");
-  const followUp = closeloop.followUpContext(await closeloop.originalOf(fb).catch(() => null));
-  // what the person pointed at, a photo they took, the answer to the one question, and the open requests this might repeat
-  const pointed = arrival.elementLine(fb.element);
-  const blocks = await arrival.photoBlocks(fb.id).catch((e) => { console.error("[arrival] photo:", e.message); return []; });
-  const qa = answered ? `\nBefore drafting, the person was asked: "${fb.question.text}" (the choices: ${(fb.question.options || []).join(" / ")}). The answer${fb.question.answered_by ? `, from ${fb.question.answered_by}` : ""}: "${fb.question.answer}". Read the answer as part of the request.` : "";
-  const open = mayTriage && !opts.alone ? await arrival.candidates(fb).catch(() => []) : [];   // alone: the manager said "not the same", so nothing to repeat
-  const extras = [followUp, pointed, blocks.length ? "\nThe person also took a photo; it is attached above." : "", qa].map((x) => String(x || "").trim()).filter(Boolean).join("\n");
-  const { data, costUsd } = await runStructured({
-    model,
-    system: "You draft improvement proposals for a factory operations platform. The reader is a production manager with no software background. Be concrete and short. Never mention code internals in the proposal text. Prefer the smallest change that removes the reported friction. The feedback was filed from a specific screen; the change belongs on that screen unless the feedback clearly says otherwise.\n\n" + guidance.text,
-    prompt: `Floor feedback (reported by ${fb.name || "anonymous"}, reported ${fb.recurrence} time(s))\n${screenLine}\n\n"${fb.message}"${extras ? `\n\n${extras}` : ""}${arrival.candidatesBlock(open)}${mayTriage ? TRIAGE_BRIEF : ""}${mayAsk ? ASK_BRIEF : ""}\n\nCurrent module for context:\n${ctx.text}\n\nDraft the proposal, classify it, and name the target file.${erpAsk}`,
-    schema: proposalSchema(ctx.files.length ? ctx.files : ["routes.js"], erpLookups, { triage: mayTriage, ask: mayAsk }),
-    toolName: "proposal",
-    blocks,
-  });
+  // the propose model: the company's, the instance's, or this request's arm of the live A/B (src/agent.js)
+  const { model } = await pickModel(fb.company, "propose", `feedback:${fb.id}`);
+  const req = await proposalRequest(fb, { ...opts, mayTriage, mayAsk, answered, ctx, screenLine });
+  const { erpLookups, blocks } = req;
+  const { data, costUsd } = await runStructured({ model, system: req.system, prompt: req.prompt, schema: req.schema, toolName: "proposal", blocks: req.blocks });
   const spent = (outcome) => recordUsage(fb.company, fb.module, "triage", model, costUsd || 0, { feedback_id: fb.id, outcome }).catch((e) => console.error("[arrival] usage:", e.message));
 
   // the same thing as an open request: fold it in, no proposal of its own
@@ -161,4 +179,4 @@ async function generateProposal(feedbackId, opts = {}) {
   return { ...r.rows[0], data_check: check };
 }
 
-module.exports = { generateProposal, moduleContext };
+module.exports = { generateProposal, moduleContext, proposalRequest };

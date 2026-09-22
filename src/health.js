@@ -252,10 +252,10 @@ async function load(windowDays) {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const companies = (await q("SELECT slug, name, monthly_cap_usd FROM platform.companies ORDER BY created_at")).rows;
   const feedback = (await q("SELECT id, company, status, created_at, outcome, person_id, follow_up_of, shipped_at, floor_answer, floor_answer_at, manager_answer, manager_answer_at, duplicate_of, (question IS NOT NULL AND NOT (question ? 'answer')) AS question_open FROM platform.feedback")).rows;
-  const proposals = (await q("SELECT p.id, p.feedback_id, f.company, p.status, p.created_at, p.data_check->>'status' AS data_status FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id")).rows;
-  const runs = (await q("SELECT id, company, module, lane, status, step, model, proposal_id, proposal_ids, created_at, evidence, log FROM platform.build_runs ORDER BY id DESC LIMIT 5000")).rows;
+  const proposals = (await q("SELECT p.id, p.feedback_id, f.company, p.status, p.created_at, p.data_check->>'status' AS data_status, p.model, p.cost_usd FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id")).rows;
+  const runs = (await q("SELECT id, company, module, lane, status, step, model, proposal_id, proposal_ids, created_at, evidence, log, cost_usd FROM platform.build_runs ORDER BY id DESC LIMIT 5000")).rows;
   const record = (await q("SELECT company, kind, proposal_id, created_at, (detail->>'on_arrival')::boolean AS on_arrival, detail->>'via' AS via FROM platform.record WHERE kind IN ('proposal_edited','proposal_approved','proposal_declined','check_added','promise_retired','question_asked','question_answered','request_flagged','duplicate_unlinked') OR (kind='proposal_drafted' AND detail ? 'on_arrival') ORDER BY id")).rows;
-  const intakes = (await q("SELECT company, status, created_at FROM platform.module_intakes")).rows;
+  const intakes = (await q("SELECT id, company, status, created_at, model, cost_usd FROM platform.module_intakes")).rows;
   const [w, m] = await Promise.all([spendSince(since), spendSince(monthStart)]);
   const spend = {}; for (const c of companies) spend[c.slug] = { window: w[c.slug] || 0, month: m[c.slug] || 0 };
   return { companies, feedback, proposals, runs, record, intakes, spend, instance_cap: agent.MONTHLY_CAP_USD || null, now };
@@ -267,4 +267,53 @@ async function forAdmin(days) {
   return compute(bundle, { now: bundle.now, windowDays });
 }
 
-module.exports = { compute, metrics, runTimes, stopKind, testStopKind, forAdmin, load, SAME_SHIFT_HOURS };
+// The live A/B, one column per model (src/assess.js abView, /admin#models). Pure, like compute(). An arm counts
+// only what the A/B put on it since the test began (until it ended): builds whose run carries evidence.ab, the
+// proposals of requests the A/B gave that model, the module intakes likewise. Everything the loop health numbers
+// say about a build (shipped, rolled back, where it stopped, fix rounds, what the floor and the manager said once
+// it was live) is metrics() over that arm's rows alone. b = load() plus b.arms (platform.model_arms rows).
+const AB_MIN_RUNS = 10;
+function abSplit(b, { since, until = null, models, now = new Date() }) {
+  const inTest = (d) => d != null && ms(d) >= ms(since) && (!until || ms(d) <= ms(until));
+  const armRefs = (job, m) => new Set((b.arms || []).filter((a) => a.job === job && a.model === m && inTest(a.created_at)).map((a) => Number(String(a.ref).split(":")[1])));
+  const edited = new Set(b.record.filter((r) => r.kind === "proposal_edited").map((r) => r.proposal_id));
+  const out = {};
+  for (const m of models) {
+    const runs = b.runs.filter((r) => r.evidence && r.evidence.ab && r.evidence.ab.arm === m && inTest(r.created_at));
+    const pids = new Set(runs.flatMap((r) => (r.proposal_ids && r.proposal_ids.length ? r.proposal_ids : [r.proposal_id])));
+    const proposals = b.proposals.filter((p) => pids.has(p.id));
+    const fids = new Set(proposals.map((p) => p.feedback_id));
+    const spend = runs.reduce((n, r) => n + Number(r.cost_usd || 0), 0);
+    const g = { feedback: b.feedback.filter((f) => fids.has(f.id)), proposals, runs, record: b.record.filter((r) => r.proposal_id && pids.has(r.proposal_id)), intakes: [], spend_window: spend, spend_month: 0, cap: null };
+    const mm = metrics(g, now, 0);
+    const toGate = runs.map((r) => { const t = runTimes(r); return t.ready ? (ms(t.ready) - ms(r.created_at)) / 60000 : null; }).filter((x) => x != null && x >= 0);
+    const onArm = armRefs("propose", m);
+    const drafted = b.proposals.filter((p) => onArm.has(p.feedback_id) && p.model === m && inTest(p.created_at));
+    const decided = drafted.filter((p) => p.status === "approved" || p.status === "declined");
+    const intakeArm = armRefs("design", m);
+    const intakes = (b.intakes || []).filter((i) => intakeArm.has(i.id));
+    out[m] = {
+      builds: {
+        started: runs.length, shipped: mm.builds.shipped, rolled_back: mm.builds.rolled_back, cancelled: mm.builds.cancelled,
+        stops: mm.builds.stops, fix_rounds: mm.builds.fix_rounds, overrides: mm.builds.overrides, in_flight: mm.builds.in_flight,
+        cost_usd: Math.round(spend * 100) / 100, cost_per_run: runs.length ? Math.round((spend / runs.length) * 100) / 100 : null, per_shipped_usd: mm.spend.per_shipped_usd,
+        to_gate_median_minutes: round1(median(toGate)),
+      },
+      floor: mm.floor,
+      answers: { met: mm.answers.met, missed: mm.answers.missed, met_share: mm.answers.met_share, fixed: mm.answers.fixed, not_quite: mm.answers.not_quite, little_left: mm.answers.manager_little_left, unanswered: mm.answers.unanswered },
+      proposals: {
+        drafted: drafted.length, approved: drafted.filter((p) => p.status === "approved").length, declined: drafted.filter((p) => p.status === "declined").length,
+        edited: drafted.filter((p) => edited.has(p.id)).length, approved_share: decided.length ? Math.round((decided.filter((p) => p.status === "approved").length / decided.length) * 100) / 100 : null,
+        cost_usd: Math.round(drafted.reduce((n, p) => n + Number(p.cost_usd || 0), 0) * 100) / 100,
+      },
+      intakes: {
+        started: intakes.length, confirmed: intakes.filter((i) => ["confirmed", "building", "done"].includes(i.status)).length,
+        done: intakes.filter((i) => i.status === "done").length, abandoned: intakes.filter((i) => i.status === "abandoned").length,
+        cost_usd: Math.round(intakes.reduce((n, i) => n + Number(i.cost_usd || 0), 0) * 100) / 100,
+      },
+    };
+  }
+  return out;
+}
+
+module.exports = { compute, metrics, runTimes, stopKind, testStopKind, forAdmin, load, abSplit, AB_MIN_RUNS, SAME_SHIFT_HOURS };

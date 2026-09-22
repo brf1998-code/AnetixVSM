@@ -205,7 +205,7 @@ async function startBuild(intake) {
   const { company, slug, name: title } = intake;
   if (!slug) throw new Error("the module has no name");
   if (await registry.getModule(company, slug)) throw new Error(`a module named "${slug}" already exists`);
-  const model = intake.model || require("./intake").INTAKE_MODEL;
+  const model = await require("./intake").intakeModel(intake);   // the model that designed it builds it and checks the build
   // starting rows: the first spreadsheet attached to the intake
   const files = await attachments.list(intake.id);
   const sheet = (await Promise.all(files.filter((a) => a.kind === "sheet").map((a) => attachments.get(a.id)))).find((a) => a && a.parsed && a.parsed.rows && a.parsed.rows.length);
@@ -431,7 +431,7 @@ Rules for this build:
     if (run.step === "cross_check") {
       const cur = await P.getRun(runId);
       if (agent.haveKey()) {
-        const model = run.model;   // Fable reviews Fable's module build; the design is the requirement
+        const model = run.model;   // the model that designed and built it checks it; the design is the requirement
         const p = (await q("SELECT * FROM platform.proposals WHERE id=$1", [run.proposal_id])).rows[0];
         const { data, costUsd } = await P.runStructuredCrossCheck(run, p, cur, model, listingAsDiff(dir));
         await P.addCost(runId, costUsd);

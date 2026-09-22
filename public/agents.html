@@ -40,12 +40,12 @@
 
   <h2>Models</h2>
   <div class="card">
-    <div class="row"><b>Propose</b><div><select id="m-propose"></select><div class="why">One call per feedback item: reads the module and drafts the proposal, picks UI vs functionality and the target screen. Small context, so a cheaper model is fine. Also restates requirements before functionality builds.</div></div></div>
-    <div class="row"><b>Build</b><div><select id="m-build"></select><div class="why">The agent that edits the module files, many turns with file tools. Most of the spend. Sonnet 5 handles UI changes well; step up to Opus 5 for functionality changes that touch server logic and data, or when a build keeps missing.</div></div></div>
-    <div class="row"><b>Review</b><div><select id="m-review"></select><div class="why">Independent cross-check of the diff on the functionality lane. One call, diff only, so a stronger model than the builder costs little here and catches more.</div></div></div>
+    <div class="row"><b>Propose</b><div><select id="m-propose"></select><div class="why">One call per request: reads the module, drafts the proposal, picks look-and-feel or how it works, and names the screen. Also restates the requirement before a functionality build, draws the diagrams and answers in a module's chat.</div></div></div>
+    <div class="row"><b>Build</b><div><select id="m-build"></select><div class="why">The agent that edits the module files, many turns with file tools. Most of the spend.</div></div></div>
+    <div class="row"><b>Review</b><div><select id="m-review"></select><div class="why">The independent check of a functionality build's diff. One call, diff only.</div></div></div>
     <div class="row"><b></b><div><button class="go" onclick="saveModels()">Save models</button><span class="ok" id="m-ok"></span></div></div>
     <table class="prices" id="prices" style="margin-top:8px"></table>
-    <div class="why" style="margin-top:6px">Prices are per million tokens, input / output. A typical UI build on Sonnet 5 runs 5 to 30 cents; the same on Fable 5.1 about five times that. Per-run and monthly caps still apply.</div>
+    <div class="why" style="margin-top:6px">Prices are per million tokens, input / output. Every job runs on Fable 5.1 or Opus 5.5. Leave a job on the platform's model unless there is a reason to pin it: the platform's model is the one the model assessment on the admin page settles on, and a pinned job stays out of the live A/B test there. Per-run and monthly caps still apply.</div>
   </div>
 
   <p class="sub">What happens when a request arrives (read it at once, photos) is on the company's <a id="settings" href="#">Settings page</a>, with people, printers and the wall sign.</p>
@@ -64,7 +64,13 @@
 const SLUG = location.pathname.split("/")[2];
 let D = null;
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
-function opts(sel, forBuild) { return D.models.list.filter(m => !forBuild || m.agent !== false).map(m => `<option value="${m.id}" ${m.id === sel ? "selected" : ""}>${m.label} ($${m.in} / $${m.out})</option>`).join(""); }
+const mlabel = (id) => (D.models.list.find(m => m.id === id) || {}).label || id;
+// "" = follow the platform's model for the job (the company pins nothing); a model id = pinned for this company
+function opts(role, forBuild) {
+  const pin = (D.models.pins || {})[role] || "";
+  const follow = `<option value="" ${pin ? "" : "selected"}>Platform's model (now ${mlabel(D.models.defaults[role])}${D.models.ab ? ", or its A/B arm" : ""})</option>`;
+  return follow + D.models.list.filter(m => !forBuild || m.agent !== false).map(m => `<option value="${m.id}" ${m.id === pin ? "selected" : ""}>Pin ${m.label} ($${m.in} / $${m.out})</option>`).join("");
+}
 async function post(url, body, method = "POST") {
   const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   const j = await r.json().catch(() => ({}));
@@ -79,7 +85,7 @@ async function load() {
   document.getElementById("coname").textContent = D.company.name;
   document.getElementById("back").href = `/c/${SLUG}/`;
   document.getElementById("settings").href = `/c/${SLUG}/settings`;
-  for (const role of ["propose", "build", "review"]) document.getElementById("m-" + role).innerHTML = opts(D.models[role], role === "build");
+  for (const role of ["propose", "build", "review"]) document.getElementById("m-" + role).innerHTML = opts(role, role === "build");
   document.getElementById("prices").innerHTML = `<tr><th>Model</th><th>In</th><th>Out</th><th>When</th></tr>` +
     D.models.list.map(m => `<tr><td><b>${m.label}</b> <span class="sub">${m.id}</span></td><td>$${m.in}</td><td>$${m.out}</td><td class="sub">${esc(m.note)}</td></tr>`).join("");
   document.getElementById("platformdocs").innerHTML = D.platformDocs.map(d => `<details class="doc card"><summary>${esc(d.name)}<span class="tag">platform, read-only</span></summary><pre>${esc(d.content)}</pre></details>`).join("");
@@ -91,6 +97,7 @@ async function load() {
 async function saveModels() {
   await post(`/api/c/${SLUG}/agents/models`, { propose: v("m-propose"), build: v("m-build"), review: v("m-review") });
   document.getElementById("m-ok").textContent = "saved"; setTimeout(() => document.getElementById("m-ok").textContent = "", 2000);
+  load();
 }
 const v = (id) => document.getElementById(id).value;
 async function saveDoc(id, mod, name) {

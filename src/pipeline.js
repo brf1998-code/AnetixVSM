@@ -17,7 +17,7 @@
 // ONE agent run, one staged demo, one deploy. Only one run is active per
 // module at a time; further runs queue and start when the active one ends.
 const { q, logEvent } = require("./db");
-const { runAgent, runStructured, haveKey, assertUnderCap, modelFor, buildModelFor, guidanceFor, runCapUsd, MODELS, AGENT_EFFORT } = require("./agent");
+const { runAgent, runStructured, haveKey, assertUnderCap, modelFor, buildModelFor, guidanceFor, runCapUsd, inTier, pickModel, keepArm, companyPins, AGENT_EFFORT } = require("./agent");
 const registry = require("./registry");
 const gate = require("./modulegate");
 const { record } = require("./record");
@@ -63,6 +63,14 @@ async function addCost(runId, usd) {
 async function getRun(runId) {
   return (await q("SELECT * FROM platform.build_runs WHERE id=$1", [runId])).rows[0];
 }
+// The model for one of a run's own calls (the requirement, the review): the company's pin for that job, then the
+// run's arm of the live A/B, then the instance's model for the job. A run on the A/B runs on one model end to end.
+async function modelForRun(run, job) {
+  const pin = (await companyPins(run.company))[job];
+  if (pin) return pin;
+  const arm = run.evidence && run.evidence.ab && run.evidence.ab.arm;
+  return inTier(arm) ? arm : modelFor(run.company, job);
+}
 async function loadProposals(ids) {
   const rows = (await q(
     `SELECT p.*, f.company, f.module, f.message, f.page, f.screen, f.name AS reporter
@@ -89,13 +97,18 @@ async function startRun(proposalIds, opts = {}) {
 
   const lane = ps.every((p) => p.class === "ui") ? "ui" : "functionality";
   const step = lane === "ui" ? "build" : "confirm_requirement";
-  const model = opts.model && MODELS.some((m) => m.id === opts.model) ? opts.model : await modelFor(company, "build");
+  // the build model: one the caller named, else the company's, the instance's, or the run's arm of the live A/B
+  // (src/agent.js pickModel). An arm is kept on the run (evidence.ab) and the run's requirement and review follow it.
+  let model, ab = null;
+  if (opts.model && inTier(opts.model)) model = opts.model;
+  else { const pick = await pickModel(company, "build", null); model = pick.model; if (pick.arm) ab = { arm: model, since: pick.since }; }
   const busy = await activeRun(company, mod);
   const r = await q(
-    `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, lane, step, status, model)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [ids[0], ids, company, mod, modRow.live_version, lane, step, busy ? "queued" : "running", model]);
+    `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, lane, step, status, model, evidence)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [ids[0], ids, company, mod, modRow.live_version, lane, step, busy ? "queued" : "running", model, JSON.stringify(ab ? { ab } : {})]);
   const run = r.rows[0];
+  if (ab) await keepArm("build", company, `run:${run.id}`, model);
   await q("UPDATE platform.feedback SET status='in_progress', updated_at=now() WHERE id = ANY($1::int[])", [ps.map((p) => p.feedback_id)]);
   await logEvent("run_started", run.id, { lane, company, module: mod, batch: ids, model, queued: Boolean(busy) });
   if (busy) {
@@ -187,7 +200,7 @@ async function advance(runId) {
       const n = (run.proposal_ids || [run.proposal_id]).length;
       if (haveKey()) {
         const out = await runStructured({
-          model: await modelFor(company, "propose"),
+          model: await modelForRun(run, "propose"),
           system: "Restate a change requirement for a factory software module in plain language. The reader is a production manager who will skim. No code talk. Never use em or en dashes.",
           prompt: `${batch}\n\nProduce three things.\n1. bluf: ONE sentence, at most 25 words, saying what will be different for the floor after this ${isBatch ? "batch" : "change"}.\n2. items: exactly ${n} entries, one per change in order (change 1 first). Each summary is ONE sentence, at most 20 words, naming the screen and what changes on it.\n3. requirement: the full statement: (1) what changes and where, (2) what stays the same, (3) how we will know it works${isBatch ? ", change by change" : ""}.`,
           schema: {
@@ -260,19 +273,8 @@ async function advance(runId) {
         signal: ctl.signal,
         system: guidance.text,
         dir: draft.dir,
-        prompt:
-`You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the live module version and will become the next version.
+        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version }),
 
-${batch}
-${req}
-
-Rules:
-- Each change names a Target file, which is the screen the feedback came from. Make the change in that file. Touch another file only if the change cannot work otherwise, and say so in your summary.
-- ${run.lane === "ui" ? "This is a UI-class change. Do NOT modify routes.js, the module.json smoke list or entry, or migrations. Touch pages/ and presentation only. The platform compares the files after you finish and stops a UI-class build that changed anything else; if the change cannot work without server logic, leave the server files alone and say so in your summary." : "This is a functionality-class change. If the data model must change, add a NEW migrations/NNN.sql file (additive only: CREATE TABLE / ALTER TABLE ADD COLUMN / CREATE INDEX / INSERT seed rows; bare table names, no schema prefixes). Never edit an existing migration file."}
-${run.lane === "ui" ? "" : `- Leave a check behind: add ONE new file checks/NNN-short-name.json (the next number) that proves ${isBatch ? "these changes work" : "this change works"}, built from "how we will know it works" in the confirmed requirement. GUARDRAILS.md ("Checks") has the format. Read the files already in checks/ first: each is a promise an earlier change made, the platform runs all of them against your build, and you never edit or remove one. If one of them would fail because of your change, change your work, not the check.\n`}${isBatch ? "- Implement every change in the batch. Keep them independent where you can so one can be understood without the others.\n" : ""}- Keep the module's existing style and structure. Plain HTML/JS, no frameworks.
-- Make the smallest change that removes the reported friction.
-- Mark what you touched so the preview can highlight it: put data-changed="v${draft.version}" on every HTML element you add or visibly change (the element itself, not its parent). One attribute per element, nothing else; it costs nothing at runtime and the preview outlines those elements.
-- Your final message must be ONLY a short bullet list of what changed (one bullet per change, naming the screen), in plain language for a production manager. No preamble, no headings, no code talk.`,
         });
       } finally { ACTIVE.delete(runId); }
       const { text, costUsd, modelsSeen } = agentOut;
@@ -342,7 +344,7 @@ ${run.lane === "ui" ? "" : `- Leave a check behind: add ONE new file checks/NNN-
       let evidenceUpdate = {};
       if (haveKey()) {
         const cur = await getRun(runId);
-        const model = await modelFor(company, "review");
+        const model = await modelForRun(run, "review");
         const { data, costUsd } = await runStructuredCrossCheck(run, p, cur, model);
         await addCost(runId, costUsd);
         evidenceUpdate = { cross_check: { ...data, model } };
@@ -375,6 +377,23 @@ ${run.lane === "ui" ? "" : `- Leave a check behind: add ONE new file checks/NNN-
   } catch (e) {
     return failRun(runId, e);
   }
+}
+
+// The build agent's brief for a change (or a batch). A function of its own so the head-to-head assessment
+// (src/assess.js) hands both models exactly the prompt a real build gets.
+function buildPrompt({ mod, isBatch, batch, req, lane, version }) {
+  return `You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the live module version and will become the next version.
+
+${batch}
+${req}
+
+Rules:
+- Each change names a Target file, which is the screen the feedback came from. Make the change in that file. Touch another file only if the change cannot work otherwise, and say so in your summary.
+- ${lane === "ui" ? "This is a UI-class change. Do NOT modify routes.js, the module.json smoke list or entry, or migrations. Touch pages/ and presentation only. The platform compares the files after you finish and stops a UI-class build that changed anything else; if the change cannot work without server logic, leave the server files alone and say so in your summary." : "This is a functionality-class change. If the data model must change, add a NEW migrations/NNN.sql file (additive only: CREATE TABLE / ALTER TABLE ADD COLUMN / CREATE INDEX / INSERT seed rows; bare table names, no schema prefixes). Never edit an existing migration file."}
+${lane === "ui" ? "" : `- Leave a check behind: add ONE new file checks/NNN-short-name.json (the next number) that proves ${isBatch ? "these changes work" : "this change works"}, built from "how we will know it works" in the confirmed requirement. GUARDRAILS.md ("Checks") has the format. Read the files already in checks/ first: each is a promise an earlier change made, the platform runs all of them against your build, and you never edit or remove one. If one of them would fail because of your change, change your work, not the check.\n`}${isBatch ? "- Implement every change in the batch. Keep them independent where you can so one can be understood without the others.\n" : ""}- Keep the module's existing style and structure. Plain HTML/JS, no frameworks.
+- Make the smallest change that removes the reported friction.
+- Mark what you touched so the preview can highlight it: put data-changed="v${version}" on every HTML element you add or visibly change (the element itself, not its parent). One attribute per element, nothing else; it costs nothing at runtime and the preview outlines those elements.
+- Your final message must be ONLY a short bullet list of what changed (one bullet per change, naming the screen), in plain language for a production manager. No preamble, no headings, no code talk.`;
 }
 
 // diffOverride: a caller that has no earlier version to diff against (a brand-new
@@ -731,5 +750,5 @@ module.exports = {
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
   setRun, log, addCost, failRun, activeRun, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
   // the cross-check brief, for the replay harness
-  crossCheckCall, crossCheckPrompt, crossCheckSystem, CROSS_CHECK_SCHEMA, CROSS_CHECK_DIFF_CHARS, demote,
+  crossCheckCall, crossCheckPrompt, crossCheckSystem, buildPrompt, proposalsText, loadProposals, modelForRun, CROSS_CHECK_SCHEMA, CROSS_CHECK_DIFF_CHARS, demote,
 };

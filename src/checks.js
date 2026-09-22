@@ -138,7 +138,7 @@ router.get("/api/c/:slug/checks", requireManager, async (req, res) => {
     for (const r of rows) counts[r.reason] = (counts[r.reason] || 0) + 1;
     const labeled = rows.filter((r) => r.label);
     const wrong = labeled.filter((r) => r.label === "wrong");
-    res.json({ runs: rows, counts, labeled: labeled.length, wrong: wrong.length, models: require("./agent").MODELS });
+    res.json({ runs: rows, counts, labeled: labeled.length, wrong: wrong.length, models: require("./agent").MODELS, labels: require("./agent").ALL_MODELS, review_model: await require("./agent").modelFor(req.params.slug, "review") });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post("/api/runs/:id/label", requireManager, json, async (req, res) => {

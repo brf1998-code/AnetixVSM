@@ -5,7 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 const { q, logEvent } = require("./db");
-const { runStructured, haveKey, fakeMode, guidanceFor, modelFor, modelInfo } = require("./agent");
+const { runStructured, haveKey, fakeMode, guidanceFor, modelFor, modelInfo, inTier } = require("./agent");
 const registry = require("./registry");
 const { sourceText } = require("./modulesource");
 
@@ -80,7 +80,7 @@ async function generate(company, mod, version, opts = {}) {
   const existing = (await q("SELECT id FROM platform.diagrams WHERE company=$1 AND module=$2 AND version=$3 AND status='done'", [company, mod, version])).rows[0];
   if (existing && !opts.force) return { skipped: true, version };
   if (!haveKey()) return { skipped: true, reason: "no key" };
-  const model = opts.model || await modelFor(company, "propose");
+  const model = inTier(opts.model) ? opts.model : await modelFor(company, "propose");
   const ins = await q(
     `INSERT INTO platform.diagrams (company, module, version, model, status) VALUES ($1,$2,$3,$4,'running') RETURNING id`,
     [company, mod, version, model]);

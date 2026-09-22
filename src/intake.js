@@ -18,7 +18,9 @@ const plain = require("./plainwords");
 const Q = require("./intake-questions");
 const { requireManager } = require("./auth");
 
-const INTAKE_MODEL = agent.MODELS.some((m) => m.id === (process.env.SOS_MODEL_INTAKE || "claude-fable-5-1")) ? (process.env.SOS_MODEL_INTAKE || "claude-fable-5-1") : "claude-fable-5-1";
+// The intake runs on the design job's model (src/agent.js): the baseline unless /admin#models gives design its
+// own, or the intake's arm of the live A/B. Chosen once at create and kept on the row, so one intake is one model.
+const intakeModel = async (it) => (it && agent.inTier(it.model) ? it.model : agent.modelFor(it && it.company, "design"));
 const REWRITE_MODEL = process.env.SOS_MODEL_SUMMARY || "claude-haiku-4-5-20251001";
 const MAX_GENERATED_ROUNDS = 2;           // round 1 is fixed; hard cap three rounds in all
 const MAX_QUESTIONS_PER_ROUND = 6;
@@ -87,7 +89,7 @@ async function view(intake) {
   const lastRound = (intake.rounds || [])[roundsDone - 1];
   return {
     id: intake.id, company: intake.company, feedback_id: intake.feedback_id, status: intake.status, name: intake.name, slug: intake.slug,
-    answers: intake.answers || {}, questions, attachments: files, design: intake.design || null, model: intake.model || INTAKE_MODEL,
+    answers: intake.answers || {}, questions, attachments: files, design: intake.design || null, model: intake.model || null,
     cost_usd: Number(intake.cost_usd || 0), error: intake.error || null,
     round: state.round, round_answered: state.answered, round_total: state.total, round_done: state.done, missing: state.missing.map((m) => m.id),
     round_why: ((intake.rounds || []).find((r) => r.round === state.round) || {}).why || "",
@@ -101,9 +103,11 @@ async function create(company, role) {
   const fb = (await q(
     `INSERT INTO platform.feedback (company, module, page, screen, message, name, status, kind) VALUES ($1,NULL,$2,'Module request','New module',$3,'new','module_request') RETURNING id`,
     [company, `/c/${company}/`, role || "manager"])).rows[0];
+  const pick = await agent.pickModel(company, "design", null);
   const it = (await q(
     `INSERT INTO platform.module_intakes (company, feedback_id, started_by, model) VALUES ($1,$2,$3,$4) RETURNING *`,
-    [company, fb.id, role || "manager", INTAKE_MODEL])).rows[0];
+    [company, fb.id, role || "manager", pick.model])).rows[0];
+  if (pick.arm) await agent.keepArm("design", company, `intake:${it.id}`, pick.model);
   await q("UPDATE platform.feedback SET intake_id=$2 WHERE id=$1", [fb.id, it.id]);
   await logEvent("intake_started", it.id, { company, role });
   return it;
@@ -305,7 +309,7 @@ async function generateRound(it) {
   if (agent.fakeMode()) return fakeRound(roundNo, it);
   await agent.assertUnderCap(it.company);
   const ctx = await contextFor(it);
-  const model = it.model || INTAKE_MODEL;
+  const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
     model, blocks: ctx.blocks, schema: ROUND_SCHEMA, toolName: "intake_round", maxTokens: 4000,
     system: ctx.system,
@@ -354,12 +358,14 @@ function estimateUsd(d) {
   const usd = 4 + 2 * screens + 1.5 * conns + (d.starting_data && !/^none/i.test(d.starting_data) ? 1 : 0);
   return Math.round(usd * 2) / 2;
 }
-async function generateDesign(it, adjustedText) {
+// opts.usageKind: what the spend is filed as; false = not filed here (the head-to-head assessment, src/assess.js,
+// files its own re-runs as "assess"). The design is returned, never written: think() and adjust() write it.
+async function generateDesign(it, adjustedText, opts = {}) {
   const cost = { usd: 0 };
   if (agent.fakeMode()) return fakeDesign(it, adjustedText);
   await agent.assertUnderCap(it.company);
   const ctx = await contextFor(it);
-  const model = it.model || INTAKE_MODEL;
+  const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
     model, blocks: ctx.blocks, schema: DESIGN_SCHEMA, toolName: "module_design", maxTokens: 12000,
     system: ctx.system,
@@ -381,7 +387,7 @@ async function generateDesign(it, adjustedText) {
     flags, model, cost_usd: cost.usd, at: new Date().toISOString(),
   };
   design.estimate_usd = estimateUsd(design);
-  await agent.recordUsage(it.company, it.slug, "design", model, cost.usd, { intake: it.id, screens: design.screens.length, connections: design.connections.length, adjusted: Boolean(adjustedText) });
+  if (opts.usageKind !== false) await agent.recordUsage(it.company, it.slug, opts.usageKind || "design", model, cost.usd, { intake: it.id, screens: design.screens.length, connections: design.connections.length, adjusted: Boolean(adjustedText) });
   return design;
 }
 
@@ -518,4 +524,4 @@ router.get("/api/attachments/:id", requireManager, async (req, res) => {
   res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
 });
 
-module.exports = { router, create, answer, next, think, adjust, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, INTAKE_MODEL, estimateUsd };
+module.exports = { router, create, answer, next, think, adjust, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd };

@@ -3,7 +3,7 @@
 // The admin gives a URL when creating a company (or later). The platform
 // fetches the page and its stylesheets (the build agent has no network), pulls
 // the raw signals out (title, colors by frequency, CSS variables, fonts, logo,
-// icon, nav wording) and asks a model (Fable by default) to rewrite the platform
+// icon, nav wording) and asks a model (the design job's, unless the admin picks) to rewrite the platform
 // STYLE.md as the company STYLE.md (it replaces the default in every build): a
 // short guide every agent run reads, plus a few structured values the board
 // uses directly (band color, favicon). Then each module the company gets is
@@ -11,7 +11,7 @@
 // the deploy gate like any other change, so the manager sees the branded
 // version in the preview before it goes live.
 const { q, logEvent, upsertDoc } = require("./db");
-const { runStructured, haveKey, fakeMode, MODELS, platformDocs } = require("./agent");
+const { runStructured, haveKey, fakeMode, inTier, modelFor, platformDocs } = require("./agent");
 const registry = require("./registry");
 const pipeline = require("./pipeline");
 
@@ -129,7 +129,7 @@ async function setBrand(slug, patch) {
 // Build (or rebuild) the guide. Runs in the background; status lives on
 // companies.brand.status: building | done | failed.
 async function buildGuide(slug, url, model) {
-  model = model && MODELS.some((m) => m.id === model) ? model : "claude-fable-5-1";
+  model = inTier(model) ? model : await modelFor(slug, "design");   // the admin's pick, else the design job's model
   const co = (await q("SELECT * FROM platform.companies WHERE slug=$1", [slug])).rows[0];
   if (!co) throw new Error("unknown company");
   await setBrand(slug, { url, status: "building", model, error: null, started_at: new Date().toISOString() });
