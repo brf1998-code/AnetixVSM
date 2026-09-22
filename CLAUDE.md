@@ -71,8 +71,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   2026-09-20 (the per-run override in Adjust, the batch bar's model select
   and the system review's model select are gone; the API still accepts
   `model` and falls back to the company's build model). `src/agent.js
-  MODELS` is the two models on offer and `PRICE_ONLY` prices Haiku and the
-  retired ones; keep both current with
+  MODELS` is the two models on offer and `PRICE_ONLY` prices the short text
+  models and Opus 5; keep both current with
   platform.claude.com/docs/en/models/overview.
 - Agent docs: repo `principles/*.md` are platform-wide and read-only in the
   app; each company has editable docs in `platform.agent_docs` (COMPANY.md
@@ -113,11 +113,13 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   changes", the requirement in full at the confirm step, and one "We did"
   line when deployed. The feedback items in it are folded into the tile
   while the run exists (cancel puts them back as their own cards).
-- **Plain summaries** (`pipeline.plainSummary`, Haiku, ~a cent): after every
+- **Plain summaries** (`pipeline.plainSummary`, on the short text jobs' model, Sonnet 5 by default since 2026-09-22, Haiku before; a fraction of a cent): after every
   build, a title (<= 8 words) and a one-to-three sentence "what changed" go
   into `evidence.title` / `evidence.what_changed`; the title becomes the
   version's `notes` (shown in the Versions panel) and what_changed is the
-  feedback outcome and the Done card text. `SOS_MODEL_SUMMARY` overrides.
+  feedback outcome and the Done card text. The model is set on `/admin#models`
+  ("Short text jobs"); `SOS_MODEL_SUMMARY` only seeds it until one is saved.
+  The `build_summarized` record carries `detail.model`.
 - **Build-agent models, Agent SDK 0.3.x (2026-09-17)**: every model in
   `MODELS` can be the builder, Fable 5.1 included. The old "Fable exits 1
   after its first reply" was the Agent SDK pinned at 0.1.77 (January 2026,
@@ -147,9 +149,13 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   assessment to decide which is the baseline). Opus 5.5 came out that day
   (`claude-opus-5-5`, $4 / $20, ahead of Fable 5.1 on Anthropic's agentic
   coding numbers; like Fable it refuses a forced `tool_choice`). **The tier**:
-  `MODELS` is exactly the two; `PRICE_ONLY` keeps Haiku 4.5 (plain summaries
-  and plain-words rewrites, `SOS_MODEL_SUMMARY`) and prices Sonnet 5 and Opus
-  5 for old rows only; `inTier(id)` is the one test, so every
+  `MODELS` is exactly the two; the short text jobs (the plain summary after a
+  build, the plain-words rewrites of the intake) have a model of their own,
+  `settings.summary`, from `SUMMARY_CHOICES` (Sonnet 5, the default since the
+  same evening, Brendan: "why keep things on Haiku 4.5 when we could use a
+  better model at marginal cost"; Haiku 4.5; or either main model),
+  `summaryModel()`, seeded by `SOS_MODEL_SUMMARY`; `PRICE_ONLY` prices those
+  two and Opus 5 (old rows only); `inTier(id)` is the one test, so every
   `MODELS.some(...)` check in the code now refuses a retired model. **Jobs**
   (`JOBS`): propose (the proposal on arrival, the requirement before a
   functionality build, diagrams, ERP lookup drafts, a module's chat default),
@@ -159,7 +165,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   (propose / build / review only, `platform.companies.model_*`, and only if in
   the tier) then the instance's model for that job then the baseline. The
   instance side is ONE row, `platform.settings` key `models` = `{ baseline,
-  jobs: { <job>: id }, ab: { on, jobs, since, by, ended }, set_at, set_by }`
+  jobs: { <job>: id }, summary, ab: { on, jobs, since, by, ended }, set_at, set_by }`
   (`instanceModels` / `setInstanceModels`, cleaned by `cleanSettings`);
   `SOS_MODEL_BASELINE` only seeds the first baseline (Fable). The old per-role
   variables are not read (`RETIRED_ENV`; boot logs `[models] ... no longer
@@ -219,9 +225,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   no `claude-opus-5-5` in it (the same trap 0.1.77 was for Fable); 0.3.280
   (published the same day) has it, and a one-turn agent run on each model
   came back reporting that model (`modelsSeen`). Tests:
-  `scripts/test-models.js` (35, no database), `scripts/e2e/models.js` (59,
+  `scripts/test-models.js` (40, no database), `scripts/e2e/models.js` (63,
   fake mode, fresh database, started with `SOS_MODEL_PROPOSE=claude-sonnet-5`
-  so the retired warning shows) and `scripts/e2e/models-browser.js` (22,
+  so the retired warning shows) and `scripts/e2e/models-browser.js` (24,
   playwright, right after models.js on the same database). The tables are in
   the backup and in company delete. Known limits: the cost estimate per case
   is rough (fixed token sizes); a build trial runs the gate and the reviewers
@@ -1406,7 +1412,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   shape, screens, connections, starting data, leaves_out, change guidance,
   plus `estimate_usd` from `estimateUsd`). Every generated string passes the
   plain-words guard (`src/plainwords.js` over `principles/PLAIN-WORDS.md`: a
-  word check, one Haiku rewrite, the check again; a question that still fails
+  word check, one rewrite on the short text jobs' model (Haiku until 2026-09-22, Sonnet 5 since), the check again; a question that still fails
   is dropped, a design line is flagged in `design.flags`; the company's own
   system names from the works_with answer are allowed). Attachments
   (`src/attachments.js`, `platform.attachments`, bytea, 15 MB and 10 per
@@ -1701,8 +1707,8 @@ tool list, 401 from the API) proves the CLI itself starts.
 `claude-fable-5-1` by default, until one is saved on `/admin#models`;
 `SOS_MODEL_PROPOSE` / `SOS_MODEL_BUILD` / `SOS_MODEL_REVIEW` / `SOS_MODEL` /
 `SOS_MODEL_INTAKE` are no longer read since 2026-09-22 and the admin page
-names any still set), `SOS_MODEL_SUMMARY` (the utility model, Haiku by
-default), `SOS_ASSESS_RESUME_MS` (15000: how long after boot a head-to-head
+names any still set), `SOS_MODEL_SUMMARY` (optional: the first model for the
+short text jobs, Sonnet 5 by default, until one is saved on `/admin#models`), `SOS_ASSESS_RESUME_MS` (15000: how long after boot a head-to-head
 that was running picks up again), `SOS_MAX_RUN_USD` (per
 build run, default 1.50), `SOS_MONTHLY_CAP_USD` (default 25),
 `SOS_FAKE_AGENT` (0/1). `SOS_FLOOR_PASSWORD` and `SOS_MANAGER_PASSWORD` are

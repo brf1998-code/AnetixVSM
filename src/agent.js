@@ -7,8 +7,9 @@
 //   - file tools only; no Bash, no network
 //
 // Every model call runs on one of two models, Fable 5.1 or Opus 5.5
-// (Brendan, 2026-09-22), apart from Haiku's plain summaries and plain-words
-// rewrites. Which of the two is the baseline is decided by the assessment on
+// (Brendan, 2026-09-22), apart from the short text jobs (the plain summary
+// after a build, the plain-words rewrites), which have a model of their own,
+// Sonnet 5 by default. Which of the two is the baseline is decided by the assessment on
 // /admin#models (src/assess.js). Four jobs:
 //   propose  reading a request and drafting the proposal; also the requirement
 //            restatement, diagrams, ERP lookups and a module's chat agent
@@ -53,19 +54,32 @@ const MODELS = [
   { id: "claude-fable-5-1", label: "Fable 5.1", in: 10, out: 50, forcedTool: false, note: "the most capable; the first baseline, until the assessment says otherwise" },
   { id: "claude-opus-5-5", label: "Opus 5.5", in: 4, out: 20, forcedTool: false, note: "40% of Fable's price; ahead of Fable 5.1 on Anthropic's agentic coding benchmarks (released 2026-09-22)" },
 ];
-// Priced, never offered as a choice. Haiku writes the plain summaries and the
-// plain-words rewrites (about a cent each, text only). Sonnet 5 and Opus 5 ran
-// jobs before 2026-09-22 and stay here only so old rows price and label right.
+// The short text jobs: the plain summary after every build (the title and the
+// "what changed" the floor reads on the Done card and in "New here", and the
+// version's note) and the plain-words rewrite of a line an intake model wrote
+// in software words. One model for both, set on /admin#models (settings
+// "summary"). Sonnet 5 by default since 2026-09-22 (Brendan: a better model
+// at a fraction of a cent more beats Haiku while the loop has to work very
+// well); Haiku 4.5 ran them before. Either of the two main models may run
+// them too.
+const SUMMARY_MODELS = [
+  { id: "claude-sonnet-5", label: "Sonnet 5", in: 2, out: 10, utility: true, note: "the short text jobs' default since 2026-09-22" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", in: 1, out: 5, utility: true, note: "the cheapest; ran the short text jobs until 2026-09-22" },
+];
+// Priced, never offered as a choice: the short text models above (offered for
+// that one setting only), and Opus 5, which ran jobs before 2026-09-22 and
+// stays here only so old rows price and label right.
 const PRICE_ONLY = [
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", in: 1, out: 5, utility: true, note: "plain summaries and plain-words rewrites only" },
-  { id: "claude-sonnet-5", label: "Sonnet 5", in: 2, out: 10, retired: true, note: "no longer runs any job (2026-09-22)" },
+  ...SUMMARY_MODELS,
   { id: "claude-opus-5", label: "Opus 5", in: 5, out: 25, retired: true, note: "no longer runs any job (2026-09-22)" },
 ];
+const FIRST_SUMMARY = "claude-sonnet-5";
 const JOBS = ["propose", "build", "review", "design"];
 const COMPANY_JOBS = ["propose", "build", "review"];   // the ones a company can pin on its Agent settings page
 const AB_JOBS = ["propose", "build", "design"];        // the ones the live A/B splits; a build's review follows the build's arm
 const FIRST_BASELINE = "claude-fable-5-1";
 const inTier = (id) => MODELS.some((m) => m.id === id);
+const SUMMARY_CHOICES = [...SUMMARY_MODELS.map((m) => m.id), ...MODELS.map((m) => m.id)];
 // Before 2026-09-22 these environment variables picked the instance's models.
 // They are read no more: the baseline and a job's own model are set on
 // /admin#models. The admin page lists any still set, so they can be deleted.
@@ -87,23 +101,28 @@ async function buildModelFor(company, requested) {
 }
 
 // The instance's model settings, in platform.settings under "models":
-//   { baseline, jobs: { <job>: id }, ab: { on, jobs: [...], since, by, ended } }
+//   { baseline, jobs: { <job>: id }, summary, ab: { on, jobs: [...], since, by, ended } }
 // baseline: what every job runs on unless the job has its own or a company
-// pins it. SOS_MODEL_BASELINE only matters until the first save on the page.
+// pins it. summary: the short text jobs' model. SOS_MODEL_BASELINE and
+// SOS_MODEL_SUMMARY only matter until the first save on the page.
 function cleanSettings(raw) {
   let s = {};
   try { s = typeof raw === "string" ? (raw ? JSON.parse(raw) : {}) : (raw || {}); } catch (e) { s = {}; }
   const first = inTier(process.env.SOS_MODEL_BASELINE) ? process.env.SOS_MODEL_BASELINE : FIRST_BASELINE;
   const baseline = inTier(s.baseline) ? s.baseline : first;
+  const firstSummary = SUMMARY_CHOICES.includes(process.env.SOS_MODEL_SUMMARY) ? process.env.SOS_MODEL_SUMMARY : FIRST_SUMMARY;
+  const summary = SUMMARY_CHOICES.includes(s.summary) ? s.summary : firstSummary;
   const jobs = {};
   for (const j of JOBS) if (s.jobs && inTier(s.jobs[j])) jobs[j] = s.jobs[j];
   const a = s.ab || {};
   const ab = a.on
     ? { on: true, jobs: (Array.isArray(a.jobs) ? a.jobs : AB_JOBS).filter((j) => AB_JOBS.includes(j)), since: a.since || new Date().toISOString(), by: a.by || null, ended: null }
     : { on: false, jobs: [], since: a.since || null, by: a.by || null, ended: a.ended || null };
-  return { baseline, jobs, ab, set_at: s.set_at || null, set_by: s.set_by || null };
+  return { baseline, jobs, summary, ab, set_at: s.set_at || null, set_by: s.set_by || null };
 }
 async function instanceModels() { return cleanSettings(await getSetting("models", "")); }
+// The model for the short text jobs (pipeline.plainSummary, the intake's plain-words rewrites).
+async function summaryModel() { return (await instanceModels()).summary; }
 async function setInstanceModels(next, by) {
   const s = cleanSettings({ ...next, set_at: new Date().toISOString(), set_by: by || null });
   await setSetting("models", JSON.stringify(s));
@@ -590,5 +609,6 @@ async function assertUnderCap(company) {
 module.exports = {
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
+  SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,
   RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT,
 };

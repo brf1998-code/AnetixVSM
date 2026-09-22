@@ -12,7 +12,8 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
 t("two models, Fable 5.1 and Opus 5.5", agent.MODELS.map((m) => m.id).join() === `${F},${O}`);
 t("Opus 5.5 is priced $4 / $20", agent.modelInfo(O).in === 4 && agent.modelInfo(O).out === 20);
 t("Haiku still prices the plain summaries", agent.modelInfo("claude-haiku-4-5-20251001").in === 1 && !agent.inTier("claude-haiku-4-5-20251001"));
-t("Sonnet 5 and Opus 5 price old rows but are no choice", agent.modelInfo("claude-sonnet-5").in === 2 && agent.modelInfo("claude-opus-5").out === 25 && !agent.inTier("claude-sonnet-5") && !agent.inTier("claude-opus-5"));
+t("Sonnet 5 and Opus 5 are priced but run no main job", agent.modelInfo("claude-sonnet-5").in === 2 && agent.modelInfo("claude-opus-5").out === 25 && !agent.inTier("claude-sonnet-5") && !agent.inTier("claude-opus-5"));
+t("the short text jobs may run on Sonnet 5, Haiku 4.5 or either main model, never Opus 5", agent.SUMMARY_CHOICES.join() === "claude-sonnet-5,claude-haiku-4-5-20251001,claude-fable-5-1,claude-opus-5-5");
 t("both refuse a forced tool_choice", agent.MODELS.every((m) => m.forcedTool === false));
 {
   const s = agent.cleanSettings("");
@@ -25,6 +26,12 @@ t("both refuse a forced tool_choice", agent.MODELS.every((m) => m.forcedTool ===
   t("SOS_MODEL_BASELINE is the first baseline until one is saved", agent.cleanSettings("").baseline === O && agent.cleanSettings({ baseline: F }).baseline === F);
   delete process.env.SOS_MODEL_BASELINE;
   t("garbage in the setting reads as nothing saved", agent.cleanSettings("{not json").baseline === F);
+  t("nothing saved: the short text jobs run on Sonnet 5", agent.cleanSettings("").summary === "claude-sonnet-5");
+  t("a saved short text model is kept, one of the main two included", agent.cleanSettings({ summary: O }).summary === O && agent.cleanSettings({ summary: "claude-haiku-4-5-20251001" }).summary === "claude-haiku-4-5-20251001");
+  t("a retired or unknown one falls back to Sonnet 5", agent.cleanSettings({ summary: "claude-opus-5" }).summary === "claude-sonnet-5" && agent.cleanSettings({ summary: "nope" }).summary === "claude-sonnet-5");
+  process.env.SOS_MODEL_SUMMARY = "claude-haiku-4-5-20251001";
+  t("SOS_MODEL_SUMMARY is the first short text model until one is saved", agent.cleanSettings("").summary === "claude-haiku-4-5-20251001" && agent.cleanSettings({ summary: F }).summary === F);
+  delete process.env.SOS_MODEL_SUMMARY;
 }
 {
   const had = process.env.SOS_MODEL_PROPOSE; process.env.SOS_MODEL_PROPOSE = "claude-sonnet-5";

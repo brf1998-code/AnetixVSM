@@ -1,8 +1,11 @@
 # Which model is the baseline: the assessment
 
 Written 2026-09-22, the day Opus 5.5 came out. Every model call in Symbiotic OS
-now runs on one of two models, Fable 5.1 or Opus 5.5 (Haiku 4.5 still writes the
-plain summaries and the plain-words rewrites, about a cent each). This doc is
+now runs on one of two models, Fable 5.1 or Opus 5.5. The short text jobs (the
+plain summary after a build, the plain-words rewrites) have a model of their
+own, Sonnet 5 by default (Haiku 4.5 until the same evening), set on the same
+page; they cost a fraction of a cent a call and are not part of this
+assessment. This doc is
 how to decide which of the two is the **baseline**: the model every job runs on
 unless a company pins it. The page is `/admin#models`; the code is
 `src/assess.js`, `src/agent.js` and `health.abSplit`.

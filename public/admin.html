@@ -170,7 +170,7 @@
 
   <!-- ================= Models: the baseline, the head-to-head, the live A/B (/assets/admin-models.js) ================= -->
   <section class="tabpanel" id="tab-models">
-    <div class="tabhead"><h2>Models</h2><p class="sub">Every job runs on Fable 5.1 or Opus 5.5 (Haiku only writes the plain summaries and plain-words rewrites). The baseline is what a job runs on unless a company pins it. The head-to-head redoes stored work on both and lets you pick blind; the live A/B splits new work between the two and counts what the floor said.</p></div>
+    <div class="tabhead"><h2>Models</h2><p class="sub">Every job runs on Fable 5.1 or Opus 5.5, apart from the short text jobs (the plain summary after a build, the plain-words rewrites), which have a model of their own, Sonnet 5 by default. The baseline is what a job runs on unless a company pins it. The head-to-head redoes stored work on both and lets you pick blind; the live A/B splits new work between the two and counts what the floor said.</p></div>
     <div id="models-root"><div class="card sub">Loading…</div></div>
   </section>
 
@@ -440,7 +440,7 @@ function drawInstance() {
   P.spend = { value: `$${D.totalSpend.toFixed(2)}${cap ? ` of $${cap.toFixed(2)}` : ""} this month`, level: over ? "red" : near ? "amber" : "ok" };
   drawPills();
   document.getElementById("top").innerHTML = `<b>This month:</b> $${D.totalSpend.toFixed(2)} across ${D.companies.length} compan${D.companies.length === 1 ? "y" : "ies"}${cap ? `, of a $${cap.toFixed(2)} cap for the whole instance (SOS_MONTHLY_CAP_USD). At the cap, no proposal or build runs anywhere.` : " (no instance-wide cap)."}<br>
-    <b>Models:</b> baseline ${esc(ml(D.modelSettings.baseline))}; propose ${esc(ml(D.defaults.propose))}, build ${esc(ml(D.defaults.build))}, review ${esc(ml(D.defaults.review))}, design ${esc(ml(D.defaults.design))}${D.modelSettings.ab.on ? ", live A/B on" : ""} <span class="sub">(set on the <a href="#models">Models</a> tab; a company's pins are on its agent settings page; its own budget is on the company, under AI budget and models)</span>
+    <b>Models:</b> baseline ${esc(ml(D.modelSettings.baseline))}; propose ${esc(ml(D.defaults.propose))}, build ${esc(ml(D.defaults.build))}, review ${esc(ml(D.defaults.review))}, design ${esc(ml(D.defaults.design))}, short text ${esc(ml(D.modelSettings.summary))}${D.modelSettings.ab.on ? ", live A/B on" : ""} <span class="sub">(set on the <a href="#models">Models</a> tab; a company's pins are on its agent settings page; its own budget is on the company, under AI budget and models)</span>
     <table class="list" style="margin-top:8px"><tr><th>Company</th><th>This month</th><th>Its own cap</th></tr>${D.companies.map(c => `<tr><td><a href="#companies/${c.slug}">${esc(c.name)}</a></td><td>$${c.spend_usd.toFixed(2)}</td><td>${c.monthly_cap_usd ? "$" + Number(c.monthly_cap_usd).toFixed(2) : '<span class="sub">none</span>'}</td></tr>`).join("")}</table>`;
 }
 

@@ -30,6 +30,8 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   const ag = (await mgr.get("/api/c/demo/agents")).json.models;
   t("the company's agent settings offer the two, pin nothing, and follow Fable", ag.list.length === 2 && Object.values(ag.pins).every((x) => x === null) && ag.propose === F && ag.defaults.build === F, ag);
   t("the checks page replays on the review model by default", (await mgr.get("/api/c/demo/checks")).json.review_model === F);
+  t("the short text jobs run on Sonnet 5, and the page offers Sonnet 5, Haiku 4.5 and the two", m.settings.summary === "claude-sonnet-5" && m.summary_choices.map((x) => x.id).join() === `claude-sonnet-5,claude-haiku-4-5-20251001,${F},${O}`, m.summary_choices);
+  t("but not a retired model", (await admin.post("/api/admin/models", { summary: "claude-opus-5" })).status === 400);
 
   // ---- a company pin, and the admin unpinning it
   t("a company may pin a job to one of the two", (await mgr.post("/api/c/demo/agents/models", { propose: "", build: O, review: "" })).status === 200);
@@ -68,7 +70,13 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   const props = []; for (const id of ids) props.push(await proposalFor(mgr, id));
   const onF = props.filter((p) => p.model === F).length, onO = props.filter((p) => p.model === O).length;
   t("four new requests split two and two between the models", onF === 2 && onO === 2, props.map((p) => p.model));
-  const s1 = await ship(mgr, [ids[0]]), s2 = await ship(mgr, [ids[1]]);
+  const s1 = await ship(mgr, [ids[0]]);
+  const summarized = async (runId) => ((await mgr.get(`/api/c/demo/record?kind=build_summarized&run_id=${runId}`)).json.rows || [])[0];
+  t("a build's plain summary is written on the short text model, and the record says which", ((await summarized(s1.runId)) || {}).detail?.model === "claude-sonnet-5", await summarized(s1.runId));
+  await admin.post("/api/admin/models", { summary: O });
+  const s2 = await ship(mgr, [ids[1]]);
+  t("move the short text jobs to Opus 5.5 and the next summary is on it", ((await summarized(s2.runId)) || {}).detail?.model === O, await summarized(s2.runId));
+  await admin.post("/api/admin/models", { summary: "claude-sonnet-5" });
   const r1 = await runOf(s1.runId), r2 = await runOf(s2.runId);
   t("two builds, one on each arm, and the arm is kept on the run", r1.model !== r2.model && r1.evidence.ab.arm === r1.model && r2.evidence.ab.arm === r2.model, [r1.model, r2.model]);
   // a functionality change: its requirement and its review run on the build's arm

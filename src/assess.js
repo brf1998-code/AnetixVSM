@@ -125,7 +125,7 @@ async function init() {
   if (env.length) console.log(`[models] ${env.join(", ")} set on this instance and no longer read (the models are set on /admin#models); delete them`);
   const s = await agent.instanceModels();
   const own = Object.entries(s.jobs).map(([j, m]) => `${j} ${m}`);
-  console.log(`[models] baseline ${s.baseline}${own.length ? `; own model for ${own.join(", ")}` : ""}${s.ab.on ? `; live A/B on for ${s.ab.jobs.join(", ")} since ${s.ab.since}` : ""}`);
+  console.log(`[models] baseline ${s.baseline}; short text jobs ${s.summary}${own.length ? `; own model for ${own.join(", ")}` : ""}${s.ab.on ? `; live A/B on for ${s.ab.jobs.join(", ")} since ${s.ab.since}` : ""}`);
   // trials that were running when the last process died run again
   await q("UPDATE platform.assessment_trials SET status='queued' WHERE status='running'");
   // resumed a little after boot, once the module versions are on disk again (registry.loadAll)
@@ -559,6 +559,7 @@ router.get("/api/admin/models", requireAdmin, async (req, res) => {
       .filter((c) => Object.values(c.pins).some(Boolean));
     res.set("Cache-Control", "no-store").json({
       models: agent.MODELS, labels: agent.ALL_MODELS, jobs: agent.JOBS, company_jobs: agent.COMPANY_JOBS, ab_jobs: agent.AB_JOBS,
+      summary_choices: agent.SUMMARY_CHOICES.map((id) => agent.modelInfo(id)),
       settings, defaults: await agent.defaultModels(settings), pins, retired_env: agent.retiredEnvSet(),
       ab: await abView(settings), assessments: await list(), kinds: KINDS.map((k) => ({ id: k, label: KIND_LABEL[k], blind: PICKED.has(k) })),
     });
@@ -568,10 +569,11 @@ router.post("/api/admin/models", requireAdmin, json, async (req, res) => {
   try {
     const b = req.body || {}, cur = await agent.instanceModels();
     if (b.baseline != null && !agent.inTier(b.baseline)) return res.status(400).json({ error: "the baseline must be one of the two models" });
+    if (b.summary != null && !agent.SUMMARY_CHOICES.includes(b.summary)) return res.status(400).json({ error: "unknown model for the short text jobs" });
     const jobs = { ...cur.jobs };
     if (b.jobs) for (const j of agent.JOBS) { if (!(j in b.jobs)) continue; const v = b.jobs[j]; if (!v) delete jobs[j]; else if (agent.inTier(v)) jobs[j] = v; else return res.status(400).json({ error: `unknown model for ${j}` }); }
-    const next = await agent.setInstanceModels({ ...cur, baseline: b.baseline || cur.baseline, jobs }, who(req));
-    await logEvent("instance_models_changed", 0, { before: { baseline: cur.baseline, jobs: cur.jobs }, after: { baseline: next.baseline, jobs: next.jobs }, by: who(req), assessment: b.assessment || null });
+    const next = await agent.setInstanceModels({ ...cur, baseline: b.baseline || cur.baseline, jobs, summary: b.summary || cur.summary }, who(req));
+    await logEvent("instance_models_changed", 0, { before: { baseline: cur.baseline, jobs: cur.jobs, summary: cur.summary }, after: { baseline: next.baseline, jobs: next.jobs, summary: next.summary }, by: who(req), assessment: b.assessment || null });
     res.json({ ok: true, settings: next, defaults: await agent.defaultModels(next) });
   } catch (e) { fail(res, e); }
 });

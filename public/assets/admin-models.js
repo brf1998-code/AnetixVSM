@@ -77,6 +77,9 @@
       <div class="big">${esc(label(s.baseline))}</div>
       <div class="sub">${s.set_at ? `Set ${esc(when(s.set_at))}${s.set_by ? ` by ${esc(s.set_by)}` : ""}.` : "The first baseline (nobody has changed it yet)."} ${M.models.map((m) => `${esc(m.label)}: $${m.in} in, $${m.out} out per million tokens.`).join(" ")}</div>
       <div class="row2"><select id="am-base">${opt(s.baseline, false)}</select><button class="primary" style="margin:0" onclick="AdminModels.saveBaseline()">Make it the baseline</button></div>
+      <h3 style="margin-top:14px">Short text jobs</h3>
+      <p class="sub">The plain summary after every build (the title and the "what changed" the floor reads on the Done card and in "New here") and the plain-words rewrites of the intake's questions and design. Short calls, a fraction of a cent each; they have a model of their own.</p>
+      <div class="row2"><select id="am-summary">${(M.summary_choices || []).map((m) => `<option value="${m.id}" ${m.id === s.summary ? "selected" : ""}>${esc(m.label)} ($${m.in} / $${m.out})</option>`).join("")}</select><button class="quiet" style="margin:0" onclick="AdminModels.saveSummary()">Save</button></div>
       <details style="margin-top:12px" ${Object.keys(s.jobs).length ? "open" : ""}><summary>A job of its own <span class="sub">(only when the assessment says one job wants the other model)</span></summary>
         <div class="hwrap"><table class="am"><tr><th>Job</th><th>What it covers</th><th>Runs on</th><th>Now</th></tr>${jobRows}</table></div>
         <button class="quiet" onclick="AdminModels.saveJobs()">Save the jobs</button>
@@ -267,6 +270,10 @@
       if (v === M.settings.baseline) return;
       if (!confirm(`Make ${label(v)} the baseline? Every job that is not pinned and has no model of its own runs on it from the next call.`)) return;
       if (await api("/api/admin/models", { baseline: v })) load();
+    },
+    async saveSummary() {
+      const v = document.getElementById("am-summary").value;
+      if (v !== M.settings.summary && (await api("/api/admin/models", { summary: v }))) load();
     },
     async saveJobs() {
       const jobs = {}; for (const j of M.jobs) jobs[j] = document.getElementById(`am-job-${j}`).value || null;

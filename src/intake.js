@@ -21,7 +21,6 @@ const { requireManager } = require("./auth");
 // The intake runs on the design job's model (src/agent.js): the baseline unless /admin#models gives design its
 // own, or the intake's arm of the live A/B. Chosen once at create and kept on the row, so one intake is one model.
 const intakeModel = async (it) => (it && agent.inTier(it.model) ? it.model : agent.modelFor(it && it.company, "design"));
-const REWRITE_MODEL = process.env.SOS_MODEL_SUMMARY || "claude-haiku-4-5-20251001";
 const MAX_GENERATED_ROUNDS = 2;           // round 1 is fixed; hard cap three rounds in all
 const MAX_QUESTIONS_PER_ROUND = 6;
 const RESERVED = new Set(["platform", "admin", "staging", "new", "api", "assets", "login", "logout", "health"]);
@@ -273,9 +272,11 @@ async function contextFor(it) {
     modulesText: mods.length ? `Modules this company already has: ${mods.map((m) => `${m.title} (${m.name})`).join(", ")}.` : "This company has no other modules yet.",
   };
 }
+// The plain-words rewrite runs on the short text jobs' model (agent.summaryModel, Sonnet 5 by default).
 async function rewriteWith(costBox) {
+  const model = await agent.summaryModel();
   return async (text, instructions) => {
-    const r = await agent.runChat({ model: REWRITE_MODEL, system: instructions, messages: [{ role: "user", content: text }], maxTokens: 6000 });
+    const r = await agent.runChat({ model, system: instructions, messages: [{ role: "user", content: text }], maxTokens: 6000 });
     costBox.usd += r.costUsd || 0;
     return r.text;
   };

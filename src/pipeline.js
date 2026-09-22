@@ -17,7 +17,7 @@
 // ONE agent run, one staged demo, one deploy. Only one run is active per
 // module at a time; further runs queue and start when the active one ends.
 const { q, logEvent } = require("./db");
-const { runAgent, runStructured, haveKey, assertUnderCap, modelFor, buildModelFor, guidanceFor, runCapUsd, inTier, pickModel, keepArm, companyPins, AGENT_EFFORT } = require("./agent");
+const { runAgent, runStructured, haveKey, assertUnderCap, modelFor, buildModelFor, guidanceFor, runCapUsd, inTier, pickModel, keepArm, companyPins, summaryModel, AGENT_EFFORT } = require("./agent");
 const registry = require("./registry");
 const gate = require("./modulegate");
 const { record } = require("./record");
@@ -143,16 +143,18 @@ async function proposalsText(run) {
 }
 
 // Short title (for the version list) and a two-sentence "what changed" for
-// operators, from the approved changes and the agent's final message.
+// operators, from the approved changes and the agent's final message. On the
+// short text jobs' model (agent.summaryModel, Sonnet 5 by default).
 async function plainSummary(batch, agentText, isBatch) {
+  const model = await summaryModel();
   const { data, costUsd } = await runStructured({
-    model: process.env.SOS_MODEL_SUMMARY || "claude-haiku-4-5-20251001",
+    model,
     system: "You write one-line change notes for people on a factory floor. Plain words, no code talk, no praise, no preamble.",
     prompt: `Approved changes:\n${batch}\n\nWhat the build agent reported:\n${(agentText || "").slice(0, 3000)}\n\nWrite a title of at most 8 words naming what changed${isBatch ? " (it is a batch, so summarize the theme, e.g. 'Station page: fold names, clip position, distance unit')" : ""}, and a what_changed of one to three short sentences an operator would understand, naming the screen.`,
     schema: { type: "object", properties: { title: { type: "string" }, what_changed: { type: "string" } }, required: ["title", "what_changed"] },
     toolName: "summary",
   });
-  return { title: String(data.title || "").slice(0, 80), what_changed: String(data.what_changed || "").slice(0, 600), costUsd };
+  return { title: String(data.title || "").slice(0, 80), what_changed: String(data.what_changed || "").slice(0, 600), costUsd, model };
 }
 
 // The AbortController of every build agent in flight, by run id, so a manager
@@ -322,7 +324,7 @@ async function advance(runId) {
         const c3 = await getRun(runId);
         await setRun(runId, { evidence: { ...c3.evidence, title: plain.title, what_changed: plain.what_changed } });
         await q("UPDATE platform.module_versions SET notes=$4 WHERE company=$1 AND module=$2 AND version=$3", [company, mod, c3.to_version, plain.title]);
-        await record("build_summarized", { company, module: mod, actor: "platform", run_id: runId, version: c3.to_version, after: plain.what_changed, detail: { title: plain.title, cost_usd: plain.costUsd || 0 } });
+        await record("build_summarized", { company, module: mod, actor: "platform", run_id: runId, version: c3.to_version, after: plain.what_changed, detail: { title: plain.title, model: plain.model, cost_usd: plain.costUsd || 0 } });
       } catch (e) { await log(runId, { step: "build", note: `summary skipped: ${e.message}` }); }
       await registry.stageVersion(company, mod, (await getRun(runId)).to_version);
       await log(runId, { step: "stage", note: "staged version mounted for preview" });

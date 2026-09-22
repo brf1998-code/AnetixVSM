@@ -23,6 +23,7 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   t("the Models tab shows the baseline, the head-to-head and the live A/B", /Baseline/.test(text) && /Head-to-head/.test(text) && /Live A\/B/.test(text), text.slice(0, 400));
   t("the baseline reads Fable 5.1", (await p.locator("#am-baseline .big").innerText()).trim() === "Fable 5.1");
   t("the retired variable is named on the page", /SOS_MODEL_PROPOSE/.test(text));
+  t("the short text jobs show their own model, Sonnet 5", /Short text jobs/i.test(text) && (await p.locator("#am-summary").inputValue()) === "claude-sonnet-5");
   t("the tab row has Models, and the pill says the baseline", (await p.locator('#shell nav a[data-tab="models"]').count()) === 1 && /Fable 5\.1 baseline/.test(await p.locator("#pill-models").innerText()));
   await p.waitForSelector("#am-assess");
   const card = await p.locator("#am-assess").innerText();
@@ -65,6 +66,13 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   t("the baseline moves from the page", (await admin.get("/api/admin/models")).json.settings.baseline === O);
   await p.selectOption("#am-base", F); await p.click('button:has-text("Make it the baseline")');
   await p.waitForFunction(() => document.querySelector("#am-baseline .big").innerText.trim() === "Fable 5.1");
+
+  // the short text model from the page, and back
+  await p.selectOption("#am-summary", "claude-haiku-4-5-20251001"); await p.click('#am-baseline button:has-text("Save") >> nth=0');
+  await waitFor("the short text model", async () => (await admin.get("/api/admin/models")).json.settings.summary === "claude-haiku-4-5-20251001");
+  t("the short text model moves from the page", true);
+  await p.waitForSelector("#am-summary"); await p.selectOption("#am-summary", "claude-sonnet-5"); await p.click('#am-baseline button:has-text("Save") >> nth=0');
+  await waitFor("back to Sonnet 5", async () => (await admin.get("/api/admin/models")).json.settings.summary === "claude-sonnet-5");
 
   // the A/B switch from the page
   await p.click('button:has-text("Start the A/B")');
