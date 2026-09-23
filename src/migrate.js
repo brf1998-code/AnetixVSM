@@ -179,6 +179,29 @@ async function columnsOf(schema, table) {
       WHERE table_schema=$1 AND table_name=$2 ORDER BY ordinal_position`, [schema, table])).rows;
 }
 
+// One row per index of a table, with the constraint behind it when there is
+// one (a UNIQUE or PRIMARY KEY constraint owns its index; DROP INDEX refuses
+// those, DROP CONSTRAINT is the way).
+const INDEX_SQL = `
+  SELECT i.indexname, i.indexdef, c.conname, c.contype
+    FROM pg_indexes i
+    JOIN pg_namespace n ON n.nspname = i.schemaname
+    JOIN pg_class ic ON ic.relname = i.indexname AND ic.relnamespace = n.oid
+    LEFT JOIN pg_constraint c ON c.conindid = ic.oid AND c.contype IN ('p', 'u', 'x')
+   WHERE i.schemaname = $1 AND i.tablename = $2
+   ORDER BY i.indexname`;
+// "CREATE UNIQUE INDEX watch_logs_date_station ON mod_demo_watch.watch_logs USING btree (watch_date, station)"
+// becomes "CREATE UNIQUE INDEX ON watch_logs USING btree (watch_date, station)": the same
+// index in any schema under any name has the same shape.
+function indexShape(indexdef) {
+  return indexdef.replace(/^CREATE (UNIQUE )?INDEX \S+ ON \S+\.(\S+) /, "CREATE $1INDEX ON $2 ");
+}
+// The snapshot's definition pointed at the live table, with no name so that
+// Postgres picks a free one (the snapshot's own name is a made-up one anyway).
+function indexOnLive(indexdef, liveSchemaName) {
+  return indexdef.replace(/^CREATE (UNIQUE )?INDEX \S+ ON \S+\./, `CREATE $1INDEX ON ${liveSchemaName}.`);
+}
+
 // Restore a snapshot INTO the live schema in place. Additive-only migrations
 // mean the live schema is a superset of the snapshot: extra tables, columns and
 // indexes get dropped, then every table's data is replaced with the snapshot's.
@@ -204,11 +227,29 @@ async function restoreSnapshot(company, mod, snapName) {
       for (const c of liveCols) {
         if (!snapCols.includes(c.column_name)) await client.query(`ALTER TABLE ${live}.${t} DROP COLUMN ${c.column_name}`);
       }
-      // indexes added after the snapshot
-      const liveIdx = (await client.query(`SELECT indexname FROM pg_indexes WHERE schemaname=$1 AND tablename=$2`, [live, t])).rows.map((r) => r.indexname);
-      const snapIdx = (await client.query(`SELECT indexname FROM pg_indexes WHERE schemaname=$1 AND tablename=$2`, [snapName, t])).rows.map((r) => r.indexname);
+      // Indexes: matched to the snapshot's by DEFINITION, never by name. The
+      // clone (LIKE ... INCLUDING ALL) gives every copied index a name Postgres
+      // makes up, so an index a migration named itself (CREATE UNIQUE INDEX
+      // watch_logs_date_station ...) sits in the snapshot as
+      // watch_logs_watch_date_station_idx. Comparing names took the live one
+      // for "added after the snapshot" and dropped it, and the reverted
+      // version's INSERT ... ON CONFLICT (watch_date, station) then failed on
+      // every request (demo, 2026-09-23). Now: a live index whose definition
+      // the snapshot does not have goes (it was added by a later migration); an
+      // index the snapshot has and the live table lacks is made again from the
+      // snapshot's definition. The primary key is never dropped.
+      const liveIdx = (await client.query(INDEX_SQL, [live, t])).rows;
+      const snapIdx = (await client.query(INDEX_SQL, [snapName, t])).rows;
+      const snapShapes = new Set(snapIdx.map((r) => indexShape(r.indexdef)));
+      const liveShapes = new Set(liveIdx.map((r) => indexShape(r.indexdef)));
       for (const i of liveIdx) {
-        if (!snapIdx.includes(i) && !/_pkey$/.test(i)) await client.query(`DROP INDEX IF EXISTS ${live}.${i}`);
+        if (i.contype === "p" || snapShapes.has(indexShape(i.indexdef))) continue;
+        if (i.conname) await client.query(`ALTER TABLE ${live}.${t} DROP CONSTRAINT ${i.conname}`);
+        else await client.query(`DROP INDEX IF EXISTS ${live}.${i.indexname}`);
+      }
+      for (const i of snapIdx) {
+        if (i.contype === "p" || liveShapes.has(indexShape(i.indexdef))) continue;
+        await client.query(indexOnLive(i.indexdef, live));
       }
       const cols = snapCols.join(", ");
       await client.query(`TRUNCATE ${live}.${t}`);
@@ -235,4 +276,5 @@ async function restoreSnapshot(company, mod, snapName) {
 module.exports = {
   liveSchema, stagingSchema, validateMigrationSql, applyMigrations,
   rebuildStagingClone, snapshotSchema, recordSnapshot, restoreSnapshot, tablesIn, columnsOf,
+  indexShape, indexOnLive,
 };
