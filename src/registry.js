@@ -607,6 +607,8 @@ async function goToVersion(company, mod, version, { restoreData = false } = {}) 
   await mountLive(company, mod, version); // applies any migrations the schema is missing (no-op going back)
   if (target) {
     await migrate.restoreSnapshot(company, mod, target.file);
+    // a snapshot taken while the schema had lost its indexes carries that loss; the version's own migrations say what belongs
+    await migrate.ensureIndexes(migrate.liveSchema(company, mod), versionDir(company, mod, version));
     if (runner.enabled()) await dbroles.grant(company, mod);   // a restore can make tables again, and a new table carries no rights
     await q("DELETE FROM platform.schema_snapshots WHERE id=$1", [target.id]);
     await q(`DROP SCHEMA IF EXISTS ${target.file} CASCADE`);

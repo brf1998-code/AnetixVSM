@@ -121,7 +121,92 @@ async function applyMigrations(schema, versionDir) {
     }
     results.push(m.file);
   }
+  await ensureIndexes(schema, versionDir);
   return results;
+}
+
+// ---- declared indexes (self-heal) -----------------------------------------
+// The 2026-09-23 damage: a restore stripped a module's named indexes, and
+// every snapshot taken after that carried the loss, so any later restore put
+// a schema with no indexes on the floor and the version's ON CONFLICT
+// upserts failed. Structure the version's own migrations declare is not
+// something a snapshot gets to take away: after the migrations run (boot,
+// deploy, switch, staging) and after a data restore, every index and unique
+// constraint those files name is made again if it is missing. Only those
+// statements are replayed, each made idempotent; tables and columns stay
+// with applyMigrations. Handled: CREATE [UNIQUE] INDEX, ALTER TABLE ... ADD
+// CONSTRAINT ... UNIQUE (...), and CONSTRAINT/UNIQUE (...) lines inside a
+// CREATE TABLE body. A column-level UNIQUE on a single column is not.
+const unq = (s) => s.replace(/^"|"$/g, "");
+function tableBodies(sql) {
+  const out = [];
+  const re = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?("?[\w.]+"?)\s*\(/gi;
+  let m;
+  while ((m = re.exec(sql))) {
+    let depth = 1, i = re.lastIndex;
+    while (i < sql.length && depth > 0) { if (sql[i] === "(") depth++; else if (sql[i] === ")") depth--; i++; }
+    out.push({ table: unq(m[1]), body: sql.slice(re.lastIndex, i - 1) });
+  }
+  return out;
+}
+function declaredIndexes(sql) {
+  sql = sql.replace(/--[^\n]*/g, "");
+  const out = [];
+  let m;
+  const idx = /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?("?\w+"?)\s+ON\s+([^;]+)/gi;
+  while ((m = idx.exec(sql))) out.push({ name: unq(m[2]), exec: `CREATE ${m[1] ? "UNIQUE " : ""}INDEX IF NOT EXISTS ${m[2]} ON ${m[3].trim()}` });
+  const alt = /\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?("?[\w.]+"?)\s+ADD\s+CONSTRAINT\s+("?\w+"?)\s+(UNIQUE\s*\([^)]*\))/gi;
+  while ((m = alt.exec(sql))) out.push({ name: unq(m[2]), exec: `ALTER TABLE ${m[1]} ADD CONSTRAINT ${m[2]} ${m[3]}` });
+  for (const t of tableBodies(sql)) {
+    const con = /(?:CONSTRAINT\s+("?\w+"?)\s+)?\bUNIQUE\s*\(([^)]*)\)/gi;
+    while ((m = con.exec(t.body))) {
+      const cols = m[2].split(",").map((c) => c.trim()).filter(Boolean).join(", ");
+      if (m[1]) out.push({ name: unq(m[1]), exec: `ALTER TABLE ${t.table} ADD CONSTRAINT ${m[1]} UNIQUE (${cols})` });
+      else out.push({ name: null, table: t.table, cols, exec: `ALTER TABLE ${t.table} ADD UNIQUE (${cols})` });
+    }
+  }
+  return out;
+}
+async function ensureIndexes(schema, versionDir) {
+  const wanted = [];
+  for (const m of migrationFiles(versionDir)) wanted.push(...declaredIndexes(m.sql));
+  if (!wanted.length) return { made: [], failed: [] };
+  const made = [], failed = [];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL search_path TO ${schema}`);
+    for (const w of wanted) {
+      const have = w.name
+        ? (await client.query(
+            `SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname=$2
+             UNION ALL SELECT 1 FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=$1 AND c.conname=$2`,
+            [schema, w.name])).rows.length > 0
+        : (await client.query(
+            `SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND tablename=$2 AND indexdef LIKE 'CREATE UNIQUE INDEX %' AND indexdef LIKE $3`,
+            [schema, w.table, `%(${w.cols})`])).rows.length > 0;
+      if (have) continue;
+      await client.query("SAVEPOINT one");
+      try {
+        await client.query(w.exec);
+        made.push(w.name || `${w.table} UNIQUE (${w.cols})`);
+      } catch (e) {
+        await client.query("ROLLBACK TO SAVEPOINT one");
+        failed.push({ what: w.exec, why: e.message });
+      }
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  if (made.length || failed.length) {
+    console.warn(`[migrate] ${schema}: ${made.length} declared index(es) were missing and were made again${failed.length ? `; ${failed.length} could not be (${failed.map((f) => f.why).join("; ")})` : ""}`);
+    await logEvent("indexes_ensured", schema, { made, failed });
+  }
+  return { made, failed };
 }
 
 // ---- schema cloning (used for staging and snapshots) ----------------------
@@ -212,6 +297,9 @@ async function restoreSnapshot(company, mod, snapName) {
     await client.query("BEGIN");
     const liveTables = (await client.query(`SELECT tablename FROM pg_tables WHERE schemaname=$1`, [live])).rows.map((r) => r.tablename);
     const snapTables = (await client.query(`SELECT tablename FROM pg_tables WHERE schemaname=$1`, [snapName])).rows.map((r) => r.tablename);
+    // A recorded snapshot whose schema is gone would read as "no tables" and
+    // the loop below would drop every live table. Refuse instead.
+    if (!snapTables.length) throw new Error(`snapshot ${snapName} has no tables; nothing was restored`);
 
     for (const t of liveTables) {
       if (!snapTables.includes(t)) await client.query(`DROP TABLE ${live}.${t} CASCADE`);
@@ -276,5 +364,5 @@ async function restoreSnapshot(company, mod, snapName) {
 module.exports = {
   liveSchema, stagingSchema, validateMigrationSql, applyMigrations,
   rebuildStagingClone, snapshotSchema, recordSnapshot, restoreSnapshot, tablesIn, columnsOf,
-  indexShape, indexOnLive,
+  indexShape, indexOnLive, ensureIndexes, declaredIndexes,
 };

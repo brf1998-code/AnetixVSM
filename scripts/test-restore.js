@@ -86,6 +86,62 @@ async function upsert() {
   ok(!s4.some((s) => /btree \(station\)$/.test(s)), "the later plain index is gone");
   ok((await q("SELECT 1 FROM pg_constraint WHERE conname='watch_logs_station_reading'")).rows.length === 1, "and it is still a constraint, untouched");
 
+  console.log("5. a damaged snapshot (no indexes) is healed from the version's own migrations");
+  const fs = require("fs"), os = require("os"), path = require("path");
+  const vdir = fs.mkdtempSync(path.join(os.tmpdir(), "sos-v-"));
+  fs.mkdirSync(path.join(vdir, "migrations"));
+  fs.writeFileSync(path.join(vdir, "migrations", "001.sql"), `
+-- the module's own schema, the way a build agent writes it
+CREATE TABLE IF NOT EXISTS watch_logs (id serial PRIMARY KEY, watch_date date NOT NULL, station text NOT NULL, reading text);
+CREATE UNIQUE INDEX IF NOT EXISTS watch_logs_date_station ON watch_logs (watch_date, station);
+CREATE INDEX watch_logs_reading_idx ON watch_logs (reading);
+CREATE TABLE IF NOT EXISTS params (
+  id serial PRIMARY KEY,
+  section text NOT NULL,
+  code text NOT NULL,
+  limits numeric(10,2),
+  CONSTRAINT params_section_code UNIQUE (section, code),
+  UNIQUE (code)
+);
+ALTER TABLE params ADD CONSTRAINT params_code_section UNIQUE (code, section);
+`);
+  await q(`CREATE TABLE ${live}.params (id serial PRIMARY KEY, section text NOT NULL, code text NOT NULL, limits numeric(10,2))`);
+  // strip everything but the primary keys, the way the old restore left demo, and snapshot that
+  for (const t of ["watch_logs", "params"]) {
+    for (const r of (await q(`SELECT i.indexname, c.conname FROM pg_indexes i JOIN pg_namespace n ON n.nspname=i.schemaname
+                              JOIN pg_class ic ON ic.relname=i.indexname AND ic.relnamespace=n.oid
+                              LEFT JOIN pg_constraint c ON c.conindid=ic.oid WHERE i.schemaname=$1 AND i.tablename=$2 AND i.indexname NOT LIKE '%_pkey'`, [live, t])).rows) {
+      if (r.conname) await q(`ALTER TABLE ${live}.${t} DROP CONSTRAINT ${r.conname}`);
+      else await q(`DROP INDEX ${live}.${r.indexname}`);
+    }
+  }
+  const bad = await migrate.snapshotSchema(CO, MOD, 6);
+  await migrate.recordSnapshot(CO, MOD, 6, bad);
+  ok((await q("SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname NOT LIKE '%_pkey'", [bad])).rows.length === 0, "the snapshot carries no indexes, like demo's");
+  const decl = migrate.declaredIndexes(fs.readFileSync(path.join(vdir, "migrations", "001.sql"), "utf8"));
+  assert.deepStrictEqual(decl.map((d) => d.name || `${d.table}:${d.cols}`), ["watch_logs_date_station", "watch_logs_reading_idx", "params_code_section", "params_section_code", "params:code"]);
+  ok(true, "five declarations found in the migration (index, plain index, alter-add, named body constraint, bare body UNIQUE)");
+  let r5 = await migrate.ensureIndexes(live, vdir);
+  assert.deepStrictEqual(r5.made.sort(), ["params UNIQUE (code)", "params_code_section", "params_section_code", "watch_logs_date_station", "watch_logs_reading_idx"].sort());
+  ok(r5.failed.length === 0, "all five made again, none failed");
+  await upsert(); ok(true, "the upsert works again");
+  r5 = await migrate.ensureIndexes(live, vdir);
+  ok(r5.made.length === 0 && r5.failed.length === 0, "a second pass makes nothing (all present by name or shape)");
+  await migrate.restoreSnapshot(CO, MOD, bad);
+  ok(!(await indexShapes(live, "watch_logs")).includes("CREATE UNIQUE INDEX ON watch_logs USING btree (watch_date, station)"), "restoring the damaged snapshot strips the index again (faithful to the snapshot)");
+  await migrate.ensureIndexes(live, vdir);
+  await upsert(); ok(true, "and the heal after the restore brings it back");
+  await migrate.restoreSnapshot(CO, MOD, bad);   // params back to no constraints
+  await q(`INSERT INTO ${live}.params (section, code) VALUES ('a','x'), ('a','x')`);
+  r5 = await migrate.ensureIndexes(live, vdir);
+  ok(r5.failed.length === 3 && r5.failed.every((f) => /could not create unique index|duplicate key/.test(f.why)), "duplicate rows: the three params constraints are reported as failed, not thrown");
+  ok(r5.made.length === 2, "and the pass still completed: the two watch_logs indexes were made");
+
+  console.log("6. a recorded snapshot whose schema is gone is refused, not restored over");
+  await q(`DROP SCHEMA ${bad} CASCADE`);
+  await assert.rejects(() => migrate.restoreSnapshot(CO, MOD, bad), /has no tables/);
+  ok((await q("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname=$1", [live])).rows[0].n === 2, "the live tables are still there");
+
   console.log(`\n${passed}/${passed} restore checks passed`);
   await pool.end();
 })().catch(async (e) => { console.error("FAILED:", e.message); await pool.end(); process.exit(1); });
