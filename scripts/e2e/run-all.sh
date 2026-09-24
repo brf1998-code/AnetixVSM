@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Every end to end suite, each on the database it asks for, against a server this script starts and stops.
+# Sandbox use (2026-09-24): Postgres 16 running locally as sos/sos, playwright installed. Prints one line per suite.
+#   bash scripts/e2e/run-all.sh            everything
+#   bash scripts/e2e/run-all.sh quick      no browser suites
+set -u
+cd "$(dirname "$0")/../.."
+export DATABASE_URL=postgres://sos:sos@127.0.0.1:5432/sos_e2e SESSION_SECRET=e2e SOS_CONNECTION_KEY=e2e-connection-key
+export SOS_FLOOR_PASSWORD=floorpw SOS_MANAGER_PASSWORD=mgrpw SOS_ADMIN_PASSWORD=adminpw SOS_INTERNAL_TOKEN=e2e-internal
+export SOS_FAKE_AGENT=1 SOS_FAKE_DELAY_MS=300 PORT=3999 SOS_AUTO_PROPOSE_PER_HOUR=500
+LOG=${SOS_E2E_LOG:-/tmp/sos-e2e}; mkdir -p "$LOG"
+QUICK=${1:-}
+
+fresh() { stop; su postgres -c "psql -qc 'DROP DATABASE IF EXISTS sos_e2e;' -c 'CREATE DATABASE sos_e2e OWNER sos;'" >/dev/null 2>&1; }
+stop() { for p in $(pgrep -f "node server.js"); do kill "$p" 2>/dev/null; done; sleep 1; }
+start() {   # start "<extra env>"
+  stop
+  ( env $1 nohup node server.js > "$LOG/server.log" 2>&1 & )
+  for i in $(seq 1 60); do curl -sf localhost:3999/health >/dev/null 2>&1 && return 0; sleep 0.5; done
+  echo "server did not come up"; tail -20 "$LOG/server.log"; return 1
+}
+run() {   # run <name> <command...>
+  local name=$1; shift
+  local out; out=$(timeout 900 "$@" 2>&1); local code=$?
+  echo "$out" > "$LOG/$name.log"
+  local line; line=$(echo "$out" | grep -E "passed, [0-9]+ failed|checks passed" | tail -1)
+  printf "%-28s %s%s\n" "$name" "${line:-NO SUMMARY (exit $code)}" "$( [ $code -ne 0 ] && echo '   <-- FAILED' )"
+}
+
+fresh; start "SOS_BROWSER=off"
+run accounts               node scripts/e2e/accounts.js
+stop; ( env SOS_BROWSER=off nohup bash -c 'while true; do node server.js; sleep 1; done' > "$LOG/server-loop.log" 2>&1 & ); sleep 6
+run accounts-restore       node scripts/e2e/accounts.js restore
+for p in $(pgrep -f "while true; do node server.js"); do kill "$p" 2>/dev/null; done; stop
+start "SOS_BROWSER=off SOS_ADMIN_2FA=off"
+run accounts-breakglass    node scripts/e2e/accounts.js breakglass
+stop; ( env -u SOS_ADMIN_PASSWORD SOS_BROWSER=off nohup node server.js > "$LOG/server.log" 2>&1 & ); sleep 6
+run accounts-noadminvar    env -u SOS_ADMIN_PASSWORD node scripts/e2e/accounts.js noadminvar
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run accounts-browser node scripts/e2e/accounts-browser.js; }
+
+fresh; start "SOS_BROWSER=off"
+run requests               node scripts/e2e/requests.js
+[ -z "$QUICK" ] && run requests-browser node scripts/e2e/requests-browser.js
+
+fresh; start "SOS_BROWSER=off"
+run closeout               node scripts/e2e/closeout.js
+[ -z "$QUICK" ] && run closeout-browser node scripts/e2e/closeout-browser.js
+
+fresh; start "SOS_BROWSER=off"
+run arrival                node scripts/e2e/arrival.js
+[ -z "$QUICK" ] && run arrival-browser node scripts/e2e/arrival-browser.js
+fresh; start "SOS_BROWSER=off SOS_AUTO_PROPOSE_PER_HOUR=2"
+run arrival-guard          env SOS_E2E_EXPECT=guard node scripts/e2e/arrival.js
+
+fresh; start "SOS_BROWSER=off"
+run board-browser          node scripts/e2e/board-browser.js
+
+CHROME=${SOS_CHROMIUM_PATH:-/opt/pw-browsers/chromium-1194/chrome-linux/chrome}   # the sandbox's Chromium, for the suites that want a browser on the instance
+fresh; start "SOS_CHROMIUM_PATH=$CHROME"
+run checks                 node scripts/e2e/checks.js
+[ -z "$QUICK" ] && { fresh; start "SOS_CHROMIUM_PATH=$CHROME"; run checks-browser node scripts/e2e/checks-browser.js; }
+fresh; start "SOS_BROWSER=off"
+run checks-nobrowser-off   env SOS_E2E_EXPECT=off node scripts/e2e/checks-nobrowser.js
+
+fresh; start "SOS_BROWSER=off SOS_MODEL_PROPOSE=claude-sonnet-5"
+run models                 node scripts/e2e/models.js
+[ -z "$QUICK" ] && run models-browser node scripts/e2e/models-browser.js
+
+fresh; start "SOS_BROWSER=off"
+run runner-hostile         node scripts/e2e/runner-hostile.js
+stop
+echo "logs in $LOG"

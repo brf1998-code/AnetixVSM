@@ -40,6 +40,7 @@ const totp = require("./totp");
 const qrcode = require("./qrcode");
 const connections = require("./connections");   // encrypt / decrypt: one key and one format for every stored secret
 const edge = require("./edge");
+const devices = require("./devices");   // "remember this computer": a trusted device skips the code at sign-in
 const authLib = () => require("./auth");         // at call time: auth.js requires this file
 
 const MAX_FAILS = Number(process.env.SOS_ACCOUNT_MAX_FAILS || 5);
@@ -132,12 +133,14 @@ const publicRow = (a) => ({
   id: a.id, login: a.login, display_name: a.display_name, role: a.role, status: a.status,
   enrolled: Boolean(a.enrolled), locked: Boolean(a.locked_until && new Date(a.locked_until) > new Date()),
   recovery_left: a.recovery_left == null ? null : Number(a.recovery_left), last_sign_in: a.last_sign_in || null, created_at: a.created_at,
+  devices: a.devices == null ? 0 : Number(a.devices),
 });
 const LIST_SQL = `
   SELECT a.*,
     EXISTS (SELECT 1 FROM platform.account_factors f WHERE f.account_id=a.id AND f.verified_at IS NOT NULL) AS enrolled,
     (SELECT count(*) FROM platform.account_recovery_codes r WHERE r.account_id=a.id AND r.used_at IS NULL) AS recovery_left,
-    (SELECT max(at) FROM platform.auth_events e WHERE e.account_id=a.id AND e.event IN ('login_ok','recovery_used','break_glass')) AS last_sign_in
+    (SELECT max(at) FROM platform.auth_events e WHERE e.account_id=a.id AND e.event IN ('login_ok','recovery_used','break_glass','signin_trusted_device')) AS last_sign_in,
+    (SELECT count(*) FROM platform.admin_devices d WHERE d.account_id=a.id AND d.removed_at IS NULL AND d.expires_at > now() AND d.generation = a.generation) AS devices
   FROM platform.accounts a`;
 async function list() { return (await q(`${LIST_SQL} ORDER BY a.id`)).rows.map(publicRow); }
 async function byLogin(login) { return (await q("SELECT * FROM platform.accounts WHERE login=$1", [login])).rows[0] || null; }
@@ -233,8 +236,9 @@ function makeRecoveryCodes() {
 }
 
 // ---- sign in ----------------------------------------------------------------------------------------------
-// -> { ok, account, enroll } | { need_code } | { status, error, need_code?, retry_after? }
-async function signIn({ login, password, code, ip }) {
+// -> { ok, account, enroll, trusted?, device? } | { need_code, clear_device? } | { status, error, need_code?, retry_after? }
+// device: this browser's sos_admin_device cookie, if any; remember: the box on the code step; ua: for the device's label.
+async function signIn({ login, password, code, ip, device, remember, ua }) {
   const name = cleanLogin(login);
   password = String(password || "");
   const nope = { status: 401, error: "that name and password did not match" };
@@ -257,10 +261,23 @@ async function signIn({ login, password, code, ip }) {
   if (twoFaOff()) return done("break_glass", { at: "sign_in" });
   if (!(await verifiedFactor(a.id))) return done("login_ok", { enroll: true });   // straight to enrollment, and nothing else (auth.middleware)
   const typed = String(code || "").trim();
+  // a trusted device (src/devices.js): this browser's cookie names a live row of THIS account, at its current
+  // generation, so the code step is skipped. Anything short of that is the code step as always.
+  if (!typed && device) {
+    const d = await devices.check(device, a);
+    if (d.ok) { const out = await done("signin_trusted_device", { device: d.row.id, label: d.row.label }); return { ...out, trusted: d.row.id }; }
+    await event("device_refused", { account_id: a.id, login: a.login, ip, detail: { why: d.why } });
+    return { need_code: true, clear_device: d.clear };
+  }
   if (!typed) return { need_code: true };
   if (/^[\d\s]+$/.test(typed)) {
     const r = await useCode(a.id, typed);
-    if (r === "ok") return done("login_ok");
+    if (r === "ok") {
+      const out = await done("login_ok");
+      // "remember this computer": only after the app's code, never after a recovery code (the branch below)
+      if (remember) { out.device = await devices.mint(a, ua); await event("device_trusted", { account_id: a.id, login: a.login, ip, detail: { device: out.device.id, label: out.device.label, days: devices.DAYS } }); }
+      return out;
+    }
     if (r === "unreadable") { await event("factor_unreadable", { account_id: a.id, login: a.login, ip }); return { status: 401, need_code: true, error: "this account's authenticator cannot be checked (the platform's key changed). Another admin has to reset it." }; }
     await noteFail(a, r === "replayed_code" ? "replayed_code" : "bad_code", ip);
     return { status: 401, need_code: true, error: r === "replayed_code" ? "that code was already used. Wait for the next one." : "that code did not match" };
@@ -355,6 +372,7 @@ async function resetFactor(id, by, ip) {
   const a = await byId(id); if (!a) throw new Error("no such account");
   await q("DELETE FROM platform.account_factors WHERE account_id=$1", [a.id]);
   await q("DELETE FROM platform.account_recovery_codes WHERE account_id=$1", [a.id]);
+  await devices.removeAll(a.id);   // a new factor means trusting each computer again
   await q("UPDATE platform.accounts SET generation=generation+1, failed_count=0, locked_until=NULL, updated_at=now() WHERE id=$1", [a.id]);
   forget(a.id);
   await event("factor_reset", { account_id: a.id, login: a.login, ip, detail: { by } });
@@ -432,9 +450,22 @@ router.post("/api/admin/accounts/me/password", (req, res, next) => authLib().req
   res.json({ ok: true, signed_out: true });   // the generation went up: this session ends too
 }));
 
+// The person's own trusted devices (src/devices.js): the list, and Remove, which asks for nothing (it only tightens).
+router.get("/api/admin/accounts/me/devices", (req, res, next) => authLib().requireAdmin(req, res, next), guard(async (req, res) => {
+  if (!mine(req, res)) return;
+  res.set("Cache-Control", "no-store").json({ devices: await devices.list(req.sosAccount.id), days: devices.DAYS, max: devices.MAX_PER_ACCOUNT });
+}));
+router.post("/api/admin/accounts/me/devices/:id(\\d+)/remove", (req, res, next) => authLib().requireAdmin(req, res, next), json, guard(async (req, res) => {
+  if (!mine(req, res)) return;
+  const gone = await devices.remove(req.sosAccount.id, req.params.id);
+  if (!gone) return res.status(404).json({ error: "no such device on your account" });
+  await event("device_removed", { account_id: req.sosAccount.id, login: req.sosAccount.login, ip: edge.clientIp(req), detail: { device: gone.id, label: gone.label } });
+  res.json({ ok: true });
+}));
+
 router.get("/api/admin/accounts", (req, res, next) => authLib().requireAdmin(req, res, next), guard(async (req, res) => {
   const events = (await q("SELECT id, at, account_id, login, ip, event, detail FROM platform.auth_events ORDER BY id DESC LIMIT 60")).rows;
-  res.json({ accounts: await list(), events, shared_password_open: await legacyOpen(), two_fa_off: twoFaOff(), key_pinned: keyPinned(), lock: { fails: MAX_FAILS, minutes: LOCK_MINUTES }, edge: edge.status(req) });
+  res.json({ accounts: await list(), events, shared_password_open: await legacyOpen(), two_fa_off: twoFaOff(), key_pinned: keyPinned(), lock: { fails: MAX_FAILS, minutes: LOCK_MINUTES }, edge: edge.status(req), trusted_days: devices.DAYS });
 }));
 router.post("/api/admin/accounts", (req, res, next) => authLib().requireAdmin(req, res, next), json, guard(async (req, res) => {
   if (!(await needStepUp(req, res, "create_account"))) return;

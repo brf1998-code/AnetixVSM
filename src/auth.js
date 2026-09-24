@@ -25,14 +25,32 @@
 //   never accepts them.
 //
 // Session
-//   A signed cookie carries role, company, a generation and issue time. For
+//   A signed cookie carries role, company, a generation and two times: when it
+//   was first issued (the sign-in) and when it was last refreshed. For
 //   an admin the company slot is "*<account id>" and the generation is the
 //   ACCOUNT's, checked on every request (ten second cache), so one admin can
 //   be signed out everywhere without touching a plant; the id 0 is the shared
 //   admin password's session, good only while that password still opens
-//   admin. Admin sessions last SOS_ADMIN_SESSION_HOURS (12); floor and
-//   manager sessions SOS_SESSION_DAYS (30), as before. An account with no
-//   authenticator yet reaches the admin page's setup and nothing else.
+//   admin. An account with no authenticator yet reaches the admin page's setup
+//   and nothing else.
+//
+//   Sliding windows (2026-09-24; before this every cookie died a fixed time
+//   after sign-in, 12 hours for an admin, so Brendan typed password and code
+//   most mornings). A cookie is good while the generation matches, it was
+//   refreshed inside the IDLE window, it was issued inside the CAP, and neither
+//   time is in the future. Any request that verifies once more than half the
+//   idle window has passed since the last refresh gets the cookie again with
+//   refreshed = now and the same issued, under the same attributes. So a
+//   session a person keeps using never ends until the cap; one they walk away
+//   from ends after the idle window. Hours, so a deployment that has to meet
+//   AAL2 on paper (1 hour idle, 24 hour cap) sets 1 and 24 with no code change:
+//     admin            SOS_ADMIN_IDLE_HOURS   168 (7 days)    SOS_ADMIN_CAP_HOURS    720 (30 days)
+//     floor, manager   SOS_SESSION_IDLE_HOURS 720 (30 days)   SOS_SESSION_CAP_HOURS 4320 (180 days; 0 = no cap)
+//   (the person cookie has its own pair in src/people.js). The cookie from
+//   before this carried one time; it is accepted while its one time is inside
+//   both windows, and re-issued in the new shape on the first request seen, so
+//   the deploy signed nobody out. SOS_ADMIN_SESSION_HOURS and SOS_SESSION_DAYS
+//   are no longer read (boot says so if they are set).
 //   For floor and manager the generation is the company's password generation. Changing a company's password raises its generation, which
 //   signs everyone at that company out (the reason to change one is usually
 //   that somebody who knew it should no longer get in). `companyGuard` is the
@@ -45,16 +63,30 @@ const crypto = require("crypto");
 const { q } = require("./db");
 const accounts = require("./accounts");
 const edge = require("./edge");
+const devices = require("./devices");
 
 const FLOOR = process.env.SOS_FLOOR_PASSWORD || "";
 const MANAGER = process.env.SOS_MANAGER_PASSWORD || "";
 const ADMIN = process.env.SOS_ADMIN_PASSWORD || "";
 const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(24).toString("hex");
 const COOKIE = "sos_session";
-// sessions expire server-side after this long, regardless of what the browser does with Max-Age
-const SESSION_SECONDS = Number(process.env.SOS_SESSION_DAYS || 30) * 24 * 60 * 60;
-// an admin session is shorter on purpose (a tablet on the floor should not log out mid shift; an admin's laptop should)
-const ADMIN_SESSION_SECONDS = Math.round(Number(process.env.SOS_ADMIN_SESSION_HOURS || 12) * 60 * 60);
+// The windows, in hours (see "Sliding windows" above). An idle window below a minute is nonsense and becomes the
+// default; a cap of 0 means none (revocation by generation only).
+function hoursVar(name, dflt, { zeroOk = false } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return dflt;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return dflt;
+  if (n === 0) return zeroOk ? 0 : dflt;
+  return zeroOk ? n : Math.max(n, 1 / 60);
+}
+const WINDOWS = {
+  admin: { idle: hoursVar("SOS_ADMIN_IDLE_HOURS", 168), cap: hoursVar("SOS_ADMIN_CAP_HOURS", 720, { zeroOk: true }) },
+  device: { idle: hoursVar("SOS_SESSION_IDLE_HOURS", 720), cap: hoursVar("SOS_SESSION_CAP_HOURS", 4320, { zeroOk: true }) },
+};
+const RETIRED_ENV = ["SOS_ADMIN_SESSION_HOURS", "SOS_SESSION_DAYS"];
+for (const name of RETIRED_ENV) if (process.env[name] !== undefined) console.warn(`[auth] ${name} is no longer read (sessions slide since 2026-09-24: SOS_ADMIN_IDLE_HOURS / SOS_ADMIN_CAP_HOURS, SOS_SESSION_IDLE_HOURS / SOS_SESSION_CAP_HOURS). Take it out of Railway.`);
+const windowFor = (role) => (role === "admin" ? WINDOWS.admin : WINDOWS.device);
 // failed logins per client IP before /login answers 429 for the rest of the window
 const LOGIN_MAX_FAILS = Number(process.env.SOS_LOGIN_MAX_FAILS || 10);
 const LOGIN_WINDOW_MS = Number(process.env.SOS_LOGIN_WINDOW_MIN || 15) * 60 * 1000;
@@ -136,9 +168,12 @@ function accessPublic(row) {
 }
 
 // ---- the session cookie -------------------------------------------------------------------
-function sign(role, company, gen) {
-  const ts = Date.now().toString(36);
-  const payload = `${role}.${company}.${Number(gen) || 0}.${ts}`;
+// role.company.generation.issued.refreshed.mac (times in base 36 ms). `times` carries a session on: the same
+// issued, a new refreshed. Without it both are now (a sign-in). `now` is for the unit cases only.
+function sign(role, company, gen, times, now = Date.now()) {
+  const issued = times && Number.isFinite(times.issued) ? times.issued : now;
+  const refreshed = times && Number.isFinite(times.refreshed) ? times.refreshed : now;
+  const payload = `${role}.${company}.${Number(gen) || 0}.${issued.toString(36)}.${refreshed.toString(36)}`;
   const mac = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
   return `${payload}.${mac}`;
 }
@@ -150,25 +185,63 @@ async function serviceCookie(company, role) {
   return `${COOKIE}=${sign(role === "floor" ? "floor" : "manager", company, await generationOf(company))}`;
 }
 
-function verify(token) {
+// Pure: is a session with these times good now, under this role's windows? Both times must be real, neither in
+// the future, the refresh not before the issue, the last refresh inside the idle window, the issue inside the cap.
+function alive(role, issued, refreshed, now = Date.now()) {
+  const w = windowFor(role);
+  if (!Number.isFinite(issued) || !Number.isFinite(refreshed)) return false;
+  if (issued > now || refreshed > now || refreshed < issued) return false;
+  if (now - refreshed > w.idle * 3600e3) return false;
+  if (w.cap && now - issued > w.cap * 3600e3) return false;
+  return true;
+}
+// Pure: is it time to hand the cookie back with a new refreshed? Past half the idle window, and always for a
+// cookie in the old one-time shape (so it takes the new shape on the first request seen).
+const refreshDue = (role, refreshed, legacy, now = Date.now()) => legacy || now - refreshed > (windowFor(role).idle * 3600e3) / 2;
+// Max-Age for the cookie: the idle window, or what is left of the cap if that comes first (seconds, never below 60).
+function maxAgeFor(role, issued, now = Date.now()) {
+  const w = windowFor(role);
+  let s = w.idle * 3600;
+  if (w.cap) s = Math.min(s, (issued + w.cap * 3600e3 - now) / 1000);
+  return Math.max(60, Math.round(s));
+}
+
+// -> { role, company, gen, account?, slot, issued, refreshed, refresh, legacy } or null
+function verify(token, now = Date.now()) {
   if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 5) return null;   // cookies from before sessions carried a company are no longer accepted
-  const [role, company, gen, ts, mac] = parts;
-  const expect = crypto.createHmac("sha256", SECRET).update(`${role}.${company}.${gen}.${ts}`).digest("base64url");
+  // five parts: the shape before sliding windows (one time); six: issued and refreshed. Anything else is nobody
+  // (cookies from before sessions carried a company had four).
+  if (parts.length !== 5 && parts.length !== 6) return null;
+  const legacy = parts.length === 5;
+  const [role, company, gen, ts1, ts2] = legacy ? [parts[0], parts[1], parts[2], parts[3], parts[3]] : parts;
+  const mac = parts[parts.length - 1];
+  const payload = legacy ? `${role}.${company}.${gen}.${ts1}` : `${role}.${company}.${gen}.${ts1}.${ts2}`;
+  const expect = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
   if (mac.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
-  const issued = parseInt(ts, 36);
-  if (!Number.isFinite(issued)) return null;
   if (!["admin", "manager", "floor"].includes(role)) return null;
-  const age = Date.now() - issued;
-  if (age < 0 || age > (role === "admin" ? ADMIN_SESSION_SECONDS : SESSION_SECONDS) * 1000) return null;  // expired (or forged timestamp)
-  if (role !== "admin") return SLUG.test(company) ? { role, company, gen: Number(gen) || 0 } : null;
+  if (!/^[0-9a-z]{1,12}$/.test(ts1) || !/^[0-9a-z]{1,12}$/.test(ts2)) return null;
+  const issued = parseInt(ts1, 36), refreshed = parseInt(ts2, 36);
+  if (!alive(role, issued, refreshed, now)) return null;   // expired, or a forged time
+  const times = { slot: company, issued, refreshed, legacy, refresh: refreshDue(role, refreshed, legacy, now) };
+  if (role !== "admin") return SLUG.test(company) ? { role, company, gen: Number(gen) || 0, ...times } : null;
   // admin: "*<account id>". The admin cookie from before named accounts ("*" alone) is no longer accepted: sign in again.
   const m = /^\*(\d{1,9})$/.exec(company);
-  return m ? { role, company: ALL, gen: Number(gen) || 0, account: Number(m[1]) } : null;
+  return m ? { role, company: ALL, gen: Number(gen) || 0, account: Number(m[1]), ...times } : null;
 }
 // The cookie value for an admin session. accountId 0: the shared admin password's session.
-function signAdmin(accountId, gen) { return sign("admin", `${ALL}${Number(accountId) || 0}`, gen); }
+function signAdmin(accountId, gen, times, now) { return sign("admin", `${ALL}${Number(accountId) || 0}`, gen, times, now); }
+// The Set-Cookie line for a session, the same attributes at sign-in and at every refresh.
+function cookieHeader(req, value, maxAge) {
+  const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+  return `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+// The cookie again, with refreshed = now and the same issued, under the same attributes. Appended, so a route
+// that sets its own cookies (the person cookie, the device id) keeps them; the logout route replaces the header.
+function reissue(req, res, session, now = Date.now()) {
+  const value = sign(session.role, session.slot, session.gen, { issued: session.issued, refreshed: now }, now);
+  res.append("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, session.issued, now)));
+}
 
 // A MAC under the session secret, for other platform cookies (src/people.js). The secret itself stays in this file.
 function hmac(payload) { return crypto.createHmac("sha256", SECRET).update(String(payload)).digest("base64url"); }
@@ -224,7 +297,8 @@ function middleware(req, res, next) {
   if (req.headers["x-sos-internal"] === INTERNAL) { req.sosRole = "admin"; req.sosCompany = ALL; req.sosInternal = true; return next(); }   // the platform's own calls; never the accounts (src/accounts.js)
   const session = verify(parseCookies(req)[COOKIE]);
   if (!session) return toLogin(req, res, 401, "login required");
-  const accept = () => { req.sosRole = session.role; req.sosCompany = session.company; next(); };
+  // the session slides: once it has verified, a cookie past half its idle window (or in the old shape) goes back refreshed
+  const accept = () => { req.sosRole = session.role; req.sosCompany = session.company; req.sosSession = { issued: session.issued, refreshed: session.refreshed }; if (session.refresh) reissue(req, res, session); next(); };
   if (session.role === "admin") {
     // the shared admin password's session ends the moment that password stops opening admin
     if (!session.account) return accounts.legacyOpen().then((open) => (open ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
@@ -340,21 +414,27 @@ async function loginHandler(req, res) {
     return res.status(429).json({ error: `too many failed logins; try again in ${Math.ceil(wait / 60)} min` });
   }
   try {
-    const { password, company, name, code } = req.body || {};
-    const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+    const { password, company, name, code, remember } = req.body || {};
+    const now = Date.now();
     // A name means a named account: password, then a code from the authenticator. Nothing is kept between the two
-    // requests: the page sends name, password and code together the second time.
+    // requests: the page sends name, password and code together the second time. A browser this account trusted
+    // (src/devices.js) carries a cookie on this one route and skips the code.
     if (String(name || "").trim()) {
-      const r = await accounts.signIn({ login: name, password, code, ip });
-      if (r.need_code && !r.error) return res.json({ need_code: true });
+      const r = await accounts.signIn({ login: name, password, code, ip, device: parseCookies(req)[devices.COOKIE], remember: Boolean(remember), ua: req.headers["user-agent"] });
+      if (r.need_code && !r.error) {
+        if (r.clear_device) res.set("Set-Cookie", devices.clearHeader(req));   // an expired row or a moved generation: the cookie is dead weight
+        return res.json({ need_code: true, remember_days: devices.DAYS });   // the page's "remember this computer" box names the days
+      }
       if (!r.ok) {
         noteLoginFail(ip);
         if (r.retry_after) res.set("Retry-After", String(r.retry_after));
         return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code) });
       }
       loginFails.delete(ip);
-      res.set("Set-Cookie", `${COOKIE}=${signAdmin(r.account.id, r.account.generation)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${ADMIN_SESSION_SECONDS}${secure}`);
-      return res.json({ ok: true, role: "admin", company: null, enroll: r.enroll });
+      const set = [cookieHeader(req, signAdmin(r.account.id, r.account.generation, null, now), maxAgeFor("admin", now, now))];
+      if (r.device) set.push(devices.cookieHeader(req, `${r.device.id}.${r.device.token}`, devices.DAYS * 86400));
+      res.set("Set-Cookie", set);
+      return res.json({ ok: true, role: "admin", company: null, enroll: r.enroll, trusted: Boolean(r.trusted), remembered: Boolean(r.device) });
     }
     let session = await sessionFor(password, company);
     if (session && session.refused_shared) { await accounts.event("legacy_admin_refused", { ip }); session = null; }
@@ -366,8 +446,8 @@ async function loginHandler(req, res) {
     }
     loginFails.delete(ip);
     if (session.shared) await accounts.event("legacy_admin_password", { ip, detail: { at: "sign_in" } });
-    const value = session.role === "admin" ? signAdmin(0, 0) : sign(session.role, session.company, session.gen);
-    res.set("Set-Cookie", `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${session.role === "admin" ? ADMIN_SESSION_SECONDS : SESSION_SECONDS}${secure}`);
+    const value = session.role === "admin" ? signAdmin(0, 0, null, now) : sign(session.role, session.company, session.gen, null, now);
+    res.set("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, now, now)));
     res.json({ ok: true, role: session.role, company: session.company === ALL ? null : session.company });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
@@ -380,5 +460,5 @@ function logoutHandler(_req, res) {
 module.exports = {
   middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
   setPasswords, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, verify, OPEN, ALL, hmac, parseCookies,
-  clientIp, ENROLL_PATHS, ADMIN_SESSION_SECONDS, SESSION_SECONDS,
+  clientIp, ENROLL_PATHS, WINDOWS, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" id="favicon" href="/api/c/demo/icon"><link rel="apple-touch-icon" id="touchicon" href="/api/c/demo/icon">
+<link rel="icon" id="favicon" href="/api/c/__company__/icon"><link rel="apple-touch-icon" id="touchicon" href="/api/c/__company__/icon">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Symbiotic OS · Improvement Board</title>
 <style>
@@ -181,8 +181,8 @@
       <div class="col c-done"><h2>Done and declined <span class="n" id="n-done">0</span></h2><div id="col-done"></div></div>
     </div>
     <details class="platform" id="platform-wrap">
-      <summary>Platform requests <span class="n" id="n-platform">0</span></summary>
-      <div class="hint">Feedback about this board, the agent settings, or the admin pages (the tool itself, not a module). The in-app agent does not rebuild its own platform; these go to Brendan and ship through the repo. They stay here so nothing gets lost.</div>
+      <summary>Requests to Anetix <span class="n" id="n-platform">0</span></summary>
+      <div class="hint">Feedback about this board, the settings pages or the software itself (not a module). These do not go through the AI: they go to Brendan at Anetix, who makes the software, and each one says where it is. The person who sent it sees the same under My requests on the feedback button.</div>
       <div class="grid" id="col-platform"></div>
     </details>
   </div>
@@ -206,6 +206,12 @@ const OPEN_ASKED = new Set();   // cards whose "asked N times" list is open; kep
 const OPEN_BATCH = new Set();   // batch tiles whose "See the N changes" is open; kept across the 4 s redraw
 const CHECKED = new Set();     // "runId:i" boxes the manager has ticked at the requirement gate (survives the 4s reload)
 const OPEN_MORE = new Set();    // cards whose "more" is open; kept across the 4 s redraw
+const OPEN_FOLDS = new Set();   // every other fold on a card (the full requirement, what a check saw); kept across the 4 s redraw
+// A <details> that stays open across the redraw. Until this the full requirement folded itself shut within four
+// seconds of being opened (Brendan, 2026-09-24: "you cannot actually read any of it").
+function fold(key, summary, body, style) {
+  return `<details ${OPEN_FOLDS.has(key) ? "open" : ""} ontoggle="this.open?OPEN_FOLDS.add('${key}'):OPEN_FOLDS.delete('${key}')"${style ? ` style="${style}"` : ""}><summary>${summary}</summary>${body}</details>`;
+}
 const MGR = () => DATA && (DATA.role === "manager" || DATA.role === "admin");
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
 // One big button for what the card is waiting on; the rarer actions fold under
@@ -367,6 +373,13 @@ async function act(url, body) {
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     const j = await res.json().catch(() => ({}));
+    // an approval with a name whose PIN was typed too long ago (SOS_APPROVAL_PIN_HOURS): the PIN pad opens for that
+    // name and the same action is sent again once it is typed
+    if (res.status === 401 && j.pin_again && window.sosPerson && window.sosPerson.pin) {
+      PENDING.delete(key); renderBusy();
+      window.sosPerson.pin(j.person, () => act(url, body), "Tap your PIN again to approve this. It was typed a while ago.");
+      return;
+    }
     if (!res.ok) alert(j.error || "action failed");
   } catch (e) { alert("Could not reach the server: " + e.message); }
   PENDING.delete(key); renderBusy();
@@ -427,7 +440,7 @@ function reqHtml(run, single) {
   let h = `<div class="req" id="req-${run.id}"><div class="bluf">${esc(bluf)}</div>`;
   h += items.map((it, i) => `<label class="item"><input type="checkbox" ${CHECKED.has(run.id + ":" + i) ? "checked" : ""} onchange="tickReq(${run.id}, ${i}, this.checked)"><span><b>${items.length > 1 ? (it.change || i + 1) + ". " : ""}</b>${esc(it.summary)}</span></label>`).join("");
   if (editing) h += `<textarea id="reqedit-${run.id}" style="margin-top:8px;min-height:160px">${esc(run.requirement)}</textarea>`;
-  else h += `<details><summary>See the full requirement</summary><div class="full">${esc(run.requirement)}</div></details>`;
+  else h += fold("req:" + run.id, "See the full requirement", `<div class="full">${esc(run.requirement)}</div>`);
   h += `<div class="gate">${all ? "Every change checked." : "Tick each change to confirm you read it; then the build can start."}</div></div>`;
   if (MGR()) {
     if (editing) h += `<button class="go" ${all ? "" : "disabled"} onclick="confirmReq(${run.id}, true)">Save and build</button><button class="quiet" onclick="EDITING=null;load()">Cancel edit</button>`;
@@ -508,7 +521,8 @@ function checksStopHtml(run, ck) {
   const a = ck.acceptance || { failed: [], invalid: [] };
   const why = (r) => { const st = (r.steps || []).find(x => !x.ok); return st ? `${st.step}: ${st.problems.join("; ")}` : ""; };
   // what the check saw is for whoever wants it (Brendan, in a pilot), folded away from the manager's first read
-  const saw = (text) => (text ? `<details style="margin-top:4px"><summary style="cursor:pointer;font-size:11.5px;opacity:.8">what the check saw</summary><div class="meta" style="color:inherit">${esc(text)}</div></details>` : "");
+  let sawN = 0;
+  const saw = (text) => (text ? fold(`saw:${run.id}:${sawN++}`, `<span style="cursor:pointer;font-size:11.5px;opacity:.8">what the check saw</span>`, `<div class="meta" style="color:inherit">${esc(text)}</div>`, "margin-top:4px") : "");
   const blocks = [];
   if (ck.kind === "smoke") blocks.push(`<div class="findings"><b>The build does not answer where it should.</b>${esc(ck.detail || "")}</div>`);
   for (const r of a.failed.filter(x => !x.new)) {
@@ -759,6 +773,15 @@ function answerQuestion(id, i) {
   act(`/api/feedback/${id}/answer`, { answer });
 }
 const FLAG_WORDS = { not_this_tool: "NOT ABOUT THIS TOOL", new_tool: "A NEW TOOL" };
+// A request to Anetix (about the software itself): where it is, in the words src/requests.js stateOf uses.
+const ANETIX_LINE = { received: "Sent to Anetix, the people who make this software. Nobody has looked yet.", looking: "Anetix is looking at it.", working: "Anetix is working on it." };
+function anetixState(fb) {
+  const note = fb.anetix_note ? ` ${fb.anetix_by || "Anetix"} says: "${String(fb.anetix_note).trim()}"` : "";
+  if (fb.status === "done") return { state: "anetix_fixed", line: `Fixed by Anetix.${fb.outcome ? ` ${fb.outcome}` : ""}` };
+  if (fb.status === "declined") return fb.anetix_by ? { state: "anetix_not_doing", line: `Anetix is not doing this one.${fb.outcome ? ` ${fb.outcome}` : ""}` } : { state: "declined", line: `Declined by the manager.${fb.outcome && !/^declined$/i.test(fb.outcome) ? ` ${fb.outcome}` : ""}` };
+  const stage = ANETIX_LINE[fb.anetix_stage] ? fb.anetix_stage : "received";
+  return { state: "anetix_" + stage, line: ANETIX_LINE[stage] + note };
+}
 
 function card(fb) {
   if (fb.kind === "module_request") return requestCard(fb);
@@ -767,7 +790,7 @@ function card(fb) {
   const pk = run && fb.status === "in_progress" ? "run:" + run.id : "fb:" + fb.id;
   let html = `<div class="card ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
-  html += `<div class="meta">#${fb.id} · ${isPlatform ? '<span class="chip platform">PLATFORM</span>' : esc(fb.module)} · ${esc(fb.name || "anonymous")}`
+  html += `<div class="meta">#${fb.id} · ${isPlatform ? '<span class="chip platform">TO ANETIX</span>' : esc(fb.module)} · ${esc(fb.name || "anonymous")}`
        + (fb.recurrence > 1 && !(fb.dupes && fb.dupes.length) ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "") + `</div>`;
   html += `<div class="meta"><span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
   html += pointedHtml(fb) + askedHtml(fb);
@@ -776,12 +799,10 @@ function card(fb) {
     : `<div class="meta" style="background:#fff4e5;border-radius:8px;padding:8px;color:#7a4a00"><b>Follow-up to #${fb.follow_up_of}: not quite.</b> ${esc(fb.name || "The person who asked")} tried what went live and says this is still off. First asked: "${esc(String(fb.follow_up_words || "").slice(0, 200))}"</div>`;
 
   if (isPlatform) {
-    if (fb.status === "new") {
-      html += `<div class="meta">Goes to Brendan's build queue, not the in-app agent.</div>`;
-      if (MGR()) html += actions(pk, "", [`<button class="no" onclick="closeItem(${fb.id}, true)">Decline</button>`]);
-    } else if (fb.outcome) {
-      html += `<div class="${fb.status === "done" ? "outcome" : "fail-note"}">${esc(fb.outcome)}</div>`;
-    }
+    // where it is with Anetix (src/requests.js): the same line the person reads under My requests
+    const st = anetixState(fb);
+    html += `<div class="${st.state === "anetix_fixed" ? "outcome" : st.state === "anetix_not_doing" || st.state === "declined" ? "fail-note" : "meta"}" data-anetix="${st.state}" style="${st.state.startsWith("anetix_") && fb.status === "new" ? "background:#eef4fb;border-radius:8px;padding:8px;color:#1f3a5f" : ""}">${st.state === "anetix_fixed" ? "✓ " : ""}${esc(st.line)}${fb.anetix_at ? ` <small style="opacity:.7">(${new Date(fb.anetix_at).toLocaleDateString()})</small>` : ""}</div>`;
+    if (fb.status === "new" && MGR()) html += actions(pk, "", [`<button class="no" onclick="closeItem(${fb.id}, true)">Decline</button>`]);
     return html + "</div>";
   }
 
@@ -889,8 +910,8 @@ async function gotoVersion(version, restore) {
 // When the company has a brand guide, the band takes its primary color and
 // the tab/home-screen icon is the company's own (served by /api/c/<slug>/icon).
 let BRAND_APPLIED = null;
-function applyBrand(b) {
-  const key = JSON.stringify(b && { c: b.colors, i: b.has_icon, s: b.status });
+function applyBrand(b, iconV) {
+  const key = JSON.stringify({ b: b && { c: b.colors, i: b.has_icon, s: b.status }, v: iconV });
   if (key === BRAND_APPLIED) return;
   BRAND_APPLIED = key;
   const root = document.documentElement.style;
@@ -898,7 +919,9 @@ function applyBrand(b) {
     root.setProperty("--navy", b.colors.primary || "#1f3a5f");
     root.setProperty("--amber", b.colors.accent || "#c2620a");
   } else { root.removeProperty("--navy"); root.removeProperty("--amber"); }
-  const icon = `/api/c/${SLUG}/icon`;
+  // the address carries the icon's own version, so a browser that keys its icon cache by URL (Safari) never shows
+  // one company's mark on another company's board, and a rebuilt brand guide shows at once
+  const icon = `/api/c/${SLUG}/icon` + (iconV ? `?v=${iconV}` : "");
   document.getElementById("favicon").href = icon; document.getElementById("touchicon").href = icon;
   const mark = document.getElementById("comark");
   if (b && b.has_icon) { mark.src = icon; mark.style.display = "inline-block"; } else mark.style.display = "none";
@@ -912,7 +935,7 @@ async function load() {
   window.BOOT = DATA.boot;
   document.title = `${DATA.company.name} · Improvement Board`;
   document.getElementById("coname").textContent = DATA.company.name;
-  applyBrand(DATA.brand);
+  applyBrand(DATA.brand, DATA.icon_v);
   const w = document.getElementById("aiwarn");
   if (!DATA.aiConfigured) { w.style.display = "block"; w.textContent = "AI is not configured on this instance (set ANTHROPIC_API_KEY). Proposals will be placeholders."; }
   else if (DATA.fakeAgent) { w.style.display = "block"; w.textContent = "Fake agent mode (SOS_FAKE_AGENT=1): the loop runs but the agent only stamps a marker on pages."; }

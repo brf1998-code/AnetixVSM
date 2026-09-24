@@ -13,9 +13,10 @@ const craft = (role, company, gen, ageMs) => { const p = `${role}.${company}.${g
 
 // ---- the admin cookie
 const tok = auth.signAdmin(7, 3);
-t("an admin cookie is admin.*<account>.<generation>.<time>.<mac>, five parts like every other", /^admin\.\*7\.3\.[0-9a-z]+\.[^.]+$/.test(tok) && tok.split(".").length === 5, tok);
+t("an admin cookie is admin.*<account>.<generation>.<issued>.<refreshed>.<mac>, six parts like every other", /^admin\.\*7\.3\.[0-9a-z]+\.[0-9a-z]+\.[^.]+$/.test(tok) && tok.split(".").length === 6, tok);
 const v = auth.verify(tok);
 t("it verifies to the account, its generation, and every company", v && v.role === "admin" && v.account === 7 && v.gen === 3 && v.company === auth.ALL, JSON.stringify(v));
+t("a fresh cookie is not due a refresh and is not the old shape", v && v.refresh === false && v.legacy === false && v.issued === v.refreshed);
 const shared = auth.verify(auth.signAdmin(0, 0));
 t("account 0 is the shared admin password's session", shared && shared.role === "admin" && shared.account === 0 && shared.company === auth.ALL);
 t("the admin cookie from before named accounts (company slot '*' alone) is nobody", auth.verify(craft("admin", "*", 0, 1000)) === null);
@@ -24,19 +25,49 @@ t("an admin cookie with a made-up account slot is nobody", auth.verify(craft("ad
 const parts = tok.split("."), swap = (i, val) => parts.map((x, k) => (k === i ? val : x)).join(".");
 t("changing the account breaks it", auth.verify(swap(1, "*8")) === null);
 t("changing the generation breaks it", auth.verify(swap(2, "4")) === null);
+t("changing either time breaks it", auth.verify(swap(3, (Date.now() - 5000).toString(36))) === null && auth.verify(swap(4, (Date.now() - 5000).toString(36))) === null);
 t("a floor cookie cannot be turned into an admin one", auth.verify(auth.sign("floor", "demo", 1).replace(/^floor/, "admin")) === null);
+t("four parts (before sessions carried a company) and seven parts are nobody", auth.verify(craft("floor", "demo", 1, 1000).split(".").slice(1).join(".")) === null && auth.verify(tok + ".x") === null);
 
-// ---- lifetimes: admin 12 hours, floor and manager 30 days
-t("an admin cookie 11 hours old still holds", auth.verify(craft("admin", "*7", 3, 11 * H)) !== null);
-t("an admin cookie 13 hours old is nobody", auth.verify(craft("admin", "*7", 3, 13 * H)) === null);
-t("the shared password's session ends at 12 hours too", auth.verify(craft("admin", "*0", 0, 13 * H)) === null);
-t("a floor cookie 13 hours old holds", (auth.verify(craft("floor", "demo", 2, 13 * H)) || {}).role === "floor");
-t("a manager cookie 29 days old holds", (auth.verify(craft("manager", "demo", 2, 29 * 24 * H)) || {}).role === "manager");
-t("a manager cookie 31 days old is nobody", auth.verify(craft("manager", "demo", 2, 31 * 24 * H)) === null);
-t("a cookie from the future is nobody", auth.verify(craft("admin", "*7", 3, -H)) === null && auth.verify(craft("floor", "demo", 2, -H)) === null);
-const fl = auth.verify(auth.sign("floor", "demo", 4));
-t("floor and manager cookies are what they were: role, company, generation, no account", fl && fl.role === "floor" && fl.company === "demo" && fl.gen === 4 && fl.account === undefined, JSON.stringify(fl));
-t("the lifetimes are 12 hours and 30 days unless the environment says otherwise", auth.ADMIN_SESSION_SECONDS === 12 * 3600 && auth.SESSION_SECONDS === 30 * 24 * 3600);
+// ---- sliding windows (2026-09-24): idle and cap per role, refresh past half the idle window
+const W = auth.WINDOWS, D = 24 * H;
+t("the windows are admin 7 days idle / 30 days cap, floor and manager 30 days idle / 180 days cap unless the environment says otherwise", W.admin.idle === 168 && W.admin.cap === 720 && W.device.idle === 720 && W.device.cap === 4320, JSON.stringify(W));
+const NOW = Date.now();
+const at = (role, slot, gen, issuedAgo, refreshedAgo) => auth.sign(role, slot, gen, { issued: NOW - issuedAgo, refreshed: NOW - refreshedAgo }, NOW);
+const see = (tk) => auth.verify(tk, NOW);
+t("an admin cookie refreshed 3 days ago holds and is not due a refresh (half the idle window is 3.5 days)", (see(at("admin", "*7", 3, 10 * D, 3 * D)) || {}).refresh === false);
+t("an admin cookie refreshed 4 days ago holds and is due a refresh", (see(at("admin", "*7", 3, 10 * D, 4 * D)) || {}).refresh === true);
+t("an admin cookie refreshed 8 days ago is nobody (idle window)", see(at("admin", "*7", 3, 10 * D, 8 * D)) === null);
+t("an admin cookie issued 31 days ago is nobody even if refreshed an hour ago (cap)", see(at("admin", "*7", 3, 31 * D, H)) === null);
+t("an admin cookie issued 29 days ago and refreshed an hour ago holds", (see(at("admin", "*7", 3, 29 * D, H)) || {}).role === "admin");
+t("the shared password's session slides the same way", see(at("admin", "*0", 0, 31 * D, H)) === null && (see(at("admin", "*0", 0, 2 * D, 2 * D)) || {}).account === 0);
+t("a floor cookie refreshed 29 days ago holds", (see(at("floor", "demo", 2, 100 * D, 29 * D)) || {}).role === "floor");
+t("a floor cookie refreshed 31 days ago is nobody", see(at("floor", "demo", 2, 100 * D, 31 * D)) === null);
+t("a manager cookie issued 179 days ago and refreshed today holds; 181 days is nobody", (see(at("manager", "demo", 2, 179 * D, 0)) || {}).role === "manager" && see(at("manager", "demo", 2, 181 * D, 0)) === null);
+t("a floor cookie refreshed 14 days ago is not due; 16 days is due", (see(at("floor", "demo", 2, 20 * D, 14 * D)) || {}).refresh === false && (see(at("floor", "demo", 2, 20 * D, 16 * D)) || {}).refresh === true);
+t("a cookie issued in the future is nobody", see(at("admin", "*7", 3, -H, -H)) === null && see(at("floor", "demo", 2, -H, -H)) === null);
+t("a cookie refreshed in the future is nobody", see(at("admin", "*7", 3, H, -H)) === null);
+t("a cookie refreshed before it was issued is nobody", see(at("admin", "*7", 3, H, 2 * H)) === null);
+t("a time that is not base 36 digits is nobody", auth.verify(swap(3, "zz.zz")) === null && auth.verify(swap(4, "-1")) === null);
+// the old one-time shape: accepted while its one time is inside both windows, and always due a refresh
+const legacy = craft("admin", "*7", 3, 20 * H);
+const lv = auth.verify(legacy);
+t("an admin cookie in the old shape, 20 hours old, still holds (it would have died at 12 under the old rule)", lv && lv.account === 7 && lv.legacy === true && lv.issued === lv.refreshed, JSON.stringify(lv));
+t("and is due a refresh on the first request seen", lv && lv.refresh === true);
+t("an old-shape cookie 8 days old is nobody", auth.verify(craft("admin", "*7", 3, 8 * D)) === null);
+t("an old-shape floor cookie 29 days old holds", (auth.verify(craft("floor", "demo", 2, 29 * D)) || {}).role === "floor");
+// the re-issue: the same issued, refreshed = now, the same attributes
+const headers = [];
+const res = { append: (k, val) => headers.push([k, val]) };
+auth.reissue({ headers: { "x-forwarded-proto": "https" } }, res, lv, NOW);
+const line = headers[0][1], again = auth.verify(line.split(";")[0].slice("sos_session=".length), NOW);
+t("the re-issued cookie is the new shape with the same issued and refreshed = now", again && again.legacy === false && again.issued === lv.issued && again.refreshed === NOW && again.account === 7 && again.gen === 3, line);
+t("under the same attributes: Path, HttpOnly, SameSite=Lax, Secure behind https, Max-Age the idle window", /; Path=\/; HttpOnly; SameSite=Lax; Max-Age=604800; Secure$/.test(line), line);
+t("Max-Age is what is left of the cap when that comes first", auth.maxAgeFor("admin", NOW - 29 * D, NOW) === Math.round(D / 1000) && auth.maxAgeFor("floor", NOW, NOW) === 720 * 3600);
+t("no Secure without https", !/Secure/.test(auth.cookieHeader({ headers: {} }, "x", 10)));
+t("alive() is the rule: generation is the middleware's business, the cookie only carries it", auth.alive("admin", NOW - H, NOW - H, NOW) && !auth.alive("admin", NOW - 8 * D, NOW - 8 * D, NOW) && !auth.alive("floor", NaN, NOW, NOW));
+t("hoursVar: blank or junk is the default, 0 is the default for an idle window and 0 for a cap that allows it", auth.hoursVar("SOS_X_NOT_SET", 5) === 5 && (process.env.SOS_X_JUNK = "abc", auth.hoursVar("SOS_X_JUNK", 5) === 5) && (process.env.SOS_X_ZERO = "0", auth.hoursVar("SOS_X_ZERO", 5) === 5 && auth.hoursVar("SOS_X_ZERO", 5, { zeroOk: true }) === 0) && (process.env.SOS_X_TWO = "2", auth.hoursVar("SOS_X_TWO", 5) === 2));
+t("SOS_ADMIN_SESSION_HOURS and SOS_SESSION_DAYS are retired", auth.RETIRED_ENV.join(",") === "SOS_ADMIN_SESSION_HOURS,SOS_SESSION_DAYS");
 
 // ---- what an account without an authenticator may reach
 const E = auth.ENROLL_PATHS;

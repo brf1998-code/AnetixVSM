@@ -123,6 +123,13 @@
     </div>
   </section>
 
+  <!-- ================= Requests: feedback about the software itself, from every board, and the way back ================= -->
+  <section class="tabpanel" id="tab-requests">
+    <div class="tabhead"><h2>Requests to Anetix</h2><p class="sub">Feedback sent from the improvement boards and the platform's own pages about the software itself (not about a module: those go round the build loop on the company's board). Every one lands here, across companies, newest first. Move it along and the person who sent it reads the same line under My requests, with an "Anetix answered" badge until they open it; the manager reads it on the board's "Requests to Anetix" strip. Fixed and Not doing this close it, with words the floor will read.</p></div>
+    <div class="card" id="req-card"><h2>Open <small id="req-open-sub"></small></h2><div id="req-open"></div></div>
+    <div class="card"><details id="req-closed-wrap"><summary style="cursor:pointer;font-weight:700;color:var(--navy)">Closed: fixed or not doing <span class="sub" id="req-closed-sub"></span></summary><div id="req-closed" style="margin-top:8px"></div></details></div>
+  </section>
+
   <!-- ================= Companies: the list, and one company open at a time ================= -->
   <section class="tabpanel" id="tab-companies">
     <div class="tabhead"><h2>Companies</h2><p class="sub">Pick a company to work on it: its pages, modules, sign-in, budget, brand. One open at a time.</p></div>
@@ -158,7 +165,9 @@
       <div id="acc-notes"></div>
       <table class="acc" id="acc-list"></table>
       <div class="two" style="margin-top:14px">
-        <div><h3>My account</h3><div id="acc-me"></div></div>
+        <div><h3>My account</h3><div id="acc-me"></div>
+          <h3 style="margin-top:14px">Computers that skip the code <small class="sub" id="acc-devices-sub"></small></h3>
+          <div id="acc-devices" class="sub">Loading…</div></div>
         <div><h3>Add an account</h3>
           <input id="a-login" type="email" placeholder="email address (the name they sign in with)" autocomplete="off" style="width:280px;max-width:100%">
           <input id="a-name" placeholder="Their name" autocomplete="off" style="width:180px;max-width:100%"><br>
@@ -206,6 +215,7 @@ function drawPills() {
     P.credit && { id: "credit", label: "AI credit", value: P.credit.value, level: lv(P.credit.level), href: "#instance", title: P.credit.title },
     P.spend && { id: "spend", label: "AI spend", value: P.spend.value, level: P.spend.level, href: "#instance", title: "This month, every company, against the instance cap" },
     P.data && { id: "data", label: "Waiting on us", value: P.data.value, level: P.data.level, href: "#health", title: "Data requests: changes that need ERP data the connection does not give yet" },
+    P.requests && { id: "requests", label: "Requests", value: P.requests.value, level: P.requests.level, href: "#requests", title: "Requests to Anetix: feedback about the software itself, from every board" },
     P.isolation && { id: "isolation", label: "Isolation", value: P.isolation.value, level: P.isolation.level, href: "#instance", title: "Whether module code runs in a process of its own with a database login of its own" },
     P.edge && { id: "edge", label: "Edge", value: P.edge.value, level: P.edge.level, href: "#instance", title: "Whether a request that did not come through Cloudflare is refused" },
     P.signin && { id: "signin", label: "Sign-in", value: P.signin.value, level: P.signin.level, href: "#accounts", title: P.signin.title },
@@ -213,6 +223,7 @@ function drawPills() {
   ]);
   const worst = (...xs) => (xs.some((x) => x && x.level === "red") ? "red" : xs.some((x) => x && x.level === "amber") ? "amber" : null);
   AdminShell.setBadge("health", { level: worst(P.data) });
+  AdminShell.setBadge("requests", { n: P.requests ? P.requests.open : undefined, level: worst(P.requests) });
   AdminShell.setBadge("accounts", { level: worst(P.signin) });
   AdminShell.setBadge("models", { level: worst(P.models) });
   AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null) });
@@ -410,12 +421,56 @@ async function dataSend(id, what, note) {
   if (what === "dismiss" && !String(note).trim()) return;
   await post(`/api/admin/data-requests/${id}/${what}`, { note }); closeModal(); loadData(); loadHealth();
 }
+// ---- requests to Anetix (src/requests.js): feedback about the software itself, from every board, and the way back ----
+const STAGE_WORD = { received: "Received, nobody has looked yet", looking: "Looking at it", working: "Working on it" };
+let REQ = null;
+async function loadRequests() {
+  const r = await fetch("/api/admin/requests?status=all", { cache: "no-store" }); if (!r.ok) return;
+  REQ = await r.json();
+  const open = REQ.requests.filter(x => x.status === "new"), closed = REQ.requests.filter(x => x.status !== "new");
+  P.requests = { open: REQ.open, value: REQ.open ? `${REQ.open} open${REQ.untouched ? `, ${REQ.untouched} new` : ""}` : "nothing open", level: REQ.untouched ? "amber" : "ok" };
+  drawPills();
+  document.getElementById("req-open-sub").textContent = open.length ? `${open.length}, ${REQ.untouched} not looked at yet` : "nothing waiting on us";
+  document.getElementById("req-closed-sub").textContent = closed.length ? `(${closed.length})` : "";
+  const one = (x) => `<div class="req" data-request="${x.id}" style="${x.status === "new" && !x.anetix_stage ? "border-left:4px solid var(--amber)" : ""}">
+    <b>${esc(x.company_name || x.company)}</b> · ${esc(x.screen || x.page || "")} · ${x.name ? `<b>${esc(x.name)}</b>` : "no name"} · ${new Date(x.created_at).toLocaleString()}${x.recurrence > 1 ? ` · x${x.recurrence}` : ""}${x.status === "new" && !x.anetix_stage ? ' <span class="warn" style="font-weight:700">NEW</span>' : ""}<br>
+    <div style="font-size:15px;margin:4px 0">"${esc(x.message)}"</div>
+    <div class="sub" data-line>${x.status === "new" ? `<b>${STAGE_WORD[x.stage]}</b>` : x.status === "done" ? '<b class="ok">Fixed</b>' : `<b class="fail">${x.anetix_by ? "Not doing this" : "Declined by the manager"}</b>`}${x.outcome ? `: ${esc(x.outcome)}` : ""}${x.anetix_note ? ` · word back: "${esc(x.anetix_note)}"` : ""}${x.anetix_at ? ` <small>(${esc(x.anetix_by || "")} ${new Date(x.anetix_at).toLocaleString()})</small>` : ""}</div>
+    <div style="margin-top:6px">${x.status === "new" ? `${x.stage !== "looking" ? `<button class="quiet" onclick="reqStage(${x.id},'looking')">Looking at it</button>` : ""}${x.stage !== "working" ? `<button class="quiet" onclick="reqStage(${x.id},'working')">Working on it</button>` : ""}<button class="quiet" onclick="reqNote(${x.id})">A word back</button><button class="go" onclick="reqClose(${x.id},'fixed')">Fixed</button><button class="danger" onclick="reqClose(${x.id},'not_doing')">Not doing this</button>` : `<button class="quiet" onclick="reqStage(${x.id},'looking')">Reopen</button>`} <a href="/c/${esc(x.company)}/" class="sub">open the board</a></div></div>`;
+  document.getElementById("req-open").innerHTML = open.length ? open.map(one).join("") : '<p class="sub">Nothing open. Feedback sent from a board or a settings page about the software itself shows up here.</p>';
+  document.getElementById("req-closed").innerHTML = closed.length ? closed.map(one).join("") : '<p class="sub">Nothing closed yet.</p>';
+}
+async function reqStage(id, stage) { await post(`/api/admin/requests/${id}`, { stage }); loadRequests(); }
+function reqNote(id) {
+  const x = (REQ.requests || []).find(r => r.id === id) || {};
+  openModal(`<h2>A word back</h2><p class="sub">One or two sentences the person who sent it reads under My requests, and the manager on the board. Plain words; it replaces the last one.</p>
+    <input id="rq-note" placeholder="e.g. Good catch, this is in the next update." autocomplete="off" value="${esc(x.anetix_note || "")}">
+    <div><button class="primary" onclick="reqNoteSend(${id})">Send it back</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+  setTimeout(() => { const el = document.getElementById("rq-note"); if (el) el.focus(); }, 50);
+}
+async function reqNoteSend(id) {
+  const note = document.getElementById("rq-note").value.trim(); if (!note) return;
+  const x = (REQ.requests || []).find(r => r.id === id) || {};
+  await post(`/api/admin/requests/${id}`, { stage: x.stage, note }); closeModal(); loadRequests();
+}
+function reqClose(id, answer) {
+  openModal(answer === "fixed"
+    ? `<h2>Fixed</h2><p class="sub">What changed, in words the floor will read (it becomes the line on their request and on the board).</p><input id="rq-what" placeholder="e.g. The full requirement now stays open until you close it." autocomplete="off">`
+    : `<h2>Not doing this</h2><p class="sub">Why, in a sentence the person will read. Kind and plain.</p><input id="rq-what" placeholder="e.g. The board keeps one column per stage on purpose, so the manager sees where everything is." autocomplete="off">`);
+  document.getElementById("mcard").insertAdjacentHTML("beforeend", `<div><button class="${answer === "fixed" ? "go" : "danger"}" onclick="reqCloseSend(${id},'${answer}')">${answer === "fixed" ? "Mark it fixed" : "Tell them"}</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+  setTimeout(() => { const el = document.getElementById("rq-what"); if (el) el.focus(); }, 50);
+}
+async function reqCloseSend(id, answer) {
+  const what = document.getElementById("rq-what").value.trim(); if (what.length < 3) return;
+  await post(`/api/admin/requests/${id}/close`, { answer, what }); closeModal(); loadRequests();
+}
 async function load() {
   if (!(await loadMe())) return;
   AdminShell.setWho(ME.me ? (ME.me.name || ME.me.login) : ME.shared_password ? "the shared admin password" : "");
   if (ME.enroll_required) return enrollOnly();
   loadAccounts().catch((e) => console.error("accounts:", e));
   loadData().catch((e) => console.error("data requests:", e));
+  loadRequests().catch((e) => console.error("requests:", e));
   const r = await fetch("/api/admin/overview");
   if (r.status === 401) { location.href = "/login?next=/admin"; return; }
   if (r.status === 403) { document.body.innerHTML = "<p style='padding:20px'>Admin login required.</p>"; return; }
@@ -540,7 +595,7 @@ function brandHtml(c) {
   if (b.status === "building") return `<div class="brand"><span class="pulse"></span>Reading ${esc(b.url)} and writing the guide with ${ml(b.model || D.defaults.design)}…</div>`;
   if (b.status === "failed") return `<div class="brand"><span class="fail">failed: ${esc(b.error || "unknown error")}</span>${form("Try again")}</div>`;
   const col = b.colors || {};
-  return `<div class="brand">${b.has_icon ? `<img src="/api/c/${c.slug}/icon" alt="">` : ""}${esc(b.company_name || c.name)} · from ${esc(b.url)} · ${ml(b.model)} · $${Number(b.cost_usd || 0).toFixed(2)} · ${new Date(b.built_at).toLocaleDateString()}<br>
+  return `<div class="brand">${b.has_icon ? `<img src="/api/c/${c.slug}/icon${b.icon_v ? `?v=${b.icon_v}` : ""}" alt="">` : ""}${esc(b.company_name || c.name)} · from ${esc(b.url)} · ${ml(b.model)} · $${Number(b.cost_usd || 0).toFixed(2)} · ${new Date(b.built_at).toLocaleDateString()}<br>
     ${["primary", "accent", "background", "ink"].map(k => `<span class="swatch" style="background:${esc(col[k])}"></span>${k} ${esc(col[k])}`).join(" · ")} · font ${esc(b.font || "")}${b.tone ? ` · voice: ${esc(b.tone)}` : ""}<br>
     Style file: <a href="/c/${c.slug}/agents">STYLE.md on the agent settings page</a> (edit it there; it replaces the platform default for every build of this company).
     ${c.modules.map(m => ` <button class="quiet" style="margin-top:6px" onclick="restyle('${c.slug}','${m.name}')">Restyle ${esc(m.title)} to brand</button>`).join("")}
@@ -711,10 +766,11 @@ async function loadAccounts() {
     <td><b>${esc(a.display_name)}</b>${a.id === mine ? ' <small class="sub">(you)</small>' : ""}${a.status !== "active" ? ' <span class="fail">switched off</span>' : ""}${a.locked ? ' <span class="warn">locked for now</span>' : ""}</td>
     <td>${esc(a.login)}</td>
     <td>${a.enrolled ? `<span class="ok">set up</span> <small class="sub">${a.recovery_left} recovery code${a.recovery_left === 1 ? "" : "s"} left</small>` : '<span class="warn">not set up yet</span>'}</td>
-    <td>${when(a.last_sign_in)}</td>
-    <td><button class="quiet" onclick="accSignOut(${a.id}, ${a.id === mine})" title="Ends every session of this account, on every device, within ten seconds">Sign out everywhere</button>${a.enrolled ? `<button class="quiet" onclick="accAct(${a.id},'reset-factor','${esc(a.login)}')">Reset authenticator</button>` : ""}${a.id !== mine ? `<button class="quiet" onclick="accAct(${a.id},'reset-password','${esc(a.login)}')">New password</button>` + (a.status === "active" ? `<button class="danger" onclick="accDisable(${a.id},'${esc(a.login)}')">Switch off</button>` : `<button class="quiet" onclick="accAct(${a.id},'enable','${esc(a.login)}')">Switch on</button><button class="danger" onclick="accAct(${a.id},'remove','${esc(a.login)}')" title="Only an account that is switched off can be removed">Remove</button>`) : ""}</td></tr>`).join("")
+    <td>${when(a.last_sign_in)}${a.devices ? `<br><small class="sub">${a.devices} trusted computer${a.devices === 1 ? "" : "s"}</small>` : ""}</td>
+    <td><button class="quiet" onclick="accSignOut(${a.id}, ${a.id === mine})" title="Ends every session of this account, on every device, and stops every computer it trusted, within ten seconds">Sign out everywhere</button>${a.enrolled ? `<button class="quiet" onclick="accAct(${a.id},'reset-factor','${esc(a.login)}')">Reset authenticator</button>` : ""}${a.id !== mine ? `<button class="quiet" onclick="accAct(${a.id},'reset-password','${esc(a.login)}')">New password</button>` + (a.status === "active" ? `<button class="danger" onclick="accDisable(${a.id},'${esc(a.login)}')">Switch off</button>` : `<button class="quiet" onclick="accAct(${a.id},'enable','${esc(a.login)}')">Switch on</button><button class="danger" onclick="accAct(${a.id},'remove','${esc(a.login)}')" title="Only an account that is switched off can be removed">Remove</button>`) : ""}</td></tr>`).join("")
     : `<tr><td class="sub">No accounts yet.</td></tr>`;
   document.getElementById("acc-me").innerHTML = ME.me ? `<button class="quiet" onclick="changePassword()">Change my password</button>${ME.me.enrolled ? "" : `<button class="go" onclick="enrollStart(false)">Set up my authenticator</button>`}` : "";
+  loadDevices(A.trusted_days).catch((e) => console.error("devices:", e));
   document.getElementById("acc-events").innerHTML = `<tr><th>When</th><th>What</th><th>Who</th><th>From</th><th>Detail</th></tr>` + A.events.map(e => `<tr><td style="text-align:left;white-space:nowrap">${when(e.at)}</td><td style="text-align:left" class="${/bad_|fail|refused|locked|replayed|break_glass|unreadable/.test(e.event) ? "warn" : ""}">${esc(e.event)}</td><td style="text-align:left">${esc(e.login || "")}</td><td style="text-align:left">${esc(e.ip || "")}</td><td style="text-align:left"><small>${esc(e.detail ? JSON.stringify(e.detail) : "")}</small></td></tr>`).join("");
   const g = A.edge || {};
   P.edge = g.mode === "off" ? { value: "off", level: "amber" } : g.mode === "report" ? { value: "report only", level: "amber" } : { value: "enforced", level: g.this_request_carried_it ? "ok" : "red" };
@@ -724,6 +780,20 @@ async function loadAccounts() {
   edgeEl.innerHTML = `<b>Edge check</b>: ` + (g.mode === "off" ? `<span class="warn">off</span>. SOS_EDGE_SECRET is not set, so a request sent straight to Railway is answered.`
     : `${g.mode === "report" ? '<span class="warn">report only</span>, nothing is refused yet' : '<span class="ok">enforced</span>'}. This request ${g.this_request_carried_it ? '<span class="ok">carried the edge header</span>' : '<span class="fail">did NOT carry the edge header</span> (do not enforce until it does)'}. Since ${when(g.since)}: ${g.with_secret} with it, ${g.without_secret} without${g.refused ? `, ${g.refused} refused` : ""}${g.last_without ? `; last without: ${esc(g.last_without.path)} from ${esc(g.last_without.ip)} at ${when(g.last_without.at)}` : ""}.`)
     + ` <span class="sub">You appear to come from ${esc(g.client_ip || "")}.</span>`;
+}
+// The person's own trusted computers (src/devices.js): "Remember this computer" ticked on the code step at sign-in.
+// Remove asks for nothing; Sign out everywhere and Reset authenticator clear them all.
+async function loadDevices(days) {
+  const el = document.getElementById("acc-devices"), sub = document.getElementById("acc-devices-sub");
+  if (!ME.me) { el.textContent = "Sign in with your own account to see these."; return; }
+  const r = await fetch("/api/admin/accounts/me/devices", { cache: "no-store" }); if (!r.ok) { el.textContent = ""; return; }
+  const j = await r.json();
+  sub.textContent = `ticked "Remember this computer" at sign-in; each lasts ${j.days || days || 30} days, ${j.max || 10} at most`;
+  el.innerHTML = j.devices.length ? `<table class="acc" id="acc-devices-list"><tr><th>Computer</th><th>Since</th><th>Last used</th><th></th></tr>` + j.devices.map(d => `<tr data-device="${d.id}"><td><b>${esc(d.label)}</b></td><td>${day(d.issued_at)} <small class="sub">(until ${day(d.expires_at)})</small></td><td>${d.last_used_at ? when(d.last_used_at) : "not yet"}</td><td><button class="quiet" onclick="removeDevice(${d.id})">Remove</button></td></tr>`).join("") + `</table>`
+    : `None. Tick "Remember this computer" on the code step when you next sign in and this browser skips the code for ${j.days || days || 30} days. A computer holding that is an admin without a code, so keep FileVault and the lock screen on.`;
+}
+async function removeDevice(id) {
+  if (await accPost(`/api/admin/accounts/me/devices/${id}/remove`, {})) loadAccounts();
 }
 async function addAccount() {
   const login = document.getElementById("a-login").value.trim(), display_name = document.getElementById("a-name").value.trim();
@@ -741,7 +811,7 @@ function showAccountPassword(login, password) {
     <div><button class="go" onclick="closeModal()">I have it</button></div>`);
 }
 const ACC_ACTIONS = {
-  "reset-factor": (l) => [`Reset the authenticator of ${l}?`, "Their app stops working for this account, their recovery codes too, and they are signed out. At their next sign-in they set it up again; until then the account is a password alone."],
+  "reset-factor": (l) => [`Reset the authenticator of ${l}?`, "Their app stops working for this account, their recovery codes too, every computer they trusted, and they are signed out. At their next sign-in they set it up again; until then the account is a password alone."],
   "reset-password": (l) => [`Make up a new password for ${l}?`, "The old one stops working and they are signed out. The new one is shown once."],
   "enable": (l) => [`Switch ${l} back on?`, "They can sign in again with the password and authenticator they had."],
   "remove": (l) => [`Remove ${l} for good?`, "The account goes, and with it its password, authenticator and recovery codes. The sign-in log keeps what it already wrote. There is no undo apart from a backup file."],
@@ -811,8 +881,8 @@ async function enrollVerify(inCard) {
 }
 AdminShell.mount({
   title: "Admin",
-  tabs: [{ id: "health", label: "Health" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
-  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "models" && window.AdminModels) AdminModels.show(rest); window.scrollTo(0, 0); },
+  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
+  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); window.scrollTo(0, 0); },
 });
 load();
 </script>

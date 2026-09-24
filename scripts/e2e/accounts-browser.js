@@ -61,7 +61,7 @@ async function codeFor(secretText, delta = 0) {
   t("a good code shows the ten recovery codes", codes.length === 10 && codes.every((c) => /^[a-z2-9]{4}(-[a-z2-9]{4}){3}$/.test(c)), codes);
   t("with a download and a copy button", (await page.locator("#rc-dl").getAttribute("href")).startsWith("data:text/plain") && (await page.locator("#rc-copy").count()) === 1);
   await page.locator("#enroll-card button.go").click(); await page.waitForSelector("#acc-list tr td");
-  t("then the whole admin page opens, on the accounts tab, with the five tabs in the header", /#accounts$/.test(page.url()) && await page.locator("#accounts-card").isVisible() && (await page.locator("#shell nav a").count()) === 5);
+  t("then the whole admin page opens, on the accounts tab, with the seven tabs in the header", /#accounts$/.test(page.url()) && await page.locator("#accounts-card").isVisible() && (await page.locator("#shell nav a").count()) === 7, await page.locator("#shell nav a").count());
   await page.click('#shell nav a[data-tab="health"]'); await page.waitForSelector("#h-table tr td");
   t("a tab shows its own work and nothing of the others", await page.locator("#health-card").isVisible() && !(await page.locator("#accounts-card").isVisible()));
   await page.click('#shell nav a[data-tab="accounts"]');
@@ -103,6 +103,34 @@ async function codeFor(secretText, delta = 0) {
   await page.locator("#accounts-card summary").click();
   const log = await page.locator("#acc-events").innerText();
   t("the sign-in log shows what happened, and never a code", /enrolled/.test(log) && /recovery_used/.test(log) && /bad_code/.test(log) && !log.includes(codes[3]) && !/\b\d{6}\b/.test(log.replace(/\d{1,2}:\d{2}:\d{2}|\d{1,2}\/\d{1,2}\/\d{4}/g, "")), log.slice(0, 400));
+
+  // ---- trusted devices: the box on the code step, the list, Remove, and a sign-in that skips the code
+  await page.goto(BASE + "/logout"); await page.goto(BASE + "/admin"); await page.waitForURL(/\/login/);
+  t("before the code step there is no remember box", !(await page.locator("#rememberbox").isVisible()));
+  await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]");
+  await page.waitForSelector("#codebox", { state: "visible" });
+  t("the code step carries 'Remember this computer for 30 days', unticked", (await page.locator("#rememberbox").isVisible()) && /Remember this computer for 30 days/.test(await page.locator("#rememberlabel").innerText()) && !(await page.locator("#remember").isChecked()));
+  await page.click("#userec");
+  t("choosing a recovery code takes the box away", !(await page.locator("#rememberbox").isVisible()));
+  await page.reload(); await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]"); await page.waitForSelector("#codebox", { state: "visible" });
+  await page.check("#remember");
+  await q("UPDATE platform.accounts SET failed_count=0 WHERE login=$1", [NAME]); await q("UPDATE platform.account_factors SET last_step=0 WHERE account_id=(SELECT id FROM platform.accounts WHERE login=$1)", [NAME]);
+  await page.fill("#code", await codeFor(secret, -1)); await page.click("button[type=submit]"); await page.waitForURL(/\/admin$/);
+  await page.goto(BASE + "/admin#accounts"); await page.waitForSelector("#acc-devices-list tr td");
+  const devs = await page.locator("#acc-devices").innerText();
+  t("the Accounts tab lists this computer under my account: a label, since, last used, Remove", /Chrome on Linux/.test(devs) && (await page.locator("#acc-devices-list tr[data-device]").count()) === 1 && /Remove/.test(devs), devs);
+  t("the account row says one trusted computer", /1 trusted computer/.test(await page.locator("#acc-list").innerText()));
+  await page.goto(BASE + "/logout"); await page.goto(BASE + "/admin"); await page.waitForURL(/\/login/);
+  await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]"); await page.waitForURL(/\/admin$/);
+  t("from this browser, password alone now signs in: no code step", /\/admin$/.test(page.url()));
+  await page.goto(BASE + "/admin#accounts"); await page.waitForSelector("#acc-devices-list tr td");
+  t("the list says when it was last used", !/not yet/.test(await page.locator("#acc-devices-list").innerText()));
+  await page.locator("#acc-devices-list button", { hasText: "Remove" }).click();
+  await page.waitForFunction(() => document.querySelector("#acc-devices-list") === null);
+  t("Remove asks for nothing and the list is empty", /None\./.test(await page.locator("#acc-devices").innerText()));
+  await page.goto(BASE + "/logout"); await page.goto(BASE + "/admin"); await page.waitForURL(/\/login/);
+  await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]"); await page.waitForSelector("#codebox", { state: "visible" });
+  t("and the next sign-in asks for the code again", await page.locator("#code").isVisible());
 
   t("no script errors on either page", errors.length === 0, errors);
   await browser.close(); await pool.end();

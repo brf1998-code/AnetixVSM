@@ -23,15 +23,19 @@
 
   const panel = document.createElement("div");
   panel.style.cssText = "position:fixed;right:12px;bottom:52px;z-index:9999;background:#fff;border:1px solid #d5dbe3;border-radius:10px;padding:14px;width:300px;max-width:calc(100vw - 24px);display:none;box-shadow:0 6px 20px rgba(0,0,0,.2);font-family:system-ui,sans-serif;";
+  // On the platform's own pages (the board, settings, the admin page) the feedback is about the software itself,
+  // so it goes to Anetix and not to the manager's build loop; say so before the person types (Brendan, 2026-09-24).
+  const toAnetix = !mod || mod === "platform";
   panel.innerHTML =
-    '<div style="font-weight:700;font-size:14px;color:#1c242e;margin-bottom:8px">Something in the way?</div>' +
-    '<textarea id="fbw-msg" rows="3" placeholder="What is slowing you down?" style="width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font-size:14px;font-family:inherit;box-sizing:border-box"></textarea>' +
+    '<div style="font-weight:700;font-size:14px;color:#1c242e;margin-bottom:' + (toAnetix ? "4" : "8") + 'px">Something in the way?</div>' +
+    (toAnetix ? '<div id="fbw-anetix" style="font-size:12.5px;color:#51606f;margin-bottom:8px;line-height:1.4">This page is part of the software itself, so this goes to <b>Brendan at Anetix</b>, who makes it, not to your manager. Tap your name and you can follow it under My requests.</div>' : "") +
+    '<textarea id="fbw-msg" rows="3" placeholder="' + (toAnetix ? "What is in the way, or what would help?" : "What is slowing you down?") + '" style="width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font-size:14px;font-family:inherit;box-sizing:border-box"></textarea>' +
     '<div id="fbw-extras" style="display:none;margin-top:6px;font-size:12.5px;color:#51606f"></div>' +
     '<div id="fbw-who" style="display:none;font-size:13px;color:#51606f;margin-top:8px"></div>' +
     '<div id="fbw-mine" style="display:none;font-size:13px;margin-top:6px"></div>' +
     '<input id="fbw-name" placeholder="Your name (optional)" style="width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font-size:14px;margin-top:8px;font-family:inherit;box-sizing:border-box">' +
     '<button id="fbw-send" style="margin:10px 0 0!important;width:100%!important;min-height:0!important;background:#2e7d4f!important;color:#fff!important;border:none!important;border-radius:6px!important;padding:11px!important;font-size:14px!important;font-weight:700!important;cursor:pointer">Send</button>' +
-    '<div id="fbw-done" style="display:none;color:#2e7d4f;font-size:13px;margin-top:8px">Sent. It goes straight on the improvement board.</div>';
+    '<div id="fbw-done" style="display:none;color:#2e7d4f;font-size:13px;margin-top:8px">' + (toAnetix ? "Sent to Anetix. You can follow it under My requests." : "Sent. It goes straight on the improvement board.") + '</div>';
 
   btn.onclick = () => { panel.style.display = panel.style.display === "none" ? "block" : "none"; };
 
@@ -243,7 +247,10 @@
     try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; who.photos = j.photos !== false; drawExtras(); } } catch (e) { /* the list is a nicety; the button works without it */ }
     renderWho(); who.listeners.forEach((f) => { try { f(who.me); } catch (e) {} });
   }
+  const BTN_ICON = btn.innerHTML;
   function renderWho() {
+    // the button itself says who is signed in (a name can stay on a shared tablet for days now, so it is never hidden)
+    btn.innerHTML = BTN_ICON + (who.me ? ' <span id="sos-fb-me" style="opacity:.85;font-weight:600">\u00b7 ' + esc(who.me.name) + "</span>" : "");
     const el = panel.querySelector("#fbw-who"), nameEl = panel.querySelector("#fbw-name"); if (!el) return;
     if (who.me) { el.style.display = "block"; nameEl.style.display = "none"; el.innerHTML = "Sending as <b>" + esc(who.me.name) + "</b> · <a href=\"#\" id=\"fbw-switch\" style=\"color:#1f3a5f\">not you?</a>"; }
     else if (who.people.length) { el.style.display = "block"; nameEl.style.display = ""; el.innerHTML = "<a href=\"#\" id=\"fbw-switch\" style=\"color:#1f3a5f;font-weight:700\">Tap your name</a> so this comes back to you, or just type it below."; }
@@ -276,9 +283,23 @@
     const no = document.createElement("button"); no.textContent = "Cancel"; no.style.cssText = "padding:10px 12px;border:none;border-radius:8px;background:#e5e9ee;font:700 14px system-ui,sans-serif;cursor:pointer;min-height:0;width:auto"; no.onclick = closePicker; row.appendChild(no);
     card.appendChild(row);
   }
-  function pinPad(card, p) {
+  // opened straight to one name's PIN pad, from the board's approval buttons: the same pad, a line saying why,
+  // and `done` once the PIN is in (window.sosPerson.pin)
+  let afterPin = null;
+  function pinFor(person, done, why) {
+    closePicker();
+    picker = document.createElement("div");
+    picker.style.cssText = "position:fixed;inset:0;background:rgba(28,36,46,.55);z-index:10001;display:flex;align-items:center;justify-content:center;padding:16px;font-family:system-ui,sans-serif";
+    const card = document.createElement("div");
+    card.style.cssText = "background:#fff;color:#1c242e;border-radius:14px;padding:18px;width:100%;max-width:380px;max-height:90vh;overflow:auto";
+    picker.appendChild(card); picker.onclick = (e) => { if (e.target === picker) { afterPin = null; closePicker(); } };
+    document.body.appendChild(picker);
+    afterPin = done || null;
+    pinPad(card, { id: person.id, name: person.name }, why);
+  }
+  function pinPad(card, p, why) {
     let pin = "";
-    card.innerHTML = "<div style=\"font-size:18px;font-weight:700\">" + esc(p.name) + "</div><div style=\"color:#51606f;font-size:14px;margin:2px 0 10px\">Your PIN</div><div id=\"fbw-dots\" style=\"font-size:30px;letter-spacing:10px;min-height:40px;text-align:center\"></div><div id=\"fbw-pinerr\" style=\"color:#b3261e;font-size:13px;min-height:18px;text-align:center\"></div><div id=\"fbw-pad\" style=\"display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px\"></div>";
+    card.innerHTML = "<div style=\"font-size:18px;font-weight:700\">" + esc(p.name) + "</div>" + (why ? "<div style=\"color:#c2620a;font-size:13.5px;font-weight:700;margin:4px 0\">" + esc(why) + "</div>" : "") + "<div style=\"color:#51606f;font-size:14px;margin:2px 0 10px\">Your PIN</div><div id=\"fbw-dots\" style=\"font-size:30px;letter-spacing:10px;min-height:40px;text-align:center\"></div><div id=\"fbw-pinerr\" style=\"color:#b3261e;font-size:13px;min-height:18px;text-align:center\"></div><div id=\"fbw-pad\" style=\"display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px\"></div>";
     const dots = card.querySelector("#fbw-dots"), err = card.querySelector("#fbw-pinerr"), pad = card.querySelector("#fbw-pad");
     const draw = () => { dots.textContent = "\u2022".repeat(pin.length); };
     const go = async () => {
@@ -287,6 +308,7 @@
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { pin = ""; draw(); err.textContent = j.error || "That did not work."; return; }
       closePicker(); await loadWho();
+      const then = afterPin; afterPin = null; if (then) { try { then(); } catch (e) {} }
     };
     ["1", "2", "3", "4", "5", "6", "7", "8", "9", "back", "0", "OK"].forEach((k) => {
       const b = document.createElement("button"); b.textContent = k === "back" ? "\u232b" : k;
@@ -317,9 +339,12 @@
     el.style.display = "block";
     // a request the manager marked done since this device last opened My requests: a quiet green badge, never a pop-up
     const thankedNew = mine.requests.filter((r) => r.state === "thanked" && !thankedSeen().includes(r.id)).length;
+    // a request to Anetix that Anetix touched (looked at it, a word back, fixed, not doing) since this device last opened the list
+    const anetixNew = mine.requests.filter((r) => r.to_anetix && r.answered_at && anetixSeen()[r.id] !== r.answered_at).length;
     el.innerHTML = "<a href=\"#\" id=\"fbw-mine-open\" style=\"color:#1f3a5f;font-weight:700\">My requests</a>" + (mine.requests.length ? " <span style=\"color:#51606f\">(" + mine.requests.length + ")</span>" : "") +
       (mine.to_answer ? " <span style=\"background:#c2620a;color:#fff;border-radius:10px;padding:1px 8px;font-size:11.5px;font-weight:700\">" + mine.to_answer + " to check</span>" : "") +
-      (thankedNew ? " <span id=\"fbw-thanked\" style=\"background:#2e7d4f;color:#fff;border-radius:10px;padding:1px 8px;font-size:11.5px;font-weight:700\">\u2713 " + thankedNew + " done</span>" : "");
+      (thankedNew ? " <span id=\"fbw-thanked\" style=\"background:#2e7d4f;color:#fff;border-radius:10px;padding:1px 8px;font-size:11.5px;font-weight:700\">\u2713 " + thankedNew + " done</span>" : "") +
+      (anetixNew ? " <span id=\"fbw-anetix-new\" style=\"background:#1f3a5f;color:#fff;border-radius:10px;padding:1px 8px;font-size:11.5px;font-weight:700\">Anetix answered" + (anetixNew > 1 ? " (" + anetixNew + ")" : "") + "</span>" : "");
     el.querySelector("#fbw-mine-open").onclick = (e) => { e.preventDefault(); openMine(); };
   }
   function sheet() {   // the same overlay the name picker uses
@@ -332,7 +357,17 @@
     document.body.appendChild(picker);
     return card;
   }
-  const STATE_COLOR = { question: "#1f3a5f", live: "#c2620a", fixed: "#2e7d4f", thanked: "#2e7d4f", not_quite: "#c2620a", little_left: "#c2620a", declined: "#b3261e", rolled_back: "#b3261e" };
+  const STATE_COLOR = { question: "#1f3a5f", live: "#c2620a", fixed: "#2e7d4f", thanked: "#2e7d4f", not_quite: "#c2620a", little_left: "#c2620a", declined: "#b3261e", rolled_back: "#b3261e",
+    anetix_looking: "#1f3a5f", anetix_working: "#1f3a5f", anetix_fixed: "#2e7d4f", anetix_not_doing: "#b3261e" };
+  // which touches by Anetix this device has already shown its person: request id -> the answered_at it saw
+  const anetixKey = "sos.anetix." + company;
+  function anetixSeen() { try { return JSON.parse(localStorage.getItem(anetixKey) || "{}") || {}; } catch (e) { return {}; } }
+  function markAnetixSeen() {
+    const seen = anetixSeen();
+    for (const r of mine.requests) if (r.to_anetix && r.answered_at) seen[r.id] = r.answered_at;
+    const ids = Object.keys(seen).map(Number).sort((a, b) => a - b).slice(-200);
+    try { localStorage.setItem(anetixKey, JSON.stringify(Object.fromEntries(ids.map((id) => [id, seen[id]])))); } catch (e) {}
+  }
   // which "marked done" requests this device has already shown its person (per company, so the badge shows once)
   const thankedKey = "sos.thanked." + company;
   function thankedSeen() { try { return JSON.parse(localStorage.getItem(thankedKey) || "[]") || []; } catch (e) { return []; } }
@@ -343,7 +378,7 @@
   const TICK = "<span style=\"display:inline-block;width:17px;height:17px;line-height:17px;border-radius:50%;background:#2e7d4f;color:#fff;text-align:center;font-size:11.5px;font-weight:700;margin-right:6px\">\u2713</span>";
   function openMine() {
     const card = sheet();
-    markThankedSeen(); drawMineLink();
+    markThankedSeen(); markAnetixSeen(); drawMineLink();
     const draw = () => {
       card.innerHTML = "<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:8px\"><div style=\"font-size:18px;font-weight:700\">My requests</div><button id=\"fbw-mine-close\" style=\"" + smallBtn("#e5e9ee", "#1c242e") + "\">Close</button></div>" +
         (mine.requests.length ? "" : "<div style=\"color:#51606f\">Nothing yet. When you send something from this button it shows up here, and you can see where it is.</div>");
@@ -353,8 +388,8 @@
         row.setAttribute("data-request", r.id);
         row.style.cssText = "border:1px solid #d5dbe3;border-radius:10px;padding:10px 12px;margin:8px 0";
         row.innerHTML = "<div style=\"font-weight:700\">“" + esc(r.words) + "”</div>" +
-          "<div style=\"color:#51606f;font-size:12px;margin:2px 0 6px\">#" + r.id + " · " + esc(r.module || "") + (r.screen ? " · " + esc(r.screen) : "") + " · " + new Date(r.created_at).toLocaleDateString() + (r.follow_up_of ? " · follow-up to #" + r.follow_up_of : "") + "</div>" +
-          "<div data-line style=\"color:" + (STATE_COLOR[r.state] || "#1c242e") + ";font-weight:" + (r.state === "live" || r.state === "thanked" || r.state === "question" ? 700 : 400) + "\">" + (r.state === "thanked" ? TICK : "") + esc(r.line) + (r.follow_up_id && (r.state === "not_quite" || r.state === "little_left") ? " (#" + r.follow_up_id + ")" : "") + "</div>" +
+          "<div style=\"color:#51606f;font-size:12px;margin:2px 0 6px\">#" + r.id + " · " + (r.to_anetix ? "the software itself, to Anetix" : esc(r.module || "")) + (r.screen ? " · " + esc(r.screen) : "") + " · " + new Date(r.created_at).toLocaleDateString() + (r.follow_up_of ? " · follow-up to #" + r.follow_up_of : "") + "</div>" +
+          "<div data-line style=\"color:" + (STATE_COLOR[r.state] || "#1c242e") + ";font-weight:" + (r.state === "live" || r.state === "thanked" || r.state === "question" || r.state === "anetix_fixed" ? 700 : 400) + "\">" + (r.state === "thanked" || r.state === "anetix_fixed" ? TICK : "") + esc(r.line) + (r.follow_up_id && (r.state === "not_quite" || r.state === "little_left") ? " (#" + r.follow_up_id + ")" : "") + "</div>" +
           (r.built ? "<div style=\"color:#51606f;font-size:12.5px;margin-top:4px\">What was built: " + esc(r.built) + "</div>" : "");
         if (r.can_answer) row.appendChild(answerButtons(r, async () => { await loadMine(); draw(); }));
         if (r.state === "question" && r.question) {
@@ -601,7 +636,7 @@
   }
   who.listeners.push(() => { loadMine(); loadNews(); });   // a different person at the device: their requests, their question
 
-  window.sosPerson = { me: () => who.me, people: () => who.people, open: openPicker, refresh: loadWho, onChange: (f) => { who.listeners.push(f); } };
+  window.sosPerson = { me: () => who.me, people: () => who.people, open: openPicker, pin: pinFor, refresh: loadWho, onChange: (f) => { who.listeners.push(f); } };
 
   document.addEventListener("DOMContentLoaded", init);
   if (document.readyState !== "loading") init();

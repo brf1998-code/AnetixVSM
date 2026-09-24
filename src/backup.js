@@ -27,7 +27,7 @@ const PLATFORM_TABLES = [
 // SOS_CONNECTION_KEY, recovery codes as hashes. Restored only when the file carries them (see restore()).
 const ACCOUNT_TABLES = ["accounts", "account_factors", "account_recovery_codes"];
 // Never in the file: who tried to sign in from where. It is a log of this instance, and it names addresses.
-const NOT_IN_BACKUP = ["auth_events"];
+const NOT_IN_BACKUP = ["auth_events", "admin_devices"];   // the sign-in log and the trusted devices are this instance's, never a file's
 
 async function columnInfo(schema, table) {
   return (await q(
@@ -132,7 +132,9 @@ async function restore(doc) {
     const withAccounts = Array.isArray(doc.platform.accounts);
     const restored = withAccounts ? PLATFORM_TABLES.concat(ACCOUNT_TABLES) : PLATFORM_TABLES;
     const generations = (await client.query("SELECT login, generation FROM platform.accounts")).rows;
-    await client.query(`TRUNCATE ${restored.map((t) => "platform." + t).join(", ")}`);
+    // trusted devices (src/devices.js) never travel and none survive a restore: the table goes with the accounts
+    // (it references them) and is wiped even when the file has no accounts, since every generation moves anyway
+    await client.query(`TRUNCATE ${restored.map((t) => "platform." + t).concat(["platform.admin_devices"]).join(", ")}`);
     for (const t of restored) {
       let rows = doc.platform[t] || [];
       // a backup from before per-company passwords has no login rows: its companies go back on the shared passwords

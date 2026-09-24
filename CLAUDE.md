@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-22)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-24)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -30,8 +30,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   something on it wants looking at. The tab in view is the address's hash, so it
   can be linked, reloaded and reached with the back button: `/admin#health`
   (the default), `#companies/<slug>`, `#companies/new`, `#library`,
-  `#models`, `#accounts`, `#instance` (Models since 2026-09-22, see "Two
-  models, one baseline"). **Health**: data requests first when there are any
+  `#models`, `#accounts`, `#instance`, `#requests` (Models since 2026-09-22,
+  see "Two models, one baseline"; Requests since 2026-09-24, see "Requests to
+  Anetix"). **Health**: data requests first when there are any
   ("waiting on us"), then the fleet tiles and the per-company table; the long
   "how to read these numbers" text is folded. **Companies**: a list on the left
   (open feedback, modules, spend this month, a red line when sign-in needs
@@ -539,9 +540,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the id and still answers company `*`, the middleware sets `req.sosAccount =
   { id, login, name, enrolled }` and checks the account's generation and
   status on every request (ten second cache, `accounts.sessionState`), which is
-  the revocation admin never had. `SOS_ADMIN_SESSION_HOURS` (12) for admin;
-  floor and manager stay at 30 days. The old admin cookie (`admin.*.0...`) no
-  longer verifies. An account with NO authenticator signs in with its password
+  the revocation admin never had. Lifetimes slide since 2026-09-24 (see
+  "Sliding sessions and trusted admin devices": `SOS_ADMIN_IDLE_HOURS` 168 /
+  `SOS_ADMIN_CAP_HOURS` 720; `SOS_ADMIN_SESSION_HOURS` is no longer read). The
+  old admin cookie (`admin.*.0...`) no longer verifies. An account with NO authenticator signs in with its password
   and reaches `auth.ENROLL_PATHS` only (the admin page, which shows the setup
   and nothing else, who-am-I and the two enroll calls); everything else is 403
   `enroll_required` or a redirect to /admin. **Enrollment** on /admin: a 20
@@ -632,6 +634,142 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the secret is the whole gate; rotating it means changing the Cloudflare rule
   and `SOS_EDGE_SECRET` together, with `SOS_EDGE_MODE=report` set while the
   two disagree.
+- **Sliding sessions and trusted admin devices** (2026-09-24, `src/auth.js`
+  sign / verify / reissue, `src/people.js`, `src/devices.js`, the code step of
+  `public/login.html`, the Accounts tab; the project file
+  `claude/sessions-and-trusted-devices-2026-09-24.md` has the live run and the
+  status table). Why: every cookie died a fixed time after sign-in (admin 12 h,
+  person 12 h, device 30 days), so an admin typed password and code most
+  mornings and a name and PIN typed at 6am were gone at 6pm whatever the person
+  was doing; Railway's request log showed one admin sign-in per working day
+  and nothing else killing cookies. **Sliding windows**: a cookie carries
+  `issued` (the sign-in) and `refreshed`; it is good while the generation
+  matches, now minus refreshed is under the IDLE window, now minus issued is
+  under the CAP, and neither time is in the future. Any request that verifies
+  once more than half the idle window has passed since the last refresh gets
+  the cookie again (`auth.reissue`, `res.append("Set-Cookie")`: same
+  attributes, Max-Age = the idle window or what is left of the cap). Windows in
+  HOURS, so a deployment that has to meet AAL2 on paper sets 1 and 24 with no
+  code change: admin `SOS_ADMIN_IDLE_HOURS` 168 / `SOS_ADMIN_CAP_HOURS` 720;
+  floor and manager `SOS_SESSION_IDLE_HOURS` 720 / `SOS_SESSION_CAP_HOURS` 4320
+  (0 = no cap, revocation by company generation only); person
+  `SOS_PERSON_IDLE_HOURS` 168 / `SOS_PERSON_CAP_HOURS` 720. `SOS_ADMIN_SESSION_HOURS`,
+  `SOS_SESSION_DAYS` and `SOS_PERSON_HOURS` are no longer read (boot warns if
+  set). The cookie shapes grew one part (session six, person seven); the old
+  one-time shapes are accepted while their one time is inside both windows and
+  come back in the new shape on the first request seen, so the deploy signed
+  nobody out. On a shared tablet a name now stays for days, so the name is
+  shown wherever a person acts: the feedback button itself reads "Feedback ·
+  Maria G", the panel "Sending as Maria G · not you?", the board chip.
+  **Approvals stay fresh**: `SOS_APPROVAL_PIN_HOURS` (12; 0 = off). A signed-in
+  name whose PIN was typed longer ago than that is asked for it again on the
+  approval itself (`people.requireFreshPin` on decide, batch, confirm, deploy,
+  override, retire-check, rollback, goto, and a new module's confirm and
+  build): the route answers 401 `{ pin_again, person }`, the board's `act()`
+  opens the PIN pad for that name (`window.sosPerson.pin(person, done, why)`)
+  and sends the action again; nobody signed in passes, the device's login
+  decides as before. Feedback attribution stays loose. **Trusted admin
+  devices** (`src/devices.js`, `platform.admin_devices`: id, account_id,
+  token_hash = sha256 of a random 32 byte token, label from the user agent
+  ("Safari on macOS"), issued_at, last_used_at, expires_at = issued plus
+  `SOS_TRUSTED_DEVICE_DAYS` 30 (absolute, not sliding), generation at issue,
+  removed_at). "Remember this computer for 30 days" is a box on the CODE step
+  of the staff sign-in and nowhere else (a recovery-code sign-in never shows
+  it and the server never mints on one). Ticked, once the app's code is
+  accepted the platform sets cookie `sos_admin_device` = `<id>.<token>`:
+  HttpOnly, Secure, SameSite=Lax, `Path=/login` (the one route the form posts
+  to, so no page ever sees it), Max-Age 30 days. At the next sign-in from that
+  browser, when the password matches an enrolled account
+  (`accounts.signIn({ device, remember, ua })`): the row by id, the hash
+  compared in constant time, not removed, not expired, account switched on,
+  generation equal to the account's current one; all true, the admin session
+  is issued with no code step and the log says `signin_trusted_device` with the
+  device id (`last_used_at` set). Anything false: the code step as always,
+  `device_refused` with why, and the cookie cleared when the row is expired,
+  removed, gone or the generation has moved (a wrong token is left alone).
+  What a trusted device NEVER skips: the fresh code on company delete, backup
+  restore, add account, switch on, new password, remove, reset authenticator
+  (`stepUp` is untouched); break glass `SOS_ADMIN_2FA=off` is unchanged; a
+  wrong password from a trusted browser counts toward the 5 in 15 minutes lock
+  like any other. Keeping them: Accounts tab, "Computers that skip the code"
+  under My account (`GET /api/admin/accounts/me/devices`, label, since, last
+  used, Remove = `POST .../devices/:id/remove`, own account only, no code: it
+  only tightens); the accounts table says "N trusted computers" per account.
+  Sign out everywhere raises the generation, so every device row of the
+  account stops matching and drops off the list; reset authenticator deletes
+  the account's rows (new factor, trust again); switch off refuses them while
+  the account is off; ten per account, the eleventh removes the oldest;
+  removing an account cascades. `admin_devices` never travels in the backup
+  (`NOT_IN_BACKUP`) and a restore truncates it (and raises generations anyway).
+  The honest cost, for the customer-facing wording too: a computer holding
+  both cookies is an admin for up to 30 days without a code, the trade GitHub
+  and Google make; both admin Macs need FileVault and a lock-screen timeout,
+  and Sign out everywhere is the kill switch. Units: `scripts/test-accounts.js`
+  (48: refresh past half idle, none before, idle and cap expiry, future times,
+  old shape accepted and re-issued, the retired variables),
+  `scripts/test-people.js` (34: the same for the person cookie, and the fresh
+  PIN rule), `scripts/test-devices.js` (25: the cookie shape, constant-time
+  compare, expiry, generation, removed, account off, the cap of ten, labels).
+  End to end: `scripts/e2e/accounts.js` (145; restore 13, breakglass 9,
+  noadminvar 6) and `accounts-browser.js` (37: the box on the code step, gone
+  in recovery mode, the list, Remove, a sign-in that skips the code).
+  `scripts/e2e/run-all.sh` runs every suite on the database it asks for.
+  Known limits: a device cookie is a bearer token on the sign-in route (a
+  stolen one is a sign-in until Sign out everywhere or 30 days); the label is
+  from the user agent, so two Safaris on two Macs read alike (last used tells
+  them apart); passkeys wait for the Anetix domain (a passkey is bound to its
+  domain).
+- **Requests to Anetix** (2026-09-24, `src/requests.js`, the Requests tab of
+  `/admin`, the "Requests to Anetix" strip on the board, My requests on the
+  feedback button; Brendan: a clear place to see the feedback from the CI
+  boards, make it plain that it goes to him, and two-way communication so the
+  person sees where it is while it is being addressed). Feedback about the
+  software itself (module `platform`: the board, the settings pages, the admin
+  page) is not built by the in-app agent; until this a manager could read one
+  company's at `GET /api/c/<slug>/feedback/platform` and nothing went back to
+  the person who sent it. Now: columns on `platform.feedback` `anetix_stage`
+  (NULL = received, `looking`, `working`), `anetix_note` (the last word back),
+  `anetix_at`, `anetix_by`; `requests.stateOf` (pure) is the one line everyone
+  reads ("Sent to Anetix, the people who make this software. Nobody has looked
+  yet." / "Anetix is looking at it. Brendan says: ..." / "Anetix is working on
+  it." / "Fixed by Anetix. <what changed>" / "Anetix is not doing this one.
+  <why>"; the manager's own Decline on the strip reads "Declined by the
+  manager."). Routes, admin only, on the `/api/admin` path space a module
+  page's policy does not open: `GET /api/admin/requests?status=open|closed|all`
+  (every company, newest first, with `open` and `untouched` counts),
+  `POST /api/admin/requests/:id { stage, note }` (a stage on a closed one
+  reopens it), `POST /api/admin/requests/:id/close { answer: fixed | not_doing,
+  what }` (words required; the earlier note goes, the words are the last word
+  back). Record kinds: `anetix_stage`, `feedback_closed` with
+  `detail.by_anetix`. **The Requests tab**: open ones first with a NEW mark and
+  an amber edge while nobody has looked, buttons Looking at it / Working on it
+  / A word back / Fixed / Not doing this, closed ones folded; a header pill
+  "Requests: N open, M new" (amber while any is untouched) and the tab badge
+  count. **The board**: the strip is "Requests to Anetix" with the hint saying
+  they go to Brendan, each card chip reads TO ANETIX and carries the stage line
+  and note; Decline stays for the manager. **The floor**: the feedback panel on
+  a platform page says "this goes to Brendan at Anetix, who makes it, not to
+  your manager" before the person types, and "Sent to Anetix. You can follow
+  it under My requests." after; My requests shows "the software itself, to
+  Anetix", the stage line in its color and the word back; a quiet navy
+  "Anetix answered" badge sits on the My requests link until the person opens
+  the list (`localStorage sos.anetix.<co>` = request id to the `answered_at`
+  seen). `closeloop.mayAnswer` is false for platform rows (no "did it fix
+  it?"), `publicRow` adds `to_anetix`, `note`, `answered_at`, `answered_by`.
+  Tests: `scripts/e2e/requests.js` (32) and `requests-browser.js` (18, also
+  the folds that stay open and the board icon per company). Same push, two
+  board fixes: (1) "See the full requirement" and "what the check saw" folded
+  themselves shut on the 4 s redraw within seconds of being opened
+  (`OPEN_FOLDS` and `fold(key, summary, body)` in `index.html`, the pattern
+  `OPEN_MORE` already used); (2) every board's tab icon showed one company's
+  mark: `index.html` carried a hard-coded `<link rel="icon"
+  href="/api/c/demo/icon">`, which the browser fetches at parse time and
+  Safari keeps for the page whatever the script sets later. The file now says
+  `/api/c/__company__/icon` and `server.js` serves `/c/:slug/` with the slug
+  put in; `/api/c/:slug/icon` carries an ETag (304 on revalidation) and the
+  board payload carries `icon_v` (a sha1 prefix of the icon), which the page
+  appends as `?v=` so a browser that keys its icon cache by URL never shows
+  one company's mark on another's board and a rebuilt guide shows at once.
 - **Per-company AI budget** (2026-09-19). `assertUnderCap(company)` now checks
   the company's own monthly cap (`platform.companies.monthly_cap_usd`, set on
   the admin page) against that company's own spend AND the instance cap, so one
@@ -688,8 +826,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   may do. The PERSON is who is standing at it: picked from the company's
   names on the feedback button, proven with a PIN (4 to 8 digits, scrypt
   hash, the platform makes a 4 digit one that is never 1111 or a run), kept in
-  a second signed cookie `sos_person` = `p.<id>.<company>.<generation>.<time>.
-  <mac>` (HttpOnly, 12 h, `SOS_PERSON_HOURS`). `people.attach` (after
+  a second signed cookie `sos_person` = `p.<id>.<company>.<generation>.<issued>.
+  <refreshed>.<mac>` (HttpOnly; it slides since 2026-09-24, a week idle and 30
+  days cap, `SOS_PERSON_IDLE_HOURS` / `SOS_PERSON_CAP_HOURS`; it was 12 h
+  fixed, `SOS_PERSON_HOURS`, which is no longer read). `people.attach` (after
   `companyGuard`) sets `req.sosPerson`, `req.sosPersonId`,
   `req.sosPersonRole`, only when the person is active, the generation
   matches and the person's company is the session's company. Nothing requires
@@ -1455,8 +1595,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   Print; the print stylesheet prints just that card as a wall sign. The band
   is two columns (title + module strip on the left, the 112px QR tile
   spanning both on the right). Platform feedback (about the tool itself,
-  shipped from Cowork) sits in a collapsed "Platform requests" strip under
-  the columns, not a column of its own.
+  shipped from Cowork) sits in a collapsed "Requests to Anetix" strip under
+  the columns, not a column of its own (see "Requests to Anetix").
 - **Batches are server state** (the board stopped using them on 2026-09-20,
   "Build these N together" posts to `/api/runs/batch`; the routes remain)
   (`platform.batches`, `feedback.batch_id`,
@@ -1620,11 +1760,14 @@ the manager's view of the same line over eight weeks, with Jonah.
 2. **Cowork revisions (free).** Brendan asks Claude here; Claude edits the repo
    and pushes; Railway redeploys. This is for platform changes (anything under
    `src/`, `public/`, `server.js`, `principles/`) and for deliberate module
-   revisions. Feedback filed about the platform itself lands in the
-   "Platform requests" strip of the board and is readable from here:
-   `GET /api/c/<slug>/feedback/platform` (manager session) or the
-   `platform.feedback` table where `module='platform'`. Close them with
-   `POST /api/feedback/:id/close {outcome}` after shipping.
+   revisions. Feedback filed about the platform itself lands on the Requests
+   tab of `/admin` (every company; `GET /api/admin/requests`), in the
+   "Requests to Anetix" strip of the board, and under My requests of whoever
+   sent it. Move it along there (Looking at it, Working on it, a word back)
+   and close it with Fixed (what changed, in the floor's words) or Not doing
+   this after shipping: `POST /api/admin/requests/:id/close`. The older
+   `GET /api/c/<slug>/feedback/platform` (manager session) and
+   `POST /api/feedback/:id/close` still work.
 
 Local smoke test of the whole loop, in the sandbox: `SOS_FAKE_AGENT=1
 SOS_FAKE_DELAY_MS=4000 PORT=3999 node server.js` (the delay gives an abort
@@ -1686,7 +1829,9 @@ runs there from a plain `npm install`: tar the repo without `node_modules`
 and `.git` in the mounted folder, stage the tarball, untar, install, boot with
 `SOS_FAKE_AGENT=1`. End to end and browser suites belong in `scripts/e2e/`
 IN THE REPO (since 2026-09-19; the earlier ones lived only in a session's
-sandbox and the next session could not rerun them). That is also where `package-lock.json` is regenerated
+sandbox and the next session could not rerun them); `bash
+scripts/e2e/run-all.sh` runs every suite on the database and server it asks
+for and prints one line each (2026-09-24; `quick` skips the browser suites). That is also where `package-lock.json` is regenerated
 after a dependency change. The `node_modules` in the mounted folder is a stale
 local install from before the SDK upgrade; Railway never sees it. The
 sandbox can reach api.anthropic.com but has no key, so a real agent run is
@@ -1720,8 +1865,11 @@ and lives in `platform.companies.monthly_cap_usd`. `SOS_PAGE_LOCK` (default
 `on`) is the browser policy on module pages: `report` sends it report-only
 (violations show in the browser console, nothing breaks), `off` sends none;
 the escape hatch if module pages ever stop after a deploy. Optional: `SOS_AGENT_EFFORT` (build agent reasoning
-effort, default `high`), `SOS_PERSON_HOURS` (default 12: how long a name and
-PIN sign-in lasts on a device), `SOS_BROWSER` (default `auto`; `off` makes
+effort, default `high`), `SOS_PERSON_IDLE_HOURS` (168) and
+`SOS_PERSON_CAP_HOURS` (720): how long a name and PIN sign-in stays on a
+device (it slides, see "Sliding sessions"; `SOS_PERSON_HOURS` is no longer
+read), `SOS_APPROVAL_PIN_HOURS` (12; 0 off: an approval with a name whose PIN
+is older than this asks for the PIN again), `SOS_BROWSER` (default `auto`; `off` makes
 every build's page load go without a browser), `SOS_CHROMIUM_PATH` (where
 Chromium is, when it is not on the PATH as `chromium`), `SOS_PAGE_SETTLE_MS`
 (default 1500: how long a screen is given to load its data before it is
@@ -1737,11 +1885,16 @@ process or not mounted; `inline` = the old in-platform way),
 (30s); `SOS_CONNECTION_KEY` now also keys the per-company database passwords,
 `SOS_CONTEXT_CHARS` (default 400000: the most
 module source a proposal, system review or diagram call is given; files are
-whole below it, see "A model reads a module's files whole"), `SOS_SESSION_DAYS` (default 30; sessions
-expire server-side, not just via cookie Max-Age), `SOS_LOGIN_MAX_FAILS`
+whole below it, see "A model reads a module's files whole"),
+`SOS_SESSION_IDLE_HOURS` (720) and `SOS_SESSION_CAP_HOURS` (4320; 0 = no cap):
+the floor and manager cookie's windows, server-side, not just cookie Max-Age
+(`SOS_SESSION_DAYS` is no longer read), `SOS_LOGIN_MAX_FAILS`
 (default 10) and `SOS_LOGIN_WINDOW_MIN` (default 15) for the per-IP login
 limiter (in-memory, address from `edge.clientIp`). Admin accounts:
-`SOS_ADMIN_SESSION_HOURS` (12), `SOS_ACCOUNT_MAX_FAILS` (5),
+`SOS_ADMIN_IDLE_HOURS` (168) and `SOS_ADMIN_CAP_HOURS` (720) for the admin
+cookie (`SOS_ADMIN_SESSION_HOURS` is no longer read; take it out if it is
+there), `SOS_TRUSTED_DEVICE_DAYS` (30: how long "remember this computer"
+skips the code), `SOS_ACCOUNT_MAX_FAILS` (5),
 `SOS_ACCOUNT_LOCK_MIN` (15), `SOS_AUTH_EVENT_DAYS` (400), `SOS_ADMIN_2FA=off`
 (break glass only), and `SOS_CONNECTION_KEY` is now REQUIRED before an
 authenticator can be set up. Edge: `SOS_EDGE_SECRET` (the value the Cloudflare
@@ -1779,9 +1932,13 @@ Passwords live only in Railway; never commit them.
   the body scopes itself with `auth.ownsCompany(req, slug)`.
 - A new platform table that belongs to a company goes in `backup.js`
   `PLATFORM_TABLES` and, if it holds secrets, stays out of `platform.companies`.
-- A secret, a one-time code or a recovery code is never logged and never
-  returned, apart from the one enrollment answer that shows a person their
-  own. A new destructive admin action takes `auth.checkAdminCode`. A new admin
+- A secret, a one-time code, a recovery code or a device token is never
+  logged and never returned, apart from the one enrollment answer that shows
+  a person their own (and the one Set-Cookie that hands a browser its device
+  token). A new destructive admin action takes `auth.checkAdminCode`, and a
+  trusted device never stands in for that code. A new route that moves a
+  change toward the floor takes `people.requireFreshPin` after
+  `requireManager`. A new admin
   route that an account with no authenticator must reach goes in
   `auth.ENROLL_PATHS`, and that list stays as short as it is. Anything that
   throttles, locks or logs by address reads it through `edge.clientIp`.

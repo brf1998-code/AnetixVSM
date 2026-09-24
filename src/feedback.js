@@ -21,6 +21,8 @@ const health = require("./health");
 const connections = require("./connections");
 const datacheck = require("./datacheck");
 const people = require("./people");
+// a signed-in name whose PIN is older than SOS_APPROVAL_PIN_HOURS is asked for it again on an approval (src/people.js)
+const freshPin = people.requireFreshPin;
 const closeloop = require("./closeloop");
 const arrival = require("./arrival");
 
@@ -155,7 +157,7 @@ router.get("/api/c/:slug/modules/:name/checks", requireManager, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post("/api/c/:slug/modules/:name/goto", requireManager, async (req, res) => {
+router.post("/api/c/:slug/modules/:name/goto", requireManager, freshPin, async (req, res) => {
   const { version, restore_data } = req.body || {};
   const row = await registry.getModule(req.params.slug, req.params.name);
   if (!row) return res.status(404).json({ error: "unknown module" });
@@ -223,7 +225,7 @@ router.post("/api/c/:slug/batch/:id/clear", requireManager, async (req, res) => 
 // Build the batch: every item that has a proposal goes into one run; items not
 // reviewed yet leave the batch (the board says how many) so the run is exactly
 // what the manager looked at.
-router.post("/api/c/:slug/batch/:id/build", requireManager, async (req, res) => {
+router.post("/api/c/:slug/batch/:id/build", requireManager, freshPin, async (req, res) => {
   const b = (await q("SELECT * FROM platform.batches WHERE id=$1 AND company=$2 AND run_id IS NULL", [req.params.id, req.params.slug])).rows[0];
   if (!b) return res.status(404).json({ error: "no such open batch" });
   const items = (await q(
@@ -270,10 +272,15 @@ router.get("/api/c/:slug/modules/:name/staged-changes", async (req, res) => {
 // Company icon for the tab and the phone home screen: the brand icon when the
 // guide found one, else the platform's own mark.
 const DEFAULT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1f3a5f"/><path d="M20 40c0 5 5 8 12 8s12-3 12-8-5-6-12-7-12-3-12-8 5-8 12-8 12 3 12 8" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/></svg>`;
+// A short fingerprint of the icon the company has now: the board puts it in the icon's address (?v=) so a browser
+// that keys its icon cache by URL never shows one company's mark on another's board (Safari did, 2026-09-24).
+const iconVersion = (b) => require("crypto").createHash("sha1").update(b && b.icon ? String(b.icon) : `default:${b && b.colors && b.colors.primary ? b.colors.primary : "#1f3a5f"}`).digest("hex").slice(0, 10);
 router.get("/api/c/:slug/icon", async (req, res) => {
   const co = await company(req.params.slug);
   const b = co && co.brand;
-  res.set("Cache-Control", "no-cache");
+  const etag = `"${iconVersion(b)}"`;
+  res.set("Cache-Control", "no-cache").set("ETag", etag);
+  if (req.headers["if-none-match"] === etag) return res.status(304).end();
   if (b && b.icon && /^data:image\/[\w.+-]+;base64,/.test(b.icon)) {
     const [head, data] = b.icon.split(",", 2);
     return res.type(head.slice(5, head.indexOf(";"))).send(Buffer.from(data, "base64"));
@@ -285,7 +292,7 @@ router.get("/api/c/:slug/icon", async (req, res) => {
 function brandPublic(b) {
   if (!b) return null;
   const { icon, ...rest } = b;
-  return { ...rest, has_icon: Boolean(icon) };
+  return { ...rest, has_icon: Boolean(icon), icon_v: iconVersion(b) };
 }
 
 // ---- board data ------------------------------------------------------------
@@ -336,7 +343,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
   const { brand: b, ...coPublic } = co;
   const intakes = req.sosRole === "floor" ? {} : await intake.boardIntakes(co.slug);
   res.json({
-    company: coPublic, brand: brandPublic(b), feedback, runs, modules, screens, reviews, batches, intakes,
+    company: coPublic, brand: brandPublic(b), icon_v: iconVersion(b), feedback, runs, modules, screens, reviews, batches, intakes,
     boardUrl: boardUrl(req, co.slug),
     spend: await agent.monthlySpend(co.slug),
     models: { list: agent.MODELS, build: (await agent.buildModelFor(co.slug, await agent.modelFor(co.slug, "build"))).model },
@@ -392,7 +399,7 @@ async function waitingOnData(proposalIds) {
 }
 
 // Manager decision on a proposal (approve/decline, with optional edits)
-router.post("/api/proposals/:id/decide", requireManager, async (req, res) => {
+router.post("/api/proposals/:id/decide", requireManager, freshPin, async (req, res) => {
   const { decision, note, editedBody, editedClass, editedTarget, model } = req.body || {};
   try {
     // the proposal as it stands, before anything the manager typed lands on it
@@ -427,7 +434,7 @@ router.post("/api/proposals/:id/decide", requireManager, async (req, res) => {
 });
 
 // Batch: approve several reviewed proposals and build them in one run
-router.post("/api/runs/batch", requireManager, async (req, res) => {
+router.post("/api/runs/batch", requireManager, freshPin, async (req, res) => {
   const ids = ((req.body || {}).proposal_ids || []).map(Number).filter(Boolean);
   if (!ids.length) return res.status(400).json({ error: "pick at least one proposal" });
   try {
@@ -449,7 +456,7 @@ router.post("/api/runs/:id/cancel", requireManager, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.cancel(Number(req.params.id)); if (x) await record("run_cancelled", { ...x.ids, actor: actor(req), detail: { step: x.run.step, status_before: x.run.status } }); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/confirm", requireManager, async (req, res) => {
+router.post("/api/runs/:id/confirm", requireManager, freshPin, async (req, res) => {
   try {
     const x = await runIds(req.params.id); const edited = (req.body || {}).requirement;
     await pipeline.confirmRequirement(Number(req.params.id), edited);
@@ -458,7 +465,7 @@ router.post("/api/runs/:id/confirm", requireManager, async (req, res) => {
   }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/deploy", requireManager, async (req, res) => {
+router.post("/api/runs/:id/deploy", requireManager, freshPin, async (req, res) => {
   try { const x = await runIds(req.params.id); const out = await pipeline.deploy(Number(req.params.id)); if (x) await record("deployed", { ...x.ids, actor: actor(req), version: out.to, detail: { from: out.from, to: out.to, lane: x.run.lane } }); res.json(out); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -466,17 +473,17 @@ router.post("/api/runs/:id/fix", requireManager, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.fix(Number(req.params.id)); if (x) await record("run_fixed", { ...x.ids, actor: actor(req), before: ((x.run.evidence || {}).cross_check || {}).summary || null, detail: { round: ((x.run.evidence || {}).fix_round || 0) + 1 } }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/override", requireManager, async (req, res) => {
+router.post("/api/runs/:id/override", requireManager, freshPin, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.override(Number(req.params.id)); if (x) await record("run_overridden", { ...x.ids, actor: actor(req), before: ((x.run.evidence || {}).cross_check || {}).summary || null }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 // An earlier promise no longer holds (src/acceptance.js, build order item 7): the manager retires the check this
 // build broke, with a reason, and the same build is checked again. On the record with who and why.
-router.post("/api/runs/:id/retire-check", requireManager, async (req, res) => {
+router.post("/api/runs/:id/retire-check", requireManager, freshPin, async (req, res) => {
   try { res.json({ ok: true, ...(await pipeline.retirePromise(Number(req.params.id), String((req.body || {}).file || ""), (req.body || {}).reason, actor(req))) }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/rollback", requireManager, async (req, res) => {
+router.post("/api/runs/:id/rollback", requireManager, freshPin, async (req, res) => {
   try { const x = await runIds(req.params.id); const out = await pipeline.rollbackRun(Number(req.params.id)); if (x) await record("rolled_back", { ...x.ids, actor: actor(req), version: out.to, detail: { to: out.to } }); res.json(out); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });

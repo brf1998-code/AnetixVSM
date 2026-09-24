@@ -80,6 +80,8 @@ const summaryOf = (outcome) => String(outcome || "").replace(/^Deployed v\d+( \(
 // ---- pure: where a request is, in one plain line -------------------------------------------
 // row: a feedback row plus proposal_status, data_status, run_status, run_step.
 function stateOf(r) {
+  // a request about the software itself goes to Anetix, not round the build loop (src/requests.js says where it is)
+  if (r.module === "platform") return require("./requests").stateOf(r);
   if (r.status === "declined") {
     const why = r.outcome && !/^declined$/i.test(r.outcome) ? clip(r.outcome, 240) : "";
     return { state: "declined", line: why ? `Declined: ${why}` : "Declined." };
@@ -113,7 +115,7 @@ function withDuplicate(r, st) {
 }
 // pure: may this person answer "fixed it / not quite" on this request?
 function mayAnswer(r, personId) {
-  if (!personId || r.status !== "done" || rolledBack(r) || r.kind === "module_request") return false;
+  if (!personId || r.status !== "done" || rolledBack(r) || r.kind === "module_request" || r.module === "platform") return false;
   if (r.floor_answer === "not_quite") return false;
   if (r.manager_answer === "little_left") return false;   // the manager's follow-up carries it; a second one would be a duplicate
   return r.person_id ? Number(r.person_id) === Number(personId) : true;
@@ -141,7 +143,7 @@ function followUpContext(original) {
 const SELECT = `
   SELECT f.id, f.kind, f.module, f.page, f.screen, f.message, f.name, f.person_id, f.status, f.outcome, f.created_at, f.follow_up_of,
          f.shipped_version, f.shipped_at, f.floor_answer, f.floor_answer_at, f.floor_answer_by, f.manager_answer, f.manager_answer_at, f.manager_answer_by,
-         f.duplicate_of, f.question,
+         f.duplicate_of, f.question, f.anetix_stage, f.anetix_note, f.anetix_at, f.anetix_by,
          p.status AS proposal_status, p.data_check->>'status' AS data_status, r.status AS run_status, r.step AS run_step,
          (SELECT c.id FROM platform.feedback c WHERE c.follow_up_of = f.id ORDER BY c.id DESC LIMIT 1) AS follow_up_id
     FROM platform.feedback f
@@ -155,6 +157,8 @@ const publicRow = (r, personId) => ({
   built: r.status === "done" && !rolledBack(r) ? clip(summaryOf(r.outcome), 400) || null : null,
   shipped_at: r.shipped_at || null, follow_up_of: r.follow_up_of || null, follow_up_id: r.follow_up_id || null,
   can_answer: mayAnswer(r, personId),
+  // a request to Anetix (module "platform"): the last word back and when Anetix last touched it, for the badge
+  ...(r.module === "platform" ? { to_anetix: true, built: null, note: r.anetix_note || null, answered_at: r.anetix_at || null, answered_by: r.anetix_by || null } : {}),
 });
 
 // The signed-in person's own requests, newest first, and how many are waiting on their answer.

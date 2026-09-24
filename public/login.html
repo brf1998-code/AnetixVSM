@@ -18,6 +18,8 @@
   #code { letter-spacing:.2em; text-align:center; }
   .hint { color:var(--steel); font-size:12.5px; margin:10px 0 6px; line-height:1.45; }
   .hint a { color:var(--navy); }
+  .remember { display:flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--steel); margin:10px 0 2px; line-height:1.45; cursor:pointer; }
+  .remember input { width:18px; height:18px; margin:1px 0 0; flex:none; }
 </style>
 </head>
 <body>
@@ -30,6 +32,7 @@
     <div id="codebox" style="display:none">
       <div class="hint" id="codehint">Type the 6 digit code your authenticator app shows for Anetix SOS.</div>
       <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digit code" maxlength="24" spellcheck="false">
+      <label class="remember" id="rememberbox"><input type="checkbox" id="remember"><span id="rememberlabel">Remember this computer for 30 days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.</span></label>
       <div class="hint"><a href="#" id="userec">Phone not with you? Use a recovery code</a></div>
     </div>
     <button type="submit">Sign in</button>
@@ -56,20 +59,28 @@ function staffMode() {
 }
 document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); };
 if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
+// recovery is for getting back in, not for minting a trusted device: the box goes when a recovery code is chosen
+let recovery = false;
 document.getElementById("userec").onclick = (e) => {
-  e.preventDefault(); code.value = ""; code.inputMode = "text"; code.style.letterSpacing = "normal"; code.placeholder = "recovery code";
+  e.preventDefault(); recovery = true; document.getElementById("remember").checked = false; document.getElementById("rememberbox").style.display = "none";
+  code.value = ""; code.inputMode = "text"; code.style.letterSpacing = "normal"; code.placeholder = "recovery code";
   document.getElementById("codehint").textContent = "Type one of the recovery codes you saved when you set the app up. Each works once."; code.focus();
 };
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
   if (!staff && co.style.display !== "none") company = co.value.trim().toLowerCase();
-  const body = staff ? { name: nm.value.trim(), password: document.getElementById("pw").value, code: codebox.style.display === "none" ? "" : code.value.trim() }
+  const onCode = codebox.style.display !== "none";
+  const body = staff ? { name: nm.value.trim(), password: document.getElementById("pw").value, code: onCode ? code.value.trim() : "", remember: onCode && !recovery && document.getElementById("remember").checked }
     : { password: document.getElementById("pw").value, company };
   const res = await fetch("/login", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
   const j = await res.json().catch(() => ({}));
   if (staff && (j.need_code || !res.ok)) {
     // the password was right and the account has an authenticator: ask for the code, then send all three together
-    if (j.need_code) { const first = codebox.style.display === "none"; codebox.style.display = "block"; code.focus(); code.select(); if (first && res.ok) { err.style.display = "none"; return; } }
+    if (j.need_code) {
+      const first = codebox.style.display === "none"; codebox.style.display = "block"; code.focus(); code.select();
+      if (j.remember_days) document.getElementById("rememberlabel").textContent = "Remember this computer for " + j.remember_days + " days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.";
+      if (first && res.ok) { err.style.display = "none"; return; }
+    }
     err.textContent = j.error ? j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : ".") : "That did not match.";
     err.style.display = "block"; return;
   }

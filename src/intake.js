@@ -17,6 +17,7 @@ const attachments = require("./attachments");
 const plain = require("./plainwords");
 const Q = require("./intake-questions");
 const { requireManager } = require("./auth");
+const freshPin = require("./people").requireFreshPin;   // an approval with a stale PIN asks for the PIN again
 
 // The intake runs on the design job's model (src/agent.js): the baseline unless /admin#models gives design its
 // own, or the intake's arm of the live A/B. Chosen once at create and kept on the row, so one intake is one model.
@@ -480,13 +481,13 @@ router.post("/api/intakes/:id/adjust", requireManager, json, async (req, res) =>
   try { res.json(await view(await adjust(Number(req.params.id), (req.body || {}).text))); }
   catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/confirm", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id/confirm", requireManager, freshPin, json, async (req, res) => {
   try { res.json(await view(await confirm(Number(req.params.id)))); }
   catch (e) { fail(res, e); }
 });
 // A confirmed design whose build never started (an older confirm, or a build
 // that was discarded at the gate): start it now.
-router.post("/api/intakes/:id/build", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id/build", requireManager, freshPin, json, async (req, res) => {
   try {
     const it = await getIntake(Number(req.params.id));
     if (!it) return res.status(404).json({ error: "not found" });

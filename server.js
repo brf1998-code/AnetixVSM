@@ -2,6 +2,7 @@
 // One process serves every company's improvement board, the platform APIs,
 // every module's live and staged versions, the agent settings pages, and the
 // admin view across companies.
+const fs = require("fs");
 const path = require("path");
 const express = require("express");
 process.env.SOS_BOOT_ID = process.env.SOS_BOOT_ID || String(Date.now()); // pages reload themselves when this changes (a redeploy)
@@ -25,6 +26,7 @@ const page = (name) => path.join(__dirname, "public", name);
 async function main() {
   await initPlatformSchema();
   await accounts.init();      // named admin accounts, their authenticators and recovery codes, the sign-in log (src/accounts.js)
+  await require("./src/devices").init();   // trusted admin devices: "remember this computer", the code skipped at sign-in for 30 days (src/devices.js)
   await record.init();   // the interaction record: insert-only, what everyone said and decided
   await people.init();        // operator identity: names and PINs per company
   await require("./src/closeloop").init();   // close the loop: my requests, what went live, fixed it / not quite
@@ -35,6 +37,7 @@ async function main() {
   await connections.init();   // what modules reach outside through: spreadsheets, label printers (src/connections.js)
   await require("./src/datacheck").init();   // the review-time check that a change's ERP data is available, and the admin's data requests
   await require("./src/assess").init();      // which model is the baseline: the head-to-head assessment and the live A/B arms (/admin#models)
+  await require("./src/requests").init();    // requests to Anetix: feedback about the software itself, and the way back to whoever sent it
 
   const app = express();
   app.disable("x-powered-by");
@@ -76,7 +79,13 @@ async function main() {
       <body style="font-family:system-ui,sans-serif;background:#f2f4f7;color:#1c242e;padding:24px"><h1 style="font-size:20px">Pick a company</h1>
       ${companies.map((c) => `<p><a style="font-size:18px;color:#1f3a5f" href="/c/${c.slug}/">${c.name}</a></p>`).join("")}</body>`);
   });
-  app.get("/c/:slug/", (_req, res) => res.sendFile(page("index.html")));
+  // The board's icon links name the company in the HTML itself (not only from the script that runs later): a
+  // browser reads <link rel="icon"> at parse time and Safari keeps that first icon for the page, which is how every
+  // board showed one company's mark (found 2026-09-24: the file said /api/c/demo/icon).
+  app.get("/c/:slug/", (req, res) => {
+    const slug = /^[a-z0-9][a-z0-9-]{1,40}$/.test(req.params.slug) ? req.params.slug : "demo";
+    res.type("html").send(fs.readFileSync(page("index.html"), "utf8").split("/api/c/__company__/icon").join(`/api/c/${slug}/icon`));
+  });
   app.get("/c/:slug", (req, res) => res.redirect(`/c/${req.params.slug}/`));
   app.get("/c/:slug/agents", (_req, res) => res.sendFile(page("agents.html")));
   app.get("/c/:slug/diagrams/:module", (_req, res) => res.sendFile(page("diagrams.html")));
@@ -90,6 +99,7 @@ async function main() {
   app.use(intake.router);    // /api/c/:slug/intakes, /api/intakes/*, /api/attachments/* (before platformApi: the attach route parses a bigger body)
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
+  app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module and /c/:slug/staging/m/:module
 

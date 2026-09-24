@@ -269,13 +269,124 @@ async function main() {
 
   // ---- lifetimes, against the running server
   const gB = (await q("SELECT generation FROM platform.accounts WHERE id=$1", [idB])).rows[0].generation;
+  // sliding windows (2026-09-24): the old one-time shape is accepted inside the new windows and comes back in the
+  // new shape; a cookie past half its idle window comes back refreshed; the idle window and the cap end it
   const aged = (role, company, g, hours) => { const p = `${role}.${company}.${g}.${(Date.now() - hours * 3600e3).toString(36)}`; return `sos_session=${p}.${auth.hmac(p)}`; };
-  t("an admin cookie 11 hours old works, 13 hours old does not", (await withCookie(aged("admin", `*${idB}`, gB, 11), "/api/admin/overview")) === 200 && (await withCookie(aged("admin", `*${idB}`, gB, 13), "/api/admin/overview")) === 401);
-  t("a floor cookie 13 hours old works", (await withCookie(aged("floor", "demo", gen, 13), "/api/c/demo/board")) === 200);
-  t("the admin cookie is set for 12 hours, the floor's for 30 days", /Max-Age=43200/.test((await tryLogin({ name: TAYLOR, password: np.json.password, code: await codeFor(secretT2, 0) })).cookie) && /Max-Age=2592000/.test((await tryLogin({ password: PW.floor, company: "demo" })).cookie));
+  const D = 24;
+  const withCookieFull = async (cookie, p) => { const r = await fetch("http://127.0.0.1:3999" + p, { headers: { Cookie: cookie }, redirect: "manual" }); return { status: r.status, set: (r.headers.getSetCookie ? r.headers.getSetCookie() : []).find((c) => c.startsWith("sos_session=")) || "" }; };
+  const oldAdmin = await withCookieFull(aged("admin", `*${idB}`, gB, 13), "/api/admin/overview");
+  const reissued = auth.verify((oldAdmin.set.split(";")[0] || "").slice("sos_session=".length));
+  t("an admin cookie in the old shape, 13 hours old, works now and comes back in the new shape with the same issue time", oldAdmin.status === 200 && reissued && reissued.legacy === false && reissued.account === idB && Math.abs(reissued.issued - (Date.now() - 13 * 3600e3)) < 5000 && Date.now() - reissued.refreshed < 5000, oldAdmin.set);
+  t("under the same attributes, Max-Age the idle window", /; Path=\/; HttpOnly; SameSite=Lax; Max-Age=604800$/.test(oldAdmin.set), oldAdmin.set);
+  t("an old-shape admin cookie 8 days old does not (the idle window)", (await withCookie(aged("admin", `*${idB}`, gB, 8 * D), "/api/admin/overview")) === 401);
+  const slid = (role, company, g, issuedH, refreshedH) => `sos_session=${auth.sign(role, company, g, { issued: Date.now() - issuedH * 3600e3, refreshed: Date.now() - refreshedH * 3600e3 })}`;
+  const notDue = await withCookieFull(slid("admin", `*${idB}`, gB, 2 * D, 2 * D), "/api/admin/overview");
+  t("an admin cookie refreshed 2 days ago works and is left alone", notDue.status === 200 && notDue.set === "", notDue.set);
+  const due = await withCookieFull(slid("admin", `*${idB}`, gB, 10 * D, 4 * D), "/api/admin/overview");
+  const due2 = auth.verify((due.set.split(";")[0] || "").slice("sos_session=".length));
+  t("an admin cookie refreshed 4 days ago works and comes back refreshed, the issue time kept", due.status === 200 && due2 && Math.abs(due2.issued - (Date.now() - 10 * D * 3600e3)) < 5000 && Date.now() - due2.refreshed < 5000, due.set);
+  t("an admin cookie refreshed 8 days ago is signed out (idle)", (await withCookie(slid("admin", `*${idB}`, gB, 10 * D, 8 * D), "/api/admin/overview")) === 401);
+  t("an admin cookie issued 31 days ago is signed out even if refreshed an hour ago (cap)", (await withCookie(slid("admin", `*${idB}`, gB, 31 * D, 1), "/api/admin/overview")) === 401);
+  t("a floor cookie refreshed 29 days ago works; 31 days does not", (await withCookie(slid("floor", "demo", gen, 100 * D, 29 * D), "/api/c/demo/board")) === 200 && (await withCookie(slid("floor", "demo", gen, 100 * D, 31 * D), "/api/c/demo/board")) === 401);
+  t("a floor cookie issued 181 days ago is signed out (cap), 179 works", (await withCookie(slid("floor", "demo", gen, 181 * D, 0), "/api/c/demo/board")) === 401 && (await withCookie(slid("floor", "demo", gen, 179 * D, 0), "/api/c/demo/board")) === 200);
+  t("an admin cookie with the right times but an older generation is refused whatever the times", (await withCookie(slid("admin", `*${idB}`, gB - 1, 1, 1), "/api/admin/overview")) === 401);
+  t("the admin cookie is set for the 7 day idle window, the floor's for 30 days", /Max-Age=604800/.test((await tryLogin({ name: TAYLOR, password: np.json.password, code: await codeFor(secretT2, 0) })).cookie) && /Max-Age=2592000/.test((await tryLogin({ password: PW.floor, company: "demo" })).cookie));
+
+  // ---- trusted devices (src/devices.js): "remember this computer" skips the code for 30 days
+  await unlock(BRENDAN); await freshSteps(BRENDAN);
+  const gBnow = () => q("SELECT generation FROM platform.accounts WHERE id=$1", [idB]).then((r) => r.rows[0].generation);
+  const deviceCookie = (r) => ((r.headers.getSetCookie ? r.headers.getSetCookie() : []).find((c) => c.startsWith("sos_admin_device=")) || "");
+  const d1 = client();
+  const rd1 = await d1.post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: await codeFor(secretB, -1), remember: true });
+  const dc1 = deviceCookie(rd1);
+  t("the box on the code step: signed in, and the browser is remembered", rd1.status === 200 && rd1.json.ok === true && rd1.json.remembered === true && rd1.json.trusted === false, rd1.text);
+  t("the device cookie is <id>.<token> on the sign-in route only: Path=/login, HttpOnly, SameSite=Lax, 30 days", /^sos_admin_device=\d+\.[A-Za-z0-9_-]{40,60}; Path=\/login; HttpOnly; SameSite=Lax; Max-Age=2592000$/.test(dc1), dc1);
+  const devId = Number(dc1.split("=")[1].split(".")[0]), devToken = dc1.split(";")[0].split(".")[1];
+  const devRow = (await q("SELECT * FROM platform.admin_devices WHERE id=$1", [devId])).rows[0];
+  t("the row keeps a sha256 of the token, never the token, the account's generation, an expiry 30 days out", devRow && devRow.account_id === idB && /^[0-9a-f]{64}$/.test(devRow.token_hash) && !devRow.token_hash.includes(devToken.slice(0, 16)) && devRow.generation === (await gBnow()) && Math.abs(new Date(devRow.expires_at) - Date.now() - 30 * 86400e3) < 60000 && devRow.removed_at === null, devRow);
+  t("it is on the record", (await events("device_trusted")).some((e) => e.account_id === idB && e.detail.device === devId));
+  await d1.get("/logout");
+  t("(signed out)", (await d1.get("/api/admin/overview")).status === 401);
+  const rd2 = await d1.post("/login", { name: BRENDAN, password: "a-new-long-password-1" });
+  t("next time from that browser: password alone signs in, no code step", rd2.status === 200 && rd2.json.ok === true && rd2.json.trusted === true && !rd2.json.need_code && (await d1.get("/api/admin/overview")).status === 200, rd2.text);
+  t("logged as a trusted-device sign-in with the device id, and the row says when", (await events("signin_trusted_device")).some((e) => e.account_id === idB && e.detail.device === devId) && (await q("SELECT last_used_at FROM platform.admin_devices WHERE id=$1", [devId])).rows[0].last_used_at !== null);
+  const listedB = (await d1.get("/api/admin/accounts")).json.accounts.find((a) => a.id === idB);
+  t("the list shows one trusted computer on the account", listedB.devices === 1 && listedB.last_sign_in, listedB);
+  t("a browser without the cookie still gets the code step", (await tryLogin({ name: BRENDAN, password: "a-new-long-password-1" })).json.need_code === true);
+  const failsBefore = (await q("SELECT failed_count FROM platform.accounts WHERE id=$1", [idB])).rows[0].failed_count;
+  t("a wrong password from the trusted browser is refused and counts toward the lock", (await d1.post("/login", { name: BRENDAN, password: "not-the-password" })).status === 401 && (await q("SELECT failed_count FROM platform.accounts WHERE id=$1", [idB])).rows[0].failed_count === failsBefore + 1);
+  await unlock(BRENDAN);
+  const su = await d1.post("/api/admin/accounts", { login: "never.e2e@anetix.test", generate: true });
+  t("a trusted session still needs a fresh code for a step-up", su.status === 403 && su.json.step_up === true, su.text);
+  t("and every other step-up too: switch on, remove, reset authenticator, new password", (await d1.post(`/api/admin/accounts/${idT}/reset-factor`, {})).status === 403 && (await d1.post(`/api/admin/accounts/${idT}/reset-password`, {})).status === 403 && (await d1.post("/api/admin/restore", { backup: { format: "nope" } })).status === 403);
+  const viaRec2 = await client().post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: recB[2], remember: true });
+  t("a sign-in with a recovery code never mints a device, box or not", viaRec2.status === 200 && viaRec2.json.ok === true && viaRec2.json.remembered === false && deviceCookie(viaRec2) === "", viaRec2.text);
+  const mine1 = (await d1.get("/api/admin/accounts/me/devices")).json;
+  t("my devices lists it: a label, since, last used, and never the token or hash", mine1.devices.length === 1 && mine1.devices[0].id === devId && typeof mine1.devices[0].label === "string" && mine1.devices[0].last_used_at && mine1.days === 30 && !JSON.stringify(mine1).includes(devToken.slice(0, 16)) && !JSON.stringify(mine1).includes(devRow.token_hash.slice(0, 16)), mine1);
+  t("another admin's devices are not mine to see or remove", (await t4.post(`/api/admin/accounts/me/devices/${devId}/remove`, {})).status === 404 && (await t4.get("/api/admin/accounts/me/devices")).json.devices.length === 0);
+  t("the floor and a manager reach none of it", (await floor.get("/api/admin/accounts/me/devices")).status === 403 && (await mgr.post(`/api/admin/accounts/me/devices/${devId}/remove`, {})).status === 403);
+  // the cap of ten: nine more rows, then a real eleventh sign-in removes the oldest
+  for (let i = 0; i < 9; i++) await q("INSERT INTO platform.admin_devices (account_id, token_hash, label, issued_at, expires_at, generation) VALUES ($1, $2, 'filler', now() + ($3 || ' seconds')::interval, now() + interval '20 days', $4)", [idB, crypto.createHash("sha256").update(`filler${i}`).digest("hex"), String(i + 1), await gBnow()]);
+  await freshSteps(BRENDAN);
+  const d11 = client();
+  const rd11 = await d11.post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: await codeFor(secretB, -1), remember: true });
+  t("(setup: an eleventh device)", rd11.status === 200 && rd11.json.remembered === true, rd11.text);
+  const live = (await q("SELECT id FROM platform.admin_devices WHERE account_id=$1 AND removed_at IS NULL ORDER BY id", [idB])).rows.map((r) => r.id);
+  t("ten at most: the oldest (the first one) was removed for it", live.length === 10 && !live.includes(devId) && (await q("SELECT removed_at FROM platform.admin_devices WHERE id=$1", [devId])).rows[0].removed_at !== null, live);
+  const rdGone = await d1.post("/login", { name: BRENDAN, password: "a-new-long-password-1" });
+  t("the removed device's browser gets the code step, and its cookie is cleared", rdGone.status === 200 && rdGone.json.need_code === true && /^sos_admin_device=; Path=\/login; .*Max-Age=0/.test(deviceCookie(rdGone)), [rdGone.text, deviceCookie(rdGone)]);
+  t("the refusal is on the record with why", (await events("device_refused")).some((e) => e.account_id === idB && e.detail.why === "removed"));
+  // expired: the row's time is up
+  const id11 = Number(deviceCookie(rd11).split("=")[1].split(".")[0]);
+  await q("UPDATE platform.admin_devices SET expires_at = now() - interval '1 second' WHERE id=$1", [id11]);
+  const rdExp = await d11.post("/login", { name: BRENDAN, password: "a-new-long-password-1" });
+  t("an expired row asks for the code and clears the cookie", rdExp.json.need_code === true && /Max-Age=0/.test(deviceCookie(rdExp)) && (await events("device_refused")).some((e) => e.detail.why === "expired"));
+  await q("DELETE FROM platform.admin_devices WHERE label='filler' OR id=$1", [id11]);
+  // sign out everywhere kills every device of the account
+  await freshSteps(BRENDAN);
+  const d3 = client();
+  t("(setup: a fresh device)", (await d3.post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: await codeFor(secretB, -1), remember: true })).json.remembered === true);
+  t("(it works)", (await d3.post("/login", { name: BRENDAN, password: "a-new-long-password-1" })).json.trusted === true);
+  await b3.post(`/api/admin/accounts/${idB}/signout`, {});
+  await sleep(200);
+  const rdSo = await d3.post("/login", { name: BRENDAN, password: "a-new-long-password-1" });
+  t("after sign out everywhere the device is refused (the generation moved), the cookie cleared, and the device is gone from the list", rdSo.json.need_code === true && /Max-Age=0/.test(deviceCookie(rdSo)) && (await events("device_refused")).some((e) => e.detail.why === "generation"));
+  await unlock(BRENDAN); await freshSteps(BRENDAN);
+  const b4 = client();
+  t("(signed in again with a code)", (await b4.post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: await codeFor(secretB, -1) })).json.ok === true);
+  t("the dead rows do not show in my devices, and the list counts none", (await b4.get("/api/admin/accounts/me/devices")).json.devices.length === 0 && (await b4.get("/api/admin/accounts")).json.accounts.find((a) => a.id === idB).devices === 0);
+  await q("DELETE FROM platform.admin_devices WHERE account_id=$1", [idB]);
+  // remove from the list asks for nothing; reset authenticator clears every device of that account
+  await freshSteps(BRENDAN);
+  const d4 = client();
+  const rd4 = await d4.post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: await codeFor(secretB, -1), remember: true });
+  const id4 = Number(deviceCookie(rd4).split("=")[1].split(".")[0]);
+  const rm4 = await b4.post(`/api/admin/accounts/me/devices/${id4}/remove`, {});
+  t("Remove on my list needs no code, and the browser gets the code step next time", rm4.status === 200 && (await d4.post("/login", { name: BRENDAN, password: "a-new-long-password-1" })).json.need_code === true && (await events("device_removed")).some((e) => e.detail.device === id4));
+  t("removing it twice is 404", (await b4.post(`/api/admin/accounts/me/devices/${id4}/remove`, {})).status === 404);
+  await freshSteps(BRENDAN);
+  const mk = await b4.post("/api/admin/accounts", { login: "device.e2e@anetix.test", display_name: "Device E2E", generate: true, code: await codeFor(secretB, -1) });
+  t("(setup: a throwaway admin)", mk.status === 200, mk.text);
+  const idD = mk.json.account.id;
+  const dv = client();
+  await dv.post("/login", { name: "device.e2e@anetix.test", password: mk.json.password });
+  const secretD = (await dv.post("/api/admin/accounts/me/enroll/start", {})).json.secret;
+  t("(setup: enrolled)", (await dv.post("/api/admin/accounts/me/enroll/verify", { code: await codeFor(secretD, -1) })).status === 200);
+  const dvr = await dv.post("/login", { name: "device.e2e@anetix.test", password: mk.json.password, code: await codeFor(secretD, 0), remember: true });
+  t("(setup: it trusted a browser)", dvr.json.remembered === true && (await q("SELECT count(*)::int AS n FROM platform.admin_devices WHERE account_id=$1", [idD])).rows[0].n === 1);
+  await freshSteps(BRENDAN);
+  t("reset authenticator clears every device of that account", (await b4.post(`/api/admin/accounts/${idD}/reset-factor`, { code: await codeFor(secretB, -1) })).status === 200 && (await q("SELECT count(*)::int AS n FROM platform.admin_devices WHERE account_id=$1", [idD])).rows[0].n === 0);
+  t("and the browser gets the code step (well, the setup: the account has no authenticator now)", (await dv.post("/login", { name: "device.e2e@anetix.test", password: mk.json.password })).json.enroll === true);
+  await q("INSERT INTO platform.admin_devices (account_id, token_hash, label, expires_at, generation) VALUES ($1, 'x', 'leftover', now() + interval '1 day', 1)", [idD]);
+  await b4.post(`/api/admin/accounts/${idD}/disable`, {}); await freshSteps(BRENDAN);
+  t("removing the account takes its device rows with it", (await b4.post(`/api/admin/accounts/${idD}/remove`, { code: await codeFor(secretB, -1) })).status === 200 && (await q("SELECT count(*)::int AS n FROM platform.admin_devices WHERE account_id=$1", [idD])).rows[0].n === 0);
+  await freshSteps(BRENDAN); await unlock(BRENDAN);
+  const b5 = client();
+  t("(Brendan signed in again for what follows)", (await b5.post("/login", { name: BRENDAN, password: "a-new-long-password-1", code: await codeFor(secretB, -1) })).json.ok === true);
 
   // ---- the backup file, and what module code's database login can see
-  const dump = (await b3.get("/api/admin/backup")).json;
+  const dump = (await b5.get("/api/admin/backup")).json;
+  t("the trusted devices never travel in the backup", dump.platform.admin_devices === undefined);
   t("the backup carries the accounts, their authenticators and recovery codes", dump.platform.accounts.length === 2 && dump.platform.account_factors.length === 2 && dump.platform.account_recovery_codes.length === 20);
   t("and not the sign-in log", dump.platform.auth_events === undefined);
   const flat = JSON.stringify(dump.platform.accounts) + JSON.stringify(dump.platform.account_factors) + JSON.stringify(dump.platform.account_recovery_codes);
@@ -289,7 +400,7 @@ async function main() {
     await role.end();
     t("module code's database login can read none of the four tables, and cannot write the log", denied.every(Boolean) && !wrote, denied);
   }
-  const log = (await b3.get("/api/admin/accounts")).json;
+  const log = (await b5.get("/api/admin/accounts")).json;
   t("the sign-in log on the admin page never carries a code, a secret or a password", log.events.length > 20 && ![secretB, secretT2, used, "a-new-long-password-1", pwB].some((s) => JSON.stringify(log.events).includes(s.replace(/ /g, ""))));
   t("the admin page is told the edge check is off here, and where this request came from", log.edge && log.edge.mode === "off" && typeof log.edge.client_ip === "string", log.edge);
 
@@ -304,9 +415,11 @@ async function main() {
 async function restore() {
   const S = JSON.parse(fs.readFileSync(STATE, "utf8"));
   await freshSteps(S.BRENDAN); await freshSteps(S.TAYLOR); await unlock(S.BRENDAN); await unlock(S.TAYLOR);
-  const { c: b, r } = await signIn(S.BRENDAN, S.pwB, await codeFor(S.secretB, -1));
-  t("(setup: signed in)", r.status === 200 && r.json.ok === true, r.text);
+  const b = client();
+  const r = await b.post("/login", { name: S.BRENDAN, password: S.pwB, code: await codeFor(S.secretB, -1), remember: true });
+  t("(setup: signed in, and this browser remembered)", r.status === 200 && r.json.ok === true && r.json.remembered === true, r.text);
   const doc = (await b.get("/api/admin/backup")).json;
+  t("the backup carries no trusted devices", doc.platform.admin_devices === undefined);
   const genBefore = (await q("SELECT generation FROM platform.accounts WHERE login=$1", [S.BRENDAN])).rows[0].generation;
   t("restore with no code is refused", (await b.post("/api/admin/restore", { backup: doc })).status === 403);
   // something that happens AFTER the backup was taken: the other admin is signed out everywhere
@@ -319,6 +432,8 @@ async function restore() {
   await waitFor("the platform to come back", async () => { try { const h = await (await fetch("http://127.0.0.1:3999/health")).json(); return h.boot !== boot; } catch (e) { return false; } }, 90000);
   await sleep(1500);
   t("every admin signs in again after a restore", (await b.get("/api/admin/overview")).status === 401);
+  const afterRs = await b.post("/login", { name: S.BRENDAN, password: S.pwB });
+  t("a browser trusted before the restore gets the code step after it: no device row survives a restore", afterRs.json.need_code === true && (await q("SELECT count(*)::int AS n FROM platform.admin_devices")).rows[0].n === 0, afterRs.text);
   const gens = (await q("SELECT login, generation FROM platform.accounts ORDER BY id")).rows;
   t("generations end up above both the file's and what the instance had, so a signed-out session stays dead", gens.find((g) => g.login === S.BRENDAN).generation > genBefore && gens.find((g) => g.login === S.TAYLOR).generation > genT, [gens, genBefore, genT]);
   await freshSteps(S.BRENDAN); await freshSteps(S.TAYLOR);

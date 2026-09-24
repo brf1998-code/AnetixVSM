@@ -21,12 +21,32 @@
 // 4 to 8 digits, stored as scrypt hashes; five wrong tries lock that name for
 // five minutes; a reset or a switch-off signs the person out everywhere
 // (generation). Names are unique per company, case aside.
+//
+// How long a name stays on a device (2026-09-24, with the session windows in
+// src/auth.js): the cookie slides. It carries when the PIN was typed (issued)
+// and when it was last refreshed; it holds while the last refresh is inside
+// SOS_PERSON_IDLE_HOURS (168, a week) and the PIN was typed inside
+// SOS_PERSON_CAP_HOURS (720, 30 days; 0 = no cap), and any request past half
+// the idle window hands it back refreshed. Before this it died 12 hours after
+// the PIN was typed, whatever the person was in the middle of. The cost on a
+// shared tablet: Friday's name is still on it on Monday, which is why the name
+// is shown wherever a person acts (the feedback button carries it, the panel
+// says "Sending as Maria, not you?", the board has the chip). SOS_PERSON_HOURS
+// is no longer read.
+//
+// Approvals stay fresh even so: SOS_APPROVAL_PIN_HOURS (12; 0 = off). A
+// manager approving something toward the floor with a name whose PIN was typed
+// longer ago than that is asked for the PIN again on the approval itself
+// (requireFreshPin, on the routes that move a change toward the floor).
+// Feedback attribution stays loose; approvals do not.
 const crypto = require("crypto");
 const { q } = require("./db");
 const auth = require("./auth");
 
 const COOKIE = "sos_person";
-const HOURS = Number(process.env.SOS_PERSON_HOURS || 12);
+const WINDOW = { idle: auth.hoursVar("SOS_PERSON_IDLE_HOURS", 168), cap: auth.hoursVar("SOS_PERSON_CAP_HOURS", 720, { zeroOk: true }) };
+const APPROVAL_PIN_HOURS = auth.hoursVar("SOS_APPROVAL_PIN_HOURS", 12, { zeroOk: true });
+if (process.env.SOS_PERSON_HOURS !== undefined) console.warn("[people] SOS_PERSON_HOURS is no longer read (the person cookie slides since 2026-09-24: SOS_PERSON_IDLE_HOURS / SOS_PERSON_CAP_HOURS). Take it out of Railway.");
 const MAX_TRIES = 5, LOCK_MINUTES = 5;
 const ROLES = ["floor", "lead", "manager"];
 
@@ -93,19 +113,40 @@ async function setActive(company, id, active) {
 }
 
 // ---- the person cookie ------------------------------------------------------------------------
-function sign(p) {
-  const payload = `p.${p.id}.${p.company}.${p.generation}.${Date.now().toString(36)}`;
+// p.<id>.<company>.<generation>.<issued>.<refreshed>.<mac>; `times` carries a cookie on with the same issued.
+function sign(p, times, now = Date.now()) {
+  const issued = times && Number.isFinite(times.issued) ? times.issued : now;
+  const refreshed = times && Number.isFinite(times.refreshed) ? times.refreshed : now;
+  const payload = `p.${p.id}.${p.company}.${p.generation}.${issued.toString(36)}.${refreshed.toString(36)}`;
   return `${payload}.${auth.hmac(payload)}`;
 }
-function verify(token) {
+// Pure: good now? Same rules as the session cookie (src/auth.js alive), under this cookie's own windows.
+function alive(issued, refreshed, now = Date.now()) {
+  if (!Number.isFinite(issued) || !Number.isFinite(refreshed)) return false;
+  if (issued > now || refreshed > now || refreshed < issued) return false;
+  if (now - refreshed > WINDOW.idle * 3600e3) return false;
+  if (WINDOW.cap && now - issued > WINDOW.cap * 3600e3) return false;
+  return true;
+}
+const refreshDue = (refreshed, legacy, now = Date.now()) => legacy || now - refreshed > (WINDOW.idle * 3600e3) / 2;
+function maxAgeFor(issued, now = Date.now()) {
+  let s = WINDOW.idle * 3600;
+  if (WINDOW.cap) s = Math.min(s, (issued + WINDOW.cap * 3600e3 - now) / 1000);
+  return Math.max(60, Math.round(s));
+}
+// -> { id, company, gen, issued, refreshed, refresh, legacy } or null. Six parts is the shape from before sliding
+// windows (one time, counted as both); seven is the current one.
+function verify(token, now = Date.now()) {
   const parts = String(token || "").split(".");
-  if (parts.length !== 6 || parts[0] !== "p") return null;
-  const [, id, company, gen, ts, mac] = parts;
-  const expect = auth.hmac(`p.${id}.${company}.${gen}.${ts}`);
+  if ((parts.length !== 6 && parts.length !== 7) || parts[0] !== "p") return null;
+  const legacy = parts.length === 6;
+  const [, id, company, gen, ts1] = parts, ts2 = legacy ? ts1 : parts[5], mac = parts[parts.length - 1];
+  const expect = auth.hmac(legacy ? `p.${id}.${company}.${gen}.${ts1}` : `p.${id}.${company}.${gen}.${ts1}.${ts2}`);
   if (mac.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
-  const age = Date.now() - parseInt(ts, 36);
-  if (!Number.isFinite(age) || age < 0 || age > HOURS * 3600e3) return null;
-  return { id: Number(id), company, gen: Number(gen) };
+  if (!/^[0-9a-z]{1,12}$/.test(ts1) || !/^[0-9a-z]{1,12}$/.test(ts2)) return null;
+  const issued = parseInt(ts1, 36), refreshed = parseInt(ts2, 36);
+  if (!alive(issued, refreshed, now)) return null;
+  return { id: Number(id), company, gen: Number(gen), issued, refreshed, legacy, refresh: refreshDue(refreshed, legacy, now) };
 }
 const gens = new Map();   // id -> { row, at }: ten seconds, so a reset signs a person out almost at once without a query per request
 async function current(id) {
@@ -116,8 +157,9 @@ async function current(id) {
 }
 const cookieHeader = (req, value, maxAge) => `${COOKIE}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly${(req.headers["x-forwarded-proto"] || req.protocol) === "https" ? "; Secure" : ""}`;
 
-// Middleware, after auth.middleware: who is standing at this device, if anyone.
-async function attach(req, _res, next) {
+// Middleware, after auth.middleware: who is standing at this device, if anyone. A cookie that verifies and is
+// past half its idle window (or in the old shape) goes back refreshed, with the same issued.
+async function attach(req, res, next) {
   try {
     const tok = auth.parseCookies(req)[COOKIE];
     const v = tok && verify(tok);
@@ -125,10 +167,26 @@ async function attach(req, _res, next) {
       const p = await current(v.id);
       // the person belongs to the company this device is signed in to (an admin session may carry any)
       const sessionOk = !req.sosCompany || req.sosCompany === auth.ALL || req.sosCompany === v.company;
-      if (p && p.active && p.generation === v.gen && p.company === v.company && sessionOk) { req.sosPerson = p.name; req.sosPersonId = p.id; req.sosPersonCompany = p.company; req.sosPersonRole = p.role; }
+      if (p && p.active && p.generation === v.gen && p.company === v.company && sessionOk) {
+        req.sosPerson = p.name; req.sosPersonId = p.id; req.sosPersonCompany = p.company; req.sosPersonRole = p.role; req.sosPersonSince = v.issued;
+        if (v.refresh) { const now = Date.now(); res.append("Set-Cookie", cookieHeader(req, sign(p, { issued: v.issued, refreshed: now }, now), maxAgeFor(v.issued, now))); }
+      }
     }
   } catch (e) { /* a bad cookie is nobody */ }
   next();
+}
+// Pure: was this person's PIN typed recently enough for an approval? Nobody signed in, or the check switched off,
+// passes: the device's own login still decides what it may do.
+function pinFresh(since, now = Date.now()) {
+  if (!APPROVAL_PIN_HOURS || !since) return true;
+  return now - since <= APPROVAL_PIN_HOURS * 3600e3;
+}
+// Middleware for the routes that move a change toward the floor (approve, confirm, deploy, switch, roll back):
+// a signed-in name whose PIN is older than SOS_APPROVAL_PIN_HOURS is asked for it again, on the approval itself.
+// The page opens the PIN pad for that name and sends the action again; the fresh sign-in re-issues the cookie.
+function requireFreshPin(req, res, next) {
+  if (!req.sosPersonId || pinFresh(req.sosPersonSince)) return next();
+  res.status(401).json({ error: `${req.sosPerson}, tap your PIN again to approve this (it was typed more than ${APPROVAL_PIN_HOURS} hour${APPROVAL_PIN_HOURS === 1 ? "" : "s"} ago)`, pin_again: true, person: { id: req.sosPersonId, name: req.sosPerson } });
 }
 // Name and PIN -> the cookie. Wrong tries lock the name for a few minutes.
 async function signIn(req, res, company, id, pin) {
@@ -141,10 +199,11 @@ async function signIn(req, res, company, id, pin) {
     throw Object.assign(new Error(tries >= MAX_TRIES ? `that is ${MAX_TRIES} wrong tries: this name is locked for ${LOCK_MINUTES} minutes` : "wrong PIN"), { status: 401 });
   }
   await q("UPDATE platform.people SET failed_tries=0, locked_until=NULL, last_seen_at=now() WHERE id=$1", [p.id]);
-  res.append("Set-Cookie", cookieHeader(req, sign(p), HOURS * 3600));
+  const now = Date.now();
+  res.append("Set-Cookie", cookieHeader(req, sign(p, null, now), maxAgeFor(now, now)));
   return publicRow(p);
 }
 function signOut(req, res) { res.append("Set-Cookie", cookieHeader(req, "", 0)); }
 async function deleteCompany(company) { await q("DELETE FROM platform.people WHERE company=$1", [company]); }
 
-module.exports = { init, SCHEMA, COOKIE, list, add, get, resetPin, setActive, signIn, signOut, attach, sign, verify, makePin, validPin, cleanName, deleteCompany, ROLES };
+module.exports = { init, SCHEMA, COOKIE, list, add, get, resetPin, setActive, signIn, signOut, attach, sign, verify, alive, refreshDue, maxAgeFor, pinFresh, requireFreshPin, WINDOW, APPROVAL_PIN_HOURS, makePin, validPin, cleanName, deleteCompany, ROLES };
