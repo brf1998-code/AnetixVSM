@@ -96,6 +96,7 @@ window.Intake = (() => {
   }
   function onKey(e) { if (e.key === "Escape") close(); }
   async function close() {
+    if (window.Dictate && ROOT) Dictate.stop(ROOT);
     await flush();
     if (POLL) { clearInterval(POLL); POLL = null; }
     document.removeEventListener("keydown", onKey);
@@ -162,9 +163,12 @@ window.Intake = (() => {
   function counter(el) {
     if (!el || !el.getAttribute || !el.getAttribute("maxlength")) return;
     const max = Number(el.getAttribute("maxlength")), len = (el.value || "").length;
-    let c = el.nextElementSibling && el.nextElementSibling.classList && el.nextElementSibling.classList.contains("ik-count") ? el.nextElementSibling : null;
+    // the talk button (dictate.js) sits right under a box; the counter goes under that
+    const mic = el.nextElementSibling && el.nextElementSibling.classList && el.nextElementSibling.classList.contains("sos-dictate") ? el.nextElementSibling : null;
+    const after = mic || el;
+    let c = after.nextElementSibling && after.nextElementSibling.classList && after.nextElementSibling.classList.contains("ik-count") ? after.nextElementSibling : null;
     if (len < max * 0.8) { if (c) c.remove(); return; }
-    if (!c) { c = document.createElement("div"); c.className = "ik-count"; el.insertAdjacentElement("afterend", c); }
+    if (!c) { c = document.createElement("div"); c.className = "ik-count"; after.insertAdjacentElement("afterend", c); }
     c.textContent = len >= max ? `This box is full (${max} characters). Shorten it, or put the rest in the next answer.` : `${max - len} characters left`;
     c.classList.toggle("full", len >= max);
   }
@@ -176,6 +180,7 @@ window.Intake = (() => {
   const progressPct = () => (MODE === "q" ? Math.round(100 * (V.round_answered / Math.max(1, V.round_total))) : MODE === "think" ? 100 : 100);
   function render() {
     if (!ROOT || !V) return;
+    if (window.Dictate) Dictate.stop(ROOT);   // the box being listened to is about to be redrawn; keep what was heard
     let body = "", foot = "";
     if (MODE === "q") { body = questionHtml(cur()); foot = questionFoot(); }
     else if (MODE === "think") { body = `<div class="ik-think"><div class="ik-spin"></div><b>Fable is reading your answers${V.attachments && V.attachments.length ? " and the files you attached" : ""}.</b><div class="ik-hint" style="margin-top:8px">${V.rounds_generated || V.enough ? "Writing the design summary." : "Deciding whether it needs to ask anything else, or can write the design."} This takes a minute or two. You can close this and come back; the card on the board shows when it is ready.</div></div>`; foot = `<span class="ik-sp"></span><button class="quiet" onclick="Intake.close()">Close for now</button>`; }
@@ -194,6 +199,8 @@ window.Intake = (() => {
       <div class="ik-bar"><i style="width:${progressPct()}%"></i></div>
       <div class="ik-body">${body}${ERR ? `<div class="ik-err">${esc(ERR)}</div>` : ""}${V.error && MODE !== "think" ? `<div class="ik-err">Last time Fable was asked, it did not finish: ${esc(V.error)}. Try again below.</div>` : ""}</div>
       <div class="ik-foot">${foot}</div></div></div>`;
+    // every answer box can be talked into instead of typed (dictate.js); the words save like typing does
+    if (window.Dictate) Dictate.scan(ROOT, ".ik-body textarea");
     for (const el of ROOT.querySelectorAll("[maxlength]")) counter(el);
     const f = ROOT.querySelector(".ik-body textarea, .ik-body input[type=text]");
     if (f && MODE === "q" && window.innerWidth > 640) f.focus();

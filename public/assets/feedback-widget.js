@@ -37,7 +37,25 @@
     '<button id="fbw-send" style="margin:10px 0 0!important;width:100%!important;min-height:0!important;background:#2e7d4f!important;color:#fff!important;border:none!important;border-radius:6px!important;padding:11px!important;font-size:14px!important;font-weight:700!important;cursor:pointer">Send</button>' +
     '<div id="fbw-done" style="display:none;color:#2e7d4f;font-size:13px;margin-top:8px">' + (toAnetix ? "Sent to Anetix. You can follow it under My requests." : "Sent. It goes straight on the improvement board.") + '</div>';
 
-  btn.onclick = () => { panel.style.display = panel.style.display === "none" ? "block" : "none"; };
+  btn.onclick = () => {
+    const open = panel.style.display === "none";
+    if (!open) stopTalk(panel);
+    panel.style.display = open ? "block" : "none";
+  };
+
+  // Talk instead of typing (assets/dictate.js): a mic button under each box the
+  // person writes in. The board loads dictate.js itself; module pages only get
+  // this widget injected, so it fetches the helper (same origin, so the module
+  // page policy's script-src 'self' allows it). Where the browser cannot do
+  // speech (Firefox) no button appears.
+  function withTalk(cb) {
+    if (window.Dictate) return cb(window.Dictate);
+    let s = document.querySelector("script[data-sos-dictate]");
+    if (!s) { s = document.createElement("script"); s.src = "/assets/dictate.js"; s.setAttribute("data-sos-dictate", "1"); document.head.appendChild(s); }
+    s.addEventListener("load", () => { if (window.Dictate) cb(window.Dictate); });
+  }
+  function talkInto(el) { if (el) withTalk((D) => D.attach(el)); }
+  function stopTalk(within) { if (window.Dictate) window.Dictate.stop(within); }
 
   function banner(text, color) {
     const news = document.getElementById("sos-news"); if (news) news.remove();   // one message at the top at a time
@@ -430,12 +448,14 @@
       const go = document.createElement("button"); go.textContent = "Send"; go.setAttribute("data-send", "1"); go.style.cssText = smallBtn("#2e7d4f", "#fff");
       const back = document.createElement("button"); back.textContent = "Back"; back.style.cssText = smallBtn("#e5e9ee", "#1c242e"); back.onclick = ask;
       go.onclick = async () => {
+        stopTalk(box);
         const what = box.querySelector("[data-still]").value.trim(), err = box.querySelector("[data-err]");
         if (what.length < 3) { err.textContent = "A few words on what is still off."; return; }
         const j = await send({ answer: "not_quite", what }, err);
         if (j) { banner("Sent. It is back on the board as #" + j.follow_up.id + ", tied to your first request.", "#1f3a5f"); done(j); }
       };
       row.appendChild(go); row.appendChild(back); box.appendChild(row);
+      talkInto(box.querySelector("[data-still]"));
       setTimeout(() => { const ta = box.querySelector("[data-still]"); if (ta) ta.focus(); }, 0);
     };
     ask();
@@ -558,8 +578,8 @@
       e.preventDefault(); own.remove();
       const ta = document.createElement("textarea"); ta.rows = 2; ta.maxLength = 500; ta.setAttribute("data-own-text", "1"); ta.style.cssText = "width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font:14px system-ui,sans-serif;box-sizing:border-box;margin-top:4px";
       const go = document.createElement("button"); go.textContent = "Send"; go.setAttribute("data-own-send", "1"); go.style.cssText = smallBtn("#2e7d4f", "#fff") + ";margin-top:6px";
-      go.onclick = () => { const v = ta.value.trim(); if (!v) { err.textContent = "A few words."; return; } send(v); };
-      box.insertBefore(ta, err); box.insertBefore(go, err); ta.focus();
+      go.onclick = () => { stopTalk(box); const v = ta.value.trim(); if (!v) { err.textContent = "A few words."; return; } send(v); };
+      box.insertBefore(ta, err); box.insertBefore(go, err); talkInto(ta); ta.focus();
     };
     box.appendChild(own); box.appendChild(err);
     return box;
@@ -644,6 +664,7 @@
     if (document.getElementById("fbw-send")) return;
     document.body.appendChild(btn);
     document.body.appendChild(panel);
+    talkInto(panel.querySelector("#fbw-msg"));
     watchVersion();
     drawExtras();
     loadWho();
@@ -651,6 +672,7 @@
     const nameEl = panel.querySelector("#fbw-name");
     try { nameEl.value = localStorage.getItem("sos.name") || ""; } catch (e) {}
     panel.querySelector("#fbw-send").onclick = async () => {
+      stopTalk(panel);   // keep the words still being heard, and let go of the microphone before sending
       const msg = panel.querySelector("#fbw-msg").value.trim();
       if (!msg) return;
       try { localStorage.setItem("sos.name", nameEl.value); } catch (e) {}

@@ -1571,6 +1571,28 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   intake router is mounted before the platform router because the attach
   route parses a bigger JSON body. Spend goes to `ai_usage` as kinds `intake`
   and `design`.
+- **Talk instead of typing** (2026-09-24, `public/assets/dictate.js`): a mic
+  button under every answer box in the module creation popout and under the
+  three boxes of the feedback widget (the message, "What is still off?", and
+  "Say it in my own words"). Version 1 uses the browser's own speech
+  recognition (Web Speech API): free and no server route, but Chrome sends
+  audio to Google and Safari to Apple, and Firefox has none (no button shows
+  there). Before a defense or CMMC customer, swap this one file for a
+  record-and-transcribe-on-our-server version; callers only use
+  `Dictate.attach(el)`, `Dictate.scan(root, selector)` and
+  `Dictate.stop(within)`. Words land as they are heard and fire an untrusted
+  `input` event, so the popout's save and counter run as for typing; a
+  trusted keystroke in the box stops listening. `stop(within)` keeps the words
+  still in flight and cuts the mic; the popout calls it at the top of
+  `render()` and in `close()`, the widget before every Send and when the
+  panel closes. It also stops on its own when the box leaves the page, the
+  tab is hidden, or after 3 minutes. The board loads the file with a script
+  tag; on module pages the widget adds it itself (same origin, so the page
+  policy's `script-src 'self'` covers it; speech recognition is not a
+  `connect-src` request). The popout's character counter sits under the mic
+  row (`counter()` skips `.sos-dictate`). Not yet checked on the live site:
+  the mic prompt on a module page under the policy's `sandbox` directive, and
+  plant noise.
 - **Module filter** (2026-09-17, `public/index.html`): with more than one
   module, each module card's title in the strip is a toggle and an "All
   modules" chip sits in front. `SEL` (a Set of module names, null = all) is
