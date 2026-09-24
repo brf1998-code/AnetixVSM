@@ -280,6 +280,11 @@ function arrivalLine(a) {
   if (a.flagged) parts.push(`${a.flagged} flagged`);
   return parts.length ? `<br><small>${parts.join(" · ")}</small>` : "";
 }
+// The test campaigns (src/campaign.js), only where a company ran any: passed, failed, deployed anyway, skipped, and the guided steps
+function campaignsCell(k) {
+  if (!k || !(k.proposed || k.passed || k.failed || k.skipped)) return "";
+  return `<br><small title="Test campaigns on the test floor: proposed / passed / failed / deployed anyway / skipped; guided steps seen by the platform, done by hand, not right">campaigns ${k.passed} passed, ${k.failed} failed${k.waived ? `, <span class="warn">${k.waived} deployed anyway</span>` : ""}${k.skipped ? `, ${k.skipped} skipped` : ""}${k.steps_seen || k.steps_by_hand || k.steps_not_right ? `<br>steps ${k.steps_seen} seen, ${k.steps_by_hand} by hand${k.steps_not_right ? `, <span class="warn">${k.steps_not_right} not right</span>` : ""}` : ""}</small>`;
+}
 function healthRow(c) {
   const stops = c.builds.stops, nstops = stops.gate + stops.reviewer + stops.tests + stops.other;
   const waiting = c.decisions.waiting + c.builds.waiting_deploy + c.builds.waiting_confirm;
@@ -289,7 +294,7 @@ function healthRow(c) {
     <td>${c.feedback.filed}${arrivalLine(c.arrival)}</td>
     <td>${c.feedback.open}${c.feedback.open ? `<br><small>oldest ${hrs(c.feedback.oldest_open_hours)}</small>` : ""}</td>
     <td class="${waiting || c.decisions.waiting_data ? "warn" : ""}">${waiting}${waiting ? `<br><small>${c.decisions.waiting} to decide${c.decisions.waiting ? ` (oldest ${hrs(c.decisions.oldest_waiting_hours)})` : ""}<br>${c.builds.waiting_confirm} to confirm, ${c.builds.waiting_deploy} to deploy</small>` : ""}${c.decisions.waiting_data ? `<br><small class="warn">${c.decisions.waiting_data} on us (ERP data, oldest ${hrs(c.decisions.oldest_waiting_data_hours)})</small>` : ""}</td>
-    <td><b>${c.builds.shipped}</b>${c.builds.rolled_back ? `<br><small class="warn">${c.builds.rolled_back} rolled back</small>` : ""}${c.builds.cancelled ? `<br><small>${c.builds.cancelled} cancelled</small>` : ""}${answersCell(c.answers)}</td>
+    <td><b>${c.builds.shipped}</b>${c.builds.rolled_back ? `<br><small class="warn">${c.builds.rolled_back} rolled back</small>` : ""}${c.builds.cancelled ? `<br><small>${c.builds.cancelled} cancelled</small>` : ""}${answersCell(c.answers)}${campaignsCell(c.builds.campaigns)}</td>
     <td>${pct(c.floor.same_shift, c.floor.n)}${c.floor.n ? `<br><small>${c.floor.same_shift} of ${c.floor.n}</small>` : ""}</td>
     <td>${hrs(c.floor.median_hours)}${c.floor.n > 1 ? `<br><small>p90 ${hrs(c.floor.p90_hours)}</small>` : ""}</td>
     <td>${hrs(c.decisions.wait_median_hours)}${c.floor.deploy_wait_n ? `<br><small>then ${hrs(c.floor.deploy_wait_median_hours)} to deploy</small>` : ""}</td>
@@ -580,6 +585,7 @@ function companyCard(c) {
       <div class="sec"><h3>AI budget and models</h3>${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "No budget of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}<br>
         <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="width:150px;margin-top:6px"> <button class="quiet" onclick="setCap('${c.slug}')">Save</button>
         <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(${(c.models.pinned || []).length ? `pinned here: ${c.models.pinned.join(", ")}; ` : "all on the platform's models; "}change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
+      <div class="sec"><h3>Test floor</h3>${testFloorHtml(c)}</div>
       <div class="sec wide"><h3>Brand</h3>${brandHtml(c)}</div>
       <div class="sec"><h3>Agent docs</h3>${c.docs.length ? `<details><summary>${c.docs.length} doc${c.docs.length === 1 ? "" : "s"} the agents read</summary><ul>` + c.docs.map(d => `<li>${esc(d.name)} <span class="sub">(${d.module ? "module " + esc(d.module) : "company-wide"}, ${d.bytes} bytes, ${d.source === "repo" ? "seeded" : "edited"})</span></li>`).join("") + `</ul></details>` : "None."}
         <div class="sub" style="margin-top:6px">Read and edit them on <a href="/c/${c.slug}/agents">agent settings and docs</a>.</div></div>
@@ -587,6 +593,28 @@ function companyCard(c) {
         <button class="danger" onclick="openDelete('${c.slug}', '${esc(c.name)}')">Delete company</button></div>
     </div>
   </div>`;
+}
+// The test floor (docs/TEST-ENVIRONMENT.md): a third lane where every tool runs together on data that is not the
+// floor's, and where a build gets its test campaign. Off by default; not every company has it.
+function testFloorHtml(c) {
+  const t = c.test_floor && D.testFloors && D.testFloors[c.slug];
+  if (!c.test_floor) return `<span class="sub">Off. Every tool of the company together on data that is not the floor's, and a test campaign on every build before it goes on the floor.</span><br><button class="quiet" onclick="testFloor('${c.slug}', true)">Switch on</button>`;
+  const up = t ? t.modules.filter((m) => m.up) : [];
+  const under = t ? t.modules.filter((m) => m.under_test) : [];
+  return `<b>On.</b> ${up.length} tool${up.length === 1 ? "" : "s"} up${under.length ? ` (${under.map((m) => `${esc(m.title)} on version ${m.test_version} under test`).join(", ")})` : ""}.<br>
+    <span class="sub">Data: ${t && t.data_source === "made" ? `a made-up set${t.made_note ? ` (${esc(t.made_note)})` : ""}` : "a copy of the floor's"}${t && t.built_at ? `, put back ${new Date(t.built_at).toLocaleString()}` : ""}.</span><br>
+    ${up.map((m) => `<a href="/c/${c.slug}/test/m/${m.name}/" style="margin-right:8px">Open ${esc(m.title)}</a>`).join("")}<br>
+    <button class="quiet" onclick="resetTestFloor('${c.slug}')">Put the data back</button> <button class="quiet" onclick="testFloor('${c.slug}', false)">Switch off</button>`;
+}
+async function testFloor(slug, on) {
+  if (!on && !confirm("Switch the test floor off? Its data is thrown away (the floor is not touched). Builds waiting at their test campaign go on to the deploy gate. Campaign history stays.")) return;
+  await post(`/api/admin/companies/${slug}/test-floor`, { on });
+  load();
+}
+async function resetTestFloor(slug) {
+  if (!confirm("Put the test floor's data back? Everything done there since is thrown away.")) return;
+  await post(`/api/c/${slug}/test-floor/reset`, {});
+  load();
 }
 function brandHtml(c) {
   const b = c.brand;

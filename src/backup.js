@@ -21,6 +21,7 @@ const PLATFORM_TABLES = [
   "module_intakes", "attachments", "check_labels", "check_replays", "record",
   "connections", "connection_uploads", "print_jobs", "erp_cache", "data_requests", "people", "check_retirements", "ai_credit",
   "model_arms", "assessments", "assessment_trials", "assessment_picks",
+  "test_floors",   // the test floor's switch state and data set (src/testfloor.js); its tst_ tables are a copy and are rebuilt at boot, never dumped
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under
@@ -105,7 +106,7 @@ async function restore(doc) {
   try {
     await client.query("BEGIN");
     // module schemas: drop live, staging and snapshots, rebuild live from the backup's DDL
-    const existing = (await client.query("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'mod\\_%' OR nspname LIKE 'stg\\_%' OR nspname LIKE 'snap\\_%'")).rows.map((r) => r.nspname);
+    const existing = (await client.query("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'mod\\_%' OR nspname LIKE 'stg\\_%' OR nspname LIKE 'snap\\_%' OR nspname LIKE 'tst\\_%'")).rows.map((r) => r.nspname);
     for (const s of existing) await client.query(`DROP SCHEMA ${s} CASCADE`);
     for (const [schema, body] of Object.entries(doc.schemas || {})) {
       if (!/^mod_[a-z0-9_]+$/i.test(schema)) throw new Error(`bad schema name in backup: ${schema}`);

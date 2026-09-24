@@ -187,6 +187,43 @@ function put(company, mod, version, code, mani) {
     t("evil's own tool recovers after the loop is ended", [200, 404, 503].includes(after.status), after.status);
   }
 
+  // ---- the test floor (docs/TEST-ENVIRONMENT.md): a third lane, a third login, one world of its own
+  {
+    const vdir = (m) => path.join(process.env.MODULES_DIR, "evil", m, "versions", "1");
+    await migrate.buildTestSchema("evil", "sibling", vdir("sibling"), { source: "floor" });
+    await migrate.buildTestSchema("evil", "tool", vdir("tool"), { source: "floor" });
+    await registry.mountTest("evil", "sibling", 1);
+    await registry.mountTest("evil", "tool", 1);
+    await migrate.rebuildStagingClone("evil", "tool"); await dbroles.grant("evil", "tool");   // a preview's tables, so the test login can be shown to miss them
+    const T = (p) => call("/c/evil/test/m/tool" + p);
+    t("the hostile tool answers on the test floor with the floor's rows copied", (G(await T("/sql?q=" + encodeURIComponent("SELECT secret FROM thing"))) || [{}])[0].secret === "evil-tool-row");
+    t("it runs as a process of its own for the test lane", runner.status().processes.some((p) => p.company === "evil" && p.lane === "test" && p.up));
+    t("it writes its own test rows", (await T("/sql?q=" + encodeURIComponent("INSERT INTO thing (secret) VALUES ('test-only') RETURNING id"))).json.ok !== false);
+    t("and the floor never sees them", !(G(await call("/c/evil/m/tool/sql?q=" + encodeURIComponent("SELECT secret FROM thing"))) || []).some((r) => r.secret === "test-only"));
+    for (const [what, schema] of [["the floor's tables", evilLive], ["the preview's tables", "stg_evil_tool"], ["another company's tables", victimLive], ["the platform's tables", "platform.companies"]]) {
+      const r = await T("/sql?q=" + encodeURIComponent(`SELECT 1 FROM ${schema === "platform.companies" ? schema : schema + ".thing"}`));
+      t("from the test floor, " + what + " are out of reach by name", refused(r) && /permission denied|42501/.test(r.json.why), r.json);
+    }
+    const fromLive = await call("/c/evil/m/tool/sql?q=" + encodeURIComponent("SELECT 1 FROM tst_evil_tool.thing"));
+    t("and the floor's tool cannot reach the test floor's tables by name", refused(fromLive) && /permission denied|42501/.test(fromLive.json.why), fromLive.json);
+    // one world: a test tool's peer read is the sibling's TEST copy
+    await T("/sql?q=" + encodeURIComponent("INSERT INTO tst_evil_sibling.thing (secret) VALUES ('sibling-test-row')"));
+    const sibT = G(await T("/peer?m=sibling&q=" + encodeURIComponent("SELECT secret FROM thing ORDER BY id"))) || [];
+    const sibL = G(await call("/c/evil/m/tool/peer?m=sibling&q=" + encodeURIComponent("SELECT secret FROM thing ORDER BY id"))) || [];
+    t("ctx.peer on the test floor reads the sibling's test copy", sibT.some((r) => r.secret === "sibling-test-row"), sibT);
+    t("ctx.peer on the floor still reads the floor's sibling and not the test copy", sibL.length && !sibL.some((r) => r.secret === "sibling-test-row"), sibL);
+    const asTest = await T("/own-pool?url=" + encodeURIComponent(evilRoleUrl("test")) + "&q=" + encodeURIComponent("SELECT 1 FROM " + evilLive + ".thing"));
+    t("a Pool built by hand with the test login reaches no further", refused(asTest) && /permission denied|42501/.test(asTest.json.why), asTest.json);
+    const who = (await T("/who")).json;
+    t("the visitor's session is stripped on the test lane too", who && !who.cookie && !who.runner && who.company === "evil", who);
+    await registry.unmountTest("evil", "tool");
+    await registry.unmountTest("evil", "sibling");
+    await sleep(300);
+    t("unmounted, the test path is gone and the test process with it", (await call("/c/evil/test/m/tool/api/state")).status === 404 && !runner.status().processes.some((p) => p.company === "evil" && p.lane === "test" && p.up));
+    t("the floor's tool is untouched by any of it", (await call("/c/evil/m/tool/sql?q=" + encodeURIComponent("SELECT 1 AS x"))).status === 200);
+    await migrate.dropTestSchema("evil", "tool"); await migrate.dropTestSchema("evil", "sibling");
+  }
+
   srv.close();
   runner.stopAll();
   await dbroles.dropCompany("evil").catch(() => {});

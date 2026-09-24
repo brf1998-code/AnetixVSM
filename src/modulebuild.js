@@ -338,6 +338,7 @@ async function advance(runId) {
       const findings = ev.fix_round && ev.findings
         ? (ev.gate && ev.gate.ok === false ? `\n\n${ev.findings}`
           : ev.findings_from === "checks" ? `\n\nThe platform ran its checks against your previous attempt in this directory and these did not pass. Fix exactly these, keep everything else as it is:\n${ev.findings}`
+          : ev.findings_from === "campaign" ? `\n\nThe manager's test campaign ran against your previous attempt in this directory, on the company's test floor beside its other tools, and these did not pass. Fix exactly these, keep everything else as it is:\n${ev.findings}`
           : `\n\nAn independent reviewer looked at your previous attempt in this directory and found these problems. Fix exactly these, keep everything else as it is:\n${ev.findings}`)
         : "";
       const ctl = new AbortController();
@@ -457,9 +458,8 @@ Rules for this build:
       await P.setRun(runId, { evidence: { ...cur.evidence, test_run: { ok: ok.ok, checked: ok.checked || [], detail: ok.detail || undefined }, checks: ok } });
       if (!ok.ok) { await record("check_verdict", { company, module: slug, actor: "platform", run_id: runId, version: cur.to_version, after: ok.detail, detail: { by: "platform tests", verdict: "fail", kind: ok.kind } }); throw new Error(`internal tests failed: ${ok.detail}`); }
       await P.recordAdded(cur, ok);
-      await P.setRun(runId, { step: "await_deploy", status: "waiting" });
       await P.log(runId, { step: "test_run", note: `${P.checksLine(ok)}; ready for the manager` });
-      return;
+      return P.toGate(runId);
     }
   } catch (e) {
     await P.failRun(runId, e);

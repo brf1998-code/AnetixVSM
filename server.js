@@ -38,6 +38,8 @@ async function main() {
   await require("./src/datacheck").init();   // the review-time check that a change's ERP data is available, and the admin's data requests
   await require("./src/assess").init();      // which model is the baseline: the head-to-head assessment and the live A/B arms (/admin#models)
   await require("./src/requests").init();    // requests to Anetix: feedback about the software itself, and the way back to whoever sent it
+  await require("./src/testfloor").init();   // the test floor: a third lane per company, switched on by the admin (docs/TEST-ENVIRONMENT.md)
+  await require("./src/campaign").init();    // the test campaign: proposed by the AI, approved by the manager, run on the test floor, a step before the deploy gate
 
   const app = express();
   app.disable("x-powered-by");
@@ -100,20 +102,29 @@ async function main() {
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
+  app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
+  app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*
-  registry.attach(app);      // /c/:slug/m/:module and /c/:slug/staging/m/:module
+  registry.attach(app);      // /c/:slug/m/:module, /c/:slug/staging/m/:module and /c/:slug/test/m/:module
 
-  // every deploy redraws the module's diagrams for the new version
-  registry.hooks.deployed = (company, mod, version) => diagrams.generate(company, mod, version);
+  // every deploy redraws the module's diagrams for the new version, and a tool on the test floor follows the floor
+  registry.hooks.deployed = async (company, mod, version) => {
+    await require("./src/testfloor").afterDeploy(company, mod, version).catch((e) => console.error(`[testfloor] ${company}/${mod}:`, e.message));
+    return diagrams.generate(company, mod, version);
+  };
   // can this instance run module code in a process of its own, with a database login of its own? find out before anything is mounted
   await require("./src/runner").selfTest().catch((e) => console.error("[runner] self test:", e.message));
   await registry.loadAll();
+  await require("./src/testfloor").boot();   // every company whose switch is on gets its test floor back
   // companies from before per-company passwords keep the shared ones until the admin sets their own
   await auth.ensureAccessRows();
   // builds that were running when the previous process died get a failed
   // status (retry/cancel on the board) instead of a spinner forever
   const orphaned = await pipeline.sweepOrphans();
   if (orphaned) console.log(`[pipeline] ${orphaned} orphaned run(s) marked failed`);
+  const swept = await require("./src/campaign").sweep();   // a campaign that was running at the restart has no process behind it
+  if (swept) console.log(`[campaign] ${swept} campaign(s) that were running at the restart marked failed`);
+  require("./src/campaign").startWatching();   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
   for (const m of (await q("SELECT company, name, live_version FROM platform.modules WHERE live_version IS NOT NULL")).rows) {
     diagrams.generate(m.company, m.name, m.live_version).catch((e) => console.error(`diagrams ${m.company}/${m.name}:`, e.message));

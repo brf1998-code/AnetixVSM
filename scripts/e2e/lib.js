@@ -57,6 +57,8 @@ async function ship(mgr, ids, company = "demo") {
   await waitFor(`run ${runId} at a gate`, async () => {
     const x = (await board(mgr, company)).runs.find((y) => y.id === runId);
     if (x && x.step === "confirm_requirement" && x.status === "waiting") { await mgr.post(`/api/runs/${runId}/confirm`, {}); return false; }
+    // a company whose test floor is on gets a test campaign step (src/campaign.js); ship() skips it, campaign.js exercises it
+    if (x && x.step === "campaign" && x.status === "waiting") { await mgr.post(`/api/runs/${runId}/campaign/skip`, { reason: "e2e: ship() skips the campaign" }); return false; }
     return x && x.step === "await_deploy" && x.status === "waiting";
   });
   await mgr.post(`/api/runs/${runId}/deploy`);

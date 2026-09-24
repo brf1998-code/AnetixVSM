@@ -62,6 +62,13 @@
       <label class="sw"><input type="checkbox" id="a-photos" onchange="saveArrival()"><span><b>Photos</b><span class="sub">People may add a photo to a request. It goes with the words to nobody outside this company. Switch it off where cameras are not allowed on the floor.</span></span></label>
       <span class="ok" id="a-ok"></span>
     </div>
+    <div class="card" id="tf-card" style="display:none">
+      <h2>Test floor</h2>
+      <div class="sub">Every tool together on data that is not the floor's. Walk around in it, try things, print a label; nothing there is real. A build gets its test campaign here before it goes on the floor. Anetix switches it on for you.</div>
+      <div id="tf-tools" style="margin-top:10px"></div>
+      <div class="sub" id="tf-data" style="margin-top:8px"></div>
+      <button class="quiet" id="tf-reset" onclick="resetTestFloor()">Put the test floor's data back</button> <span class="ok" id="tf-ok"></span>
+    </div>
   </div>
   <div id="print-sign"><h2 id="print-co"></h2><p>Scan to open the improvement board</p><img id="print-qr" alt=""><p id="print-url"></p></div>
 <script>
@@ -82,6 +89,33 @@ async function load() {
   document.getElementById("print-co").textContent = D.company.name;
   document.getElementById("a-auto").checked = D.company.auto_propose !== false;
   document.getElementById("a-photos").checked = D.company.allow_photos !== false;
+  loadTestFloor();
+}
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// The test floor (docs/TEST-ENVIRONMENT.md): the card shows only while Anetix has switched it on for this company.
+async function loadTestFloor() {
+  const r = await fetch(`/api/c/${SLUG}/test-floor`, { cache: "no-store" });
+  if (!r.ok) return;
+  const t = await r.json();
+  const card = document.getElementById("tf-card");
+  card.style.display = t.on ? "block" : "none";
+  if (!t.on) return;
+  const up = t.modules.filter((m) => m.version != null);
+  document.getElementById("tf-tools").innerHTML = up.length
+    ? up.map((m) => `<a class="btn primary" style="margin:0 6px 6px 0" href="/c/${SLUG}/test/m/${m.name}/">${esc(m.title)}${m.under_test ? ` <small>(version ${m.test_version} under test)</small>` : ""}</a>`).join("")
+    : "<span class='sub'>No tool is on the floor yet.</span>";
+  const when = t.built_at ? new Date(t.built_at).toLocaleString() : "not yet";
+  document.getElementById("tf-data").textContent = (t.data_source === "made" ? `The data there is a made-up set${t.made_note ? ` (${t.made_note})` : ""}` : "The data there is a copy of the floor's") + `, put back ${when}.`;
+}
+async function resetTestFloor() {
+  if (!confirm("Put the test floor's data back? Everything done there since is thrown away. The floor is not touched.")) return;
+  const b = document.getElementById("tf-reset"); b.disabled = true;
+  const r = await fetch(`/api/c/${SLUG}/test-floor/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  b.disabled = false;
+  if (!r.ok) { alert(j.error || "that did not work"); return; }
+  document.getElementById("tf-ok").textContent = "put back"; setTimeout(() => { document.getElementById("tf-ok").textContent = ""; }, 2500);
+  loadTestFloor();
 }
 async function saveArrival() {
   const r = await fetch(`/api/c/${SLUG}/agents/arrival`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_propose: document.getElementById("a-auto").checked, allow_photos: document.getElementById("a-photos").checked }) });

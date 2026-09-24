@@ -260,6 +260,7 @@ async function advance(runId) {
         + (ev0.fix_round && ev0.findings
           ? (ev0.gate && ev0.gate.ok === false ? `\n\n${ev0.findings}`
             : ev0.findings_from === "checks" ? `\n\nThe platform ran its checks against your previous attempt in this directory and these did not pass. Fix exactly these, keep everything else as it is:\n${ev0.findings}`
+            : ev0.findings_from === "campaign" ? `\n\nThe manager's test campaign ran against your previous attempt in this directory, on the company's test floor beside its other tools, and these did not pass. Fix exactly these, keep everything else as it is:\n${ev0.findings}`
             : `\n\nAn independent reviewer looked at your previous attempt in this directory and found these problems. Fix exactly these, keep everything else as it is:\n${ev0.findings}`)
           : "");
       const guidance = await guidanceFor(company, mod);
@@ -337,9 +338,8 @@ async function advance(runId) {
       const cur = await getRun(runId);
       await setRun(runId, { evidence: { ...cur.evidence, visual_check: { ok: ok.ok, checked: ok.checked || [], detail: ok.detail || undefined }, checks: ok } });
       if (!ok.ok) { await record("check_verdict", { company, module: mod, actor: "platform", run_id: runId, version: cur.to_version, after: ok.detail, detail: { by: "platform tests", verdict: "fail", kind: ok.kind } }); throw new Error(`visual check failed: ${ok.detail}`); }
-      await setRun(runId, { step: "await_deploy", status: "waiting" });
       await log(runId, { step: "visual_check", note: `${checksLine(ok)}; ready for manager review` });
-      return;
+      return toGate(runId);
     }
 
     if (run.step === "cross_check") {
@@ -372,13 +372,19 @@ async function advance(runId) {
       if (!ok.ok) { await record("check_verdict", { company, module: mod, actor: "platform", run_id: runId, version: cur.to_version, after: ok.detail, detail: { by: "platform tests", verdict: "fail", kind: ok.kind, checked: ok.checked } }); throw new Error(`internal tests failed: ${ok.detail}`); }
       await recordAdded(cur, ok);
       if (!ok.acceptance.added.length) await log(runId, { step: "test_run", note: "this change left no check behind; nothing will hold a later build to it" });
-      await setRun(runId, { step: "await_deploy", status: "waiting" });
       await log(runId, { step: "test_run", note: checksLine(ok) });
-      return;
+      return toGate(runId);
     }
   } catch (e) {
     return failRun(runId, e);
   }
+}
+
+// After the platform's checks: the test campaign when the company's test floor is on (src/campaign.js, a step of
+// its own before the gate), else straight to the deploy gate.
+async function toGate(runId) {
+  if (await require("./campaign").begin(runId)) return;
+  await setRun(runId, { step: "await_deploy", status: "waiting" });
 }
 
 // The build agent's brief for a change (or a batch). A function of its own so the head-to-head assessment
@@ -615,6 +621,7 @@ async function deploy(runId) {
   if (run.step !== "await_deploy" || run.status !== "waiting") throw new Error("run is not awaiting deploy");
   const result = await registry.deployVersion(run.company, run.module, run.to_version);
   await setRun(runId, { status: "deployed" });
+  await require("./campaign").afterRunEnds(run, "deployed").catch((e) => console.error("[campaign] after deploy:", e.message));
   await log(runId, { step: "deploy", note: result.from ? `v${result.from} -> v${result.to} live` : `v${result.to} live: the module is on the floor` });
   const ps = await loadProposals(run.proposal_ids || [run.proposal_id]);
   const ev = run.evidence || {};
@@ -650,6 +657,7 @@ async function retry(runId) {
   const step = run.lane === "ui" || run.lane === "module" || run.requirement ? "build" : "confirm_requirement";
   const busy = await activeRun(run.company, run.module);
   const modRow = await registry.getModule(run.company, run.module);
+  if (run.step === "campaign") await require("./campaign").afterRunEnds(run, "retried").catch((e) => console.error("[campaign] after retry:", e.message));
   await setRun(runId, { step, status: busy ? "queued" : "running", from_version: modRow.live_version });
   await log(runId, { step, note: busy ? `manager retried; queued behind run #${busy.id}` : "manager retried the run" });
   if (!busy) advance(runId).catch((e) => failRun(runId, e));
@@ -661,15 +669,17 @@ const MAX_FIX_ROUNDS = Number(process.env.SOS_MAX_FIX_ROUNDS || 2);
 // with the findings, in the same draft version.
 async function fix(runId) {
   const run = await getRun(runId);
-  if (run.status !== "failed" || !run.to_version || !["cross_check", "test_run", "visual_check"].includes(run.step)) throw new Error("only a build that failed a check can be sent back for fixes");
+  if (run.status !== "failed" || !run.to_version || !["cross_check", "test_run", "visual_check", "campaign"].includes(run.step)) throw new Error("only a build that failed a check can be sent back for fixes");
   const ev = run.evidence || {};
   const round = (ev.fix_round || 0) + 1;
   if (round > MAX_FIX_ROUNDS) throw new Error(`already tried ${MAX_FIX_ROUNDS} fix rounds; retry from scratch, adjust the proposals, or override`);
   const lastErr = (run.log || []).filter((l) => l.step === "error").slice(-1)[0];
-  const fromChecks = ev.checks && ev.checks.ok === false ? checksForAgent(ev.checks) : "";
-  const findings = (ev.cross_check && ev.cross_check.verdict === "fail" && ev.cross_check.summary) || fromChecks || (lastErr ? lastErr.note : "the previous attempt failed its checks");
+  // a failed test campaign (src/campaign.js): the platform's wording plus a person's own words
+  const fromCampaign = run.step === "campaign" ? require("./campaign").forAgent(await require("./campaign").forRun(runId)) : "";
+  const fromChecks = ev.checks && ev.checks.ok === false && run.step !== "campaign" ? checksForAgent(ev.checks) : "";
+  const findings = fromCampaign || (ev.cross_check && ev.cross_check.verdict === "fail" && ev.cross_check.summary) || fromChecks || (lastErr ? lastErr.note : "the previous attempt failed its checks");
   const busy = await activeRun(run.company, run.module);
-  await setRun(runId, { step: "build", status: busy ? "queued" : "running", evidence: { ...ev, fix_round: round, findings, findings_from: fromChecks && !(ev.cross_check && ev.cross_check.verdict === "fail") ? "checks" : "reviewer", cross_check: undefined, test_run: undefined, visual_check: undefined, checks: undefined } });
+  await setRun(runId, { step: "build", status: busy ? "queued" : "running", evidence: { ...ev, fix_round: round, findings, findings_from: fromCampaign ? "campaign" : fromChecks && !(ev.cross_check && ev.cross_check.verdict === "fail") ? "checks" : "reviewer", cross_check: undefined, test_run: undefined, visual_check: undefined, checks: undefined, campaign: undefined } });
   await log(runId, { step: "build", note: busy ? `fix round ${round} queued behind run #${busy.id}` : `manager sent the reviewer's findings back to the agent (fix round ${round} of ${MAX_FIX_ROUNDS})` });
   if (!busy) advance(runId).catch((e) => failRun(runId, e));
 }
@@ -719,6 +729,7 @@ async function cancel(runId) {
     await log(runId, { step: run.step, note: `aborted by manager during ${run.step}${ctl ? "; agent process stopped" : ""}` });
   }
   const modRow = await registry.getModule(run.company, run.module);
+  await require("./campaign").afterRunEnds(run, "cancelled").catch((e) => console.error("[campaign] after cancel:", e.message));
   if (run.to_version && modRow && modRow.staged_version === run.to_version) await registry.unstage(run.company, run.module);
   // a draft that was never staged is a dead version; drop it so the Versions panel stays honest
   if (run.to_version && modRow && modRow.live_version !== run.to_version && modRow.staged_version !== run.to_version) {
@@ -748,7 +759,7 @@ async function sweepOrphans() {
 }
 
 module.exports = {
-  startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS,
+  startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, toGate,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
   setRun, log, addCost, failRun, activeRun, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
   // the cross-check brief, for the replay harness

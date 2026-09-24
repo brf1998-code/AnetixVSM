@@ -40,11 +40,18 @@ const { q } = require("./db");
 const DATABASE_URL = process.env.DATABASE_URL || "postgres://sos:sos@localhost:5432/sos";
 const ident = (s) => String(s).replace(/[^a-z0-9_]/gi, "_").toLowerCase();
 const LANES = ["live", "staged"];
+// The test floor (docs/TEST-ENVIRONMENT.md) is a third lane and a third role,
+//   sos_<company>_tst   reads and writes the company's TEST tables (tst_<company>_*) and nothing else:
+//                       not the floor, not a preview. Made the first time the company's test floor is
+//                       switched on, dropped with the company. ALL_LANES is for stopping and dropping;
+//                       LANES stays the two every company has from birth.
+const TEST = "test";
+const ALL_LANES = [...LANES, TEST];
 const CONNECTION_LIMIT = Number(process.env.SOS_ROLE_CONNECTIONS || 12);
 const STATEMENT_TIMEOUT = process.env.SOS_ROLE_STATEMENT_TIMEOUT || "30s";
 
 // ---- pure ------------------------------------------------------------------------------------------
-function roleName(company, lane) { return `sos_${ident(company)}_${lane === "staged" ? "stg" : "live"}`.slice(0, 63); }
+function roleName(company, lane) { return `sos_${ident(company)}_${lane === "staged" ? "stg" : lane === TEST ? "tst" : "live"}`.slice(0, 63); }
 function secret() { return process.env.SOS_CONNECTION_KEY || process.env.SESSION_SECRET || "sos-dev-secret-not-for-production"; }
 // url-safe on purpose: it goes into a connection string and into ALTER ROLE as a literal
 function passwordFor(role) { return crypto.createHmac("sha256", secret()).update(`sos-dbrole:${role}`).digest("base64url"); }
@@ -58,12 +65,20 @@ function connectionFor(company, lane, base = DATABASE_URL) {
     ssl: /railway|rlwy\.net|sslmode=require/.test(base) ? { rejectUnauthorized: false } : undefined,
   };
 }
-// The statements that give the two roles their rights on one module's schemas. has: which of the schemas and
-// bookkeeping tables exist right now ({ live, staged, liveMigrations, stagedMigrations }).
+// The statements that give the roles their rights on one module's schemas. has: which of the schemas and
+// bookkeeping tables exist right now ({ live, staged, test, liveMigrations, stagedMigrations, testMigrations }).
+// The test role is named only when a test schema exists, so a company with the test floor off never gets a
+// statement about it.
 function grantStatements(company, mod, has) {
-  const live = `mod_${ident(company)}_${ident(mod)}`, stg = `stg_${ident(company)}_${ident(mod)}`;
-  const L = roleName(company, "live"), S = roleName(company, "staged");
+  const live = `mod_${ident(company)}_${ident(mod)}`, stg = `stg_${ident(company)}_${ident(mod)}`, tst = `tst_${ident(company)}_${ident(mod)}`;
+  const L = roleName(company, "live"), S = roleName(company, "staged"), T = roleName(company, TEST);
   const out = [];
+  if (has.test) {
+    out.push(`GRANT USAGE ON SCHEMA ${tst} TO ${T}`);
+    out.push(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${tst} TO ${T}`);
+    out.push(`GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ${tst} TO ${T}`);
+    if (has.testMigrations) out.push(`REVOKE ALL ON ${tst}._migrations FROM ${T}`);
+  }
   if (has.live) {
     out.push(`GRANT USAGE ON SCHEMA ${live} TO ${L}, ${S}`);
     out.push(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${live} TO ${L}`);
@@ -100,19 +115,26 @@ async function ensureCompany(company) {
   ensured.add(company);
 }
 // Call after the platform made or remade tables for this module (mount, staging clone, restore).
+async function ensureTestRole(company) {
+  if (ensured.has(`${company}/${TEST}`)) return;
+  await ensureRole(roleName(company, TEST));
+  ensured.add(`${company}/${TEST}`);
+}
 async function grant(company, mod) {
   if (state.ok === false) return { skipped: state.reason };
   await ensureCompany(company);
-  const live = `mod_${ident(company)}_${ident(mod)}`, stg = `stg_${ident(company)}_${ident(mod)}`;
-  const schemas = new Set((await q("SELECT nspname FROM pg_namespace WHERE nspname = ANY($1::text[])", [[live, stg]])).rows.map((r) => r.nspname));
-  const migs = new Set((await q("SELECT schemaname FROM pg_tables WHERE tablename='_migrations' AND schemaname = ANY($1::text[])", [[live, stg]])).rows.map((r) => r.schemaname));
-  const stmts = grantStatements(company, mod, { live: schemas.has(live), staged: schemas.has(stg), liveMigrations: migs.has(live), stagedMigrations: migs.has(stg) });
+  const live = `mod_${ident(company)}_${ident(mod)}`, stg = `stg_${ident(company)}_${ident(mod)}`, tst = `tst_${ident(company)}_${ident(mod)}`;
+  const schemas = new Set((await q("SELECT nspname FROM pg_namespace WHERE nspname = ANY($1::text[])", [[live, stg, tst]])).rows.map((r) => r.nspname));
+  const migs = new Set((await q("SELECT schemaname FROM pg_tables WHERE tablename='_migrations' AND schemaname = ANY($1::text[])", [[live, stg, tst]])).rows.map((r) => r.schemaname));
+  if (schemas.has(tst)) await ensureTestRole(company);   // the third role exists only once a company has a test floor
+  const stmts = grantStatements(company, mod, { live: schemas.has(live), staged: schemas.has(stg), test: schemas.has(tst), liveMigrations: migs.has(live), stagedMigrations: migs.has(stg), testMigrations: migs.has(tst) });
   for (const s of stmts) await q(s);
   return { statements: stmts.length };
 }
 async function dropCompany(company) {
   ensured.delete(company);
-  for (const lane of LANES) {
+  ensured.delete(`${company}/${TEST}`);
+  for (const lane of ALL_LANES) {
     const role = roleName(company, lane);
     try {
       if (!(await q("SELECT 1 FROM pg_roles WHERE rolname=$1", [role])).rows.length) continue;
@@ -154,4 +176,4 @@ async function selfTest() {
   }
 }
 
-module.exports = { roleName, passwordFor, connectionFor, grantStatements, ensureCompany, grant, dropCompany, selfTest, state, LANES };
+module.exports = { roleName, passwordFor, connectionFor, grantStatements, ensureCompany, ensureTestRole, grant, dropCompany, selfTest, state, LANES, ALL_LANES, TEST };

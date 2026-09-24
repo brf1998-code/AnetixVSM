@@ -22,7 +22,9 @@ function reasonFor(run) {
   const last = errs[errs.length - 1] || "";
   const cc = ev.cross_check || {};
   const reviewerFailed = cc.verdict === "fail" && cc.model !== "platform checks";
-  if (["deployed", "rolled_back"].includes(run.status)) return reviewerFailed ? "deployed over a reviewer stop" : "deployed";
+  const campaignWaived = ev.campaign && ev.campaign.status === "waived";   // the manager deployed over a failed test campaign (src/campaign.js)
+  if (["deployed", "rolled_back"].includes(run.status)) return reviewerFailed ? "deployed over a reviewer stop" : campaignWaived ? "deployed over a failed test campaign" : "deployed";
+  if (run.status === "failed" && run.step === "campaign") return "test campaign failed";
   if (run.status === "waiting" && run.step === "await_deploy") return reviewerFailed ? "at the gate over a reviewer stop" : "at the gate";
   if (run.status === "cancelled") return reviewerFailed ? "cancelled after a reviewer stop" : /aborted/.test(JSON.stringify(run.log || [])) ? "aborted" : "cancelled";
   if (run.status === "running" || run.status === "queued") return "in flight";
@@ -102,6 +104,7 @@ async function listChecks(company) {
       reason: reasonFor(r), reviewer_failed: Boolean(ev.cross_check && ev.cross_check.verdict === "fail" && ev.cross_check.model !== "platform checks"), error: errs[errs.length - 1] || null, fix_round: ev.fix_round || 0,
       cross_check: ev.cross_check ? { verdict: ev.cross_check.verdict, model: ev.cross_check.model, summary: ev.cross_check.summary, findings: ev.cross_check.findings || [], overridden: Boolean(ev.cross_check.overridden), model_verdict: ev.cross_check.model_verdict } : null,
       test_run: ev.test_run || null, models_seen: ev.models_seen || null, effort: ev.effort || null,
+      campaign: ev.campaign || null,   // the test campaign's outcome on this build (src/campaign.js): status, line, failed cases, a waiver
       title: ev.title || null, targets: (r.targets || []).filter(Boolean), proposals_text: r.proposals_text,
       label: r.label || null, label_note: r.label_note || null, labeled_by: r.labeled_by || null, labeled_at: r.labeled_at || null,
       replays: byRun[r.id] || [],

@@ -71,7 +71,7 @@ const demo = (out) => out.companies.find((c) => c.slug === "demo");
   const r = run("demo", p, 48, { status: "failed", step: "cross_check", stops: [[47, "platform checks failed: routes.js line 3"], [40, "cross-check failed: the label moved"], [30, "internal tests failed: 500 on /api/items"], [20, "visual check failed: blank"], [10, "agent stopped: boom"]], evidence: { fix_round: 2, cross_check: { overridden: true } } });
   const c = run("demo", prop(fb("demo", 5, "reviewing"), 4), 3, { status: "cancelled", step: "build" });
   const d = demo(go(bundle({ feedback: [f], proposals: [p], runs: [r, c] })));
-  t("stops are sorted: gate 1, reviewer 1, tests 2, other 1", j(d.builds.stops) === j({ gate: 1, reviewer: 1, tests: 2, other: 1, ai: 0 }), j(d.builds.stops));
+  t("stops are sorted: gate 1, reviewer 1, tests 2, other 1", j(d.builds.stops) === j({ gate: 1, reviewer: 1, tests: 2, other: 1, ai: 0, campaign: 0 }), j(d.builds.stops));
   t("fix rounds and overrides come from the run's evidence", d.builds.fix_rounds === 2 && d.builds.overrides === 1, j(d.builds));
   t("a cancelled run is counted", d.builds.cancelled === 1, j(d.builds));
   t("quiet stretch: last check stop 20h ago (0.8 days), last gate stop 47h ago (2 days), never a rollback", d.quiet.check_stop_days === 0.8 && d.quiet.gate_stop_days === 2 && d.quiet.rollback_days === null && d.quiet.other_stop_days === 0.4, j(d.quiet));

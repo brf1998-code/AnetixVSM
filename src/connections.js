@@ -875,7 +875,7 @@ function cookies(req) {
 }
 function deviceOf(req) { const d = cookies(req).sos_device; return d && /^[a-f0-9]{24}$/.test(d) ? d : null; }
 function deviceCookie(req, res, next) {
-  if (!deviceOf(req) && /^\/(c\/[^/]+\/(m|staging\/m|connections)|api\/c\/[^/]+\/print)/.test(req.path)) {
+  if (!deviceOf(req) && /^\/(c\/[^/]+\/(m|staging\/m|test\/m|connections)|api\/c\/[^/]+\/print)/.test(req.path)) {
     const id = crypto.randomBytes(12).toString("hex");
     req.headers.cookie = `${req.headers.cookie ? req.headers.cookie + "; " : ""}sos_device=${id}`;
     const secure = (req.headers["x-forwarded-proto"] || req.protocol) === "https" ? "; Secure" : "";
@@ -892,7 +892,9 @@ async function liveDeclaration(company, mod, name) {
   const { connections } = declared(registry.readManifest(company, mod, m.live_version));
   return connections[name] || null;
 }
-function surfaces(company, mod, version, manifest) {
+// lane: live | staged | test. A label printed from the test floor is a real label (that is the point of a guided
+// test step); its job row says where it came from.
+function surfaces(company, mod, version, manifest, lane = "live") {
   const { connections } = declared(manifest);
   const out = {};
   for (const [name, d] of Object.entries(connections)) {
@@ -917,7 +919,7 @@ function surfaces(company, mod, version, manifest) {
         if (!d.templates.includes(template)) throw new Error(`no label named ${template} on this connection`);
         const zpl = renderZpl(await templateText(company, mod, version, template), data || {});
         const device = req && req.headers ? deviceOf(req) : null;
-        const job = await queueJob({ company, mod, name, device, template, zpl, detail: { data: data || {} } });
+        const job = await queueJob({ company, mod, name, device, template, zpl, detail: { data: data || {}, ...(lane === "test" ? { lane: "test" } : {}) } });
         return { job_id: job.id, queued: true, device: Boolean(device), zpl };
       },
       async preview(template, data) {

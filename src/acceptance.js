@@ -88,12 +88,16 @@ function matcherProblems(m, where, out, depth = 0) {
   if (m.$type != null && !["string", "number", "boolean", "array", "object", "null"].includes(m.$type)) out.push(`${where}: $type is string, number, boolean, array, object or null`);
   for (const k of keys) if (k === "$contains" || k === "$every" || k === "$not" || !k.startsWith("$")) matcherProblems(m[k], `${where}.${k}`, out, depth + 1);
 }
-// name: "checks/007-request-quantity.json"; text: the file. Returns { ok, check, problems }.
-function parse(name, text) {
+// name: "checks/007-request-quantity.json"; text: the file (or an already parsed object). Returns { ok, check, problems }.
+// opts.allowModule: a step may name the tool it is made against ("module": a slug), which a test campaign case
+// (src/campaign.js) uses to reach a sibling tool on the test floor; a check in a module's own files never may.
+function parse(name, text, opts = {}) {
   const problems = [];
   if (!FILE.test(name)) problems.push(`the name is checks/NNN-short-name.json (three digits, then lowercase words joined by dashes); got ${name}`);
   let c = null;
-  try { c = JSON.parse(text); } catch (e) { return { ok: false, check: null, problems: [...problems, `does not parse as JSON: ${e.message}`] }; }
+  if (text && typeof text === "object") c = text;
+  else { try { c = JSON.parse(text); } catch (e) { return { ok: false, check: null, problems: [...problems, `does not parse as JSON: ${e.message}`] }; } }
+  const stepKeys = ["call", "page", "body", "as", "expect", "save", "note"].concat(opts.allowModule ? ["module"] : []);
   if (!isObj(c)) return { ok: false, check: null, problems: [...problems, "is one JSON object with a title and steps"] };
   const title = typeof c.title === "string" ? c.title.trim() : "";
   if (title.length < 8 || title.length > 160) problems.push("title: one plain sentence, 8 to 160 characters, saying what the floor can count on");
@@ -103,8 +107,9 @@ function parse(name, text) {
   (Array.isArray(c.steps) ? c.steps : []).forEach((s, i) => {
     const at = `step ${i + 1}`;
     if (!isObj(s)) { problems.push(`${at}: is an object with "call" or "page"`); return; }
-    const unknown = Object.keys(s).filter((k) => !["call", "page", "body", "as", "expect", "save", "note"].includes(k));
+    const unknown = Object.keys(s).filter((k) => !stepKeys.includes(k));
     if (unknown.length) problems.push(`${at}: does not know ${unknown.map((k) => `"${k}"`).join(", ")}`);
+    if (s.module != null && !/^[a-z0-9][a-z0-9-]{0,40}$/.test(String(s.module))) problems.push(`${at}: module is a tool's short name`);
     if ((s.call == null) === (s.page == null)) { problems.push(`${at}: has exactly one of "call" (METHOD /path) or "page" (/path)`); return; }
     if (s.call != null) {
       const m = /^([A-Z]+) (\S+)$/.exec(String(s.call));
@@ -211,8 +216,10 @@ function statusProblem(status, want) {
 
 // ---- the runner ----------------------------------------------------------------------------------
 // base: "http://127.0.0.1:8080/c/<co>/staging/m/<mod>"; cookies: { manager, floor } Cookie header values;
-// browser: optional src/pageload.js session with .visit(url, cookie) for "visible" and "selector".
-async function runCheck(check, { base, cookies = {}, browser = null, fetchImpl = fetch }) {
+// browser: optional src/pageload.js session with .visit(url, cookie) for "visible" and "selector";
+// bases: { <module>: base } for a step that names a module (a test campaign case on the test floor); a step whose
+// module is not in bases fails with a plain reason instead of reaching anywhere else.
+async function runCheck(check, { base, bases = null, cookies = {}, browser = null, fetchImpl = fetch }) {
   const vars = {}, steps = [];
   let ok = true;
   for (let i = 0; i < check.steps.length && ok; i++) {
@@ -220,12 +227,14 @@ async function runCheck(check, { base, cookies = {}, browser = null, fetchImpl =
     const label = s.call || `page ${s.page}`;
     const problems = [], notes = [];
     let status = 0;
+    const at = s.module ? (bases && bases[s.module]) || null : base;
+    if (!at) { steps.push({ n: i + 1, step: label, as: s.as || "manager", status: 0, ok: false, problems: [s.module ? `the tool "${s.module}" is not on the test floor` : "no address to call"] }); ok = false; break; }
     try {
       const [method, rawPath] = s.call ? String(s.call).split(" ") : ["GET", s.page];
       const path = fill(rawPath, Object.fromEntries(Object.entries(vars).map(([k, v]) => [k, encodeURIComponent(String(v))])));
       const headers = { Cookie: cookies[s.as || "manager"] || cookies.manager || "", Accept: s.page ? "text/html" : "application/json" };
       if (s.body != null) headers["Content-Type"] = "application/json";
-      const res = await fetchImpl(base + path, { method, headers, body: s.body != null ? JSON.stringify(fill(s.body, vars)) : undefined, redirect: "manual", signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
+      const res = await fetchImpl(at + path, { method, headers, body: s.body != null ? JSON.stringify(fill(s.body, vars)) : undefined, redirect: "manual", signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
       status = res.status;
       const text = await res.text();
       const sp = statusProblem(status, e.status); if (sp) problems.push(sp);
@@ -237,14 +246,14 @@ async function runCheck(check, { base, cookies = {}, browser = null, fetchImpl =
       if (s.page && (e.visible || e.selector) && !problems.length) {
         if (!browser) notes.push("what the screen shows was not looked at: no browser on this instance");
         else {
-          const seen = await browser.visit(base + path, cookies[s.as || "manager"] || cookies.manager || "", { visible: fill(e.visible || [], vars), selector: e.selector || [] });
+          const seen = await browser.visit(at + path, cookies[s.as || "manager"] || cookies.manager || "", { visible: fill(e.visible || [], vars), selector: e.selector || [] });
           for (const m of seen.missingText) problems.push(`the screen does not show "${m}"`);
           for (const m of seen.missingSelector) problems.push(`the screen has nothing matching ${m}`);
         }
       }
     } catch (err) { problems.push(err.name === "TimeoutError" ? `no answer within ${Math.round(STEP_TIMEOUT_MS / 1000)} seconds` : `could not be called: ${err.message}`); }
     if (problems.length) ok = false;
-    steps.push({ n: i + 1, step: label, as: s.as || "manager", status, ok: !problems.length, problems: problems.slice(0, 6), ...(notes.length ? { notes } : {}) });
+    steps.push({ n: i + 1, step: label, as: s.as || "manager", status, ok: !problems.length, problems: problems.slice(0, 6), ...(s.module ? { module: s.module } : {}), ...(notes.length ? { notes } : {}) });
   }
   return { file: check.file, title: check.title, ok, wrote: writes(check), steps };
 }

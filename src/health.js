@@ -44,6 +44,7 @@ function stopKind(note) {
   if (/^platform checks failed/.test(n)) return "gate";
   if (/^cross-check failed/.test(n)) return "reviewer";
   if (/^(internal tests|visual check) failed/.test(n)) return "tests";
+  if (/^test campaign failed/.test(n)) return "campaign";   // the manager's own campaign on the test floor (src/campaign.js): never a reviewer or test stop
   return "other";
 }
 
@@ -54,7 +55,7 @@ function runTimes(run) {
   const find = (pred) => { const e = log.filter(pred).slice(-1)[0]; return e && e.t ? e.t : null; };
   return {
     // the line each lane logs when the build reaches the deploy gate
-    ready: find((e) => (e.step === "test_run" && /^smoke checks passed/.test(e.note || "")) || (e.step === "visual_check" && /ready for manager review/.test(e.note || ""))),
+    ready: find((e) => (e.step === "test_run" && /^smoke checks passed/.test(e.note || "")) || (e.step === "visual_check" && /ready for manager review/.test(e.note || "")) || (e.step === "campaign" && /ready for the deploy gate|on to the deploy gate/.test(e.note || ""))),
     deployed: find((e) => e.step === "deploy"),
     rolledBack: find((e) => e.step === "rollback"),
     stops: log.filter((e) => e.step === "error" && e.t).map((e) => ({ t: e.t, kind: stopKind(e.note), ...(stopKind(e.note) === "tests" ? { test: testStopKind(e.note) } : {}) })),
@@ -102,13 +103,21 @@ function metrics(g, now, windowDays) {
   const started = timed.filter((x) => inWin(x.r.created_at));
   const shipped = timed.filter((x) => inWin(x.t.deployed));
   const rolledBack = timed.filter((x) => inWin(x.t.rolledBack));
-  const stops = { gate: 0, reviewer: 0, tests: 0, other: 0, ai: 0 };
+  const stops = { gate: 0, reviewer: 0, tests: 0, other: 0, ai: 0, campaign: 0 };
   const testStops = { promise: 0, own_check: 0, page: 0, smoke: 0 };
   for (const x of timed) for (const s of x.t.stops) if (inWin(s.t)) { stops[s.kind]++; if (s.test) testStops[s.test]++; }
   // the pile of promises: checks that changes left behind in the window, and the ones a manager retired
   const checksAdded = g.record.filter((r) => r.kind === "check_added" && inWin(r.created_at)).length;
   const promisesRetired = g.record.filter((r) => r.kind === "promise_retired" && inWin(r.created_at)).length;
   const fixRounds = started.reduce((n, x) => n + Number((x.r.evidence || {}).fix_round || 0), 0);
+  // the test campaigns (src/campaign.js), from the record; absent from the page unless a company has any
+  const recOf = (k) => g.record.filter((r) => r.kind === k && inWin(r.created_at));
+  const stepRec = recOf("campaign_step");
+  const campaigns = {
+    proposed: recOf("campaign_proposed").length, approved: recOf("campaign_approved").length, skipped: recOf("campaign_skipped").length,
+    passed: recOf("campaign_passed").length, failed: recOf("campaign_failed").length, waived: recOf("campaign_waived").length,
+    steps_seen: stepRec.filter((r) => (r.detail || {}).state === "seen").length, steps_by_hand: stepRec.filter((r) => (r.detail || {}).state === "done").length, steps_not_right: stepRec.filter((r) => (r.detail || {}).state === "not_right").length,
+  };
   const overrides = started.filter((x) => ((x.r.evidence || {}).cross_check || {}).overridden).length;
   const cancelled = started.filter((x) => x.r.status === "cancelled").length;
   const inFlight = g.runs.filter((r) => r.status === "queued" || r.status === "running").length;
@@ -187,7 +196,7 @@ function metrics(g, now, windowDays) {
       started: started.length, shipped: shipped.length, rolled_back: rolledBack.length, cancelled,
       stops, test_stops: testStops, checks_added: checksAdded, promises_retired: promisesRetired, fix_rounds: fixRounds, overrides,
       in_flight: inFlight, waiting_deploy: waitingDeploy, waiting_confirm: waitingConfirm,
-      models,
+      models, campaigns,
     },
     floor: {
       n: toFloor.length, median_hours: round1(median(toFloor)), p90_hours: round1(p90(toFloor)),
@@ -254,7 +263,7 @@ async function load(windowDays) {
   const feedback = (await q("SELECT id, company, status, created_at, outcome, person_id, follow_up_of, shipped_at, floor_answer, floor_answer_at, manager_answer, manager_answer_at, duplicate_of, (question IS NOT NULL AND NOT (question ? 'answer')) AS question_open FROM platform.feedback")).rows;
   const proposals = (await q("SELECT p.id, p.feedback_id, f.company, p.status, p.created_at, p.data_check->>'status' AS data_status, p.model, p.cost_usd FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id")).rows;
   const runs = (await q("SELECT id, company, module, lane, status, step, model, proposal_id, proposal_ids, created_at, evidence, log, cost_usd FROM platform.build_runs ORDER BY id DESC LIMIT 5000")).rows;
-  const record = (await q("SELECT company, kind, proposal_id, created_at, (detail->>'on_arrival')::boolean AS on_arrival, detail->>'via' AS via FROM platform.record WHERE kind IN ('proposal_edited','proposal_approved','proposal_declined','check_added','promise_retired','question_asked','question_answered','request_flagged','duplicate_unlinked') OR (kind='proposal_drafted' AND detail ? 'on_arrival') ORDER BY id")).rows;
+  const record = (await q("SELECT company, kind, proposal_id, created_at, (detail->>'on_arrival')::boolean AS on_arrival, detail->>'via' AS via, CASE WHEN kind='campaign_step' THEN jsonb_build_object('state', detail->>'state') ELSE NULL END AS detail FROM platform.record WHERE kind IN ('proposal_edited','proposal_approved','proposal_declined','check_added','promise_retired','question_asked','question_answered','request_flagged','duplicate_unlinked','campaign_proposed','campaign_approved','campaign_skipped','campaign_passed','campaign_failed','campaign_waived','campaign_step') OR (kind='proposal_drafted' AND detail ? 'on_arrival') ORDER BY id")).rows;
   const intakes = (await q("SELECT id, company, status, created_at, model, cost_usd FROM platform.module_intakes")).rows;
   const [w, m] = await Promise.all([spendSince(since), spendSince(monthStart)]);
   const spend = {}; for (const c of companies) spend[c.slug] = { window: w[c.slug] || 0, month: m[c.slug] || 0 };

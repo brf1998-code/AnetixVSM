@@ -12,6 +12,7 @@
   const mount = script ? script.getAttribute("data-mount") : null;
   const company = (script && script.getAttribute("data-company")) || ((/^\/c\/([^/]+)/.exec(location.pathname) || [])[1]) || "demo";
   const staged = mount === "staged";
+  const onTest = mount === "test";   // the company's test floor (docs/TEST-ENVIRONMENT.md): a violet bar, nothing here is real
 
   // Small pill, bottom right, out of the way of the work. Opens a panel on tap.
   const btn = document.createElement("button");
@@ -29,6 +30,7 @@
   panel.innerHTML =
     '<div style="font-weight:700;font-size:14px;color:#1c242e;margin-bottom:' + (toAnetix ? "4" : "8") + 'px">Something in the way?</div>' +
     (toAnetix ? '<div id="fbw-anetix" style="font-size:12.5px;color:#51606f;margin-bottom:8px;line-height:1.4">This page is part of the software itself, so this goes to <b>Brendan at Anetix</b>, who makes it, not to your manager. Tap your name and you can follow it under My requests.</div>' : "") +
+    (onTest ? '<div style="font-size:12.5px;color:#51606f;margin-bottom:8px;line-height:1.4">You are on the <b>test floor</b>. This goes on the improvement board like any feedback, marked as sent from here.</div>' : "") +
     '<textarea id="fbw-msg" rows="3" placeholder="' + (toAnetix ? "What is in the way, or what would help?" : "What is slowing you down?") + '" style="width:100%;border:1px solid #d5dbe3;border-radius:6px;padding:8px;font-size:14px;font-family:inherit;box-sizing:border-box"></textarea>' +
     '<div id="fbw-extras" style="display:none;margin-top:6px;font-size:12.5px;color:#51606f"></div>' +
     '<div id="fbw-who" style="display:none;font-size:13px;color:#51606f;margin-top:8px"></div>' +
@@ -125,9 +127,87 @@
     box.innerHTML = h;
   }
 
+  // The test floor's bar: never goes away, says what is on the floor, offers the way back. The page reloads when
+  // the test floor moves to another version or its data was put back, and leaves when the floor is switched off.
+  let testBuilt = null;
+  function testBar(j) {
+    let bar = document.getElementById("sos-test-bar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "sos-test-bar";
+      bar.style.cssText = "position:sticky;top:0;z-index:10001;background:#5b3fa0;color:#fff;padding:9px 14px;font-size:13.5px;font-weight:700;font-family:system-ui,sans-serif;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.25);";
+      document.body.insertBefore(bar, document.body.firstChild);
+      document.body.style.borderTop = "4px dashed #5b3fa0";
+    }
+    const back = location.pathname.replace("/test/", "/");
+    const had = document.getElementById("sos-test-step");
+    bar.innerHTML = "TEST FLOOR. Nothing here is real." + (j && j.live_version ? " The floor is on version " + j.live_version + (String(j.live_version) !== String(version) ? "; this is version " + version + " under test" : "") + "." : "") +
+      ' · <a href="' + back + '" style="color:#fff;text-decoration:underline">open the live page</a>' +
+      '<div id="sos-test-step"></div>';
+    if (had) document.getElementById("sos-test-step").innerHTML = had.innerHTML;
+  }
+  // The guided steps of a test campaign for THIS screen (src/campaign.js, GET /api/c/<co>/who/campaign): what to
+  // do, and whether the platform has seen it. Done and Not right go straight from here, with the signed-in
+  // person's name when there is one.
+  let stepOpen = null;   // "campaign:case:n" whose "not right" box is open
+  async function loadSteps() {
+    const box = document.getElementById("sos-test-step");
+    if (!box) return;
+    let j = null;
+    try { const r = await fetch("/api/c/" + company + "/who/campaign?module=" + encodeURIComponent(mod) + "&page=" + encodeURIComponent(location.pathname), { cache: "no-store" }); if (r.ok) j = await r.json(); } catch (e) {}
+    const steps = (j && j.steps) || [];
+    if (!steps.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+    box.style.display = "block";
+    box.style.cssText = "display:block;background:#fff;color:#1c242e;text-align:left;font-weight:400;font-size:13.5px;line-height:1.45;border-radius:10px;padding:10px 12px;margin:8px auto 0;max-width:720px;box-shadow:0 4px 14px rgba(0,0,0,.2);";
+    box.innerHTML = steps.map((s) => {
+      const key = s.campaign_id + ":" + s.case + ":" + s.n;
+      const state = s.state === "seen" ? '<span style="color:#2e7d4f;font-weight:700">&#10003; Seen by the platform' + (s.saw ? " (" + esc(s.saw) + ")" : "") + '. That is what should happen.</span>'
+        : s.state === "done" ? '<span style="color:#2e7d4f;font-weight:700">&#10003; Done' + (s.by ? " (" + esc(s.by) + ")" : "") + '</span>'
+        : s.state === "not_right" ? '<span style="color:#b3261e;font-weight:700">Not right' + (s.by ? " (" + esc(s.by) + ")" : "") + '</span>'
+        : '<span style="color:#7a4a00;font-weight:700">' + (s.watched ? (s.timed_out ? "The platform stopped watching; tap Done when it is done." : "We are watching for it.") : "Tap Done when it is done.") + '</span>';
+      let h = '<div style="margin-top:4px"><b style="color:#3e2a73">Test step ' + s.n + ':</b> ' + esc(s.do) + '<br>' + state;
+      if (["waiting", "seen"].includes(s.state)) {
+        if (stepOpen === key) h += '<div style="margin-top:4px"><textarea id="sos-nr" placeholder="What did you see?" style="width:100%;min-height:44px;font:inherit;font-size:13px;border:1px solid #d5dbe3;border-radius:6px;padding:6px;box-sizing:border-box"></textarea><button data-nr="' + key + '" style="margin-top:4px;background:#b3261e;color:#fff;border:none;border-radius:6px;padding:7px 10px;font-weight:700;cursor:pointer">Send: not right</button> <button data-nm="1" style="margin-top:4px;background:#e9edf2;color:#1c242e;border:none;border-radius:6px;padding:7px 10px;cursor:pointer">Never mind</button></div>';
+        else h += '<div style="margin-top:4px">' + (s.state === "waiting" ? '<button data-done="' + key + '" style="background:#2e7d4f;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-weight:700;cursor:pointer">Done</button> ' : "") + '<button data-open="' + key + '" style="background:#e9edf2;color:#1c242e;border:none;border-radius:6px;padding:7px 10px;cursor:pointer">Not right</button></div>';
+      }
+      return h + "</div>";
+    }).join("");
+    box.querySelectorAll("[data-done]").forEach((b) => { b.onclick = () => answerStep(b.getAttribute("data-done"), "done", ""); });
+    box.querySelectorAll("[data-open]").forEach((b) => { b.onclick = () => { stepOpen = b.getAttribute("data-open"); loadSteps(); }; });
+    box.querySelectorAll("[data-nm]").forEach((b) => { b.onclick = () => { stepOpen = null; loadSteps(); }; });
+    box.querySelectorAll("[data-nr]").forEach((b) => { b.onclick = () => { const ta = document.getElementById("sos-nr"); const what = ta ? ta.value.trim() : ""; if (what.length < 3) { if (ta) ta.focus(); return; } answerStep(b.getAttribute("data-nr"), "not_right", what); }; });
+  }
+  async function answerStep(key, answer, what) {
+    const [campaignId, caseId, n] = key.split(":");
+    try {
+      const r = await fetch("/api/c/" + company + "/who/campaign/steps/" + campaignId + "/" + encodeURIComponent(caseId) + "/" + n, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ answer, what }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); banner(j.error || "That did not go through.", "#b3261e"); }
+    } catch (e) {}
+    stepOpen = null;
+    loadSteps();
+  }
   let justUpdated = null;   // set when this load is the reload after a deploy; loadNews() turns it into a banner
   function watchVersion() {
     if (!mod || !version || mod === "platform") return;
+    if (onTest) {
+      testBar(null);
+      const probe = async () => {
+        try {
+          const r = await fetch("/api/c/" + company + "/modules/" + mod + "/version?lane=test", { cache: "no-store" });
+          if (!r.ok) return;
+          const j = await r.json();
+          if (!j.test_floor) { banner("The test floor was switched off. Opening the live page.", "#51606f"); setTimeout(() => location.href = location.pathname.replace("/test/", "/"), 2500); return; }
+          testBar(j);
+          if (j.test_version && String(j.test_version) !== String(version)) { location.reload(); return; }
+          if (testBuilt === null) testBuilt = j.test_built_at || "";
+          else if ((j.test_built_at || "") !== testBuilt) { banner("The test floor's data was put back. Reloading.", "#5b3fa0"); setTimeout(() => location.reload(), 1500); testBuilt = j.test_built_at || ""; }
+        } catch (e) {}
+        if (!stepOpen) loadSteps();   // the guided step for this screen, unless a person is typing in it
+      };
+      probe();
+      setInterval(probe, 5000);
+      return;
+    }
     const key = "sos.updated." + company + "." + mod;
     try {
       const v = sessionStorage.getItem(key);
@@ -163,7 +243,7 @@
   const TOUR_KEY = "sos.tour." + company + "." + mod;
   function tourState() { try { return JSON.parse(sessionStorage.getItem(TOUR_KEY) || "null"); } catch (e) { return null; } }
   function setTour(st) { try { st ? sessionStorage.setItem(TOUR_KEY, JSON.stringify(st)) : sessionStorage.removeItem(TOUR_KEY); } catch (e) {} }
-  function modBase() { return (location.pathname.match(/^\/c\/[^/]+\/(?:staging\/)?m\/[^/]+/) || [""])[0]; }
+  function modBase() { return (location.pathname.match(/^\/c\/[^/]+\/(?:staging\/|test\/)?m\/[^/]+/) || [""])[0]; }
   function relPath() { return location.pathname.slice(modBase().length) || "/"; }
 
   async function maybeTour() {
@@ -600,7 +680,7 @@
   // What went live here lately. The person who asked gets the question back; everyone else reads what is new and who asked.
   let askCard = null;
   async function loadNews() {
-    if (!mod || mod === "platform" || staged) return;
+    if (!mod || mod === "platform" || staged || onTest) return;   // nothing that went live is news on a preview or the test floor
     let j = null;
     try { const r = await peopleApi("/news?module=" + encodeURIComponent(mod), { cache: "no-store" }); if (r.ok) j = await r.json(); } catch (e) {}
     const changes = (j && j.changes) || [];

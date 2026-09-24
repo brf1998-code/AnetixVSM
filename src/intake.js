@@ -24,7 +24,7 @@ const freshPin = require("./people").requireFreshPin;   // an approval with a st
 const intakeModel = async (it) => (it && agent.inTier(it.model) ? it.model : agent.modelFor(it && it.company, "design"));
 const MAX_GENERATED_ROUNDS = 2;           // round 1 is fixed; hard cap three rounds in all
 const MAX_QUESTIONS_PER_ROUND = 6;
-const RESERVED = new Set(["platform", "admin", "staging", "new", "api", "assets", "login", "logout", "health"]);
+const RESERVED = new Set(["platform", "admin", "staging", "test", "new", "api", "assets", "login", "logout", "health"]);
 
 // ---- helpers ------------------------------------------------------------------
 async function getIntake(id) { return (await q("SELECT * FROM platform.module_intakes WHERE id=$1", [id])).rows[0]; }

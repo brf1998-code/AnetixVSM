@@ -22,6 +22,9 @@ const KEEP_SNAPSHOTS = Number(process.env.SOS_KEEP_SNAPSHOTS || 10);
 const ident = (s) => String(s).replace(/[^a-z0-9_]/gi, "_");
 function liveSchema(company, mod) { return `mod_${ident(company)}_${ident(mod)}`; }
 function stagingSchema(company, mod) { return `stg_${ident(company)}_${ident(mod)}`; }
+// the test floor (docs/TEST-ENVIRONMENT.md): a third set of tables per tool, built from the version's own
+// migrations with sequences of its own, so nothing done there advances a sequence on the real floor
+function testSchema(company, mod) { return `tst_${ident(company)}_${ident(mod)}`; }
 
 // ---- validation -----------------------------------------------------------
 // Allowed statement shapes (whitespace-insensitive, case-insensitive):
@@ -70,7 +73,7 @@ function validateMigrationSql(sql) {
       errors.push(`forbidden operation in: ${st.slice(0, 80)}`);
       continue;
     }
-    if (/\bpublic\s*\.|\bplatform\s*\.|\bmod_|\bstg_|\bsnap_|"/i.test(st)) {
+    if (/\bpublic\s*\.|\bplatform\s*\.|\bmod_|\bstg_|\bsnap_|\btst_|"/i.test(st)) {
       errors.push(`schema-qualified or quoted identifier not allowed: ${st.slice(0, 80)}`);
       continue;
     }
@@ -236,6 +239,105 @@ async function rebuildStagingClone(company, mod) {
   return tables;
 }
 
+// ---- the test floor's tables (docs/TEST-ENVIRONMENT.md) --------------------
+// Built FROM THE VERSION'S OWN MIGRATIONS on an empty schema (so every serial
+// column has a sequence of its own; the staging clone's LIKE ... INCLUDING ALL
+// keeps the floor's), then filled one of three ways:
+//   source "floor"  every row of the floor's table (the columns the two have
+//                   in common), sequences set past the copied ids
+//   source "made"   the rows given (validated against the real columns first;
+//                   one bad column or value and nothing is written)
+//   source "empty"  nothing but what the migrations seed
+// -> { tables, rows: { table: n } }
+const ROW_CAP = Number(process.env.SOS_CAMPAIGN_MAX_ROWS || 200);
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+// Pure: the problems with a made-up set against the tables and columns it will go into.
+// columnsByTable: { table: [column names] }. -> [problem strings]
+function rowsProblems(made, columnsByTable) {
+  const out = [];
+  if (!isObj(made)) return ["the rows are an object of tables, each a list of rows"];
+  for (const [t, rows] of Object.entries(made)) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(t)) { out.push(`"${t}" is not a table name`); continue; }
+    const cols = columnsByTable[t];
+    if (!cols) { out.push(`there is no table named ${t}`); continue; }
+    if (!Array.isArray(rows)) { out.push(`${t}: not a list of rows`); continue; }
+    if (rows.length > ROW_CAP) out.push(`${t}: ${rows.length} rows; at most ${ROW_CAP}`);
+    rows.slice(0, ROW_CAP).forEach((r, i) => {
+      if (!isObj(r)) { out.push(`${t} row ${i + 1}: not an object of column: value`); return; }
+      const bad = Object.keys(r).filter((k) => !cols.includes(k));
+      if (bad.length) out.push(`${t} row ${i + 1}: no column named ${bad.join(", ")} (the columns are ${cols.join(", ")})`);
+      for (const v of Object.values(r)) if (v !== null && typeof v === "object") { out.push(`${t} row ${i + 1}: a value is a nested object; give plain values`); break; }
+    });
+  }
+  return out.slice(0, 20);
+}
+async function columnsByTable(schema) {
+  const rows = (await q("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name <> '_migrations' ORDER BY table_name, ordinal_position", [schema])).rows;
+  const out = {};
+  for (const r of rows) (out[r.table_name] = out[r.table_name] || []).push(r.column_name);
+  return out;
+}
+async function setSequencesPastData(client, schema) {
+  const cols = (await client.query(
+    `SELECT table_name, column_name, column_default FROM information_schema.columns WHERE table_schema=$1 AND column_default LIKE 'nextval(%'`, [schema])).rows;
+  for (const c of cols) {
+    const m = /nextval\('([^']+)'/.exec(c.column_default || "");
+    if (!m) continue;
+    await client.query(`SELECT setval('${m[1]}', COALESCE((SELECT MAX(${c.column_name}) FROM ${schema}.${c.table_name}), 0) + 1, false)`);
+  }
+}
+async function buildTestSchema(company, mod, versionDir, { source = "floor", rows = null } = {}) {
+  const schema = testSchema(company, mod), live = liveSchema(company, mod);
+  await q(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+  await applyMigrations(schema, versionDir);   // makes the schema, the tables, their own sequences, the seed rows
+  const tables = (await tablesIn(schema)).filter((t) => t !== "_migrations");
+  const counts = {};
+  if (source === "made") {
+    const cols = await columnsByTable(schema);
+    const problems = rowsProblems(rows || {}, cols);
+    if (problems.length) { const e = new Error(`the made-up rows do not fit this tool's tables: ${problems.join("; ")}`); e.problems = problems; throw e; }
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (source === "floor") {
+      const liveTables = new Set(await tablesIn(live));
+      for (const t of tables) {
+        if (!liveTables.has(t)) continue;
+        const a = (await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2", [schema, t])).rows.map((r) => r.column_name);
+        const b = new Set((await client.query("SELECT column_name FROM information_schema.columns WHERE table_schema=$1 AND table_name=$2", [live, t])).rows.map((r) => r.column_name));
+        const common = a.filter((c) => b.has(c));
+        if (!common.length) continue;
+        await client.query(`TRUNCATE ${schema}.${t}`);   // the migrations' seed rows are on the floor too; the floor's copy is the one that counts
+        const r = await client.query(`INSERT INTO ${schema}.${t} (${common.join(", ")}) SELECT ${common.join(", ")} FROM ${live}.${t}`);
+        counts[t] = r.rowCount;
+      }
+    } else if (source === "made") {
+      for (const [t, list] of Object.entries(rows || {})) {
+        await client.query(`TRUNCATE ${schema}.${t}`);
+        let n = 0;
+        for (const row of list.slice(0, ROW_CAP)) {
+          const keys = Object.keys(row);
+          if (!keys.length) continue;
+          await client.query(`INSERT INTO ${schema}.${t} (${keys.join(", ")}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(", ")})`, keys.map((k) => row[k]));
+          n++;
+        }
+        counts[t] = n;
+      }
+    }
+    await setSequencesPastData(client, schema);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+  await logEvent("test_schema_built", `${company}/${mod}`, { source, tables, rows: counts });
+  return { tables, rows: counts };
+}
+async function dropTestSchema(company, mod) { await q(`DROP SCHEMA IF EXISTS ${testSchema(company, mod)} CASCADE`); }
+
 // ---- snapshots (in-database) ----------------------------------------------
 async function snapshotSchema(company, mod, version) {
   const name = `snap_${ident(company)}_${ident(mod)}_${Date.now()}`;
@@ -362,7 +464,8 @@ async function restoreSnapshot(company, mod, snapName) {
 }
 
 module.exports = {
-  liveSchema, stagingSchema, validateMigrationSql, applyMigrations,
+  liveSchema, stagingSchema, testSchema, buildTestSchema, dropTestSchema, rowsProblems, columnsByTable, ROW_CAP,
+  validateMigrationSql, applyMigrations,
   rebuildStagingClone, snapshotSchema, recordSnapshot, restoreSnapshot, tablesIn, columnsOf,
   indexShape, indexOnLive, ensureIndexes, declaredIndexes,
 };

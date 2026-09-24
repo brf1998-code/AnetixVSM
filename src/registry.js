@@ -29,13 +29,14 @@ const migrate = require("./migrate");
 const gate = require("./modulegate");
 const runner = require("./runner");
 const dbroles = require("./dbroles");
-const { liveSchema, stagingSchema, applyMigrations, rebuildStagingClone } = migrate;
+const { liveSchema, stagingSchema, testSchema, applyMigrations, rebuildStagingClone } = migrate;
 
 const REPO_MODULES_DIR = process.env.REPO_MODULES_DIR || path.join(__dirname, "..", "modules");
 const MODULES_DIR = process.env.MODULES_DIR || path.join(__dirname, "..", "data", "modules");
 const PRINCIPLES_DIR = process.env.PRINCIPLES_DIR || path.join(__dirname, "..", "principles");
 
-// in-memory mount table: "company/name" -> { live: router|null, staged: router|null }
+// in-memory mount table: "company/name" -> { live: router|null, staged: router|null, test: router|null }
+// (test = the company's test floor, docs/TEST-ENVIRONMENT.md; present only while the company's switch is on)
 const mounts = new Map();
 // hooks.deployed(company, mod, version) runs after every deploy (set by server.js)
 const hooks = { deployed: null };
@@ -125,7 +126,7 @@ function routeMatches(route, rel) {
 // pagePath is what the browser reported (location.pathname). Strip the mount
 // prefix, then match the manifest routes.
 function screenFor(manifest, pagePath) {
-  const rel = String(pagePath || "").replace(/^\/c\/[^/]+\/(staging\/)?m\/[^/]+/, "") || "/";
+  const rel = String(pagePath || "").replace(/^\/c\/[^/]+\/(staging\/|test\/)?m\/[^/]+/, "") || "/";
   const entries = pageEntries(manifest);
   // longest route first so /station/:seq beats /station
   entries.sort((a, b) => b.route.length - a.route.length);
@@ -150,7 +151,7 @@ function widgetInject(html, company, mod, version, mount, manifest) {
 // SOS_MODULE_RUNNER=inline, or `inline` is asked for by the boot safety net), inside this process as before.
 // The screens are files and are always served from here: no module code runs to serve one.
 async function buildRouter(company, mod, version, schema, { inline = false } = {}) {
-  const mount = schema.startsWith("stg_") ? "staged" : "live";
+  const mount = schema.startsWith("stg_") ? "staged" : schema.startsWith("tst_") ? "test" : "live";
   const dir = versionDir(company, mod, version);
   const manifest = readManifest(company, mod, version);
   const router = express.Router();
@@ -165,6 +166,7 @@ async function buildRouter(company, mod, version, schema, { inline = false } = {
 
   // module routes
   router.manifest = manifest;
+  router.version = version;
   if (runner.enabled() && !inline) {
     await dbroles.grant(company, mod);   // the platform has just made or remade this module's tables
     await runner.load({ company, lane: mount, mod, version, schema, dir, manifest });
@@ -177,7 +179,7 @@ async function buildRouter(company, mod, version, schema, { inline = false } = {
   const makeRouter = require(entry);
   const requireManager = (req, res, next) =>
     ["manager", "admin"].includes(req.sosRole) ? next() : res.status(403).json({ error: "manager login required" });
-  router.use(makeRouter({ express, db: scopedDb(schema), moduleName: mod, company, requireManager, ...moduleServices(company, mod, manifest, version) }));
+  router.use(makeRouter({ express, db: scopedDb(schema), moduleName: mod, company, requireManager, ...moduleServices(company, mod, manifest, version, mount) }));
   return router;
 }
 function hasPrinter(manifest) {
@@ -196,13 +198,17 @@ function hasPrinter(manifest) {
 //   connections.<name>  the surface of each connection module.json declares
 //                   (src/connections.js): files -> status(); printer ->
 //                   print(req, template, data), preview(template, data), status()
-function moduleServices(company, mod, manifest, version) {
+// lane: live | staged | test. On the test floor a tool's peer is the TEST copy of its sibling (one world),
+// and what the platform lends is marked as spent or printed from the test floor.
+function moduleServices(company, mod, manifest, version, lane = "live") {
   const agent = require("./agent");
+  const onTest = lane === "test";
   return {
     manifest,
-    connections: require("./connections").surfaces(company, mod, version, manifest),
+    connections: require("./connections").surfaces(company, mod, version, manifest, lane),
     peer(name) {
       const entry = mounts.get(key(company, name));
+      if (onTest) return entry && entry.test ? scopedDb(testSchema(company, name), { readOnly: true }) : null;
       if (!entry || !entry.live) return null;
       return scopedDb(liveSchema(company, name), { readOnly: true });
     },
@@ -220,11 +226,11 @@ function moduleServices(company, mod, manifest, version) {
         await agent.assertUnderCap(company);
         const m = model && agent.MODELS.some((x) => x.id === model) ? model : await agent.modelFor(company, "propose");
         const out = await agent.runChat({ model: m, system, messages, maxTokens });
-        await agent.recordUsage(company, mod, kind || "chat", m, out.costUsd, detail);
+        await agent.recordUsage(company, mod, kind || "chat", m, out.costUsd, onTest ? { ...(detail || {}), lane: "test" } : detail);
         const asked = [...(messages || [])].reverse().find((x) => x && x.role === "user");
         const rec = require("./record").record;
-        await rec("chat_question", { company, module: mod, actor: "person", after: asked ? String(asked.content) : null, detail: { persona: kind || "chat" } });
-        await rec("chat_answer", { company, module: mod, actor: "agent", after: out.text, detail: { persona: kind || "chat", model: m, cost_usd: out.costUsd || 0 } });
+        await rec("chat_question", { company, module: mod, actor: "person", after: asked ? String(asked.content) : null, detail: { persona: kind || "chat", ...(onTest ? { lane: "test" } : {}) } });
+        await rec("chat_answer", { company, module: mod, actor: "agent", after: out.text, detail: { persona: kind || "chat", model: m, cost_usd: out.costUsd || 0, ...(onTest ? { lane: "test" } : {}) } });
         return { ...out, model: m };
       },
     },
@@ -255,6 +261,25 @@ function unmountStaged(company, mod) {
   if (entry) entry.staged = null;
   runner.unload(company, "staged", mod).catch(() => {});   // the staged process goes away with its last preview
 }
+
+// The test floor (docs/TEST-ENVIRONMENT.md). The tables are built by src/testfloor.js (migrate.buildTestSchema)
+// before the first mount; a later mount of another version applies the migrations that version adds, data kept,
+// the way a version switch does on the floor.
+async function mountTest(company, mod, version) {
+  await materialize(company, mod, version);
+  await assertGate(company, mod, version);   // the same backstop as staging and deploy: never a refused draft
+  await applyMigrations(testSchema(company, mod), versionDir(company, mod, version));
+  const entry = mounts.get(key(company, mod)) || {};
+  entry.test = await buildRouter(company, mod, version, testSchema(company, mod));
+  mounts.set(key(company, mod), entry);
+}
+async function unmountTest(company, mod) {
+  const entry = mounts.get(key(company, mod));
+  if (entry) entry.test = null;
+  await runner.unload(company, "test", mod).catch(() => {});
+}
+function testMounted(company, mod) { const e = mounts.get(key(company, mod)); return Boolean(e && e.test); }
+function testVersionMounted(company, mod) { const e = mounts.get(key(company, mod)); return e && e.test ? e.test.version || null : null; }
 
 // ---- lifecycle ------------------------------------------------------------
 async function nextVersionNumber(company, mod) {
@@ -638,7 +663,7 @@ function modulePagePolicy(req, company, mod) {
   const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
   const safeHost = /^[a-z0-9.-]+(:\d+)?$/i.test(host) ? host : null;
   const at = (p) => (safeHost ? `${safeHost}${p}` : "'self'");
-  const own = [`/c/${company}/m/${mod}/`, `/c/${company}/staging/m/${mod}/`];
+  const own = [`/c/${company}/m/${mod}/`, `/c/${company}/staging/m/${mod}/`, `/c/${company}/test/m/${mod}/`];
   // the feedback button's person picker (a name and a PIN) lists the company's names and signs one in:
   // /who only. The manager's list-keeping routes (/people) stay closed to module pages.
   const connect = [...own, "/api/feedback", `/api/c/${company}/modules/${mod}/`, `/api/c/${company}/who`, `/api/c/${company}/who/`].map(at);
@@ -646,7 +671,7 @@ function modulePagePolicy(req, company, mod) {
   // page talks to Zebra Browser Print on the device (localhost only) and to
   // the platform's print queue for this company; nothing else widens
   const entry = mounts.get(key(company, mod));
-  const manifest = entry && ((entry.live && entry.live.manifest) || (entry.staged && entry.staged.manifest));
+  const manifest = entry && ((entry.live && entry.live.manifest) || (entry.staged && entry.staged.manifest) || (entry.test && entry.test.manifest));
   if (hasPrinter(manifest)) connect.push(at(`/api/c/${company}/print/`), "http://localhost:9100", "https://localhost:9101", "http://127.0.0.1:9100");
   return [
     "default-src 'self'",
@@ -695,6 +720,13 @@ function attach(app) {
     lockDown(req, res);
     entry.staged(req, res, next);
   });
+  // the test floor: only while the company's switch is on (src/testfloor.js); otherwise this path does not exist
+  app.use("/c/:company/test/m/:module", (req, res, next) => {
+    const entry = mounts.get(key(req.params.company, req.params.module));
+    if (!entry || !entry.test) return req.path.startsWith("/api/") ? res.status(404).json({ error: "no test floor" }) : res.status(404).send("no test floor");
+    lockDown(req, res);
+    entry.test(req, res, next);
+  });
   // old single-company URLs
   app.use("/m/:module", (req, res) => res.redirect(`/c/demo/m/${req.params.module}${req.url === "/" ? "/" : req.url}`));
   app.use("/staging/m/:module", (req, res) => res.redirect(`/c/demo/staging/m/${req.params.module}${req.url === "/" ? "/" : req.url}`));
@@ -704,4 +736,5 @@ module.exports = {
   MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,
   unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany, moduleServices,
+  mountTest, unmountTest, testMounted, testVersionMounted, wasEverLive,
 };

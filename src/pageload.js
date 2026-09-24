@@ -74,7 +74,7 @@ function screenPaths(manifest) {
 }
 // The same problem reads the same on live and on staging once the mount and the numbers that move are taken out.
 function normalize(msg) {
-  return String(msg || "").replace(/\/staging\/m\//g, "/m/").replace(/https?:\/\/[^/\s]+/g, "").replace(/:\d+:\d+/g, "").replace(/\bv\d+\b/g, "v").replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "").replace(/\s+/g, " ").trim();
+  return String(msg || "").replace(/\/(?:staging|test)\/m\//g, "/m/").replace(/https?:\/\/[^/\s]+/g, "").replace(/:\d+:\d+/g, "").replace(/\bv\d+\b/g, "v").replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "").replace(/\s+/g, " ").trim();
 }
 const keyOf = (p) => `${p.kind}|${p.screen}|${normalize(p.what)}`;
 // problems: [{ kind, screen, what }]. Returns { fresh, inherited }.

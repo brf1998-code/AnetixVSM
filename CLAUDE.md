@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-24)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-24, evening)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -770,6 +770,195 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   board payload carries `icon_v` (a sha1 prefix of the icon), which the page
   appends as `?v=` so a browser that keys its icon cache by URL never shows
   one company's mark on another's board and a rebuilt guide shows at once.
+- **The test floor** (2026-09-24, `src/testfloor.js`, the third lane in `src/dbroles.js`,
+  `src/runner.js` and `src/registry.js`, `migrate.buildTestSchema`; concept and the
+  interaction matrix in `docs/TEST-ENVIRONMENT.md`; Brendan: "the option to turn on
+  a test environment so that they can run a full test campaign ... to test all
+  interactions within the module and to other modules. Not all companies will have
+  this"). **A switch per company, off by default, set by the admin**
+  (`platform.companies.test_floor`, the "Test floor" section of the company card,
+  `POST /api/admin/companies/<slug>/test-floor { on }`). With it off nothing shows
+  anywhere and every older suite runs unchanged. **On**: every tool with a live
+  version gets `tst_<company>_<tool>` tables BUILT FROM THE VERSION'S OWN MIGRATIONS
+  on an empty schema (so serial columns have sequences of their own; the staging
+  clone's `LIKE ... INCLUDING ALL` keeps the floor's, which is why staging leaves
+  id gaps on the floor and the test floor never does) and filled from the floor's
+  rows (columns in common) or a made-up set; a third database role
+  `sos_<company>_tst` (`dbroles.TEST`, `ALL_LANES`; made when the switch first goes
+  on, dropped with the company; rights on the company's `tst_` tables and nothing
+  else, the hostile suite proves it misses `mod_`, `stg_`, another company and
+  `platform`); a third child process (`runner.js` lane `test`, user id base + 2,
+  `peersOf(company, "test", rec)` hands it the TEST schemas of the company's tools
+  and the list of tools up in that process, so `ctx.peer("kpis")` on the test floor
+  reads the test copy of kpis, never the floor; the live and staged children never
+  learn a test schema); a mount `/c/<slug>/test/m/<tool>/` (`registry.mountTest` /
+  `unmountTest` / `testMounted`, `mounts.<key>.test`, `attach`; an API path answers
+  404 JSON `no test floor` when there is none); the browser policy's `connect-src`
+  and `form-action` carry the test path; `screenFor`, the widget's `modBase()`,
+  `connections.deviceCookie` and `pageload.sameProblem` know the third prefix, and
+  `test` is a reserved module name. **Which version runs there**:
+  `platform.modules.test_version` (NULL = the floor's version;
+  `testfloor.effective(m)`); a deploy or switch moves a tool that is not under test
+  (`registry.hooks.deployed` chains `testfloor.afterDeploy` before the diagrams:
+  code remounted, missing migrations applied, data kept); a library module added to
+  a company gets its test copy (`afterModuleAdded`); boot (`testfloor.boot()`,
+  after `registry.loadAll`) mounts every company whose switch is on and rebuilds a
+  schema that is missing (a restore drops `tst_` with the rest; they are never
+  dumped). **Data sets** (`platform.test_floors`: `on`, `data_source` floor |
+  made, `made_rows` `{ tool: { table: [rows] } }`, `made_note`, who, `built_at`,
+  `reset_at`, `campaign_id`): `POST /api/c/<slug>/test-floor/reset { source?, rows?,
+  note? }` (manager) rebuilds every tool from the source in force, or from the one
+  given; a made-up set is checked against the real columns before anything is
+  rebuilt (`migrate.rowsProblems`, 400 with the columns named; nothing changes) and
+  capped at `SOS_CAMPAIGN_MAX_ROWS` (200) a table; a tool the set says nothing about
+  is filled from the floor. `GET /api/c/<slug>/test-floor` is the status any device
+  of the company reads (the settings page's card, the admin section). The version
+  route takes `?lane=test` and answers `test_floor`, `test_version`,
+  `test_built_at`, which is how an open test page reloads when the version moves or
+  the data was put back, and leaves for the live page when the floor is switched
+  off. **Off**: refused while a campaign is running; builds waiting at the campaign
+  step go on to the deploy gate with a note (`campaign.releaseWaiting`); then the
+  mounts, the test child, every `tst_` schema (the confirm says the data is thrown
+  away), `test_version`; the `test_floors` row stays with `on=false` so a made-up
+  set survives a round trip; campaign history stays. **What a person sees**: the
+  strip's violet "Test floor" link per tool while on; a violet bar on every test
+  page ("TEST FLOOR. Nothing here is real. The floor is on version N", with the
+  version under test named, and the way back; no news banner, no "did it fix it?"
+  there); the feedback panel says where they are and a card filed from a test page
+  carries a "from the test floor" chip (the screen is resolved as on the floor);
+  the settings page's "Test floor" card (a button per tool, the data in force, Put
+  the data back); the admin company card's section (switch, tools up, data, Open,
+  Put the data back). Connections on the test floor: a label printed there is a
+  real label (the job row carries `lane: test`), an ERP lookup is a real read-only
+  lookup, `ctx.ai` spends under the company's budget with `lane: test` on the
+  usage and the record, spreadsheets upload to the floor only. Record kinds:
+  test_floor_on, test_floor_off, test_floor_reset, test_floor_data. `test_floors`
+  is in the backup and in company delete (`testfloor.deleteCompany` drops the
+  schemas; the runner drops the third role). Tests: `scripts/e2e/testfloor.js`
+  (43: off by default and nothing answers, on, one world and not the floor's, a
+  sibling's peer read on the test floor, the deploy followed with data kept,
+  reset, a made-up set and a refused one, off tears everything down, on again with
+  the set intact, delete with a floor up), `testfloor-browser.js` (15: the bar,
+  the strip, the settings card, the admin section, a page that leaves when the
+  floor goes off), and `runner-hostile.js` gained 18 checks against the third lane.
+  Sandbox note: the e2e database user has to be able to make roles (in this
+  sandbox `ALTER USER sos WITH SUPERUSER`), or the runner falls back to inline and
+  the hostile suite's own-table checks fail.
+- **The test campaign** (2026-09-24, `src/campaign.js`, `platform.test_campaigns`;
+  step `campaign` in every lane between the platform's checks and the deploy gate,
+  present only when the company's test floor is on at the moment the build passes
+  its checks: `pipeline.toGate` asks `campaign.begin(runId)` and goes to
+  `await_deploy` when it answers false; `modulebuild` does the same; the board's
+  `laneSteps(run)` draws the step only on a run that has one). Brendan: "also
+  proposed test campaign by AI ... semi automated, this is if anything giving the
+  user more confidence in the system so ideally they will do some of it and see
+  the results that it is interacting properly". **The proposal** (`propose`, one
+  structured call on `pipeline.modelForRun(run, "design")`, the run's A/B arm
+  respected, `ai_usage` kind `campaign`, `maxTokens` 16000): the tool's files
+  whole (`modulesource.sourceText`), the request words, the requirement or
+  design, the plain summary, the diff against the floor (`diff -ruN`; a new
+  module: the listing), the checks the tool already carries (not to repeat),
+  the connections declared, and every sibling tool's screens, calls, smoke
+  paths, its `reference.md` and the lines of its `routes.js` that call `peer(`
+  (`siblingsBrief`, which also says which siblings READ the tool under test),
+  plus the last campaign on the tool. Output (`SCHEMA_OUT`): title, summary,
+  `data { source floor | made, why, made }`, 3 to 12 cases `{ id, title, why,
+  area inside | across | connection | role, kind auto | guided, steps }`. **The
+  case format** is a check (GUARDRAILS "Checks") with three additions: `module`
+  on a step (a sibling tool; `acceptance.parse(name, text, { allowModule })` and
+  `runCheck({ bases })` carry it, a check in a module's own files still may
+  not), `do` steps for guided cases (`{ do, on, module?, then?, within }`: the
+  person does it, the platform asks `then` every `SOS_CAMPAIGN_WATCH_MS` (5000)
+  until it matches or `within` seconds pass, then the step is "seen"; no `then`
+  = a plain tick), and nothing in it is a promise (cases live in the table,
+  never in `checks/`, so the module gate has nothing to learn and no agent can
+  write or retire one). `campaign.parse` (pure, on `acceptance.parse`) drops a
+  case that is wrong with the reason (`dropped`), caps 12 cases and 4 guided,
+  clamps `within` to 30..3600; titles and every `do` sentence go through
+  `plainwords.scrub` (a rewrite on the short text model, then the check again; a
+  line that still fails drops the case). **On the card** (status `proposed`, the
+  run `waiting`): title, summary, "N cases, K you do yourself, M across tools",
+  the cases folded with an area chip (THIS TOOL / ACROSS TOOLS / CONNECTION /
+  WHO MAY / YOU DO) and a "run it" tick each, the data choice (a fresh copy of the
+  floor's data, or the made-up set with its row counts), "Add a case in your own
+  words" (a plain guided step on the first screen, ticked by hand), **Run the
+  campaign on the test floor** (`POST /api/runs/:id/campaign/approve { cases,
+  data, added }`, manager, fresh PIN) and under more Skip this campaign (`.../skip
+  { reason }`, words required, a waiver on the record) and Cancel the build.
+  **Preparing and running** (`execute`): `testfloor.setUnderTest(company, mod,
+  to_version)` then `testfloor.reset` with the choice (so every tool's test tables
+  are rebuilt, the tool under test from ITS version's migrations, the
+  `test_floors.campaign_id` set), then the auto cases in order through
+  `acceptance.runCheck` with `bases` = the test mounts only and the company's
+  service cookies (a step naming a tool that is not up fails with a plain reason
+  instead of reaching anywhere), page steps in the platform's browser when it has
+  one; each case's result and a `campaign_case` record as it lands. A failed auto
+  case does NOT end the campaign: the person still does their steps and sees the
+  rest, and the verdict comes once everything is closed (`verdictOf`, pure).
+  **Walking**: the run is `waiting`; the card lists the guided cases with "Open
+  the test floor here" per step, the state (waiting for you / seen by the
+  platform with what it saw / done by hand, not seen / not right with the words),
+  Done and Not right (`POST /api/runs/:id/campaign/steps/:case/:n { answer done |
+  not_right, what }`, manager; words required for not right); the test page's bar
+  shows the steps for THAT screen (`GET /api/c/<slug>/who/campaign?module=&page=`,
+  `stepsForScreen`, open to any device of the company through the page policy's
+  `/who` allowance) with Done and Not right that post to `POST
+  /api/c/<slug>/who/campaign/steps/<campaign>/<case>/<n>` under the signed-in
+  person's name ("Done (Maria G)"); watches are evaluated by `tick` on every read
+  of a walking campaign and by `startWatching`'s interval; a watch past `within`
+  stops looking (`timed_out`) and the person's Done still closes the step. **The
+  verdict** (`finish`): passed = every auto case ok and every guided step seen or
+  done: `evidence.campaign = { id, status: "passed", line, attempt, counts,
+  by_hand, seen }`, the run to `await_deploy`, the run log "test campaign passed:
+  N cases, K steps seen by the platform and J done by hand (names); ready for the
+  deploy gate", record `campaign_passed`. Failed (a case did not pass, or a person
+  said not right): the run fails at step `campaign` with
+  `evidence.campaign.failed = [{ id, title, kind, step | do + words + by }]`, the
+  stopped card leads with the failed cases and the person's words, then Send
+  findings back (`pipeline.fix` accepts the step; `campaign.forAgent` is the
+  agent's brief, `findings_from: "campaign"`, the person's words verbatim) and
+  under more Deploy anyway (`.../campaign/waive { reason }`, manager, fresh PIN,
+  words required: `evidence.campaign.waived`, record `campaign_waived`, the
+  shipped tile and the checks log say "deployed over a failed test campaign"),
+  Retry from scratch, Cancel. **After a fix round** the checks run again and
+  `begin` finds the failed campaign with its approved cases and runs the SAME
+  campaign again (attempt + 1, no second approval, the guided steps done again;
+  the card says so). Deploy, cancel, discard and retry call
+  `campaign.afterRunEnds`, which closes an open campaign and puts the tool back on
+  the floor's version of the test floor (`setUnderTest(..., null)`). The switch
+  going off releases waiting builds (above). Boot sweeps a campaign that was
+  proposing, preparing or running at the restart to failed. Loop health
+  (`builds.campaigns`: proposed, approved, skipped, passed, failed, waived,
+  steps_seen, steps_by_hand, steps_not_right, from the record; `stops.campaign`
+  counted apart from gate, reviewer and tests so it never touches the quiet
+  stretch; `runTimes.ready` reads the campaign's "ready for the deploy gate" line)
+  and a "campaigns ..." line in the Health table's Shipped cell only where a
+  company ran any; the checks log names "test campaign failed" and "deployed over
+  a failed test campaign" and shows the campaign under the run;
+  `checks.listChecks` rows carry `campaign`. The board payload carries
+  `campaigns` by run id (`campaign.forBoard`) whenever the switch is on or a run
+  carries one. Fake mode (`fakeProposal`): four cases (the first screen and the
+  smoke list; a floor read; the first sibling's screen, across; one guided case
+  on the first screen with a watch on the first smoke path, seen at once) and
+  markers in the request words: `CAMPAIGNFAIL` (the second case expects 599 on
+  the first attempt and passes from attempt 2), `CAMPAIGNMADE` (paperline: a
+  made-up set of two open requests), `CAMPAIGNNOWATCH` (the guided step has no
+  watch, so it waits for a tick). Tests: `scripts/test-campaign.js` (22, pure:
+  the format, drops with reasons, the verdict, the steps a page shows, the fake
+  proposal under the same rules), `scripts/e2e/campaign.js` (47: no step with the
+  switch off; proposed, dropped and added cases, the made-up data on the test
+  floor, a watch seen on its own, a floor person's tick from the test page, the
+  pass and the gate, the tool back on the floor's version after deploy or
+  discard, not right with words and the fix round rerunning the same campaign,
+  deploy anyway, skip, the switch going off under a waiting build, loop health)
+  and `campaign-browser.js` (19: the card in every state, the test page's step
+  turning to Done under the person's name, the stopped card, Deploy anyway through
+  the prompt, the shipped tile's line). `run-all.sh` runs both. Not yet: a
+  campaign on the floor as it is (no build behind it), cases kept as promises
+  after a pass, the floor's names on guided steps through a PIN (the signed-in
+  person is recorded when there is one), a campaign across two tools' new
+  versions; `docs/TEST-ENVIRONMENT.md` lists them. Read the first real campaigns
+  before trusting the brief (the fake ones are machinery only).
 - **Per-company AI budget** (2026-09-19). `assertUnderCap(company)` now checks
   the company's own monthly cap (`platform.companies.monthly_cap_usd`, set on
   the admin page) against that company's own spend AND the instance cap, so one
@@ -1915,7 +2104,9 @@ the floor and manager cookie's windows, server-side, not just cookie Max-Age
 limiter (in-memory, address from `edge.clientIp`). Admin accounts:
 `SOS_ADMIN_IDLE_HOURS` (168) and `SOS_ADMIN_CAP_HOURS` (720) for the admin
 cookie (`SOS_ADMIN_SESSION_HOURS` is no longer read; take it out if it is
-there), `SOS_TRUSTED_DEVICE_DAYS` (30: how long "remember this computer"
+there), `SOS_CAMPAIGN_WATCH_MS` (5000: how often a walking test campaign's watches
+are asked), `SOS_CAMPAIGN_MAX_ROWS` (200: the most rows a made-up test data set may
+carry per table), `SOS_TRUSTED_DEVICE_DAYS` (30: how long "remember this computer"
 skips the code), `SOS_ACCOUNT_MAX_FAILS` (5),
 `SOS_ACCOUNT_LOCK_MIN` (15), `SOS_AUTH_EVENT_DAYS` (400), `SOS_ADMIN_2FA=off`
 (break glass only), and `SOS_CONNECTION_KEY` is now REQUIRED before an

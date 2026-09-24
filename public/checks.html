@@ -103,6 +103,12 @@ function row(r) {
     h += `<details><summary>Reviewer passed it${cc.findings && cc.findings.length ? ` with ${cc.findings.length} minor note(s)` : ""}</summary><div class="summary">${esc(cc.summary || "")}</div></details>`;
   }
   if (r.error && r.reason !== "reviewer failed it") h += `<div class="findings">${esc(r.error)}</div>`;
+  // the test campaign on this build (src/campaign.js): what passed, what did not, a person's words, a waiver
+  if (r.campaign) {
+    const c = r.campaign;
+    const failed = (c.failed || []).map((f) => `<div class="summary"><b>${esc(f.title)}</b>${f.kind === "guided" ? ` · ${esc(f.by || "a person")} said not right: "${esc(f.words || "")}"` : ` · ${esc(f.step || "did not pass")}`}</div>`).join("");
+    h += `<details><summary>Test campaign: ${esc(c.status)}${c.line ? ` · ${esc(c.line)}` : ""}${c.attempt > 1 ? ` (attempt ${c.attempt})` : ""}${c.waived ? ` · ${c.waived.kind === "skipped" ? "skipped" : "deployed anyway"} by ${esc(c.waived.by || "the manager")}: ${esc(c.waived.reason)}` : ""}</summary>${failed || `<div class="summary">${esc(c.reason || c.line || "")}</div>`}</details>`;
+  }
   if (r.test_run && !r.test_run.ok) h += `<div class="findings">Tests: ${esc(r.test_run.detail || "")}</div>`;
   if (r.replays && r.replays.length) {
     const exp = expectedFor(r);

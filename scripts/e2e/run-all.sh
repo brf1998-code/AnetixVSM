@@ -67,6 +67,13 @@ run models                 node scripts/e2e/models.js
 [ -z "$QUICK" ] && run models-browser node scripts/e2e/models-browser.js
 
 fresh; start "SOS_BROWSER=off"
+run testfloor              node scripts/e2e/testfloor.js
+[ -z "$QUICK" ] && run testfloor-browser node scripts/e2e/testfloor-browser.js
+fresh; start "SOS_BROWSER=off SOS_CAMPAIGN_WATCH_MS=1500"
+run campaign               node scripts/e2e/campaign.js
+[ -z "$QUICK" ] && run campaign-browser node scripts/e2e/campaign-browser.js
+
+fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop
 echo "logs in $LOG"

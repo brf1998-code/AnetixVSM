@@ -25,6 +25,8 @@ const people = require("./people");
 const freshPin = people.requireFreshPin;
 const closeloop = require("./closeloop");
 const arrival = require("./arrival");
+const testfloor = require("./testfloor");
+const campaign = require("./campaign");
 
 const router = express.Router();
 // the restore route carries a whole backup and parses its own body; a request from the floor may carry one photo
@@ -126,7 +128,10 @@ router.post("/api/feedback/:id/closeout", requireManager, async (req, res) => {
 router.get("/api/c/:slug/modules/:name/version", async (req, res) => {
   const row = await registry.getModule(req.params.slug, req.params.name);
   if (!row) return res.status(404).json({ error: "unknown module" });
-  res.set("Cache-Control", "no-store").json({ live_version: row.live_version, staged_version: row.staged_version });
+  // the test floor's page (src/testfloor.js) reloads when its version moves or its data was rebuilt, and leaves when the floor is switched off
+  const tf = req.query.lane === "test" ? await testfloor.status(req.params.slug) : null;
+  res.set("Cache-Control", "no-store").json({ live_version: row.live_version, staged_version: row.staged_version,
+    ...(tf ? { test_floor: tf.on, test_version: tf.on ? testfloor.effective(row) : null, test_built_at: tf.built_at } : {}) });
 });
 
 // Guided tour steps for a module (any signed-in role; the widget drives it).
@@ -344,6 +349,8 @@ router.get("/api/c/:slug/board", async (req, res) => {
   const intakes = req.sosRole === "floor" ? {} : await intake.boardIntakes(co.slug);
   res.json({
     company: coPublic, brand: brandPublic(b), icon_v: iconVersion(b), feedback, runs, modules, screens, reviews, batches, intakes,
+    test_floor: Boolean(co.test_floor),   // the strip shows a "Test floor" link per tool only while the company's switch is on
+    campaigns: co.test_floor || runs.some((r) => r.step === "campaign" || (r.evidence && r.evidence.campaign_id)) ? await campaign.forBoard(co.slug) : {},
     boardUrl: boardUrl(req, co.slug),
     spend: await agent.monthlySpend(co.slug),
     models: { list: agent.MODELS, build: (await agent.buildModelFor(co.slug, await agent.modelFor(co.slug, "build"))).model },
@@ -676,7 +683,9 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       monthly_cap_usd: c.monthly_cap_usd == null ? null : Number(c.monthly_cap_usd),
       access: auth.accessPublic(access.find((a) => a.company === c.slug)),
       brand: brandPublic(c.brand),
+      test_floor: Boolean(c.test_floor),
     })),
+    testFloors: Object.fromEntries(await Promise.all(companies.filter((c) => c.test_floor).map(async (c) => [c.slug, await testfloor.status(c.slug)]))),
     library: await libraryView(modules),
     models: agent.MODELS,
     labels: agent.ALL_MODELS,   // every model a row may name, retired ones included, for labels only
@@ -927,7 +936,7 @@ router.post("/api/admin/companies/:slug/modules", requireAdmin, async (req, res)
     if (!co) return res.status(404).json({ error: "unknown company" });
     const r = await registry.importFromRepo(co.slug, mod);
     const row = await registry.getModule(co.slug, mod);
-    if (row && row.live_version) await registry.mountLiveIfNeeded(co.slug, mod, row.live_version);
+    if (row && row.live_version) { await registry.mountLiveIfNeeded(co.slug, mod, row.live_version); await testfloor.afterModuleAdded(co.slug, mod, row.live_version); }
     let restyle = null;
     if (co.brand && co.brand.status === "done" && (req.body || {}).restyle !== false) {
       try { restyle = (await brand.restyleModule(co.slug, mod)).id; }
@@ -970,6 +979,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
   if (busy) return res.status(409).json({ error: `${busy} build(s) still open on this company; cancel them first` });
   try {
     const mods = (await q("SELECT name FROM platform.modules WHERE company=$1", [co.slug])).rows.map((m) => m.name);
+    await testfloor.deleteCompany(co.slug);   // its test tables and its test_floors row (the third role goes with the runner below)
     registry.unmountCompany(co.slug);
     for (const m of mods) {
       await q(`DROP SCHEMA IF EXISTS ${migrate.liveSchema(co.slug, m)} CASCADE`);

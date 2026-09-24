@@ -131,15 +131,17 @@ async function idsFor(company) {
     try { row = (await q("INSERT INTO platform.runner_ids (company, base) SELECT $1, COALESCE(MAX(base), 19990) + 10 FROM platform.runner_ids RETURNING base", [company])).rows[0]; }
     catch (e) { if (e.code !== "23505") throw e; row = (await q("SELECT base FROM platform.runner_ids WHERE company=$1", [company])).rows[0]; }
   }
-  return { gid: row.base, live: row.base, staged: row.base + 1 };
+  // live runs as base, staged as base + 1, the test floor (docs/TEST-ENVIRONMENT.md) as base + 2; the ids step by 10
+  return { gid: row.base, live: row.base, staged: row.base + 1, test: row.base + 2 };
 }
+const uidOf = (ids, lane) => (lane === "staged" ? ids.staged : lane === dbroles.TEST ? ids.test : ids.live);
 // The user a company's lane runs as, with the company's module folder closed to everyone else. null when this
 // instance cannot run a process as another user.
 async function userFor(company, lane) {
   if (!isRoot() || state.user.ok !== true) return null;
   const ids = await idsFor(company);
   closeFolder(path.join(require("./registry").MODULES_DIR, company), ids.gid);
-  return { uid: lane === "staged" ? ids.staged : ids.live, gid: ids.gid };
+  return { uid: uidOf(ids, lane), gid: ids.gid };
 }
 // Close the company's module folder to every other company's user.
 function closeFolder(dir, gid) {
@@ -155,8 +157,9 @@ async function start(company, lane) {
   if (had && had.proc && !had.dead) return had.ready;
   const registry = require("./registry");
   const ids = await idsFor(company);
-  const uid = lane === "staged" ? ids.staged : ids.live;
+  const uid = uidOf(ids, lane);
   await dbroles.ensureCompany(company);
+  if (lane === dbroles.TEST) await dbroles.ensureTestRole(company);
   const companyDir = path.join(registry.MODULES_DIR, company);
   closeFolder(companyDir, ids.gid);
   const sockDir = path.join(RUN_DIR, `${company}-${lane}`);
@@ -250,18 +253,26 @@ async function serve(rec, m) {
 }
 
 // ---- load, unload, proxy ----------------------------------------------------------------------------
-async function peersOf(company) {
+// What a tool's ctx.peer reaches, per lane: on the live and staged lanes the FLOOR's tables of the tools that are
+// live; on the test floor the TEST tables of the tools that are up there (one world: a test tool reads the test
+// copy of its sibling, never the floor). The live and staged children never learn a test schema.
+async function peersOf(company, lane, rec) {
   const migrate = require("./migrate");
   const rows = (await q("SELECT name, live_version FROM platform.modules WHERE company=$1", [company])).rows;
-  const peerSchemas = {}; for (const r of rows) peerSchemas[r.name] = migrate.liveSchema(company, r.name).toLowerCase();
+  const peerSchemas = {};
+  if (lane === dbroles.TEST) {
+    for (const r of rows) peerSchemas[r.name] = migrate.testSchema(company, r.name).toLowerCase();
+    return { peerSchemas, peers: rec ? [...rec.loaded.keys()] : [] };
+  }
+  for (const r of rows) peerSchemas[r.name] = migrate.liveSchema(company, r.name).toLowerCase();
   return { peerSchemas, peers: rows.filter((r) => r.live_version).map((r) => r.name) };
 }
 // Put one module version into the company's process for that lane. Throws what `require` threw.
 async function load({ company, lane, mod, version, schema, dir, manifest }) {
   const registry = require("./registry"), agent = require("./agent");
   const rec = await start(company, lane);
-  const { peerSchemas, peers } = await peersOf(company);
-  if (lane === "live" && !peers.includes(mod)) peers.push(mod);
+  const { peerSchemas, peers } = await peersOf(company, lane, rec);
+  if ((lane === "live" || lane === dbroles.TEST) && !peers.includes(mod)) peers.push(mod);
   const connections = {}; for (const [n, c] of Object.entries((manifest && manifest.connections) || {})) if (c && c.kind) connections[n] = c.kind;
   const spec = { mod, version, dir, entry: (manifest && manifest.entry) || "routes.js", schema: String(schema).toLowerCase(), manifest, connections, peerSchemas, peers, models: agent.MODELS };
   try { await send(rec, { op: "load", spec }); }
@@ -269,9 +280,9 @@ async function load({ company, lane, mod, version, schema, dir, manifest }) {
     if (e.timeout) { kill(rec); throw new Error(`routes.js did not finish loading within ${Math.round(LOAD_TIMEOUT_MS / 1000)} seconds`); }
     throw new Error(`routes.js fails to load: ${e.message}`);
   }
-  rec.loaded.set(mod, { spec, services: registry.moduleServices(company, mod, manifest, version) });
-  // the company's other lane and tools hear which tools are live now
-  for (const l of dbroles.LANES) { const other = children.get(key(company, l)); if (other && !other.dead) send(other, { op: "peers", peers }, 5000).catch(() => {}); }
+  rec.loaded.set(mod, { spec, services: registry.moduleServices(company, mod, manifest, version, lane) });
+  // the company's other lane and tools hear which tools are live now (the test child hears only its own world)
+  for (const l of lane === dbroles.TEST ? [dbroles.TEST] : dbroles.LANES) { const other = children.get(key(company, l)); if (other && !other.dead) send(other, { op: "peers", peers }, 5000).catch(() => {}); }
   return rec;
 }
 async function unload(company, lane, mod) {
@@ -280,9 +291,10 @@ async function unload(company, lane, mod) {
   rec.loaded.delete(mod);
   if (!rec.dead) await send(rec, { op: "unload", mod }, 5000).catch(() => {});
   if (!rec.loaded.size) stop(company, lane);
+  else if (lane === dbroles.TEST && !rec.dead) send(rec, { op: "peers", peers: [...rec.loaded.keys()] }, 5000).catch(() => {});
 }
 function stop(company, lane) {
-  for (const l of lane ? [lane] : dbroles.LANES) {
+  for (const l of lane ? [lane] : dbroles.ALL_LANES) {
     const rec = children.get(key(company, l));
     if (!rec) continue;
     rec.stopping = true; children.delete(key(company, l));
