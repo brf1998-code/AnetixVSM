@@ -62,6 +62,12 @@ function staffMode(login) {
 document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); };
 if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
 else if (params.get("account")) staffMode(params.get("account"));
+else if (params.get("staff")) { staffMode(); sub.textContent = "Your email (or name) and password, then the code from your authenticator app."; }   // signed out of an account: back to the account form
+else if (company) {
+  // a personal demo has no company password, only its manager's account: open that form at once instead of the
+  // password box (which would only ever answer "did not match")
+  fetch("/login/mode?c=" + encodeURIComponent(company)).then((r) => r.json()).then((j) => { if (j.mode === "account" && !staff) { staffMode(); sub.textContent = "Sign in to " + company + " with your email and password, then the code from your authenticator app."; } }).catch(() => {});
+}
 // recovery is for getting back in, not for minting a trusted device: the box goes when a recovery code is chosen
 let recovery = false;
 document.getElementById("userec").onclick = (e) => {

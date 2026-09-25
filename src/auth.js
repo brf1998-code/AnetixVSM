@@ -488,13 +488,26 @@ async function loginHandler(req, res) {
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
-function logoutHandler(_req, res) {
+// Signing out of a named account (an admin, a demo's manager) lands on the account sign-in, not on the company
+// password box, which a demo does not have (Brendan, 2026-09-25: "it takes you to a pin only enter, then it errors").
+function logoutHandler(req, res) {
+  let account = false;
+  try { const v = verify(parseCookies(req)[COOKIE]); account = Boolean(v && v.account); } catch (e) {}
   res.set("Set-Cookie", `${COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
-  res.redirect("/login");
+  res.redirect(account ? "/login?staff=1" : "/login");
+}
+// How a company's people sign in, for the login page: "account" for a company whose only way in is a named account
+// (a personal demo, accountsOnly), so the page opens the account form at once; "password" otherwise, including for a
+// code that is not a company (the page then behaves as it always has).
+async function loginMode(slug) {
+  slug = String(slug || "").toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) return "password";
+  const row = await accessRow(slug);
+  return row && !row.floor_hash && !row.manager_hash && !row.legacy_login ? "account" : "password";
 }
 
 module.exports = {
   middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
-  setPasswords, accountsOnly, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
+  setPasswords, accountsOnly, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

@@ -60,6 +60,8 @@ async function main() {
   app.use("/assets", express.static(path.join(__dirname, "public", "assets")));
   app.get("/health", (_req, res) => res.json({ ok: true, boot: process.env.SOS_BOOT_ID }));
   app.get("/login", (_req, res) => res.sendFile(page("login.html")));
+  // which form the login page opens for the company it was sent to: "account" for a personal demo (no company password)
+  app.get("/login/mode", async (req, res) => { try { res.set("Cache-Control", "no-store").json({ mode: await auth.loginMode(req.query.c) }); } catch (e) { res.json({ mode: "password" }); } });
   // anetix.ai is a wall (2026-09-25): its only public page is a sign-in, and that form posts HERE across the origin
   // (same site, so the session cookie this answer sets lands on this host). CORS for the www service's own
   // addresses and nothing else; any other origin gets no CORS headers and the browser refuses to read the answer.

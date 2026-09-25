@@ -28,15 +28,17 @@ t("a long name is cut to thirty characters without a trailing dash", (() => { co
 t("a one-letter name still makes a legal code", /^co-/.test(s.slugFrom("X")) && s.slugFrom("") === "co-");
 t("a name that is all punctuation makes a legal code", /^co-/.test(s.slugFrom("!!!")));
 
-// the balance
+// the balance, shown as a percentage of the tank (the credit right after the last refill), never in dollars
 const b = s.balanceOf({ credit_usd: 30, spent_usd: 12.345 });
-t("balance is credit minus spend, to the cent", b.balance_usd === 17.65 && b.spent_usd === 12.35 && b.credit_usd === 30, b);
-t("the line says what is left and what was used", /^\$17\.65 of AI credit left \(\$12\.35 of \$30\.00 used\)\.$/.test(b.line), b.line);
+t("balance is credit minus spend, to the cent (kept for the admin)", b.balance_usd === 17.65 && b.spent_usd === 12.35 && b.credit_usd === 30, b);
+t("the line is a percentage and names no dollars", b.line === "59% left." && !/\$/.test(b.line) && b.percent === 59, b.line);
 t("plenty left is ok", b.level === "ok");
-t("under five dollars is amber", s.balanceOf({ credit_usd: 30, spent_usd: 26 }).level === "amber");
+t("under a quarter is amber", s.balanceOf({ credit_usd: 30, spent_usd: 23 }).level === "amber" && s.balanceOf({ credit_usd: 30, spent_usd: 22 }).level === "ok");
 const out = s.balanceOf({ credit_usd: 30, spent_usd: 31.2 });
-t("used up is red, the balance goes negative, and the line says nothing runs", out.level === "red" && out.balance_usd === -1.2 && /Out of AI credit/.test(out.line) && /Nothing will be proposed or built/.test(out.line), out);
+t("used up is red, 0%, the balance goes negative, and the line says nothing runs", out.level === "red" && out.percent === 0 && out.balance_usd === -1.2 && /used up/.test(out.line) && /Nothing new will be proposed or built/.test(out.line) && !/\$/.test(out.line), out);
 t("exactly zero is out", s.balanceOf({ credit_usd: 10, spent_usd: 10 }).level === "red");
+t("the tank decides the percentage: refilled at $6 left with $15 more, $21 is 100%", s.balanceOf({ credit_usd: 30, spent_usd: 9, tank_usd: 21 }).percent === 100 && s.balanceOf({ credit_usd: 30, spent_usd: 19.5, tank_usd: 21 }).percent === 50);
+t("a crumb left is 1%, never 0% while anything runs", s.balanceOf({ credit_usd: 15, spent_usd: 14.99, tank_usd: 15 }).percent === 1);
 t("nothing bought, nothing spent: out (a self-serve row with an empty ledger buys nothing)", s.balanceOf({}).level === "red");
 
 // the www key

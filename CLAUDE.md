@@ -1180,6 +1180,38 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `e2e.js` (56) walks the whole thing, and a headless run went pin and email,
   the form, the welcome page, the authenticator, the board with its strip, the
   credit drained to the red panel and on to the $30 page.
+- **Demo sign-in and the credit as a percentage** (2026-09-25, late; from the
+  first outside tester). (1) "It takes you to a pin only enter, then it errors":
+  a demo manager who was not signed in (after Sign out, or opening a board link)
+  landed on `/login`'s company-password box, which a demo does not have. Now
+  `GET /login/mode?c=<slug>` (before the auth middleware, `auth.loginMode`)
+  answers `account` for an accounts-only company and `password` for anything
+  else (a floor company, an unknown code, junk), and `login.html` opens the
+  account form at once for `account` ("Sign in to <slug> with your email and
+  password, then the code ..."); `/logout` sends a named account (admin or
+  manager, `verify(...).account`) to `/login?staff=1`, which opens the same
+  form; a floor or company-password sign-out lands on `/login` as before.
+  (2) "I do not want to show what $ credits, just a percentage": the board's
+  credit line is `AI credit: 64% left.` (or "used up. Nothing new will be
+  proposed or built until more is added."), never dollars. `balanceOf` takes
+  `tank_usd` and returns `percent`; `credit()` computes the tank as what the
+  company had right after its LAST refill (the ledger up to the last row that
+  added credit, minus what was spent before then), so a refill always reads
+  100% and the percentage counts down from there; amber under 25%; `1%` while
+  anything at all is left. The refusal is "this company's AI credit is used
+  up. Add credit at <link> to keep going." with no figures. The dollar fields
+  stay on the object for the admin page and the www service. On anetix.ai the
+  pin page, the set-up form and the welcome page name no dollars of credit
+  ("AI credit from us", "$30 through Stripe refills it"); the top-up page says
+  "N% of the AI credit left" and one button, "Refill my AI credit / Pay $30";
+  the Stripe line is "Anetix: AI credit refill for <company>"; after paying,
+  "Your AI credit is refilled. 100% left now." The $30 price is the only
+  dollar figure a demo person sees. Tests: `scripts/test-selfserve.js` (45),
+  `scripts/e2e/selfserve.js` (97: the mode for a demo and for everything else,
+  both sign-outs, 100% after a refill, 0% used up); www `test-www.js` (31),
+  `e2e.js` (56); the headless walk (13) signed out, came back through a board
+  link to the account form, signed in with a real code and read "AI credit:
+  100% left.".
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the

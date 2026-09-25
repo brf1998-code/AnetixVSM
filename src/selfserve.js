@@ -129,14 +129,19 @@ function slugFrom(name) {
   if (s.length < 2) s = "co-" + s;
   return s;
 }
-// The balance and the line the board shows. Pure.
-function balanceOf({ credit_usd = 0, spent_usd = 0 }) {
+// The balance and the line the board shows. Pure. The board says a PERCENTAGE, never dollars (Brendan, 2026-09-25:
+// "I do not want to show what $ credits, just a percentage"): what is left of the tank, where the tank is what the
+// company had right after its last refill (tank_usd, from credit()); a refill always reads 100%. The dollar fields
+// stay for the admin page and the www service, which never show them to the company.
+function balanceOf({ credit_usd = 0, spent_usd = 0, tank_usd }) {
   const balance = money(money(credit_usd) - money(spent_usd));   // from the cents shown, so the line adds up
-  const level = balance <= 0 ? "red" : balance < 5 ? "amber" : "ok";
+  const tank = tank_usd == null ? money(credit_usd) : money(tank_usd);
+  const percent = balance <= 0 ? 0 : tank > 0 ? Math.max(1, Math.min(100, Math.round((balance / tank) * 100))) : 0;   // never "0%" while something is left
+  const level = balance <= 0 ? "red" : percent < 25 ? "amber" : "ok";
   const line = balance <= 0
-    ? `Out of AI credit: $${money(credit_usd).toFixed(2)} bought, $${money(spent_usd).toFixed(2)} used. Nothing will be proposed or built until credit is added.`
-    : `$${balance.toFixed(2)} of AI credit left ($${money(spent_usd).toFixed(2)} of $${money(credit_usd).toFixed(2)} used).`;
-  return { balance_usd: balance, credit_usd: money(credit_usd), spent_usd: money(spent_usd), level, line };
+    ? "used up. Nothing new will be proposed or built until more is added."
+    : `${percent}% left.`;
+  return { balance_usd: balance, credit_usd: money(credit_usd), spent_usd: money(spent_usd), tank_usd: tank, percent, level, line };
 }
 
 // ---- reads -------------------------------------------------------------------------------------------------------
@@ -201,14 +206,18 @@ async function credit(company) {
   const ss = await selfServeRow(company); if (!ss) return null;
   const bought = Number((await q("SELECT COALESCE(SUM(delta_usd),0) AS usd FROM platform.credit_ledger WHERE company=$1", [company])).rows[0].usd || 0);
   const spent = await spentSince(company, ss.created_at);
-  return { ...balanceOf({ credit_usd: bought, spent_usd: spent }), topup_url: topupUrl(company), since: ss.created_at, email: ss.email, contact: ss.contact };
+  // the tank: what the company had right after its last refill (the last ledger row that ADDED credit): the ledger up
+  // to then, minus what had been spent before then. The percentage counts down from there.
+  const last = (await q("SELECT created_at, (SELECT COALESCE(SUM(delta_usd),0) FROM platform.credit_ledger l2 WHERE l2.company=$1 AND l2.created_at <= l.created_at) AS upto FROM platform.credit_ledger l WHERE company=$1 AND delta_usd > 0 ORDER BY created_at DESC, id DESC LIMIT 1", [company])).rows[0];
+  const tank = last ? Number(last.upto || 0) - (spent - (await spentSince(company, last.created_at))) : 0;
+  return { ...balanceOf({ credit_usd: bought, spent_usd: spent, tank_usd: tank }), topup_url: topupUrl(company), since: ss.created_at, email: ss.email, contact: ss.contact };
 }
 // The gate every AI run passes through (called from agent.assertUnderCap). Throws for a self-serve company with
 // nothing left; does nothing for any other company.
 async function assertCredit(company) {
   if (!company) return;
   const c = await credit(company); if (!c) return;
-  if (c.balance_usd <= 0) throw new Error(`this company's AI credit is used up ($${c.spent_usd.toFixed(2)} of $${c.credit_usd.toFixed(2)}). Add credit at ${c.topup_url} to keep going.`);
+  if (c.balance_usd <= 0) throw new Error(`this company's AI credit is used up. Add credit at ${c.topup_url} to keep going.`);
 }
 
 // ---- writes ------------------------------------------------------------------------------------------------------

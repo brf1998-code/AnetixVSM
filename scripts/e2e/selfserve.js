@@ -109,7 +109,7 @@ async function www(method, path, body, key = KEY) {
   const ev = await mgr.post(`/api/c/${SLUG}/me/enroll/verify`, { code: await codeFor(es.json.secret.replace(/\s/g, "")) });
   t("the right code enrolls and hands over ten recovery codes", ev.status === 200 && ev.json.recovery_codes && ev.json.recovery_codes.length === 10, ev.json);
   const board = await mgr.get(`/api/c/${SLUG}/board`);
-  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && /\$30\.00 of AI credit left/.test(board.json.credit.line) && board.json.credit.level === "ok", board.json.credit);
+  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && board.json.credit.line === "100% left." && board.json.credit.percent === 100 && board.json.credit.level === "ok", board.json.credit);
   // a second sign-in now needs the code
   const m2 = client();
   const need = await m2.post("/login", { name: MGRLOGIN, password: MGRPW });
@@ -151,7 +151,7 @@ async function www(method, path, body, key = KEY) {
   t("$27.50 spent: $2.50 left, amber", low.json.credit.balance_usd === 2.5 && low.json.credit.level === "amber", low.json.credit);
   await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',2.5,'{}')", [SLUG]);
   const out = await mgr.get(`/api/c/${SLUG}/board`);
-  t("$30 spent: out, red, the line says nothing runs", out.json.credit.balance_usd === 0 && out.json.credit.level === "red" && /Out of AI credit/.test(out.json.credit.line), out.json.credit);
+  t("$30 spent: out, red, the line says nothing runs", out.json.credit.balance_usd === 0 && out.json.credit.level === "red" && /used up/.test(out.json.credit.line) && out.json.credit.percent === 0 && !/\$/.test(out.json.credit.line), out.json.credit);
   const fb = await floor.post("/api/feedback", { company: SLUG, module: "paperline", page: "/", message: "the timer should count down", name: "Sam" });
   t("feedback still lands", fb.status === 200 || fb.status === 201, fb.json);
   await sleep(1500);   // the proposer on arrival tries and is refused by the credit gate
@@ -166,7 +166,7 @@ async function www(method, path, body, key = KEY) {
 
   // ---- a top-up, idempotent; an admin grant
   const top = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
-  t("a top-up adds credit: $10 for $20", top.status === 200 && top.json.added && top.json.credit.balance_usd === 10 && top.json.credit.credit_usd === 40, top.json);
+  t("a top-up adds credit: $10 for $20", top.status === 200 && top.json.added && top.json.credit.balance_usd === 10 && top.json.credit.credit_usd === 40 && top.json.credit.percent === 100 && top.json.credit.line === "100% left.", top.json);
   const top2 = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
   t("the same top-up again adds nothing", top2.status === 200 && !top2.json.added && top2.json.credit.credit_usd === 40, top2.json);
   t("a top-up for a company that does not exist is refused", (await www("POST", "/api/www/credit", { slug: "nobody", ref: "cs_x", paid_usd: 2, credit_usd: 1 })).status === 404);
@@ -238,6 +238,16 @@ async function www(method, path, body, key = KEY) {
   t("the demo manager sets up the authenticator", (await dana.post(`/api/c/${DSLUG}/me/enroll/verify`, { code: await codeFor(des.json.secret.replace(/\s/g, "")) })).status === 200);
   const dboard = await dana.get(`/api/c/${DSLUG}/board`);
   t("and reaches the board as its manager, the demo flag and $15 on it", dboard.status === 200 && dboard.json.role === "manager" && dboard.json.company.demo === true && dboard.json.credit.balance_usd === 15, dboard.json && { role: dboard.json.role, demo: dboard.json.company && dboard.json.company.demo });
+  // the login page opens the account form for a demo (no company password to type), the password box for anyone else
+  const mode = async (c) => (await client().get(`/login/mode?c=${encodeURIComponent(c)}`)).json.mode;
+  t("the login page is told a demo signs in by account", await mode(DSLUG) === "account");
+  t("and a company with a floor password, the old demo, an unknown code and junk all get the password box", await mode("late-browser-co") === "password" && await mode("demo") === "password" && await mode("nobody-here") === "password" && await mode("../x") === "password");
+  const lo = await dana.get("/logout");
+  t("signing out of the demo's account lands on the account sign-in", lo.status === 302 && lo.headers.get("location") === "/login?staff=1", lo.headers.get("location"));
+  const fl = await client().post("/login", { password: PW.floor, company: "demo" });
+  const flc = client(); await flc.post("/login", { password: PW.floor, company: "demo" });
+  const flo = await flc.get("/logout");
+  t("signing out of a floor login lands on the plain sign-in, as before", fl.status === 200 && flo.headers.get("location") === "/login", flo.headers.get("location"));
   const db = await admin.get(`/api/c/${DSLUG}/board`);
   t("the board says demo and carries the $15", db.status === 200 && db.json.company.demo === true && db.json.credit.balance_usd === 15, db.json && db.json.company);
   t("a company made the old way is not a demo", (await admin.get(`/api/c/late-browser-co/board`)).json.company.demo === false);
