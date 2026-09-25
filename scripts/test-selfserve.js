@@ -53,5 +53,23 @@ if (saved == null) delete process.env.SOS_WWW_KEY; else process.env.SOS_WWW_KEY 
 
 t("the www address has no trailing slash", (() => { const w = process.env.SOS_WWW_URL; process.env.SOS_WWW_URL = "https://anetix.ai/"; const ok = s.WWW_URL() === "https://anetix.ai"; if (w == null) delete process.env.SOS_WWW_URL; else process.env.SOS_WWW_URL = w; return ok; })());
 
+// the top-up link's key and the sign-in's CORS (anetix.ai is a wall since 2026-09-25)
+const withEnv = (vars, fn) => { const old = {}; for (const k of Object.keys(vars)) { old[k] = process.env[k]; if (vars[k] == null) delete process.env[k]; else process.env[k] = vars[k]; } try { return fn(); } finally { for (const k of Object.keys(old)) { if (old[k] == null) delete process.env[k]; else process.env[k] = old[k]; } } };
+const K = "a-proper-key-of-thirty-two-chars", T0 = Date.UTC(2026, 8, 25, 15, 30);
+t("a credit key is <exp>.<32 characters>, exp 31 days out at a day boundary", /^\d{10}\.[A-Za-z0-9_-]{32}$/.test(s.creditToken("acme", T0, K)) && Number(s.creditToken("acme", T0, K).split(".")[0]) === Date.UTC(2026, 9, 26) / 1000);
+t("the same key all day, another the next day", s.creditToken("acme", T0, K) === s.creditToken("acme", Date.UTC(2026, 8, 25, 23, 59), K) && s.creditToken("acme", T0, K) !== s.creditToken("acme", Date.UTC(2026, 8, 26, 0, 1), K));
+t("a key per company and per secret", s.creditToken("acme", T0, K) !== s.creditToken("acme-2", T0, K) && s.creditToken("acme", T0, K) !== s.creditToken("acme", T0, K + "x"));
+t("no key, or a short one, or a bad code: no token", s.creditToken("acme", T0, "") === "" && s.creditToken("acme", T0, "short") === "" && s.creditToken("../x", T0, K) === "");
+t("the top-up link carries the key when there is one, and is bare when there is not", withEnv({ SOS_WWW_KEY: K, SOS_WWW_URL: "https://anetix.ai" }, () => /^https:\/\/anetix\.ai\/c\/acme\/credit\?t=\d+\.[A-Za-z0-9_-]{32}$/.test(s.topupUrl("acme"))) && withEnv({ SOS_WWW_KEY: null, SOS_WWW_URL: "https://anetix.ai" }, () => s.topupUrl("acme") === "https://anetix.ai/c/acme/credit"));
+t("the sign-in answers CORS for anetix.ai and www.anetix.ai only", withEnv({ SOS_WWW_URL: "https://anetix.ai/" }, () => { const o = s.wwwOrigins(); return o.has("https://anetix.ai") && o.has("https://www.anetix.ai") && o.size === 2; }));
+t("a local address gets no www. twin", withEnv({ SOS_WWW_URL: "http://127.0.0.1:4000" }, () => { const o = s.wwwOrigins(); return o.has("http://127.0.0.1:4000") && o.size === 1; }));
+const fakeRes = () => { const r = { h: {}, code: 0, ended: false, set(o) { Object.assign(r.h, o); return r; }, status(c) { r.code = c; return r; }, end() { r.ended = true; } }; return r; };
+t("a preflight from the wall gets the headers and 204; from elsewhere, 204 and nothing", withEnv({ SOS_WWW_URL: "https://anetix.ai" }, () => {
+  const a = fakeRes(); s.loginCors({ method: "OPTIONS", headers: { origin: "https://anetix.ai" } }, a, () => {});
+  const b = fakeRes(); s.loginCors({ method: "OPTIONS", headers: { origin: "https://evil.example" } }, b, () => {});
+  return a.code === 204 && a.h["Access-Control-Allow-Origin"] === "https://anetix.ai" && a.h["Access-Control-Allow-Credentials"] === "true" && b.code === 204 && !b.h["Access-Control-Allow-Origin"];
+}));
+t("a POST passes on to the sign-in either way", withEnv({ SOS_WWW_URL: "https://anetix.ai" }, () => { let n = 0; s.loginCors({ method: "POST", headers: { origin: "https://evil.example" } }, fakeRes(), () => n++); s.loginCors({ method: "POST", headers: {} }, fakeRes(), () => n++); return n === 2; }));
+
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

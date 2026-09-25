@@ -1104,7 +1104,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   codes and devices cascade); the three tables are in the backup. **Env**:
   `SOS_WWW_KEY` (shared with the www service; `openssl rand -hex 24`),
   `SOS_WWW_URL` (default https://anetix.ai; the top-up link). **Tests**:
-  `scripts/test-selfserve.js` (29, pure), `scripts/e2e/selfserve.js` (75: the
+  `scripts/test-selfserve.js` (29 then, 38 since the wall), `scripts/e2e/selfserve.js` (75: the
   door, a pin's life, the company with its handout both ways round, the 2FA
   sign-in end to end with real TOTP codes, the credit gate on arrival and on
   the button, top-up idempotency, grants, delete, backup) in `run-all.sh`;
@@ -1117,6 +1117,30 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   stored as typed (it is an invitation, not a password); the www service
   keeps the welcome passwords in a signed cookie on that browser for seven
   days so a reload shows them again.
+- **anetix.ai is a wall** (2026-09-25, the `www/` service's `pages.wall` and
+  gates, `selfserve.loginCors`, `selfserve.creditToken` / `topupUrl`; Brendan:
+  "nothing visible or showing what we are doing that is publicly accessible
+  without a pin"). Without a pin anetix.ai is one page: a sign-in (name,
+  password, the authenticator code) with "Have a pin?" in the corner and
+  "Public site coming soon"; the description, the people, the prices and the
+  pictures open only with a good pin (re-checked on every view). The wall's
+  sign-in posts to THIS product's `POST /login` across the origin:
+  `loginCors` (in front of the route in server.js, plus `app.options`) answers
+  CORS with credentials for `SOS_WWW_URL`'s origin and its `www.` twin only;
+  the same site, so the session and trusted-device cookies land on this host,
+  and the page then goes to `/admin`, the manager's board or its enrollment.
+  `/login` itself is unchanged. The board's Add credit link and the
+  "Add credit at" refusal now carry `?t=<exp>.<mac>` (HMAC-SHA256 over
+  `credit:<slug>:<exp>` under `SOS_WWW_KEY`, 32 characters, exp 31 days out
+  rounded to the day; no key, no token); the www service opens a company's
+  top-up page only for that key, the browser that paid for it, or the way
+  back from Stripe. Tests: `scripts/test-selfserve.js` (38, the key and the
+  CORS answer), `scripts/e2e/selfserve.js` (75); the www side has
+  `scripts/test-www.js` (29) and `scripts/e2e.js` (53: the wall says nothing,
+  the pictures and top-up page are shut, the preflight from the wall and not
+  from elsewhere, a pin opening and then closing the page, the key). Known
+  limit: this product's own `/login` page at app.anetix.ai is still public
+  and says "Symbiotic OS" and "floor and manager passwords".
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the

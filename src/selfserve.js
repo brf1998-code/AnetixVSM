@@ -147,12 +147,43 @@ async function spentSince(company, since) {
          + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE company=$1 AND created_at >= $2),0) AS usd`, [company, since])).rows[0];
   return Number(r.usd || 0);
 }
+// The top-up page on anetix.ai is behind the wall (2026-09-25): it opens only for a link that carries a token the
+// www service can check with the key both services hold. "<exp>.<mac>", exp in unix seconds rounded to the day (so
+// the link on the board stays the same all day) and 31 days out; the mac is HMAC-SHA256 over "credit:<slug>:<exp>"
+// under SOS_WWW_KEY, base64url, 32 characters. No key (or too short): no token, and the page stays shut. Pure but
+// for the clock and the key; www/server.js has the same few lines to check it.
+function creditToken(slug, now = Date.now(), key = process.env.SOS_WWW_KEY || "") {
+  if (key.length < 16 || !SLUG.test(String(slug || ""))) return "";
+  const exp = (Math.floor(now / 86400e3) + 31) * 86400;
+  return `${exp}.${crypto.createHmac("sha256", key).update(`credit:${slug}:${exp}`).digest("base64url").slice(0, 32)}`;
+}
+function topupUrl(company, now = Date.now()) {
+  const t = creditToken(company, now);
+  return `${WWW_URL()}/c/${company}/credit${t ? `?t=${t}` : ""}`;
+}
+// The sign-in form on anetix.ai posts to this product's /login across the origin (server.js). CORS for the www
+// service's own addresses only: SOS_WWW_URL and its www. twin. A request from anywhere else gets no CORS headers,
+// so a browser will not let that page read the answer (and the preflight gives it nothing to go on).
+function wwwOrigins() {
+  const out = new Set();
+  try { const u = new URL(WWW_URL()); out.add(u.origin); if (!u.hostname.startsWith("www.") && !/^[\d.]+$|^localhost$/.test(u.hostname)) out.add(`${u.protocol}//www.${u.host}`); } catch (e) {}
+  return out;
+}
+function loginCors(req, res, next) {
+  const o = String(req.headers.origin || "");
+  const ok = o && wwwOrigins().has(o);
+  if (ok) res.set({ "Access-Control-Allow-Origin": o, "Access-Control-Allow-Credentials": "true", Vary: "Origin" });
+  if (req.method !== "OPTIONS") return next();
+  if (ok) res.set({ "Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "600" });
+  res.status(204).end();
+}
+
 // null for a company that is not self-serve; otherwise the balance, with the top-up page's address.
 async function credit(company) {
   const ss = await selfServeRow(company); if (!ss) return null;
   const bought = Number((await q("SELECT COALESCE(SUM(delta_usd),0) AS usd FROM platform.credit_ledger WHERE company=$1", [company])).rows[0].usd || 0);
   const spent = await spentSince(company, ss.created_at);
-  return { ...balanceOf({ credit_usd: bought, spent_usd: spent }), topup_url: `${WWW_URL()}/c/${company}/credit`, since: ss.created_at, email: ss.email, contact: ss.contact };
+  return { ...balanceOf({ credit_usd: bought, spent_usd: spent }), topup_url: topupUrl(company), since: ss.created_at, email: ss.email, contact: ss.contact };
 }
 // The gate every AI run passes through (called from agent.assertUnderCap). Throws for a self-serve company with
 // nothing left; does nothing for any other company.
@@ -394,6 +425,7 @@ adminRouter.post("/api/admin/companies/:slug/credit", requireAdmin, json, guard(
 
 module.exports = {
   init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL,
+  creditToken, topupUrl, wwwOrigins, loginCors,
   pinRow, selfServeRow, spentSince, credit, assertCredit, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
   wwwRouter, adminRouter, keyOk,
 };

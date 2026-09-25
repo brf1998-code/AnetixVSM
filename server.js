@@ -19,6 +19,7 @@ const connections = require("./src/connections");
 const people = require("./src/people");
 const accounts = require("./src/accounts");
 const edge = require("./src/edge");
+const selfserve = require("./src/selfserve");
 
 const PORT = process.env.PORT || 3000;
 const page = (name) => path.join(__dirname, "public", name);
@@ -59,7 +60,11 @@ async function main() {
   app.use("/assets", express.static(path.join(__dirname, "public", "assets")));
   app.get("/health", (_req, res) => res.json({ ok: true, boot: process.env.SOS_BOOT_ID }));
   app.get("/login", (_req, res) => res.sendFile(page("login.html")));
-  app.post("/login", express.json(), auth.loginHandler);
+  // anetix.ai is a wall (2026-09-25): its only public page is a sign-in, and that form posts HERE across the origin
+  // (same site, so the session cookie this answer sets lands on this host). CORS for the www service's own
+  // addresses and nothing else; any other origin gets no CORS headers and the browser refuses to read the answer.
+  app.options("/login", selfserve.loginCors);
+  app.post("/login", selfserve.loginCors, express.json(), auth.loginHandler);
   app.get("/logout", auth.logoutHandler);
   // A stand-in ERP for the showroom: SAP-shaped OData answers about the paper
   // line's stock, so a demo company's erp connection has something to talk

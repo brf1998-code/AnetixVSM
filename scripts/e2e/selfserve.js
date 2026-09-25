@@ -63,7 +63,7 @@ async function www(method, path, body, key = KEY) {
   t("the company is made: slug from the name, the floor password and the manager account shown once, $30 of credit, the login link", c1.status === 200 && c1.json.created && c1.json.company.slug === "acme-wire-cable-inc" && c1.json.passwords && c1.json.passwords.floor && !c1.json.passwords.manager
     && c1.json.manager && c1.json.manager.login === "sam@acme.test" && c1.json.manager.password && c1.json.manager.password !== c1.json.passwords.floor
     && c1.json.managers.length === 1 && c1.json.managers[0].login === "sam@acme.test" && c1.json.managers[0].enrolled === false && c1.json.managers[0].name === "Sam Jones"
-    && c1.json.credit.balance_usd === 30 && c1.json.credit.credit_usd === 30 && c1.json.credit.spent_usd === 0 && c1.json.credit.topup_url === `${WWW}/c/acme-wire-cable-inc/credit` && c1.json.login_url === "/login?next=%2Fc%2Facme-wire-cable-inc%2F&account=sam%40acme.test", c1.json);
+    && c1.json.credit.balance_usd === 30 && c1.json.credit.credit_usd === 30 && c1.json.credit.spent_usd === 0 && new RegExp(`^${rx(WWW)}/c/acme-wire-cable-inc/credit\\?t=\\d+\\.[A-Za-z0-9_-]{32}$`).test(c1.json.credit.topup_url) && c1.json.login_url === "/login?next=%2Fc%2Facme-wire-cable-inc%2F&account=sam%40acme.test", c1.json);
   const SLUG = c1.json.company.slug, FLOOR = c1.json.passwords.floor, MGRLOGIN = c1.json.manager.login, MGRPW = c1.json.manager.password;
   t("no shared manager password exists for the company", (await q("SELECT manager_hash FROM platform.company_access WHERE company=$1", [SLUG])).rows[0].manager_hash === null);
   t("the manager account is not on the Accounts tab's list (admins only)", !(await admin.get("/api/admin/accounts")).json.accounts.some((a) => a.login === MGRLOGIN));
