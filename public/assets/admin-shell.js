@@ -28,14 +28,14 @@
     const { id, rest } = parse();
     for (const t of cfg.tabs) { const el = document.getElementById("tab-" + t.id); if (el) el.classList.toggle("on", t.id === id); }
     drawTabs();
-    document.title = `${cfg.product || "Symbiotic OS"} · ${cfg.title} · ${(cfg.tabs.find((t) => t.id === id) || {}).label || ""}`;
+    document.title = `${cfg.product || "Anetix"} · ${cfg.title} · ${(cfg.tabs.find((t) => t.id === id) || {}).label || ""}`;
     if (cfg.onShow) cfg.onShow(id, rest);
   }
   window.AdminShell = {
     mount(c) {
       cfg = c;
       document.getElementById("shell").innerHTML = `<div class="inner">
-        <div class="top"><h1><img class="mark" src="/assets/anetix-mark.svg" alt="Anetix">${esc(c.product || "Symbiotic OS")}<small>${esc(c.title)}</small></h1><div class="who"><span id="shell-who"></span><a href="/logout">sign out</a></div></div>
+        <div class="top"><h1><img class="mark" src="/assets/anetix-mark.svg" alt="Anetix">${esc(c.product || "Anetix")}<small>${esc(c.title)}</small></h1><div class="who"><span id="shell-who"></span><a href="/logout">sign out</a></div></div>
         <div class="pills" id="shell-pills"></div>
         <nav aria-label="${esc(c.title)} sections"></nav></div>`;
       window.addEventListener("hashchange", show);

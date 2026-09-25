@@ -67,7 +67,7 @@ function check(secret, code, ms = Date.now()) {
 // 20 random bytes: the HMAC-SHA1 block the RFC recommends, 32 base32 characters to type if the QR will not scan
 function newSecret() { return crypto.randomBytes(20); }
 // What the QR code carries. The label and the issuer are both shown by the authenticator app.
-function uri(secret, login, issuer = "Anetix SOS") {
+function uri(secret, login, issuer = "Anetix") {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(login)}?secret=${base32Encode(secret)}&issuer=${encodeURIComponent(issuer)}`;
 }
 
@@ -104,7 +104,7 @@ if (require.main === module) {
   t("junk is refused, not a crash", [null, undefined, "", "12345", "1234567", "abcdef", "12345a", {}, 12].every((x) => check(s, x, now) === null));
   t("another secret's code fails", check(Buffer.from("some-other-secret-xx"), near[1], now) === null);
   const u = uri(rfc, "brf1998@gmail.com");
-  t("the otpauth uri", u === "otpauth://totp/Anetix%20SOS:brf1998%40gmail.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Anetix%20SOS", u);
+  t("the otpauth uri", u === "otpauth://totp/Anetix:brf1998%40gmail.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Anetix", u);
   t("the uri fits the platform's QR generator (216 bytes, byte mode)", Buffer.byteLength(uri(rfc, "taylor.pearlman@gmail.com")) <= 216);
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

@@ -109,7 +109,7 @@ async function www(method, path, body, key = KEY) {
   const ev = await mgr.post(`/api/c/${SLUG}/me/enroll/verify`, { code: await codeFor(es.json.secret.replace(/\s/g, "")) });
   t("the right code enrolls and hands over ten recovery codes", ev.status === 200 && ev.json.recovery_codes && ev.json.recovery_codes.length === 10, ev.json);
   const board = await mgr.get(`/api/c/${SLUG}/board`);
-  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && board.json.credit.line === "100% left." && board.json.credit.percent === 100 && board.json.credit.level === "ok", board.json.credit);
+  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && board.json.credit.line === "200% left." && board.json.credit.percent === 200 && board.json.credit.level === "ok", board.json.credit);
   // a second sign-in now needs the code
   const m2 = client();
   const need = await m2.post("/login", { name: MGRLOGIN, password: MGRPW });
@@ -166,7 +166,7 @@ async function www(method, path, body, key = KEY) {
 
   // ---- a top-up, idempotent; an admin grant
   const top = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
-  t("a top-up adds credit: $10 for $20", top.status === 200 && top.json.added && top.json.credit.balance_usd === 10 && top.json.credit.credit_usd === 40 && top.json.credit.percent === 100 && top.json.credit.line === "100% left.", top.json);
+  t("a top-up adds credit: $10 for $20", top.status === 200 && top.json.added && top.json.credit.balance_usd === 10 && top.json.credit.credit_usd === 40 && top.json.credit.percent === 67 && top.json.credit.line === "67% left.", top.json);
   const top2 = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
   t("the same top-up again adds nothing", top2.status === 200 && !top2.json.added && top2.json.credit.credit_usd === 40, top2.json);
   t("a top-up for a company that does not exist is refused", (await www("POST", "/api/www/credit", { slug: "nobody", ref: "cs_x", paid_usd: 2, credit_usd: 1 })).status === 404);

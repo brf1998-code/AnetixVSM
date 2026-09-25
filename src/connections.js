@@ -351,7 +351,7 @@ const zplEscape = (v) => String(v == null ? "" : v).replace(/[\^~\\]/g, " ").rep
 function renderZpl(template, data) {
   return String(template).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => zplEscape(data && data[k]));
 }
-const TEST_LABEL = `^XA^CF0,40^FO30,25^FDSymbiotic OS^FS^CF0,28^FO30,80^FD{{company}}: test label^FS^FO30,120^FD{{when}}^FS^BY2,2,60^FO30,170^BCN,60,Y,N,N^FD{{code}}^FS^XZ`;
+const TEST_LABEL = `^XA^CF0,40^FO30,25^FDAnetix^FS^CF0,28^FO30,80^FD{{company}}: test label^FS^FO30,120^FD{{when}}^FS^BY2,2,60^FO30,170^BCN,60,Y,N,N^FD{{code}}^FS^XZ`;
 function printerSettings(c) {
   const s = (c && c.settings) || {};
   return { dpmm: [6, 8, 12, 24].includes(Number(s.dpmm)) ? Number(s.dpmm) : 8, width_in: Number(s.width_in) > 0 ? Number(s.width_in) : 4, height_in: Number(s.height_in) > 0 ? Number(s.height_in) : 2 };
@@ -812,7 +812,7 @@ async function itNote(company, mod, name) {
     lines.push(`  ${qn}: ${d.about || "a read-only lookup"}. Fields we read: ${d.fields.join(", ")}${d.params.length ? `. Looked up by: ${d.params.join(", ")}` : ""}${def && def.path ? `. Path: ${def.path}` : ""}`);
   }
   lines.push("");
-  lines.push(`Where the calls come from: the Symbiotic OS instance (hosted; we will give you its outbound address if you allow-list by address), over HTTPS${s.base_url ? ` to ${s.base_url}` : " to the service address you give us"}.`);
+  lines.push(`Where the calls come from: the Anetix platform (hosted; we will give you its outbound address if you allow-list by address), over HTTPS${s.base_url ? ` to ${s.base_url}` : " to the service address you give us"}.`);
   lines.push("How often: a few reads a minute at most; results are cached on our side for " + (s.freshness_s >= 60 ? `${Math.round(s.freshness_s / 60)} minute${s.freshness_s >= 120 ? "s" : ""}` : `${s.freshness_s} seconds`) + ".");
   lines.push("How the login is kept: encrypted on the platform, entered by our administrator, never stored on a plant device, never visible on any screen of the tool.");
   lines.push("What we need back from you: the service address (the OData service URL or the BAQ name), the technical user and its password (or an API key), and, for SAP, the client number.");

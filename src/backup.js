@@ -102,7 +102,7 @@ async function resetSequences(client, schema) {
 }
 
 async function restore(doc) {
-  if (!doc || doc.format !== "sos-backup-1" || !doc.platform) throw new Error("not a Symbiotic OS backup file");
+  if (!doc || doc.format !== "sos-backup-1" || !doc.platform) throw new Error("not an Anetix backup file");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

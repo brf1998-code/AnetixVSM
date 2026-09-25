@@ -90,7 +90,7 @@ async function main() {
     if (req.sosRole !== "admin") return res.redirect(`/c/${req.sosCompany}/`);   // a floor or manager login belongs to one company
     if (companies.length !== 1) return res.redirect("/admin");
     if (companies.length === 1) return res.redirect(`/c/${companies[0].slug}/`);
-    res.type("html").send(`<!DOCTYPE html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Symbiotic OS</title>
+    res.type("html").send(`<!DOCTYPE html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Anetix</title>
       <body style="font-family:system-ui,sans-serif;background:#f2f4f7;color:#1c242e;padding:24px"><h1 style="font-size:20px">Pick a company</h1>
       ${companies.map((c) => `<p><a style="font-size:18px;color:#1f3a5f" href="/c/${c.slug}/">${c.name}</a></p>`).join("")}</body>`);
   });
@@ -116,6 +116,7 @@ async function main() {
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
+  app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
@@ -145,7 +146,7 @@ async function main() {
     diagrams.generate(m.company, m.name, m.live_version).catch((e) => console.error(`diagrams ${m.company}/${m.name}:`, e.message));
   }
 
-  app.listen(PORT, () => console.log(`Symbiotic OS instance on :${PORT} (auth ${auth.OPEN ? "OPEN: no passwords set" : "on"})`));
+  app.listen(PORT, () => console.log(`Anetix instance on :${PORT} (auth ${auth.OPEN ? "OPEN: no passwords set" : "on"})`));
   // does this instance have a browser for the page load every build gets (src/pageload.js)? say so in the deploy log
   require("./src/pageload").selfTest().catch((e) => console.error("[pageload] self test:", e.message));
 }

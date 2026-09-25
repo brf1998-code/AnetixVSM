@@ -21,7 +21,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   2026-09-21, see "Named admin accounts"; `SOS_ADMIN_PASSWORD` opens it only
   until the first authenticator is set up) lists companies, their modules,
   docs, spend, and adds companies or library modules to them.
-- **The admin page is seven tabs, one job each** (2026-09-21, `public/admin.html`; Pins added 2026-09-25
+- **The admin page is seven tabs, one job each** (2026-09-21, `public/admin.html`; Pins and Demos added 2026-09-25, nine now
   plus the standard header `public/assets/admin-shell.js` and
   `admin-shell.css`; Brendan: the page had become fix stacked on fix and he got
   lost in it). The header is on every tab: the navy band, who is signed in,
@@ -1193,25 +1193,68 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   form; a floor or company-password sign-out lands on `/login` as before.
   (2) "I do not want to show what $ credits, just a percentage": the board's
   credit line is `AI credit: 64% left.` (or "used up. Nothing new will be
-  proposed or built until more is added."), never dollars. `balanceOf` takes
-  `tank_usd` and returns `percent`; `credit()` computes the tank as what the
-  company had right after its LAST refill (the ledger up to the last row that
-  added credit, minus what was spent before then), so a refill always reads
-  100% and the percentage counts down from there; amber under 25%; `1%` while
-  anything at all is left. The refusal is "this company's AI credit is used
+  proposed or built until more is added."), never dollars. `balanceOf` returns
+  `percent` = the balance over ONE demo allowance, `SOS_CREDIT_UNIT_USD`
+  (default $15), so a new demo reads 100% and it can go past 100: Brendan the
+  same night, "if they have 5% left it should take them to 105% ... I do not
+  want to have a frustrating rip off system there" (an earlier version that
+  reset to 100% at a refill was replaced before it shipped); amber under 25%;
+  `1%` while anything at all is left. The refusal is "this company's AI credit is used
   up. Add credit at <link> to keep going." with no figures. The dollar fields
   stay on the object for the admin page and the www service. On anetix.ai the
   pin page, the set-up form and the welcome page name no dollars of credit
   ("AI credit from us", "$30 through Stripe refills it"); the top-up page says
-  "N% of the AI credit left" and one button, "Refill my AI credit / Pay $30";
+  "N% of the AI credit left" and one button, "Refill my AI credit / Pay $30" (a refill ADDS 100% on top of what is left);
   the Stripe line is "Anetix: AI credit refill for <company>"; after paying,
-  "Your AI credit is refilled. 100% left now." The $30 price is the only
-  dollar figure a demo person sees. Tests: `scripts/test-selfserve.js` (45),
+  "Your AI credit is refilled. N% left now." The $30 price is the only
+  dollar figure a demo person sees. Tests: `scripts/test-selfserve.js` (47),
   `scripts/e2e/selfserve.js` (97: the mode for a demo and for everything else,
   both sign-outs, 100% after a refill, 0% used up); www `test-www.js` (31),
   `e2e.js` (56); the headless walk (13) signed out, came back through a board
   link to the account form, signed in with a real code and read "AI credit:
   100% left.".
+- **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
+  Symbiotic OS to Anetix"). Everything a person sees: every page title
+  (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin
+  shell's product name, the authenticator app's entry (issuer `Anetix`, was
+  `Anetix SOS`; apps already set up keep the old label and the codes still
+  work), the recovery codes file, the printer test label, the IT note, the
+  backup error, the boot log. Internal names stay on purpose: the repo
+  `SymbioticOS`, the Railway service, every `SOS_` variable, `sos_` cookies,
+  `sos-backup-1`, and this file's title.
+- **The Demos tab: what Anetix learns from the demos** (2026-09-25, `src/demos.js`,
+  `public/assets/admin-demos.js`, the Demos tab of `/admin` between Pins and
+  Companies; Brendan: "see from admin what the person has spent, how much they
+  have paid and important stuff ... collect feedback from their CI board and
+  get an overview of their company ... see what people start building and use
+  cases ... admin only"). Read only; every route is `requireAdmin` on the
+  `/api/admin` path space the module page policy never opens (a demo's own
+  manager gets 403, nobody signed in 401). `GET /api/admin/demos`: every
+  company with a `self_serve` row, newest first, each with who (contact,
+  email, the pin it came in on, the manager account, 2FA or not, last
+  sign-in), money (`moneyOf`, pure, over the ledger: paid through Stripe,
+  refills, credit bought, given, taken back; plus spent, balance, percent and
+  paid minus AI spend), what it built (modules with live version and version
+  count), counts (requests filed and shipped, requests to Anetix, new-tool
+  requests, builds live and stopped), the loop's numbers from
+  `health.forAdmin(0)` (approved, declined, shipped, median hours to live),
+  last activity; the totals across them; and the USE CASES (`useCaseOf`,
+  pure: every new-tool request's name, what it is for, what it tracks, how
+  it is done today, who uses it, the design's one line, live or not).
+  `GET /api/admin/demos/:slug`: that plus every new-tool request with every
+  answer in order, question first (`answersOf`, pure, fixed questions then the
+  generated rounds) and its design, every request on the board in the
+  person's words with where it is and the proposal or the outcome, every
+  build with its title and what changed, the ledger, spend by kind, and the
+  interaction record newest first (600 steps; "Download the record" on the
+  page has them all). `GET /api/admin/demos/export`: every company in full as
+  one JSON file (`anetix-demos-1`) for reading the learnings offline. The
+  page: totals, one row per company (click for all of it,
+  `#demos/<slug>`), the use cases; the company view links its board (an
+  admin session opens any board), its company card and its record. The admin
+  page now has nine tabs. Tests: `scripts/test-demos.js` (7),
+  `scripts/e2e/demos.js` (21, in `run-all.sh`), `accounts-browser.js` counts
+  nine tabs.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the

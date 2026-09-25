@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Symbiotic OS · Admin</title>
+<title>Anetix · Admin</title>
 <link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/admin-shell.css">
 <style>
@@ -148,6 +148,12 @@
   </section>
 
   <!-- ================= Companies: the list, and one company open at a time ================= -->
+  <!-- ================= Demos: what the companies from anetix.ai paid, spent, built, and how (/assets/admin-demos.js) ================= -->
+  <section class="tabpanel" id="tab-demos">
+    <div class="tabhead"><h2>Demos</h2><p class="sub">Every company that came in from anetix.ai: what it paid, what its AI spent, the tools it built and the requests for new ones in its own words, every request on its board, and the process step by step. Only Anetix admins see this. Open a company for all of it.</p></div>
+    <div id="demos-root"><div class="card sub">Loading…</div></div>
+  </section>
+
   <section class="tabpanel" id="tab-companies">
     <div class="tabhead"><h2>Companies</h2><p class="sub">Pick a company to work on it: its pages, modules, sign-in, budget, brand. One open at a time.</p></div>
     <div class="split">
@@ -221,6 +227,7 @@
   <div id="modal" onclick="if(event.target===this)closeModal()"><div class="mcard" id="mcard"></div></div>
 <script src="/assets/admin-shell.js"></script>
 <script src="/assets/admin-models.js"></script>
+<script src="/assets/admin-demos.js"></script>
 <script>
 let D = null;
 // ---- the standard header (/assets/admin-shell.js): pills that stay on every tab, and a dot on a tab that wants a look.
@@ -558,6 +565,7 @@ async function load() {
   loadData().catch((e) => console.error("data requests:", e));
   loadRequests().catch((e) => console.error("requests:", e));
   loadPins().catch((e) => console.error("pins:", e));
+  if (window.AdminDemos) AdminDemos.badge();
   const r = await fetch("/api/admin/overview");
   if (r.status === 401) { location.href = "/login?next=/admin"; return; }
   if (r.status === 403) { document.body.innerHTML = "<p style='padding:20px'>Admin login required.</p>"; return; }
@@ -1003,15 +1011,15 @@ async function enrollVerify(inCard) {
   const html = `<p><b>Done. Now save these ten recovery codes</b> somewhere that is not your phone (a password manager, a printed page).</p>
     <p class="sub" style="margin-top:4px">Each one signs you in once in place of the app's code, for the day the phone is lost. They are shown this once and never again.</p>
     <div class="codes">${j.recovery_codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
-    <div><button class="quiet" id="rc-copy">Copy them</button><a id="rc-dl" download="anetix-sos-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.hash='accounts';location.reload()">I have saved them</button></div>`;
+    <div><button class="quiet" id="rc-copy">Copy them</button><a id="rc-dl" download="anetix-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.hash='accounts';location.reload()">I have saved them</button></div>`;
   if (inCard) document.getElementById("enroll-body").innerHTML = html; else openModal(`<h2>Your authenticator is set up</h2>${html}`);
-  document.getElementById("rc-dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix SOS recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
+  document.getElementById("rc-dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
   document.getElementById("rc-copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(text);
 }
 AdminShell.mount({
   title: "Admin",
-  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "pins", label: "Pins" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
-  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); window.scrollTo(0, 0); },
+  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "pins", label: "Pins" }, { id: "demos", label: "Demos" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
+  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); if (id === "demos" && window.AdminDemos) AdminDemos.show(rest); window.scrollTo(0, 0); },
 });
 load();
 </script>

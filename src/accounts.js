@@ -325,7 +325,7 @@ async function enrollStart(account, ip, origin) {
     [account.id, connections.encrypt({ secret: b32 })]);
   await event("enroll_started", { account_id: account.id, login: account.login, ip });
   // the issuer names the instance, so a test instance and the live one are told apart in the app
-  const issuer = /localhost|127\.0\.0\.1/.test(origin || "") ? "Anetix SOS (local)" : "Anetix SOS";
+  const issuer = /localhost|127\.0\.0\.1/.test(origin || "") ? "Anetix (local)" : "Anetix";
   const uri = totp.uri(secret, account.login, issuer);
   return { secret: b32.match(/.{1,4}/g).join(" "), qr_svg: qrcode.svg(uri, { size: 220 }) };
 }
