@@ -59,7 +59,7 @@
     <div class="card">
       <h2>When a request arrives</h2>
       <label class="sw"><input type="checkbox" id="a-auto" onchange="saveArrival()"><span><b>Read it at once</b><span class="sub">The draft proposal is on the card before you look. A repeat of an open request is added to it instead of making a new card, and when the words can be read two ways the person who sent it gets one question to tap an answer to. Switched off, requests wait for your "Review with AI" button.</span></span></label>
-      <label class="sw"><input type="checkbox" id="a-photos" onchange="saveArrival()"><span><b>Photos</b><span class="sub">People may add a photo to a request. It goes with the words to nobody outside this company. Switch it off where cameras are not allowed on the floor.</span></span></label>
+      <label class="sw"><input type="checkbox" id="a-photos" onchange="saveArrival()"><span><b>Photos</b><span class="sub" id="a-photos-sub">People may add a photo to a request. It goes with the words to nobody outside this company. Switch it off where cameras are not allowed on the floor.</span></span></label>
       <span class="ok" id="a-ok"></span>
     </div>
     <div class="card" id="tf-card" style="display:none">
@@ -89,6 +89,8 @@ async function load() {
   document.getElementById("print-co").textContent = D.company.name;
   document.getElementById("a-auto").checked = D.company.auto_propose !== false;
   document.getElementById("a-photos").checked = D.company.allow_photos !== false;
+  // the data wall (set by Anetix): a photo is a picture of the data, so photos are off while the AI is walled off
+  if (D.company.ai_reads_data === false) { const p = document.getElementById("a-photos"); p.checked = false; p.disabled = true; document.getElementById("a-photos-sub").textContent = "Off while the AI is walled off from this company's data (set by Anetix): a photo is a picture of the data."; }
   loadTestFloor();
 }
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));

@@ -27,6 +27,7 @@ const closeloop = require("./closeloop");
 const arrival = require("./arrival");
 const testfloor = require("./testfloor");
 const campaign = require("./campaign");
+const datawall = require("./datawall");
 
 const router = express.Router();
 // the restore route carries a whole backup and parses its own body; a request from the floor may carry one photo
@@ -72,6 +73,7 @@ router.post("/api/feedback", async (req, res) => {
   if (photo && photo.data && mod && mod !== "platform") {
     try {
       if (co.allow_photos === false) throw new Error("photos are switched off for this company");
+      if (co.ai_reads_data === false) throw new Error("photos are switched off for this company while the AI is walled off from its data; the words went through");
       const mime = String(photo.mime || "image/jpeg").toLowerCase();
       if (!/^image\/(jpeg|png|webp)$/.test(mime)) throw new Error("a photo is a jpeg, png or webp");
       const bytes = Buffer.from(String(photo.data).replace(/^data:[^,]*,/, ""), "base64");
@@ -684,6 +686,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       access: auth.accessPublic(access.find((a) => a.company === c.slug)),
       brand: brandPublic(c.brand),
       test_floor: Boolean(c.test_floor),
+      ...datawall.status(c),
     })),
     testFloors: Object.fromEntries(await Promise.all(companies.filter((c) => c.test_floor).map(async (c) => [c.slug, await testfloor.status(c.slug)]))),
     library: await libraryView(modules),
@@ -968,6 +971,15 @@ router.post("/api/admin/companies/:slug/modules/:module/restyle", requireAdmin, 
 // Refused while any build of that company is running or queued. Everything the
 // company owns goes: module schemas and snapshots, versions, feedback, runs,
 // docs, reviews, diagrams, batches, the mounts, the materialized files.
+// The data wall (src/datawall.js): whether the AI may read this company's data. Admin only; on the record.
+router.post("/api/admin/companies/:slug/data-wall", requireAdmin, async (req, res) => {
+  try {
+    const co = await company(req.params.slug);
+    if (!co) return res.status(404).json({ error: "unknown company" });
+    const out = await datawall.setWall(co.slug, Boolean((req.body || {}).walled), actor(req, req.sosAccount && req.sosAccount.name ? req.sosAccount.name : null));
+    res.json({ ok: true, ...out, ai_reads_data: !out.walled });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
 router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) => {
   const { confirm_slug, password, code } = req.body || {};
   const co = await company(req.params.slug);

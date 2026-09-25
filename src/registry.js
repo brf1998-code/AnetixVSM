@@ -223,9 +223,11 @@ function moduleServices(company, mod, manifest, version, lane = "live") {
       models: agent.MODELS,
       modelFor: (role) => agent.modelFor(company, role),
       async chat({ model, system, messages, maxTokens, kind, detail }) {
+        // walled off from the data (src/datawall.js): a persona reads the company's rows by design, so it does not run
+        if (await require("./datawall").isWalled(company)) throw Object.assign(new Error("AI reading of the company's data is switched off for this company, so this helper cannot answer. Anetix can switch it on."), { status: 409 });
         await agent.assertUnderCap(company);
         const m = model && agent.MODELS.some((x) => x.id === model) ? model : await agent.modelFor(company, "propose");
-        const out = await agent.runChat({ model: m, system, messages, maxTokens });
+        const out = await agent.runChat({ model: m, company, system, messages, maxTokens });
         await agent.recordUsage(company, mod, kind || "chat", m, out.costUsd, onTest ? { ...(detail || {}), lane: "test" } : detail);
         const asked = [...(messages || [])].reverse().find((x) => x && x.role === "user");
         const rec = require("./record").record;

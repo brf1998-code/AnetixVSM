@@ -50,15 +50,16 @@ async function moduleContext(company, mod, { first = [], version = null } = {}) 
   const row = await registry.getModule(company, mod);
   if (!row) return { text: "(unknown module)", files: [], screens: [], cut: [] };
   const v = version || row.live_version;
-  const files = (await registry.versionFiles(company, mod, v)) || {};
+  const walled = await require("./datawall").isWalled(company);
+  const files = require("./datawall").filesForModel((await registry.versionFiles(company, mod, v)) || {}, walled);   // seed rows withheld for a walled company
   const manifest = JSON.parse(files["module.json"] || "{}");
   const screens = registry.pageEntries(manifest);
   const src = sourceText(files, { first: first.filter(Boolean) });
   const screenList = screens.map((s) => `- ${s.label}: ${s.file} (route ${s.route})`).join("\n");
   return {
-    text: `Module "${row.title}" (${mod}), ${v === row.live_version ? "live version" : "version"} ${v}.\nScreens in this module:\n${screenList}\n- server logic: routes.js\nSource:\n${src.text}`,
+    text: `Module "${row.title}" (${mod}), ${v === row.live_version ? "live version" : "version"} ${v}.${walled ? `\n${require("./datawall").PROMPT_NOTE}` : ""}\nScreens in this module:\n${screenList}\n- server logic: routes.js\nSource:\n${src.text}`,
     files: Object.keys(files).filter((f) => f.startsWith("pages/") || f === "routes.js"),
-    screens, cut: src.cut, chars: src.chars,
+    screens, cut: src.cut, chars: src.chars, walled,
   };
 }
 
@@ -94,8 +95,9 @@ async function proposalRequest(fb, opts = {}) {
   const closeloop = require("./closeloop");
   const followUp = closeloop.followUpContext(await closeloop.originalOf(fb).catch(() => null));
   // what the person pointed at, a photo they took, the answer to the one question, and the open requests this might repeat
-  const pointed = arrival.elementLine(fb.element);
-  const blocks = await arrival.photoBlocks(fb.id).catch((e) => { console.error("[arrival] photo:", e.message); return []; });
+  // walled off from the data (src/datawall.js): the element's place, never what it showed; no photo
+  const pointed = arrival.elementLine(ctx.walled ? require("./datawall").element(fb.element) : fb.element);
+  const blocks = ctx.walled ? [] : await arrival.photoBlocks(fb.id).catch((e) => { console.error("[arrival] photo:", e.message); return []; });
   const qa = answered ? `\nBefore drafting, the person was asked: "${fb.question.text}" (the choices: ${(fb.question.options || []).join(" / ")}). The answer${fb.question.answered_by ? `, from ${fb.question.answered_by}` : ""}: "${fb.question.answer}". Read the answer as part of the request.` : "";
   const open = mayTriage && !opts.alone ? await arrival.candidates(fb).catch(() => []) : [];   // alone: the manager said "not the same", so nothing to repeat
   const extras = [followUp, pointed, blocks.length ? "\nThe person also took a photo; it is attached above." : "", qa].map((x) => String(x || "").trim()).filter(Boolean).join("\n");
@@ -139,7 +141,7 @@ async function generateProposal(feedbackId, opts = {}) {
   const { model } = await pickModel(fb.company, "propose", `feedback:${fb.id}`);
   const req = await proposalRequest(fb, { ...opts, mayTriage, mayAsk, answered, ctx, screenLine });
   const { erpLookups, blocks } = req;
-  const { data, costUsd } = await runStructured({ model, system: req.system, prompt: req.prompt, schema: req.schema, toolName: "proposal", blocks: req.blocks });
+  const { data, costUsd } = await runStructured({ model, system: req.system, prompt: req.prompt, schema: req.schema, toolName: "proposal", blocks: req.blocks, company: fb.company });
   const spent = (outcome) => recordUsage(fb.company, fb.module, "triage", model, costUsd || 0, { feedback_id: fb.id, outcome }).catch((e) => console.error("[arrival] usage:", e.message));
 
   // the same thing as an open request: fold it in, no proposal of its own

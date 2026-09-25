@@ -87,20 +87,25 @@ async function generate(company, mod, version, opts = {}) {
   const id = ins.rows[0].id;
   try {
     let data, costUsd = 0;
-    if (fakeMode()) data = fakeDiagrams(mod);
-    else {
-      const files = (await registry.versionFiles(company, mod, version)) || {};
-      const manifest = JSON.parse(files["module.json"] || "{}");
-      const screens = registry.pageEntries(manifest).map((s) => `- ${s.label}: ${s.file} (route ${s.route})`).join("\n");
-      // every file whole (src/modulesource.js): a data-flow drawing made from half of routes.js misses half the flows
-      const srcOut = sourceText(files, { first: ["routes.js"] });
-      const src = srcOut.text;
-      if (srcOut.cut.length) console.error(`[context] diagrams for ${company}/${mod} v${version}: cut ${srcOut.cut.map((c) => `${c.name} ${c.shown}/${c.of}`).join(", ")}`);
+    // the files a model reads: with the company's data walled off, every migration's starting rows are withheld (src/datawall.js)
+    const walled = await require("./datawall").isWalled(company);
+    const files = require("./datawall").filesForModel((await registry.versionFiles(company, mod, version)) || {}, walled);
+    const manifest = JSON.parse(files["module.json"] || "{}");
+    const screens = registry.pageEntries(manifest).map((s) => `- ${s.label}: ${s.file} (route ${s.route})`).join("\n");
+    // every file whole (src/modulesource.js): a data-flow drawing made from half of routes.js misses half the flows
+    const srcOut = sourceText(files, { first: ["routes.js"] });
+    const src = srcOut.text;
+    if (srcOut.cut.length) console.error(`[context] diagrams for ${company}/${mod} v${version}: cut ${srcOut.cut.map((c) => `${c.name} ${c.shown}/${c.of}`).join(", ")}`);
+    const prompt = `Module "${row.title}" (${mod}), version ${version}.\nScreens:\n${screens}\n\nSource:\n${src}\n\nProduce the overview, the data flow set, and one workflow per role.`;
+    if (fakeMode()) {
+      await require("./agent").atWall("structured:diagrams", { company, model, prompt });   // the prompt log sees what a real call would carry
+      data = fakeDiagrams(mod);
+    } else {
       const guidance = await guidanceFor(company, mod);
       const out = await runStructured({
-        model,
+        model, company,
         system: `You draw diagrams of a factory software module for people who will never read its code. Follow the conventions exactly.\n\n${conventions()}\n\n---\n\n${guidance.text}`,
-        prompt: `Module "${row.title}" (${mod}), version ${version}.\nScreens:\n${screens}\n\nSource:\n${src}\n\nProduce the overview, the data flow set, and one workflow per role.`,
+        prompt,
         schema: SCHEMA,
         toolName: "diagrams",
         maxTokens: 16000,

@@ -145,10 +145,10 @@ async function proposalsText(run) {
 // Short title (for the version list) and a two-sentence "what changed" for
 // operators, from the approved changes and the agent's final message. On the
 // short text jobs' model (agent.summaryModel, Sonnet 5 by default).
-async function plainSummary(batch, agentText, isBatch) {
+async function plainSummary(batch, agentText, isBatch, company) {
   const model = await summaryModel();
   const { data, costUsd } = await runStructured({
-    model,
+    model, company,
     system: "You write one-line change notes for people on a factory floor. Plain words, no code talk, no praise, no preamble.",
     prompt: `Approved changes:\n${batch}\n\nWhat the build agent reported:\n${(agentText || "").slice(0, 3000)}\n\nWrite a title of at most 8 words naming what changed${isBatch ? " (it is a batch, so summarize the theme, e.g. 'Station page: fold names, clip position, distance unit')" : ""}, and a what_changed of one to three short sentences an operator would understand, naming the screen.`,
     schema: { type: "object", properties: { title: { type: "string" }, what_changed: { type: "string" } }, required: ["title", "what_changed"] },
@@ -202,7 +202,7 @@ async function advance(runId) {
       const n = (run.proposal_ids || [run.proposal_id]).length;
       if (haveKey()) {
         const out = await runStructured({
-          model: await modelForRun(run, "propose"),
+          model: await modelForRun(run, "propose"), company,
           system: "Restate a change requirement for a factory software module in plain language. The reader is a production manager who will skim. No code talk. Never use em or en dashes.",
           prompt: `${batch}\n\nProduce three things.\n1. bluf: ONE sentence, at most 25 words, saying what will be different for the floor after this ${isBatch ? "batch" : "change"}.\n2. items: exactly ${n} entries, one per change in order (change 1 first). Each summary is ONE sentence, at most 20 words, naming the screen and what changes on it.\n3. requirement: the full statement: (1) what changes and where, (2) what stays the same, (3) how we will know it works${isBatch ? ", change by change" : ""}.`,
           schema: {
@@ -266,20 +266,27 @@ async function advance(runId) {
       const guidance = await guidanceFor(company, mod);
       const { model, substituted } = await buildModelFor(company, run.model);
       if (substituted) await log(runId, { step: "build", note: `${substituted} cannot run as the build agent; building with ${model} instead` });
+      // walled off from the data (src/datawall.js): the seed rows in the migrations that existed before this build
+      // are withheld from the agent's folder for the length of the build and put back byte for byte after
+      const datawall = require("./datawall");
+      const walled = await datawall.isWalled(company);
+      const fromFilesW = walled && run.from_version ? await registry.versionFiles(company, mod, run.from_version) : null;
+      const withheld = walled ? datawall.withhold(draft.dir, fromFilesW) : [];
+      if (withheld.length) await log(runId, { step: "build", note: `walled off from the data: starting rows withheld from ${withheld.join(", ")} while the agent works` });
       const ctl = new AbortController();
       ACTIVE.set(runId, ctl);
       let agentOut;
       try {
         agentOut = await runAgent({
-        model,
+        model, company,
         capUsd,
         signal: ctl.signal,
         system: guidance.text,
         dir: draft.dir,
-        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version }),
+        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version, walled }),
 
         });
-      } finally { ACTIVE.delete(runId); }
+      } finally { ACTIVE.delete(runId); if (withheld.length) datawall.restore(draft.dir, fromFilesW, withheld); }
       const { text, costUsd, modelsSeen } = agentOut;
       await addCost(runId, costUsd);
       const cur = await getRun(runId);
@@ -289,7 +296,7 @@ async function advance(runId) {
       // should make impossible; it is logged loudly rather than hidden.
       const seen = Array.isArray(modelsSeen) ? modelsSeen : [];
       const swapped = seen.length && (seen.length > 1 || seen[0] !== model);
-      await setRun(runId, { evidence: { ...cur.evidence, build_summary: text, docs: guidance.names, model, models_seen: seen, effort: AGENT_EFFORT, cap_usd: capUsd } });
+      await setRun(runId, { evidence: { ...cur.evidence, build_summary: text, docs: guidance.names, model, models_seen: seen, effort: AGENT_EFFORT, cap_usd: capUsd, ...(walled ? { walled: true } : {}) } });
       await log(runId, { step: "build", note: swapped
         ? `agent build complete, but the agent reported running on ${seen.join(", ")} instead of ${model}`
         : `agent build complete (${model}, effort ${AGENT_EFFORT}${seen.length ? ", confirmed by the agent" : ""})` });
@@ -320,7 +327,7 @@ async function advance(runId) {
       // and the feedback outcome. Cheap model; the agent's own final text is
       // often chatty despite the instruction.
       try {
-        const plain = await plainSummary(batch, text, isBatch);
+        const plain = await plainSummary(batch, text, isBatch, company);
         await addCost(runId, plain.costUsd);
         const c3 = await getRun(runId);
         await setRun(runId, { evidence: { ...c3.evidence, title: plain.title, what_changed: plain.what_changed } });
@@ -389,8 +396,8 @@ async function toGate(runId) {
 
 // The build agent's brief for a change (or a batch). A function of its own so the head-to-head assessment
 // (src/assess.js) hands both models exactly the prompt a real build gets.
-function buildPrompt({ mod, isBatch, batch, req, lane, version }) {
-  return `You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the live module version and will become the next version.
+function buildPrompt({ mod, isBatch, batch, req, lane, version, walled = false }) {
+  return `You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the live module version and will become the next version.${walled ? `\n${require("./datawall").PROMPT_NOTE} Starting rows in the migrations are withheld here and are put back by the platform after you finish.` : ""}
 
 ${batch}
 ${req}
@@ -426,7 +433,7 @@ async function runStructuredCrossCheck(run, proposal, cur, model, diffOverride) 
   }
   const ps = await loadProposals(run.proposal_ids || [run.proposal_id]).catch(() => []);
   const targets = ps.map((x) => x.target_file).filter(Boolean);
-  return crossCheckCall({ model, lane: run.lane, targets, requirement: cur.requirement || proposal.body, diff, fromVersion: run.from_version, toVersion: cur.to_version });
+  return crossCheckCall({ model, lane: run.lane, targets, requirement: cur.requirement || proposal.body, diff, fromVersion: run.from_version, toVersion: cur.to_version, company: run.company });
 }
 
 // The cross-check as one pure call, so scripts/replay-crosscheck.js can run
@@ -436,9 +443,9 @@ function crossCheckPrompt({ lane, targets, requirement, diff, fromVersion, toVer
   const changed = [...diff.matchAll(/^diff -ru \S+ \S+\/versions\/\d+\/(\S+)$/gm)].map((m) => m[1]);
   return `Lane: ${lane === "ui" ? "look-and-feel change (pages only)" : lane === "module" ? "a brand-new module built from a confirmed design" : "functionality change"}.${targets && targets.length ? ` Screen file(s) named by the proposals: ${targets.join(", ")}.` : ""}\nFiles touched: ${changed.length ? changed.join(", ") : "(see diff)"}.\n\nConfirmed requirement:\n${requirement}\n\nUnified diff of the change (v${fromVersion || 0} -> v${toVersion})${truncated ? `, cut at ${CROSS_CHECK_DIFF_CHARS} characters; judge only what you can see and never fail for what was cut` : ""}:\n${diff.slice(0, CROSS_CHECK_DIFF_CHARS) || "(no textual diff found)"}`;
 }
-async function crossCheckCall({ model, lane, targets, requirement, diff, fromVersion, toVersion }) {
+async function crossCheckCall({ model, lane, targets, requirement, diff, fromVersion, toVersion, company }) {
   const out = await runStructured({
-    model,
+    model, company,
     system: crossCheckSystem(lane),
     prompt: crossCheckPrompt({ lane, targets, requirement, diff, fromVersion, toVersion }),
     schema: CROSS_CHECK_SCHEMA,
@@ -564,7 +571,8 @@ async function runChecks(company, mod, run) {
   const origin = `http://127.0.0.1:${process.env.PORT || 3000}`;
   const mounts = { staged: `/c/${company}/staging/m/${mod}`, live: row.live_version ? `/c/${company}/m/${mod}` : null };
   const cookies = { manager: await auth.serviceCookie(company, "manager"), floor: await auth.serviceCookie(company, "floor") };
-  const out = { ok: true, kind: null, detail: "", version };
+  const hideValues = await require("./datawall").isWalled(company);   // a failed check names paths and types, never what the answer held
+  const out = { ok: true, kind: null, detail: "", version, ...(hideValues ? { walled: true } : {}) };
 
   out.smoke = await smokeCheck(company, mod, true);
   if (!out.smoke.ok) return { ...out, ok: false, kind: "smoke", detail: out.smoke.detail, checked: out.smoke.checked };
@@ -575,7 +583,7 @@ async function runChecks(company, mod, run) {
   try {
     out.pages = await pageload.look({ origin, mounts, manifest, files, liveManifest: liveFiles ? JSON.parse(liveFiles["module.json"] || "{}") : null, liveFiles, cookie: cookies.manager, browser });
     if (launchNote && !out.pages.fell_back) out.pages.fell_back = `the browser would not start (${launchNote})`;
-    out.acceptance = await acceptance.runAll({ files, fromFiles, retired: await acceptance.retiredSet(company, mod), base: origin + mounts.staged, cookies, browser });
+    out.acceptance = await acceptance.runAll({ files, fromFiles, retired: await acceptance.retiredSet(company, mod), base: origin + mounts.staged, cookies, browser, hideValues });
   } finally {
     if (browser) await browser.close();
     // checks may have written rows: the preview starts from the floor's data again, pass or fail

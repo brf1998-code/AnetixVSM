@@ -125,13 +125,16 @@ async function runReview(reviewId) {
   const files = ctx.files.length ? ctx.files : ["routes.js"];
   const guidance = await guidanceFor(company, mod);
   let data, costUsd = 0;
+  const history = await historyText(company, mod);
+  // walled off from the data (src/datawall.js): the review reads the files and the history, never a snapshot of the rows
+  const snapshot = ctx.walled ? "(withheld: this company's data is walled off from the AI; judge from the files and the history)" : await dataSnapshot(company, mod);
   if (fakeMode()) {
+    // the prompt is assembled and logged as for a real call (the data wall's canary test reads the log), the findings are canned
+    await require("./agent").atWall("structured:review", { company, model, prompt: `${ctx.text}\n\n${history}\n\nLive data snapshot:\n${snapshot}` });
     data = fakeFindings(files);
   } else {
-    const history = await historyText(company, mod);
-    const snapshot = await dataSnapshot(company, mod);
     const out = await runStructured({
-      model,
+      model, company,
       system: `You are re-baselining a factory software module as a whole. You are not answering one complaint; you are looking at every screen, the data model, the information flow between roles, the feedback history and what was already shipped or declined, and the live data, and deciding what would most improve how the floor runs. The reader of your summary is the production manager. Each finding must be independent, small enough for one agent build, land on one screen or the server logic, and be written so a build agent can implement it from the proposal text alone. Do not repeat a change that already shipped. Prefer changes that remove friction people reported or that the data shows (waiting, stockouts, scrap, idle stations). Order findings by priority. Never mention code internals in the text the manager reads.\n\n` + guidance.text,
       prompt: `${ctx.text}\n\n${history}\n\nLive data snapshot:\n${snapshot}\n\nReview the module and return the summary and findings.`,
       schema: reviewSchema(files),

@@ -390,8 +390,29 @@ const AGENT_EFFORT = process.env.SOS_AGENT_EFFORT || "high";
 // Returns { text, costUsd, modelsSeen }: modelsSeen is every model id the
 // run reported (the init message and each assistant message); a run built on
 // the requested model reports exactly one.
-async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, signal, maxTurns }) {
+// ---- the data wall's choke point (src/datawall.js) ------------------------------------------------------------
+// Every model call passes here. `company` names whose call it is; a walled company never sends image or document
+// blocks, whatever the caller assembled. SOS_PROMPT_LOG=<file> appends every prompt sent (fake mode too), which is
+// how scripts/e2e/datawall.js proves that a marker seeded into every kind of data reaches no prompt.
+async function atWall(kind, { company, model, system, prompt, messages, blocks, dir }) {
+  let out = blocks;
+  let walled = false;
+  if (company) {
+    walled = await require("./datawall").isWalled(company);
+    if (walled && blocks && blocks.some((b) => b && (b.type === "image" || b.type === "document"))) {
+      console.warn(`[datawall] ${company}: ${blocks.filter((b) => b && (b.type === "image" || b.type === "document")).length} image or document block(s) dropped from a ${kind} call`);
+      out = blocks.filter((b) => b && b.type === "text");
+    }
+  }
+  if (process.env.SOS_PROMPT_LOG) {
+    try { fs.appendFileSync(process.env.SOS_PROMPT_LOG, JSON.stringify({ t: new Date().toISOString(), kind, company: company || null, walled, model, system, prompt, messages, blocks: (out || []).map((b) => (b.type === "text" ? b.text : `<${b.type}>`)), dir: dir || null }) + "\n"); } catch (e) { /* the log is best effort */ }
+  }
+  return { blocks: out, walled };
+}
+
+async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, signal, maxTurns, company }) {
   const cap = capUsd || MAX_RUN_USD;   // 0 = no cap
+  await atWall("agent", { company, model, system, prompt, dir });
   if (fakeMode()) {
     // fake builds take a moment so an abort can be exercised without a key
     await new Promise((r) => setTimeout(r, Number(process.env.SOS_FAKE_DELAY_MS || 1500)));
@@ -496,7 +517,8 @@ async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, 
 const noForcedTool = new Set(MODELS.filter((m) => m.forcedTool === false).map((m) => m.id));
 // `blocks`: optional content blocks (images, pdf documents, extra text) that
 // go in front of the prompt text, for callers that hand the model attachments.
-async function runStructured({ model, system, prompt, schema, toolName, maxTokens, blocks }) {
+async function runStructured({ model, system, prompt, schema, toolName, maxTokens, blocks, company }) {
+  ({ blocks } = await atWall(`structured:${toolName}`, { company, model, system, prompt, blocks }));
   if (fakeMode()) {
     // SOS_FAKE_PROPOSE_MS: how long a fake proposal call takes, so "the proposer is reading this" can be seen and tested
     const wait = toolName === "proposal" ? Number(process.env.SOS_FAKE_PROPOSE_MS || 0) : 0;
@@ -543,7 +565,8 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
 
 // Plain chat call (no tools): a module's conversational agent. Returns
 // { text, costUsd }. Fake mode answers with a canned line.
-async function runChat({ model, system, messages, maxTokens }) {
+async function runChat({ model, system, messages, maxTokens, company }) {
+  await atWall("chat", { company, model, system, messages });
   if (fakeMode()) {
     const last = [...messages].reverse().find((m) => m.role === "user");
     return { text: `Fake-mode answer to "${String(last && last.content || "").slice(0, 80)}": the data digest was read; nothing else happened. (SOS_FAKE_AGENT=1)`, costUsd: 0 };
@@ -607,6 +630,7 @@ async function assertUnderCap(company) {
 }
 
 module.exports = {
+  atWall,   // the data wall's choke point and the prompt log (src/datawall.js)
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
   SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,

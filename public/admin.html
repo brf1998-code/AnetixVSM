@@ -586,6 +586,7 @@ function companyCard(c) {
         <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="width:150px;margin-top:6px"> <button class="quiet" onclick="setCap('${c.slug}')">Save</button>
         <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(${(c.models.pinned || []).length ? `pinned here: ${c.models.pinned.join(", ")}; ` : "all on the platform's models; "}change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
       <div class="sec"><h3>Test floor</h3>${testFloorHtml(c)}</div>
+      <div class="sec"><h3>What the AI reads</h3>${dataWallHtml(c)}</div>
       <div class="sec wide"><h3>Brand</h3>${brandHtml(c)}</div>
       <div class="sec"><h3>Agent docs</h3>${c.docs.length ? `<details><summary>${c.docs.length} doc${c.docs.length === 1 ? "" : "s"} the agents read</summary><ul>` + c.docs.map(d => `<li>${esc(d.name)} <span class="sub">(${d.module ? "module " + esc(d.module) : "company-wide"}, ${d.bytes} bytes, ${d.source === "repo" ? "seeded" : "edited"})</span></li>`).join("") + `</ul></details>` : "None."}
         <div class="sub" style="margin-top:6px">Read and edit them on <a href="/c/${c.slug}/agents">agent settings and docs</a>.</div></div>
@@ -593,6 +594,19 @@ function companyCard(c) {
         <button class="danger" onclick="openDelete('${c.slug}', '${esc(c.name)}')">Delete company</button></div>
     </div>
   </div>`;
+}
+// The data wall (src/datawall.js): whether the AI may read the company's data. Walled off, it builds the pipeline the
+// data goes through without seeing the data: the tool's files and the words people type, never rows, uploads, ERP
+// answers or photos. The words people type stay outside the wall by decision (Brendan, 2026-09-24).
+function dataWallHtml(c) {
+  if (c.walled) return `<b>Walled off from the data.</b> The AI reads the tool's files and the words people type, never the company's rows, uploads, ERP answers or photos. Photos with a request are off, starting lists load after a build without the AI seeing a row, and helpers that read the data (Jonah) say so instead of answering.<br><button class="quiet" onclick="dataWall('${c.slug}', false)">Let the AI read the data</button>`;
+  return `<b>The AI reads the data too</b> <span class="sub">(rows the tools hold, uploads, ERP answers, photos with a request, a live snapshot in a whole-tool review)</span>.<br><button class="quiet" onclick="dataWall('${c.slug}', true)">Wall it off from the data</button>`;
+}
+async function dataWall(slug, walled) {
+  if (walled && !confirm("Wall the AI off from this company's data? From now on no AI call for this company carries its rows, uploads, ERP answers or photos. Words people type still go to the AI. Anything already sent cannot be unsent. Jonah and other data-reading helpers will stop answering.")) return;
+  if (!walled && !confirm("Let the AI read this company's data again?")) return;
+  await post(`/api/admin/companies/${slug}/data-wall`, { walled });
+  load();
 }
 // The test floor (docs/TEST-ENVIRONMENT.md): a third lane where every tool runs together on data that is not the
 // floor's, and where a build gets its test campaign. Off by default; not every company has it.

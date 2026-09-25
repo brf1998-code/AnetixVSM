@@ -138,7 +138,7 @@ async function buildGuide(slug, url, model) {
     const site = fakeMode() ? { url, title: "Fake site", meta: {}, icons: [], logos: [], colors: ["#1f3a5f (x9)"], rgbColors: [], cssVars: [], fonts: ["system-ui"], text: "Fake site text", stylesheets: 0, cssBytes: 0 } : await readSite(url);
     const icon = fakeMode() ? null : await readIcon(site);
     if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured");
-    const { data, costUsd } = await runStructured({
+    const { data, costUsd } = await runStructured({ company: slug,
       model,
       maxTokens: 6000,
       system: "You write the visual style file for factory-floor software that a company has adopted. Input: the platform's default style file and raw signals scraped from the company's public website. Output: that style file rewritten for the company, so that a build agent reading only your file (the default is removed from its prompt) reproduces the brand: same sections, same specificity, brand values everywhere a default value was. Prefer the colors that repeat most and that look like brand colors (skip greys, pure black and white unless they are clearly the brand). Keep white text readable on the primary color. Never invent a logo image; describe a text treatment instead. Plain words. No em or en dashes anywhere.",

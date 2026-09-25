@@ -40,6 +40,7 @@ async function main() {
   await require("./src/requests").init();    // requests to Anetix: feedback about the software itself, and the way back to whoever sent it
   await require("./src/testfloor").init();   // the test floor: a third lane per company, switched on by the admin (docs/TEST-ENVIRONMENT.md)
   await require("./src/campaign").init();    // the test campaign: proposed by the AI, approved by the manager, run on the test floor, a step before the deploy gate
+  await require("./src/datawall").init();    // the data wall: whether the AI may read a company's data, a switch per company on /admin (src/datawall.js)
 
   const app = express();
   app.disable("x-powered-by");

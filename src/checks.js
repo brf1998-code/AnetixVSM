@@ -76,7 +76,7 @@ async function replayRun(runId, model) {
   const ps = (await q("SELECT target_file FROM platform.proposals WHERE id = ANY($1::int[])", [run.proposal_ids || [run.proposal_id]])).rows;
   const p0 = (await q("SELECT body FROM platform.proposals WHERE id=$1", [run.proposal_id])).rows[0];
   const diff = await diffForRun(run);
-  const { data, costUsd } = await pipeline.crossCheckCall({ model: m, lane: run.lane, targets: ps.map((x) => x.target_file).filter(Boolean), requirement: run.requirement || (p0 && p0.body) || "", diff, fromVersion: run.from_version, toVersion: run.to_version });
+  const { data, costUsd } = await pipeline.crossCheckCall({ model: m, company: run.company, lane: run.lane, targets: ps.map((x) => x.target_file).filter(Boolean), requirement: run.requirement || (p0 && p0.body) || "", diff, fromVersion: run.from_version, toVersion: run.to_version });
   const row = (await q(
     "INSERT INTO platform.check_replays (run_id, model, verdict, summary, findings, cost_usd) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
     [runId, m, data.verdict, data.summary, JSON.stringify(data.findings || []), costUsd || 0])).rows[0];

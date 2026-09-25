@@ -959,6 +959,61 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   person is recorded when there is one), a campaign across two tools' new
   versions; `docs/TEST-ENVIRONMENT.md` lists them. Read the first real campaigns
   before trusting the brief (the fake ones are machinery only).
+- **The data wall** (2026-09-24, `src/datawall.js`, `agent.atWall`;
+  `docs/DATA-WALL.md` has the table of every place data reached a model and
+  what the wall does there; Brendan: "whether they have their AI looking at
+  the data when it is building or it is walled off from the data ... only
+  building the pipeline for the data to go through without ever seeing the
+  data"). **A switch per company on the admin card** ("What the AI reads",
+  `platform.companies.ai_reads_data`, default true, `POST
+  /api/admin/companies/<slug>/data-wall { walled }`, admin only, record kinds
+  `datawall_on` / `datawall_off`; `datawall.isWalled(company)` is cached ten
+  seconds). **Walled off, no row reaches a model**: the files every reader
+  gets (the proposer, the system review, diagrams, the campaign proposal, the
+  head-to-head) go through `datawall.filesForModel`, which replaces each
+  `INSERT` statement in a migration with a note (`withheldMigration`; CREATE
+  and ALTER stay, so the columns are known); the build step withholds the
+  same in the agent's folder before it starts and restores the originals byte
+  for byte after (`withhold` / `restore`, `evidence.walled`, the run log
+  "starting rows withheld from ..."); a new module's skeleton seeds nothing
+  and declares a `files` connection `starting` that the PLATFORM loads from
+  the manager's sheet after the first deploy (`modulebuild.afterDeploy`,
+  record `starting_rows_loaded`); an intake's photos and pdfs are named and
+  withheld and a sheet is its headers and row count
+  (`attachments.blocksFor(id, { walled })`); photos with a request are off
+  (`arrival.settings` answers `allow_photos: false`, the settings page says
+  why, `POST /api/feedback` refuses the photo with the words going through);
+  "point at it" sends the element's tag, id, classes and position only
+  (`datawall.element`); the system review skips its live snapshot; check
+  failures are quoted to the agent as paths and types, never values
+  (`acceptance.match(actual, expected, at, hide)`, `runCheck({ hideValues })`);
+  `ctx.ai.chat`, Jonah and any persona answer 409 with one plain sentence
+  ("AI reading of the company's data is switched off for this company, so
+  this helper cannot answer. Anetix can switch it on."); every walled prompt
+  carries `datawall.PROMPT_NOTE`. **Outside the wall by decision, no
+  filter**: the words people type (feedback, intake answers, adjustments,
+  "not right" on a campaign step) are the request and are accepted as shared
+  with the AI. **The choke point**: `runAgent`, `runStructured` and `runChat`
+  take `company` and call `agent.atWall(kind, {...})`, which drops image and
+  document blocks for a walled company whatever the caller sent, and with
+  `SOS_PROMPT_LOG` set appends every prompt as a JSON line, fake mode included
+  (every fake branch calls it too, so the log is the same in both modes).
+  NEVER set `SOS_PROMPT_LOG` on the live instance: it is the canary's tool
+  and writes every prompt, data included, to a file. **The canary**:
+  `scripts/e2e/datawall.js` (34) seeds `CANARY7731` into every kind of
+  company data (a module built from an intake sheet so its migration carries
+  it, a floor row, a stock upload, a pointed element, a photo), walls the
+  company, runs every model flow (proposal, change build, broken promise and
+  fix round, review, campaign, diagrams, intake and its module build, Jonah)
+  and asserts the kinds all logged, no prompt carried the marker but the
+  request words it was typed into on purpose, no image or document block went
+  out, the migration was restored, the starting list was loaded by the
+  platform; then the wall comes down and the marker returns. Unit:
+  `scripts/test-datawall.js` (19). Known limits (in the doc's "Being honest"
+  section): from now on, not retroactive; column names, page labels and a
+  check's expected values are read; a sheet's shape goes through; staging
+  and the test floor hold real rows (between the data and the model, not the
+  data and the platform); no per-tool wall.
 - **Per-company AI budget** (2026-09-19). `assertUnderCap(company)` now checks
   the company's own monthly cap (`platform.companies.monthly_cap_usd`, set on
   the admin page) against that company's own spend AND the instance cap, so one
@@ -2106,7 +2161,9 @@ limiter (in-memory, address from `edge.clientIp`). Admin accounts:
 cookie (`SOS_ADMIN_SESSION_HOURS` is no longer read; take it out if it is
 there), `SOS_CAMPAIGN_WATCH_MS` (5000: how often a walking test campaign's watches
 are asked), `SOS_CAMPAIGN_MAX_ROWS` (200: the most rows a made-up test data set may
-carry per table), `SOS_TRUSTED_DEVICE_DAYS` (30: how long "remember this computer"
+carry per table), `SOS_PROMPT_LOG` (a file every prompt is appended to as a JSON
+line, data included: the data wall's canary test only, NEVER on the live
+instance), `SOS_TRUSTED_DEVICE_DAYS` (30: how long "remember this computer"
 skips the code), `SOS_ACCOUNT_MAX_FAILS` (5),
 `SOS_ACCOUNT_LOCK_MIN` (15), `SOS_AUTH_EVENT_DAYS` (400), `SOS_ADMIN_2FA=off`
 (break glass only), and `SOS_CONNECTION_KEY` is now REQUIRED before an

@@ -280,7 +280,7 @@ async function siblingsBrief(company, self) {
 }
 async function diffText(run) {
   const to = registry.versionDir(run.company, run.module, run.to_version);
-  if (!run.from_version) return require("./modulebuild").listingAsDiff(to).slice(0, 60000);
+  if (!run.from_version) return require("./modulebuild").listingAsDiff(to).slice(0, 60000);   // a walled company's new module seeds no rows (modulebuild.skeleton)
   const from = registry.versionDir(run.company, run.module, run.from_version);
   try { return execFileSync("diff", ["-ruN", from, to], { encoding: "utf8", maxBuffer: 4 * 1024 * 1024 }).slice(0, 60000); }
   catch (e) { return String(e.stdout || "").slice(0, 60000); }
@@ -306,15 +306,19 @@ async function requestWords(run) {
 }
 async function propose(run, camp) {
   const { company, module: mod } = run;
-  const files = (await registry.versionFiles(company, mod, run.to_version)) || {};
+  const walled = await require("./datawall").isWalled(company);
+  const files = require("./datawall").filesForModel((await registry.versionFiles(company, mod, run.to_version)) || {}, walled);
   let manifest = {}; try { manifest = JSON.parse(files["module.json"] || "{}"); } catch (e) { /* unreadable */ }
   const sib = await siblingsBrief(company, mod);
   const modules = [mod, ...sib.names];
   const model = await pipe().modelForRun(run, "design");
   const words = await requestWords(run);
   let data, costUsd;
-  if (agent.fakeMode()) ({ data, costUsd } = fakeProposal(run, manifest, sib.names, camp.attempt, words));
-  else {
+  if (agent.fakeMode()) {
+    // the files a real call would read are logged (the data wall's canary test reads the log); the campaign is canned
+    await agent.atWall("structured:campaign", { company, model, prompt: `${clip(words, 2000)}\n\n${await diffText(run)}\n\n${modulesource.sourceText(files, { first: [] }).text}\n\n${sib.text}` });
+    ({ data, costUsd } = fakeProposal(run, manifest, sib.names, camp.attempt, words));
+  } else {
     const src = modulesource.sourceText(files, { first: [] });
     const { checks } = acceptance.collect(files);
     const last = await lastOnModule(company, mod, camp.id);
@@ -347,8 +351,8 @@ ${sib.text}
 
 ${last ? `THE LAST CAMPAIGN ON THIS TOOL: "${last.title}" ${last.status} (${last.verdict_line || ""}). Do not repeat what held; go after what this change touches.\n\n` : ""}Return the campaign.`;
     const out = await agent.runStructured({
-      model,
-      system: `You design a test campaign for a change to one tool of a factory operating system, to be run on the company's TEST FLOOR: every tool the company has, mounted together on a copy of data that is not the floor's, in one world, so what one tool reads from another is real there. The campaign has cases the platform runs itself and cases a person does on the test floor while the platform watches. The reader of every title and every "do" sentence is a production manager with no technical background, and the person doing a guided step may be on the floor with a tablet.\n\n${formatBrief(mod, modules)}\n\nPLAIN WORDS:\n${plain.rules()}`,
+      model, company,
+      system: `${walled ? require("./datawall").PROMPT_NOTE + "\n\n" : ""}You design a test campaign for a change to one tool of a factory operating system, to be run on the company's TEST FLOOR: every tool the company has, mounted together on a copy of data that is not the floor's, in one world, so what one tool reads from another is real there. The campaign has cases the platform runs itself and cases a person does on the test floor while the platform watches. The reader of every title and every "do" sentence is a production manager with no technical background, and the person doing a guided step may be on the floor with a tablet.\n\n${formatBrief(mod, modules)}\n\nPLAIN WORDS:\n${plain.rules()}`,
       prompt, schema: SCHEMA_OUT, toolName: "campaign", maxTokens: 16000,
     });
     data = out.data; costUsd = out.costUsd || 0;
@@ -356,7 +360,7 @@ ${last ? `THE LAST CAMPAIGN ON THIS TOOL: "${last.title}" ${last.status} (${last
   const parsed = parse(data, { modules, self: mod });
   // plain words on what a person reads; a line that still fails is dropped
   const costBox = { usd: 0 };
-  const rewrite = agent.fakeMode() ? null : await (async () => { const m = await agent.summaryModel(); return async (text, instructions) => { const r = await agent.runChat({ model: m, system: instructions, messages: [{ role: "user", content: text }], maxTokens: 2000 }); costBox.usd += r.costUsd || 0; return r.text; }; })();
+  const rewrite = agent.fakeMode() ? null : await (async () => { const m = await agent.summaryModel(); return async (text, instructions) => { const r = await agent.runChat({ model: m, company, system: instructions, messages: [{ role: "user", content: text }], maxTokens: 2000 }); costBox.usd += r.costUsd || 0; return r.text; }; })();
   const allow = [];
   const clean = async (text) => { const r = await plain.scrub(text, { allow, rewrite }); return r.hits.length ? null : r.text; };
   const kept = [];
@@ -499,12 +503,13 @@ async function execute(campId) {
     const status = await testfloor.status(company);
     const up = status.modules.filter((m) => m.up).map((m) => m.name);
     const B = bases(company, up), C = await cookiesFor(company);
+    const hideValues = await require("./datawall").isWalled(company);   // a failed case names paths and types, never what the answer held
     let browser = null;
     try { browser = await require("./pageload").session(`http://127.0.0.1:${process.env.PORT || 3000}`); } catch (e) { /* no browser: page steps skip visible/selector */ }
     try {
       for (const c of camp.cases) {
         if (c.kind !== "auto") continue;
-        const r = await acceptance.runCheck({ file: c.id, title: c.title, steps: c.steps }, { base: B[mod], bases: B, cookies: C, browser });
+        const r = await acceptance.runCheck({ file: c.id, title: c.title, steps: c.steps }, { base: B[mod], bases: B, cookies: C, browser, hideValues });
         // fake mode: the CAMPAIGNFAIL case stands in for a build a fix round put right; it passes from attempt 2
         if (agent.fakeMode() && camp.attempt > 1 && /first attempt only/.test(c.title)) { r.ok = true; r.steps = r.steps.map((x) => ({ ...x, ok: true, problems: [], note: "fake mode: passes from attempt 2" })); }
         results.cases.push({ id: c.id, kind: "auto", ok: r.ok, steps: r.steps, at: new Date().toISOString() });

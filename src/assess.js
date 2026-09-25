@@ -294,7 +294,7 @@ const TRIALS = {
     const pipeline = require("./pipeline");
     const diff = await require("./checks").diffForRun(run);
     const ps = (await q("SELECT target_file, body FROM platform.proposals WHERE id = ANY($1::int[]) ORDER BY id", [run.proposal_ids || [run.proposal_id]])).rows;
-    const { data, costUsd } = await pipeline.crossCheckCall({ model: t.model, lane: run.lane, targets: ps.map((x) => x.target_file).filter(Boolean), requirement: run.requirement || (ps[0] && ps[0].body) || "", diff, fromVersion: run.from_version, toVersion: run.to_version });
+    const { data, costUsd } = await pipeline.crossCheckCall({ model: t.model, company: run.company, lane: run.lane, targets: ps.map((x) => x.target_file).filter(Boolean), requirement: run.requirement || (ps[0] && ps[0].body) || "", diff, fromVersion: run.from_version, toVersion: run.to_version });
     const old = run.evidence && run.evidence.cross_check && run.evidence.cross_check.verdict;
     // a Right label keeps the reviewer's verdict at the time, Wrong flips it (the same reading as the checks page)
     const expected = run.label === "right" ? old : run.label === "wrong" ? (old === "fail" ? "pass" : "fail") : null;
@@ -307,7 +307,7 @@ const TRIALS = {
     const ref = await approvedFor(fb.id);
     if (!ref.proposal || !ref.run) throw new Error("the approved proposal or its build is gone");
     const req = await require("./proposals").proposalRequest(fb, { force: true, alone: true, version: ref.run.from_version });
-    const { data, costUsd } = await agent.runStructured({ model: t.model, system: req.system, prompt: req.prompt, schema: req.schema, toolName: "proposal", blocks: req.blocks });
+    const { data, costUsd } = await agent.runStructured({ model: t.model, company: fb.company, system: req.system, prompt: req.prompt, schema: req.schema, toolName: "proposal", blocks: req.blocks });
     return {
       output: { proposal: data.proposal, class: data.class, target_file: data.target_file || null, rationale: data.rationale, version: ref.run.from_version },
       score: { class_match: data.class === ref.proposal.class, target_match: (data.target_file || null) === (ref.proposal.target_file || null) },
@@ -330,7 +330,8 @@ const TRIALS = {
     const run = (await q("SELECT * FROM platform.build_runs WHERE id=$1", [t.source_id])).rows[0];
     if (!run) throw new Error("the run is gone");
     const pipeline = require("./pipeline"), registry = require("./registry"), gate = require("./modulegate");
-    const fromFiles = await registry.versionFiles(run.company, run.module, run.from_version);
+    const walled = await require("./datawall").isWalled(run.company);
+    const fromFiles = require("./datawall").filesForModel(await registry.versionFiles(run.company, run.module, run.from_version), walled);   // a walled company's seed rows never reach the trial's folder
     if (!fromFiles) throw new Error(`the files of v${run.from_version} are gone`);
     const ids = run.proposal_ids && run.proposal_ids.length ? run.proposal_ids : [run.proposal_id];
     const batch = await pipeline.proposalsText(run);
@@ -342,8 +343,8 @@ const TRIALS = {
     let cost = 0;
     try {
       const guidance = await agent.guidanceFor(run.company, run.module);
-      const out = await agent.runAgent({ model: t.model, system: guidance.text, dir, capUsd: agent.runCapUsd(ids.length),
-        prompt: pipeline.buildPrompt({ mod: run.module, isBatch: ids.length > 1, batch, req, lane: run.lane, version: run.to_version }) });
+      const out = await agent.runAgent({ model: t.model, company: run.company, system: guidance.text, dir, capUsd: agent.runCapUsd(ids.length),
+        prompt: pipeline.buildPrompt({ mod: run.module, isBatch: ids.length > 1, batch, req, lane: run.lane, version: run.to_version, walled }) });
       cost += out.costUsd || 0;
       const verdict = gate.checkDir(dir, { fromFiles, lane: run.lane });
       let diff = "";
@@ -353,7 +354,7 @@ const TRIALS = {
       // both models check the result, so a build is never graded only by its own model
       const reviews = {};
       if (diff.trim()) for (const m of agent.MODELS.map((x) => x.id)) {
-        const r = await pipeline.crossCheckCall({ model: m, lane: run.lane, targets, requirement: run.requirement || batch, diff, fromVersion: run.from_version, toVersion: run.to_version });
+        const r = await pipeline.crossCheckCall({ model: m, company: run.company, lane: run.lane, targets, requirement: run.requirement || batch, diff, fromVersion: run.from_version, toVersion: run.to_version });
         cost += r.costUsd || 0;
         reviews[m] = { verdict: r.data.verdict, blocking: blockingOf(r.data.findings), summary: String(r.data.summary || "").slice(0, 1500) };
       }

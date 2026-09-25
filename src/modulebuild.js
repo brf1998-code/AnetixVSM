@@ -29,11 +29,14 @@ const sq = (s) => String(s == null ? "" : s).replace(/'/g, "''");
 
 // ---- the skeleton --------------------------------------------------------------------
 // A small working module from the design: the thing, its stages, one screen.
-function skeleton({ slug, title, design, answers, startingRows }) {
+// walled (src/datawall.js): no seed rows in the migration; instead module.json declares a files connection
+// "starting" and the platform loads the sheet into that table after the first deploy, so the agent never sees a row.
+function skeleton({ slug, title, design, answers, startingRows, walled = false, sheetHeaders = null }) {
   const thing = String((answers && answers.thing) || "item").trim() || "item";
   const stages = (Array.isArray(answers && answers.stages) ? answers.stages : []).map((s) => String(s).trim()).filter(Boolean);
   const STAGES = stages.length >= 2 ? stages : ["new", "in work", "done"];
-  const seed = (startingRows || []).map((r) => (Array.isArray(r) ? r[0] : r)).map((v) => String(v || "").trim()).filter(Boolean).slice(0, 200);
+  const seed = walled ? [] : (startingRows || []).map((r) => (Array.isArray(r) ? r[0] : r)).map((v) => String(v || "").trim()).filter(Boolean).slice(0, 200);
+  const starting = walled && sheetHeaders && sheetHeaders.length ? { starting: { kind: "files", label: "Starting list (loaded by the platform after the first deploy)", table: "items", key: "name", columns: { name: [String(sheetHeaders[0])] } } } : null;
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   const files = {};
   files["module.json"] = JSON.stringify({
@@ -41,6 +44,7 @@ function skeleton({ slug, title, design, answers, startingRows }) {
     entry: "routes.js",
     pages: { "/": { file: "pages/board.html", label: `${title} board` } },
     smoke: ["/api/items", "/api/stats"],
+    ...(starting ? { connections: starting } : {}),
   }, null, 2) + "\n";
   files["migrations/001.sql"] = `CREATE TABLE IF NOT EXISTS items (
   id SERIAL PRIMARY KEY,
@@ -210,8 +214,9 @@ async function startBuild(intake) {
   const files = await attachments.list(intake.id);
   const sheet = (await Promise.all(files.filter((a) => a.kind === "sheet").map((a) => attachments.get(a.id)))).find((a) => a && a.parsed && a.parsed.rows && a.parsed.rows.length);
   const startingRows = sheet ? sheet.parsed.rows : [];
+  const walled = await require("./datawall").isWalled(company);
   await q("INSERT INTO platform.modules (company, name, title, live_version, staged_version) VALUES ($1,$2,$3,NULL,NULL)", [company, slug, title]);
-  const seed = skeleton({ slug, title, design, answers: intake.answers || {}, startingRows });
+  const seed = skeleton({ slug, title, design, answers: intake.answers || {}, startingRows, walled, sheetHeaders: sheet ? sheet.parsed.headers : null });
   await q(`INSERT INTO platform.module_versions (company, module, version, source, notes, files) VALUES ($1,$2,1,'build',$3,$4)`,
     [company, slug, `First version of ${title}, built from the design`, JSON.stringify(seed)]);
   await registry.materialize(company, slug, 1);
@@ -222,7 +227,7 @@ async function startBuild(intake) {
   const run = (await q(
     `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, to_version, lane, step, status, model, requirement, evidence)
      VALUES ($1,$2,$3,$4,NULL,1,'module','build','running',$5,$6,$7) RETURNING *`,
-    [p.id, [p.id], company, slug, model, design.reference_md || design.bluf || "", JSON.stringify({ intake_id: intake.id, module_title: title, design_bluf: design.bluf, title: `First version of ${title}`, estimate_usd: design.estimate_usd, seed_rows: startingRows.length })])).rows[0];
+    [p.id, [p.id], company, slug, model, design.reference_md || design.bluf || "", JSON.stringify({ intake_id: intake.id, module_title: title, design_bluf: design.bluf, title: `First version of ${title}`, estimate_usd: design.estimate_usd, seed_rows: startingRows.length, ...(walled ? { walled: true, sheet_id: sheet ? sheet.id : null } : {}) })])).rows[0];
   await q("UPDATE platform.feedback SET status='in_progress', updated_at=now() WHERE id=$1", [intake.feedback_id]);
   await q("UPDATE platform.module_intakes SET status='building', run_ids=array_append(COALESCE(run_ids, '{}'), $2), updated_at=now() WHERE id=$1", [intake.id, run.id]);
   await logEvent("module_build_started", run.id, { company, module: slug, intake: intake.id, model, seed_rows: startingRows.length });
@@ -319,11 +324,12 @@ async function advance(runId) {
       const design = (intake && intake.design) || {};
       const last = (run.log || []).slice(-1)[0];
       const fresh = !ev.findings || (last && /retried/.test(String(last.note || "")));
+      const walled = await require("./datawall").isWalled(company);
       if (fresh) {
         // start again from the skeleton (a retry, or the first attempt)
         const files = await attachments.list(ev.intake_id || 0);
         const sheet = (await Promise.all(files.filter((a) => a.kind === "sheet").map((a) => attachments.get(a.id)))).find((a) => a && a.parsed && a.parsed.rows && a.parsed.rows.length);
-        const seed = skeleton({ slug, title: ev.module_title || slug, design, answers: (intake && intake.answers) || {}, startingRows: sheet ? sheet.parsed.rows : [] });
+        const seed = skeleton({ slug, title: ev.module_title || slug, design, answers: (intake && intake.answers) || {}, startingRows: sheet ? sheet.parsed.rows : [], walled, sheetHeaders: sheet ? sheet.parsed.headers : null });
         fs.rmSync(dir, { recursive: true, force: true });
         for (const [f, content] of Object.entries(seed)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), content); }
         if (ev.findings) await P.setRun(runId, { evidence: { ...ev, findings: undefined, fix_round: undefined } });
@@ -333,7 +339,11 @@ async function advance(runId) {
       const answersText = intake ? Object.entries(intake.answers || {}).filter(([k]) => !/^r\d+q\d+$/.test(k)).map(([k, v]) => { const qn = Q.FIXED.find((x) => x.id === k); return qn ? `${qn.text}\n${Q.describe(qn, v)}` : ""; }).filter(Boolean).join("\n\n") : "";
       const files = await attachments.list(ev.intake_id || 0);
       const sheet = (await Promise.all(files.filter((a) => a.kind === "sheet").map((a) => attachments.get(a.id)))).find((a) => a && a.parsed && a.parsed.rows && a.parsed.rows.length);
-      const rowsText = sheet ? `Starting data from "${sheet.filename}" (${sheet.parsed.row_count} rows; columns: ${sheet.parsed.headers.join(" | ")}):\n${sheet.parsed.rows.slice(0, 200).map((r) => r.join(" | ")).join("\n")}` : "No starting data was attached.";
+      const rowsText = sheet
+        ? (walled
+          ? `Starting data from "${sheet.filename}" (${sheet.parsed.row_count} rows; columns: ${sheet.parsed.headers.join(" | ")}). ${require("./datawall").PROMPT_NOTE} The rows are withheld from you: the platform loads them into the table named by the "starting" connection in module.json after the first deploy. Keep that connection declared, pointing at the table that holds the ${(intake && intake.answers && intake.answers.thing) || "thing"} with "key" its name column, and under "columns" map each spreadsheet column name to the column you gave it where the names differ.`
+          : `Starting data from "${sheet.filename}" (${sheet.parsed.row_count} rows; columns: ${sheet.parsed.headers.join(" | ")}):\n${sheet.parsed.rows.slice(0, 200).map((r) => r.join(" | ")).join("\n")}`)
+        : "No starting data was attached.";
       if (ev.fix_round && ev.gate && ev.gate.ok === false) ev.findings = gate.forAgent(ev.gate, []);
       const findings = ev.fix_round && ev.findings
         ? (ev.gate && ev.gate.ok === false ? `\n\n${ev.findings}`
@@ -346,7 +356,7 @@ async function advance(runId) {
       let out;
       try {
         out = await agent.runAgent({
-          model: run.model, capUsd: 0, signal: ctl.signal, maxTurns: MODULE_MAX_TURNS,
+          model: run.model, company, capUsd: 0, signal: ctl.signal, maxTurns: MODULE_MAX_TURNS,
           system: guidance.text + "\n\n---\n\n<!-- platform: MODULE-CONTRACT.md -->\n" + readDoc("MODULE-CONTRACT.md") + "\n\n---\n\n<!-- platform: PLAIN-WORDS.md -->\n" + plain.rules(),
           dir,
           prompt: `NEW MODULE BUILD: "${ev.module_title || slug}" (slug "${slug}"), version 1.
@@ -374,7 +384,7 @@ Rules for this build:
 - The rules in the design become checks in routes.js (refuse the action and say why in plain words).
 - checks/ holds what this module promises, as files the platform runs against every build from now on (MODULE-CONTRACT.md, "Checks"). checks/001-the-list-answers.json describes the skeleton's API: keep it true, and since nothing is on the floor yet you may edit it this once if you change that API. Add one check file per rule the design names (the next numbers), each proving the rule holds: make the rows it needs, try the thing the rule refuses, expect the refusal.
 - The numbers on the board come from /api/stats or your own endpoint and show at the top of the lead's or manager's screen.
-- Seed the starting data as INSERT rows in migrations/001.sql (mind the validator: no quoted identifiers, no schema prefixes, additive statements only).
+- ${walled ? "Seed NO rows of the company's data (you have none); the platform loads the starting list after the first deploy through the \"starting\" connection." : "Seed the starting data as INSERT rows in migrations/001.sql (mind the validator: no quoted identifiers, no schema prefixes, additive statements only)."}
 - Plain words on every visible string (PLAIN-WORDS.md). No em or en dashes anywhere.
 - Keep it small and working. What the design leaves out stays out.
 - Put data-changed="v1" on the main container of every screen.
@@ -411,7 +421,7 @@ Rules for this build:
       }
       await P.log(runId, { step: "build", note: "platform checks passed: manifest, migrations, routes load, tour" });
       try {
-        const summary = await P.plainSummary(`New module "${ev.module_title || slug}": ${design.bluf || ""}`, out.text, false);
+        const summary = await P.plainSummary(`New module "${ev.module_title || slug}": ${design.bluf || ""}`, out.text, false, company);
         await P.addCost(runId, summary.costUsd);
         const c3 = await P.getRun(runId);
         await P.setRun(runId, { evidence: { ...c3.evidence, title: `First version of ${ev.module_title || slug}`, what_changed: summary.what_changed } });
@@ -470,6 +480,23 @@ Rules for this build:
 async function afterDeploy(run, result) {
   const ev = run.evidence || {};
   if (ev.intake_id) await q("UPDATE platform.module_intakes SET status='done', updated_at=now() WHERE id=$1", [ev.intake_id]);
+  // walled off from the data (src/datawall.js): the starting list the manager attached goes into the tool's table
+  // now, by the platform, through the "starting" files connection the skeleton declared; the agent never saw a row
+  if (ev.walled && ev.sheet_id) {
+    const P = pipe();
+    try {
+      const a = await attachments.get(ev.sheet_id);
+      const cx = require("./connections");
+      const preview = await cx.previewUpload(run.company, run.module, "starting", { filename: a.filename, mime: a.mime, data: a.bytes.toString("base64") }, "platform");
+      if (!preview.can_load) throw new Error(`the starting list could not be loaded: ${preview.blockers.join("; ")}`);
+      const loaded = await cx.loadUpload(run.company, run.module, "starting", preview.upload_id, { role: "platform", name: "the platform" });
+      await P.log(run.id, { step: "deploy", note: `the platform loaded the starting list "${a.filename}" into the tool (${preview.row_count} rows) after the deploy; the AI never saw a row` });
+      await record("starting_rows_loaded", { company: run.company, module: run.module, actor: "platform", run_id: run.id, version: result.to, after: `${preview.row_count} rows from ${a.filename}`, detail: { rows: preview.row_count, loaded: loaded && loaded.loaded != null ? loaded.loaded : undefined } });
+    } catch (e) {
+      await P.log(run.id, { step: "deploy", note: `the starting list was NOT loaded (${e.message}); load it on the connections page, under "Starting list"` });
+      console.error(`[datawall] ${run.company}/${run.module}: starting list not loaded: ${e.message}`);
+    }
+  }
   await q("UPDATE platform.feedback SET status='done', outcome=$2, updated_at=now() WHERE intake_id=$1",
     [ev.intake_id || 0, `Built and live as v${result.to}: ${(ev.what_changed || ev.build_summary || ev.design_bluf || "").slice(0, 500)}`]);
   await logEvent("module_built", `${run.company}/${run.module}`, { run: run.id, intake: ev.intake_id, cost_usd: Number(run.cost_usd || 0) });

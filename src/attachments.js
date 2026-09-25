@@ -147,13 +147,19 @@ async function remove(id, intakeId) { await q("DELETE FROM platform.attachments 
 
 // Content blocks for the model: images and pdfs as they are, spreadsheets as
 // text (headers plus a sample), so the model reads what the person attached.
-async function blocksFor(intakeId, { maxImages = 6, sampleRows = 40 } = {}) {
+// walled (src/datawall.js): a photo or a pdf is named, never sent; a sheet is its headers and row count, no rows.
+async function blocksFor(intakeId, { maxImages = 6, sampleRows = 40, walled = false } = {}) {
   const rows = (await q("SELECT id, question_id, filename, mime, size, parsed, bytes FROM platform.attachments WHERE intake_id=$1 ORDER BY id", [intakeId])).rows;
   const blocks = [];
   let images = 0;
   for (const a of rows) {
     const kind = kindOf(a.mime, a.filename);
     const head = `Attachment "${a.filename}" (for question ${a.question_id || "?"})`;
+    if (walled) {
+      if (kind === "sheet" && a.parsed) blocks.push({ type: "text", text: head + `, a spreadsheet with ${a.parsed.row_count} rows. Columns: ${a.parsed.headers.join(" | ")}. The rows are withheld: this company's data is walled off from the AI.` });
+      else blocks.push({ type: "text", text: head + `, a ${kind === "image" ? "photo" : kind === "pdf" ? "pdf" : "file"} the manager attached. It is withheld: this company's data is walled off from the AI; ask about what it shows in plain words if you need to.` });
+      continue;
+    }
     if (kind === "image" && images < maxImages) {
       images++;
       blocks.push({ type: "text", text: head + ", a photo:" });

@@ -3,6 +3,9 @@
 # Sandbox use (2026-09-24): Postgres 16 running locally as sos/sos, playwright installed. Prints one line per suite.
 #   bash scripts/e2e/run-all.sh            everything
 #   bash scripts/e2e/run-all.sh quick      no browser suites
+# Run it from a command line that does not itself contain the words "node server.js": stop() kills every process
+# whose command line matches, the calling shell included (found 2026-09-24: an orphaned run kept going and fought the
+# next one for the port and the database).
 set -u
 cd "$(dirname "$0")/../.."
 export DATABASE_URL=postgres://sos:sos@127.0.0.1:5432/sos_e2e SESSION_SECRET=e2e SOS_CONNECTION_KEY=e2e-connection-key
@@ -72,6 +75,9 @@ run testfloor              node scripts/e2e/testfloor.js
 fresh; start "SOS_BROWSER=off SOS_CAMPAIGN_WATCH_MS=1500"
 run campaign               node scripts/e2e/campaign.js
 [ -z "$QUICK" ] && run campaign-browser node scripts/e2e/campaign-browser.js
+
+fresh; rm -f "$LOG/prompts.jsonl"; start "SOS_BROWSER=off SOS_CAMPAIGN_WATCH_MS=1500 SOS_PROMPT_LOG=$LOG/prompts.jsonl"
+run datawall               env SOS_PROMPT_LOG=$LOG/prompts.jsonl node scripts/e2e/datawall.js
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

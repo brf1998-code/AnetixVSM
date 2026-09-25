@@ -138,9 +138,11 @@ async function photoBlocks(feedbackId) {
   for (const a of rows) { blocks.push({ type: "text", text: "A photo the person took with this request:" }); blocks.push({ type: "image", source: { type: "base64", media_type: a.mime, data: a.bytes.toString("base64") } }); }
   return blocks;
 }
+// photos are off while the company's data is walled off from the AI (src/datawall.js): a photo is a picture of the data
 async function settings(company) {
-  const r = (await q("SELECT auto_propose, allow_photos FROM platform.companies WHERE slug=$1", [company])).rows[0];
-  return { auto_propose: !r || r.auto_propose !== false, allow_photos: !r || r.allow_photos !== false };
+  const r = (await q("SELECT auto_propose, allow_photos, ai_reads_data FROM platform.companies WHERE slug=$1", [company])).rows[0];
+  const walled = Boolean(r && r.ai_reads_data === false);
+  return { auto_propose: !r || r.auto_propose !== false, allow_photos: (!r || r.allow_photos !== false) && !walled, walled };
 }
 
 // ---- writes -----------------------------------------------------------------------------------------

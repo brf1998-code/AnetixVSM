@@ -153,7 +153,9 @@ const writes = (check) => check.steps.some((s) => s.call && !/^GET /.test(s.call
 
 // ---- the matcher (pure) ------------------------------------------------------------------------
 const typeOf = (v) => (v === null ? "null" : Array.isArray(v) ? "array" : typeof v);
-const show = (v) => { const s = JSON.stringify(v); return s === undefined ? "nothing" : s.length > 120 ? s.slice(0, 117) + "..." : s; };
+// What a mismatch quotes. With the data wall up (src/datawall.js) a value from the answer is never shown, only
+// its type, because these lines go to the agent in a fix round and to the card.
+const show = (v, hide) => { if (hide) return v === undefined ? "nothing" : `a ${typeOf(v) === "array" ? `list of ${v.length}` : typeOf(v)}`; const s = JSON.stringify(v); return s === undefined ? "nothing" : s.length > 120 ? s.slice(0, 117) + "..." : s; };
 function fill(v, vars) {
   if (typeof v === "string") {
     const whole = /^\{([a-z][a-z0-9_]{0,30})\}$/i.exec(v);
@@ -172,41 +174,43 @@ function pick(obj, path) {
   }
   return cur;
 }
-// Mismatches in plain words; empty = it matches. expected is a subset pattern.
-function match(actual, expected, at = "the answer") {
+// Mismatches in plain words; empty = it matches. expected is a subset pattern. hide: never quote a value from
+// the answer (the data wall, src/datawall.js), only its type.
+function match(actual, expected, at = "the answer", hide = false) {
   const out = [];
+  const sh = (v) => show(v, hide);
   if (isObj(expected) && Object.keys(expected).some((k) => k.startsWith("$"))) {
     for (const [op, want] of Object.entries(expected)) {
       if (op === "$exists") { if ((actual !== undefined) !== Boolean(want)) out.push(`${at} ${want ? "is missing" : "should not be there"}`); continue; }
-      if (op === "$not") { if (!match(actual, want, at).length) out.push(`${at} is ${show(actual)}, which it should not be`); continue; }
+      if (op === "$not") { if (!match(actual, want, at, hide).length) out.push(`${at} is ${sh(actual)}, which it should not be`); continue; }
       if (actual === undefined) { out.push(`${at} is missing`); break; }
-      if (op === "$type" && typeOf(actual) !== want) out.push(`${at} is ${typeOf(actual) === "array" ? "a list" : `a ${typeOf(actual)}`} (${show(actual)}), expected ${want}`);
-      if (op === "$gte" && !(actual >= want)) out.push(`${at} is ${show(actual)}, expected at least ${show(want)}`);
-      if (op === "$lte" && !(actual <= want)) out.push(`${at} is ${show(actual)}, expected at most ${show(want)}`);
-      if (op === "$gt" && !(actual > want)) out.push(`${at} is ${show(actual)}, expected more than ${show(want)}`);
-      if (op === "$lt" && !(actual < want)) out.push(`${at} is ${show(actual)}, expected less than ${show(want)}`);
-      if (op === "$in" && !(Array.isArray(want) && want.some((w) => !match(actual, w, at).length))) out.push(`${at} is ${show(actual)}, expected one of ${show(want)}`);
-      if (op === "$regex" && !(typeof actual === "string" && new RegExp(String(want)).test(actual))) out.push(`${at} is ${show(actual)}, which does not look like ${want}`);
+      if (op === "$type" && typeOf(actual) !== want) out.push(`${at} is ${typeOf(actual) === "array" ? "a list" : `a ${typeOf(actual)}`} (${sh(actual)}), expected ${want}`);
+      if (op === "$gte" && !(actual >= want)) out.push(`${at} is ${sh(actual)}, expected at least ${show(want)}`);
+      if (op === "$lte" && !(actual <= want)) out.push(`${at} is ${sh(actual)}, expected at most ${show(want)}`);
+      if (op === "$gt" && !(actual > want)) out.push(`${at} is ${sh(actual)}, expected more than ${show(want)}`);
+      if (op === "$lt" && !(actual < want)) out.push(`${at} is ${sh(actual)}, expected less than ${show(want)}`);
+      if (op === "$in" && !(Array.isArray(want) && want.some((w) => !match(actual, w, at, hide).length))) out.push(`${at} is ${sh(actual)}, expected one of ${show(want)}`);
+      if (op === "$regex" && !(typeof actual === "string" && new RegExp(String(want)).test(actual))) out.push(`${at} is ${sh(actual)}, which does not look like ${want}`);
       if (op === "$length" && !((Array.isArray(actual) || typeof actual === "string") && actual.length === want)) out.push(`${at} has ${actual && actual.length != null ? actual.length : "no"} entries, expected ${want}`);
       if (op === "$minLength" && !((Array.isArray(actual) || typeof actual === "string") && actual.length >= want)) out.push(`${at} has ${actual && actual.length != null ? actual.length : "no"} entries, expected at least ${want}`);
-      if (op === "$contains" && !(Array.isArray(actual) && actual.some((el) => !match(el, want, at).length))) out.push(`${at} ${Array.isArray(actual) ? `has ${actual.length} entries and none of them` : "is not a list that"} matches ${show(want)}`);
-      if (op === "$every") { if (!Array.isArray(actual)) out.push(`${at} is not a list`); else actual.forEach((el, i) => out.push(...match(el, want, `${at}[${i}]`).slice(0, 1))); }
+      if (op === "$contains" && !(Array.isArray(actual) && actual.some((el) => !match(el, want, at, hide).length))) out.push(`${at} ${Array.isArray(actual) ? `has ${actual.length} entries and none of them` : "is not a list that"} matches ${show(want)}`);
+      if (op === "$every") { if (!Array.isArray(actual)) out.push(`${at} is not a list`); else actual.forEach((el, i) => out.push(...match(el, want, `${at}[${i}]`, hide).slice(0, 1))); }
     }
     return out.slice(0, 6);
   }
   if (Array.isArray(expected)) {
-    if (!Array.isArray(actual)) return [`${at} is ${show(actual)}, expected a list`];
+    if (!Array.isArray(actual)) return [`${at} is ${sh(actual)}, expected a list`];
     if (actual.length !== expected.length) return [`${at} has ${actual.length} entries, expected ${expected.length}`];
-    expected.forEach((e, i) => out.push(...match(actual[i], e, `${at}[${i}]`)));
+    expected.forEach((e, i) => out.push(...match(actual[i], e, `${at}[${i}]`, hide)));
     return out.slice(0, 6);
   }
   if (isObj(expected)) {
-    if (!isObj(actual)) return [`${at} is ${show(actual)}, expected an object with ${Object.keys(expected).join(", ")}`];
-    for (const [k, e] of Object.entries(expected)) out.push(...match(actual[k], e, at === "the answer" ? k : `${at}.${k}`));
+    if (!isObj(actual)) return [`${at} is ${sh(actual)}, expected an object with ${Object.keys(expected).join(", ")}`];
+    for (const [k, e] of Object.entries(expected)) out.push(...match(actual[k], e, at === "the answer" ? k : `${at}.${k}`, hide));
     return out.slice(0, 6);
   }
   if (actual === undefined) return [`${at} is missing, expected ${show(expected)}`];
-  return actual === expected ? [] : [`${at} is ${show(actual)}, expected ${show(expected)}`];
+  return actual === expected ? [] : [`${at} is ${sh(actual)}, expected ${show(expected)}`];
 }
 function statusProblem(status, want) {
   if (want == null) return status >= 200 && status < 300 ? null : `answered ${status || "nothing"}, expected a 2xx`;
@@ -219,7 +223,7 @@ function statusProblem(status, want) {
 // browser: optional src/pageload.js session with .visit(url, cookie) for "visible" and "selector";
 // bases: { <module>: base } for a step that names a module (a test campaign case on the test floor); a step whose
 // module is not in bases fails with a plain reason instead of reaching anywhere else.
-async function runCheck(check, { base, bases = null, cookies = {}, browser = null, fetchImpl = fetch }) {
+async function runCheck(check, { base, bases = null, cookies = {}, browser = null, fetchImpl = fetch, hideValues = false }) {
   const vars = {}, steps = [];
   let ok = true;
   for (let i = 0; i < check.steps.length && ok; i++) {
@@ -239,7 +243,7 @@ async function runCheck(check, { base, bases = null, cookies = {}, browser = nul
       const text = await res.text();
       const sp = statusProblem(status, e.status); if (sp) problems.push(sp);
       let json; try { json = JSON.parse(text); } catch (err) { json = undefined; }
-      if (e.json !== undefined) { if (json === undefined) problems.push("did not answer with JSON"); else problems.push(...match(json, fill(e.json, vars))); }
+      if (e.json !== undefined) { if (json === undefined) problems.push("did not answer with JSON"); else problems.push(...match(json, fill(e.json, vars), "the answer", hideValues)); }
       for (const c of fill(e.contains || [], vars)) if (!text.includes(c)) problems.push(`the ${s.page ? "page" : "answer"} does not contain "${c}"`);
       for (const c of fill(e.lacks || [], vars)) if (text.includes(c)) problems.push(`the ${s.page ? "page" : "answer"} still contains "${c}"`);
       if (s.save && json !== undefined) for (const [k, p] of Object.entries(s.save)) { const v = pick(json, p); if (v === undefined) problems.push(`nothing at "${p}" to carry into the next step`); else vars[k] = v; }
@@ -259,12 +263,12 @@ async function runCheck(check, { base, bases = null, cookies = {}, browser = nul
 }
 
 // Every active check of a version against a mount. fromFiles tells new from old.
-async function runAll({ files, fromFiles = null, retired = new Set(), base, cookies, browser }) {
+async function runAll({ files, fromFiles = null, retired = new Set(), base, cookies, browser, hideValues = false }) {
   const { checks, invalid } = collect(files);
   const results = [];
   for (const c of checks) {
     if (retired.has(c.file)) continue;
-    const r = await runCheck(c, { base, cookies, browser });
+    const r = await runCheck(c, { base, cookies, browser, hideValues });
     r.new = !fromFiles || fromFiles[c.file] == null;
     results.push(r);
   }

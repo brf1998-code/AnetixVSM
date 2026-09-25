@@ -265,10 +265,11 @@ async function contextFor(it) {
   const mods = await companyModules(it.company);
   const guidance = await agent.guidanceFor(it.company, it.slug || "new-module");
   const allow = Q.systemNames(it.answers || {});
-  const blocks = agent.fakeMode() ? [] : await attachments.blocksFor(it.id);
+  const walled = await require("./datawall").isWalled(it.company);
+  const blocks = await attachments.blocksFor(it.id, { walled });   // fake mode ignores them; the prompt log still sees the text parts
   return {
-    questions, files, mods, allow, blocks,
-    system: `You are Fable, the assistant inside a factory operating system, helping a production manager design a new module (a small tracker with a few screens) by asking the right questions and then writing its design. The manager knows the operation and nothing about how software is made. Everything you write is read by that manager.\n\n${plain.rules()}\n\n${guidance.text}`,
+    questions, files, mods, allow, blocks, walled,
+    system: `You are Fable, the assistant inside a factory operating system, helping a production manager design a new module (a small tracker with a few screens) by asking the right questions and then writing its design. The manager knows the operation and nothing about how software is made. Everything you write is read by that manager.${walled ? `\n\n${require("./datawall").PROMPT_NOTE}` : ""}\n\n${plain.rules()}\n\n${guidance.text}`,
     answersText: answersText(questions, it.answers || {}, files),
     modulesText: mods.length ? `Modules this company already has: ${mods.map((m) => `${m.title} (${m.name})`).join(", ")}.` : "This company has no other modules yet.",
   };
@@ -308,12 +309,17 @@ const ROUND_SCHEMA = {
 async function generateRound(it) {
   const roundNo = (it.rounds || []).length + 2;
   const cost = { usd: 0 };
-  if (agent.fakeMode()) return fakeRound(roundNo, it);
+  if (agent.fakeMode()) {
+    // the prompt is assembled and logged as for a real call (the data wall's canary test reads the log); the round is canned
+    const ctx = await contextFor(it);
+    await agent.atWall("structured:intake_round", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText, blocks: ctx.blocks });
+    return fakeRound(roundNo, it);
+  }
   await agent.assertUnderCap(it.company);
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
-    model, blocks: ctx.blocks, schema: ROUND_SCHEMA, toolName: "intake_round", maxTokens: 4000,
+    model, company: it.company, blocks: ctx.blocks, schema: ROUND_SCHEMA, toolName: "intake_round", maxTokens: 4000,
     system: ctx.system,
     prompt: `This is round ${roundNo} of at most 3. Below are the manager's answers so far, and any files they attached are above.\n\n${ctx.answersText}\n\n${ctx.modulesText}\n\nWhat the tool can connect to: ${CONNECTION_KINDS}.\n\nAsk only what still changes the design of a deliberately small first version: who may move the thing from one stage to the next; what happens at capacity or when two people want the same thing; whether things already carry a number or a name and what a scan of one contains; what the one-glance screen shows first; time (due dates, shift boundaries, how long a thing may sit); what "done" means and whether done things stay in view; and for every outside system they ticked, the follow-ups that shape the connection (for a label printer: what is on the label, its size, how many a day, which printer; for an ERP: which few things this needs from it, how fresh, who can get a login; for a spreadsheet: which columns matter, who keeps it; for a scanner: what gets scanned; for a machine: what it reports). Never ask something already answered. Never ask about how the tool is built. At most ${MAX_QUESTIONS_PER_ROUND} questions; fewer is better. If you already have enough for a small first version, say so and ask nothing.`,
   });
@@ -364,12 +370,16 @@ function estimateUsd(d) {
 // files its own re-runs as "assess"). The design is returned, never written: think() and adjust() write it.
 async function generateDesign(it, adjustedText, opts = {}) {
   const cost = { usd: 0 };
-  if (agent.fakeMode()) return fakeDesign(it, adjustedText);
+  if (agent.fakeMode()) {
+    const ctx = await contextFor(it);
+    await agent.atWall("structured:module_design", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText + (adjustedText ? `\n\n${adjustedText}` : ""), blocks: ctx.blocks });
+    return fakeDesign(it, adjustedText);
+  }
   await agent.assertUnderCap(it.company);
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
-    model, blocks: ctx.blocks, schema: DESIGN_SCHEMA, toolName: "module_design", maxTokens: 12000,
+    model, company: it.company, blocks: ctx.blocks, schema: DESIGN_SCHEMA, toolName: "module_design", maxTokens: 12000,
     system: ctx.system,
     prompt: `Write the design summary for this new module, deliberately small: the thing and its stages, one screen per role with its single prominent action, the few rules that must hold, the numbers on the board, the connections it needs, the starting data, and what the first version leaves for later. It will be built as plain screens on top of a list of the thing; nothing here should describe how it is built. The module is called "${it.name}".\n\nThe manager's answers, and any files they attached are above:\n\n${ctx.answersText}\n\n${ctx.modulesText}\n\nWhat the tool can connect to: ${CONNECTION_KINDS}.${adjustedText ? `\n\nThe manager edited an earlier version of the reference text. Their edit is the authority; keep every change they made and re-issue the whole design to match it:\n\n${adjustedText}` : ""}`,
   });
