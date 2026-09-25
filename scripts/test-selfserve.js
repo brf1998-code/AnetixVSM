@@ -70,6 +70,8 @@ t("a preflight from the wall gets the headers and 204; from elsewhere, 204 and n
   return a.code === 204 && a.h["Access-Control-Allow-Origin"] === "https://anetix.ai" && a.h["Access-Control-Allow-Credentials"] === "true" && b.code === 204 && !b.h["Access-Control-Allow-Origin"];
 }));
 t("a POST passes on to the sign-in either way", withEnv({ SOS_WWW_URL: "https://anetix.ai" }, () => { let n = 0; s.loginCors({ method: "POST", headers: { origin: "https://evil.example" } }, fakeRes(), () => n++); s.loginCors({ method: "POST", headers: {} }, fakeRes(), () => n++); return n === 2; }));
+t("a preview key is <exp>.<32 characters>, ten minutes out, none without a key", /^\d{10}\.[A-Za-z0-9_-]{32}$/.test(s.previewToken(T0, K)) && Number(s.previewToken(T0, K).split(".")[0]) === Math.floor(T0 / 1000) + 600 && s.previewToken(T0, "short") === "");
+t("a preview key is not a credit key", s.previewToken(T0, K).split(".")[1] !== s.creditToken("preview", T0, K).split(".")[1]);
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -157,6 +157,14 @@ function creditToken(slug, now = Date.now(), key = process.env.SOS_WWW_KEY || ""
   const exp = (Math.floor(now / 86400e3) + 31) * 86400;
   return `${exp}.${crypto.createHmac("sha256", key).update(`credit:${slug}:${exp}`).digest("base64url").slice(0, 32)}`;
 }
+// An admin's look at anetix.ai as a pin holder sees it (2026-09-25, "View the pin page" on the Pins tab): the same
+// kind of key, over "preview:<exp>", good for ten minutes. The www service turns it into a preview cookie; a preview
+// can read every page a pin opens but cannot make a company.
+function previewToken(now = Date.now(), key = process.env.SOS_WWW_KEY || "") {
+  if (key.length < 16) return "";
+  const exp = Math.floor(now / 1000) + 600;
+  return `${exp}.${crypto.createHmac("sha256", key).update(`preview:${exp}`).digest("base64url").slice(0, 32)}`;
+}
 function topupUrl(company, now = Date.now()) {
   const t = creditToken(company, now);
   return `${WWW_URL()}/c/${company}/credit${t ? `?t=${t}` : ""}`;
@@ -406,6 +414,11 @@ wwwRouter.get("/api/www/companies/:slug", guard(async (req, res) => {
 const adminRouter = express.Router();
 const requireAdmin = (req, res, next) => require("./auth").requireAdmin(req, res, next);
 const who = (req) => (req.sosAccount && (req.sosAccount.name || req.sosAccount.login)) || "admin";
+adminRouter.get("/api/admin/www-preview", requireAdmin, guard(async (_req, res) => {
+  const t = previewToken();
+  if (!t) return res.status(409).json({ error: "SOS_WWW_KEY is not set on this instance, so anetix.ai cannot be opened from here" });
+  res.set("Cache-Control", "no-store").json({ ok: true, url: `${WWW_URL()}/preview?t=${t}` });
+}));
 adminRouter.get("/api/admin/pins", requireAdmin, guard(async (_req, res) => res.set("Cache-Control", "no-store").json(await adminView())));
 adminRouter.post("/api/admin/pins", requireAdmin, json, guard(async (req, res) => {
   const row = await makePinRow(req.body || {}, who(req));
@@ -425,7 +438,7 @@ adminRouter.post("/api/admin/companies/:slug/credit", requireAdmin, json, guard(
 
 module.exports = {
   init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL,
-  creditToken, topupUrl, wwwOrigins, loginCors,
+  creditToken, previewToken, topupUrl, wwwOrigins, loginCors,
   pinRow, selfServeRow, spentSince, credit, assertCredit, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
   wwwRouter, adminRouter, keyOk,
 };

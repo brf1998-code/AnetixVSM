@@ -133,7 +133,8 @@
 
   <!-- ================= Pins: who may come in from anetix.ai, and the companies that did ================= -->
   <section class="tabpanel" id="tab-pins">
-    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here and handed to them. With it they pay through Stripe and get a company of their own on this instance, with what they paid as AI credit (the first purchase dollar for dollar, top-ups at two dollars for one). A pin is for one person: it makes one company unless you say more, and it expires. Cancel one and it stops working at once; the company it already made stays.</p></div>
+    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here and handed to them. With it they pay through Stripe and get a company of their own on this instance, with what they paid as AI credit (the first purchase dollar for dollar, top-ups at two dollars for one). A pin is for one person: it makes one company unless you say more, and it expires. Cancel one and it stops working at once; the company it already made stays.</p>
+      <p style="margin:10px 0 0"><button class="primary" id="www-preview" onclick="openWwwPreview()" style="margin:0">View the pin page</button> <span class="sub">anetix.ai as a person with a pin sees it, in a new tab. A preview cannot make a company; to try the payment, make yourself a pin.</span></p></div>
     <div class="card"><h2>Make a pin</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">
         <label class="sub">Who it is for<br><input id="pin-label" placeholder="e.g. Sam at Acme Wire" style="width:240px" autocomplete="off"></label>
@@ -519,6 +520,16 @@ async function makePin() {
     <p class="sub">${j.pin.max_uses} compan${j.pin.max_uses === 1 ? "y" : "ies"} · ${j.pin.expires_at ? "expires " + new Date(j.pin.expires_at).toLocaleDateString() : "never expires"}. It stays readable on the Pins tab.</p>
     <div><button class="go" onclick="closeModal()">Done</button></div>`);
   loadPins();
+}
+// anetix.ai behind the wall, as a pin holder sees it: a ten minute key from the product, opened in a new tab (the
+// tab is opened before the fetch so a popup blocker lets it through)
+async function openWwwPreview() {
+  const w = window.open("", "_blank");
+  try {
+    const r = await fetch("/api/admin/www-preview", { cache: "no-store" }); const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.url) throw new Error(j.error || "could not make the link");
+    if (w) { w.opener = null; w.location = j.url; } else location.href = j.url;
+  } catch (e) { if (w) w.close(); alert(e.message); }
 }
 async function revokePin(id) {
   if (!confirm("Cancel this pin? It stops working at once. A company it already made stays.")) return;

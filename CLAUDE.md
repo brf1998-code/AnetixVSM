@@ -1134,9 +1134,16 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `credit:<slug>:<exp>` under `SOS_WWW_KEY`, 32 characters, exp 31 days out
   rounded to the day; no key, no token); the www service opens a company's
   top-up page only for that key, the browser that paid for it, or the way
-  back from Stripe. Tests: `scripts/test-selfserve.js` (38, the key and the
-  CORS answer), `scripts/e2e/selfserve.js` (75); the www side has
-  `scripts/test-www.js` (29) and `scripts/e2e.js` (53: the wall says nothing,
+  back from Stripe. **Admin preview** (the same evening; Brendan: signing in
+  from the wall takes him to the product, so how does he see the pin page):
+  "View the pin page" on the Pins tab (`openWwwPreview`, the tab opened before
+  the fetch so a popup blocker lets it through) asks `GET
+  /api/admin/www-preview` (admin only, `selfserve.previewToken`: HMAC over
+  `preview:<exp>`, ten minutes) and opens `<SOS_WWW_URL>/preview?t=...`; the
+  www service gives that browser a preview cookie that opens every pin page,
+  marked as a preview, and refuses to make a company. Tests:
+  `scripts/test-selfserve.js` (40, the keys and the CORS answer), `scripts/e2e/selfserve.js` (75); the www side has
+  `scripts/test-www.js` (29) and `scripts/e2e.js` (60: the wall says nothing, the preview,
   the pictures and top-up page are shut, the preflight from the wall and not
   from elsewhere, a pin opening and then closing the page, the key). Known
   limit: this product's own `/login` page at app.anetix.ai is still public
