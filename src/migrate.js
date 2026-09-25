@@ -46,7 +46,11 @@ function testSchema(company, mod) { return `tst_${ident(company)}_${ident(mod)}`
 const FORBIDDEN_WORDS = /\b(DROP|TRUNCATE|DELETE|UPDATE|GRANT|REVOKE|SECURITY|FUNCTION|TRIGGER|RULE|EXTENSION|COPY|VACUUM|REINDEX|CLUSTER|OWNER|RESET|DO)\b(?!\s+(?:TEXT|VARCHAR|CHAR|INTEGER|INT|SMALLINT|BIGINT|SERIAL|BIGSERIAL|BOOLEAN|BOOL|NUMERIC|DECIMAL|REAL|DOUBLE|FLOAT|TIMESTAMPTZ|TIMESTAMP|DATE|TIME|JSONB|JSON|UUID|BYTEA)\b)/i;
 const FORBIDDEN_PHRASES = /\b(ALTER\s+SCHEMA|CREATE\s+SCHEMA|SET\s+ROLE|ALTER\s+TABLE\s+\w+\s+(?:DROP|RENAME|ALTER)\b)/i;
 const stripLiterals = (st) => st.replace(/'(?:[^']|'')*'/g, "''");
-const FORBIDDEN = { test: (st) => { const bare = stripLiterals(st); return FORBIDDEN_PHRASES.test(bare) || FORBIDDEN_WORDS.test(bare); } };
+// A parenthesised list of bare column names (an index's columns, an INSERT's column
+// list, a UNIQUE constraint) is never an operation, whatever the columns are called:
+// CREATE INDEX ... ON items (owner) was rejected for the word OWNER (run #58, 2026-09-24).
+const stripIdentLists = (st) => st.replace(/\(\s*[a-z_][a-z0-9_]*(?:\s+(?:ASC|DESC))?(?:\s*,\s*[a-z_][a-z0-9_]*(?:\s+(?:ASC|DESC))?)*\s*\)/gi, "()");
+const FORBIDDEN = { test: (st) => { const bare = stripIdentLists(stripLiterals(st)); return FORBIDDEN_PHRASES.test(bare) || FORBIDDEN_WORDS.test(bare); } };
 const BARE_IDENT = "[a-z_][a-z0-9_]*";
 const ALLOWED = [
   new RegExp(`^CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${BARE_IDENT}\\s*\\(`, "i"),

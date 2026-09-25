@@ -11,6 +11,8 @@ cd "$(dirname "$0")/../.."
 export DATABASE_URL=postgres://sos:sos@127.0.0.1:5432/sos_e2e SESSION_SECRET=e2e SOS_CONNECTION_KEY=e2e-connection-key
 export SOS_FLOOR_PASSWORD=floorpw SOS_MANAGER_PASSWORD=mgrpw SOS_ADMIN_PASSWORD=adminpw SOS_INTERNAL_TOKEN=e2e-internal
 export SOS_FAKE_AGENT=1 SOS_FAKE_DELAY_MS=300 PORT=3999 SOS_AUTO_PROPOSE_PER_HOUR=500
+# the suites below press Fix themselves and count the rounds; the automatic loop (pipeline.autoFix) has its own suite
+export SOS_AUTO_FIX_ROUNDS=0
 LOG=${SOS_E2E_LOG:-/tmp/sos-e2e}; mkdir -p "$LOG"
 QUICK=${1:-}
 
@@ -64,6 +66,8 @@ run checks                 node scripts/e2e/checks.js
 [ -z "$QUICK" ] && { fresh; start "SOS_CHROMIUM_PATH=$CHROME"; run checks-browser node scripts/e2e/checks-browser.js; }
 fresh; start "SOS_BROWSER=off"
 run checks-nobrowser-off   env SOS_E2E_EXPECT=off node scripts/e2e/checks-nobrowser.js
+fresh; start "SOS_CHROMIUM_PATH=$CHROME SOS_AUTO_FIX_ROUNDS=2"
+run autofix                node scripts/e2e/autofix.js
 
 fresh; start "SOS_BROWSER=off SOS_MODEL_PROPOSE=claude-sonnet-5"
 run models                 node scripts/e2e/models.js

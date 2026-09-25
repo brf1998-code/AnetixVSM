@@ -45,7 +45,8 @@ const { record } = require("./record");
 const DIR = "checks/";
 const FILE = /^checks\/\d{3}-[a-z0-9]+(?:-[a-z0-9]+){0,9}\.json$/;
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
-const MAX_STEPS = 12, MAX_BODY = 8000, STEP_TIMEOUT_MS = Number(process.env.SOS_CHECK_TIMEOUT_MS || 10000);
+// MAX_TITLE was 160 until 2026-09-25: four builds in two days stopped at the gate on a title of 165 to 200 characters
+const MAX_STEPS = 12, MAX_BODY = 8000, MAX_TITLE = 200, STEP_TIMEOUT_MS = Number(process.env.SOS_CHECK_TIMEOUT_MS || 10000);
 const OPS = ["$type", "$gte", "$lte", "$gt", "$lt", "$in", "$regex", "$exists", "$length", "$minLength", "$contains", "$every", "$not"];
 const DASH = /[\u2013\u2014]/;
 
@@ -100,7 +101,7 @@ function parse(name, text, opts = {}) {
   const stepKeys = ["call", "page", "body", "as", "expect", "save", "note"].concat(opts.allowModule ? ["module"] : []);
   if (!isObj(c)) return { ok: false, check: null, problems: [...problems, "is one JSON object with a title and steps"] };
   const title = typeof c.title === "string" ? c.title.trim() : "";
-  if (title.length < 8 || title.length > 160) problems.push("title: one plain sentence, 8 to 160 characters, saying what the floor can count on");
+  if (title.length < 8 || title.length > MAX_TITLE) problems.push(`title: one plain sentence, 8 to ${MAX_TITLE} characters, saying what the floor can count on${title.length > MAX_TITLE ? ` (this one is ${title.length})` : ""}`);
   if (DASH.test(title)) problems.push("title: no long dashes; a manager reads this line");
   if (c.why != null && (typeof c.why !== "string" || c.why.length > 300)) problems.push("why: a short sentence, at most 300 characters");
   if (!Array.isArray(c.steps) || !c.steps.length || c.steps.length > MAX_STEPS) problems.push(`steps: 1 to ${MAX_STEPS} steps`);

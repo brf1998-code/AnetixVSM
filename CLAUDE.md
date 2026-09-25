@@ -248,6 +248,26 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `POST /api/runs/:id/override` (cross-check only; runs the tests, then the
   deploy gate; `cross_check.overridden` recorded), retry from scratch, or
   cancel (which now unstages the draft).
+- **Automatic fix rounds** (2026-09-25, `autoFix` in pipeline.js, from the
+  checks failure review in the project): `failRun` sends a build that failed
+  the cross-check, the module gate, the tests or the visual check straight
+  back to the agent with the findings, same draft, up to
+  `SOS_AUTO_FIX_ROUNDS` (default 2) times; then it stops as before with one
+  manual round left (`SOS_MAX_FIX_ROUNDS` default is now 3). Never for a
+  failed test campaign, an AI outage, a cost cap, a restart, or the smoke
+  check's "could not sign itself in". Logged as "the platform sent the
+  findings back to the agent on its own (fix round N of 3)", recorded as
+  `run_fixed` with actor `platform` and `detail.auto`. `sweepOrphans` now
+  starts a run cut off by a redeploy again from scratch, once
+  (`evidence.restarted`; `SOS_RESTART_ORPHANS=0` marks them failed instead).
+  The review found the two biggest stop causes were guidance gaps: check
+  titles over 160 characters (cap now 200, `acceptance.MAX_TITLE`, and the
+  number is in GUARDRAILS and the build prompt) and `visible` text the
+  screen only shows after a tap or from seed rows (GUARDRAILS says what
+  `visible` may hold). `migrate.js` blanks a parenthesised column list
+  before the forbidden-word test (`ON items (owner)` was refused, run #58).
+  E2E: `scripts/e2e/autofix.js`; the other suites run with
+  `SOS_AUTO_FIX_ROUNDS=0` because they press Fix themselves.
 - **Cost caps are off by default** (2026-09-17, Brendan: development mode,
   spend what the work needs). `SOS_MAX_RUN_USD`, `SOS_MAX_BATCH_USD` and
   `SOS_MONTHLY_CAP_USD` unset or 0 mean no cap; set them to bring caps back

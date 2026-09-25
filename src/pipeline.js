@@ -178,7 +178,32 @@ async function failRun(runId, err) {
   if (aiDown) await setRun(runId, { evidence: { ...((before && before.evidence) || {}), ai_unavailable: aiDown } });
   await setRun(runId, { status: "failed" });
   const run = await getRun(runId);
-  if (run) kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
+  if (!run) return;
+  // a failed check goes back to the agent on its own, up to SOS_AUTO_FIX_ROUNDS times, before the manager sees a stop
+  if (!aiDown && await autoFix(run).catch((e) => { console.error(`auto fix of run ${runId} failed:`, e); return false; })) return;
+  kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
+}
+
+// Most stops clear on the second or third attempt (checks campaign, 2026-09-25: the
+// reviewer, a check that wanted text the screen only shows after a tap, a check
+// title over the limit, a script error). Until now every one of them waited for a
+// manager to press Fix. Now the platform presses it: a build that failed the
+// cross-check, the module gate, the tests or the visual check goes straight back
+// to the agent with the findings, in the same draft, up to AUTO_FIX_ROUNDS times.
+// Then it stops as before, with one manual round left (MAX_FIX_ROUNDS). Never for a
+// failed test campaign (the manager's own cases), an AI outage or a cost cap.
+// SOS_AUTO_FIX_ROUNDS=0 turns it off.
+const AUTO_FIX_ROUNDS = Math.max(0, Number(process.env.SOS_AUTO_FIX_ROUNDS ?? 2));
+async function autoFix(run) {
+  if (!AUTO_FIX_ROUNDS || run.status !== "failed" || !run.to_version) return false;
+  if (!["cross_check", "test_run", "visual_check"].includes(run.step)) return false;
+  const ev = run.evidence || {};
+  if ((ev.fix_round || 0) >= AUTO_FIX_ROUNDS) return false;
+  const last = String(((run.log || []).filter((l) => l.step === "error").slice(-1)[0] || {}).note || "");
+  if (/cost passed|safety budget|monthly AI cap|platform restarted|could not sign itself in/i.test(last)) return false;
+  await fix(run.id, { auto: true });
+  await record("run_fixed", { company: run.company, module: run.module, actor: "platform", run_id: run.id, proposal_id: run.proposal_id, version: run.to_version, before: (ev.cross_check && ev.cross_check.summary) || last || null, detail: { round: (ev.fix_round || 0) + 1, auto: true } }).catch((e) => console.error("record run_fixed:", e.message));
+  return true;
 }
 
 // ---- the state machine -----------------------------------------------------
@@ -405,7 +430,7 @@ ${req}
 Rules:
 - Each change names a Target file, which is the screen the feedback came from. Make the change in that file. Touch another file only if the change cannot work otherwise, and say so in your summary.
 - ${lane === "ui" ? "This is a UI-class change. Do NOT modify routes.js, the module.json smoke list or entry, or migrations. Touch pages/ and presentation only. The platform compares the files after you finish and stops a UI-class build that changed anything else; if the change cannot work without server logic, leave the server files alone and say so in your summary." : "This is a functionality-class change. If the data model must change, add a NEW migrations/NNN.sql file (additive only: CREATE TABLE / ALTER TABLE ADD COLUMN / CREATE INDEX / INSERT seed rows; bare table names, no schema prefixes). Never edit an existing migration file."}
-${lane === "ui" ? "" : `- Leave a check behind: add ONE new file checks/NNN-short-name.json (the next number) that proves ${isBatch ? "these changes work" : "this change works"}, built from "how we will know it works" in the confirmed requirement. GUARDRAILS.md ("Checks") has the format. Read the files already in checks/ first: each is a promise an earlier change made, the platform runs all of them against your build, and you never edit or remove one. If one of them would fail because of your change, change your work, not the check.\n`}${isBatch ? "- Implement every change in the batch. Keep them independent where you can so one can be understood without the others.\n" : ""}- Keep the module's existing style and structure. Plain HTML/JS, no frameworks.
+${lane === "ui" ? "" : `- Leave a check behind: add ONE new file checks/NNN-short-name.json (the next number) that proves ${isBatch ? "these changes work" : "this change works"}, built from "how we will know it works" in the confirmed requirement. GUARDRAILS.md ("Checks") has the format. Read the files already in checks/ first: each is a promise an earlier change made, the platform runs all of them against your build, and you never edit or remove one. If one of them would fail because of your change, change your work, not the check. Two things stop most builds at this step, so get them right: the title is one plain sentence of at most 200 characters, and "visible" on a page step may only name text the screen shows on its own as it first opens (never text behind a tap or a value from the rows of the day; prove those with call steps instead).\n`}${isBatch ? "- Implement every change in the batch. Keep them independent where you can so one can be understood without the others.\n" : ""}- Keep the module's existing style and structure. Plain HTML/JS, no frameworks.
 - Make the smallest change that removes the reported friction.
 - Mark what you touched so the preview can highlight it: put data-changed="v${version}" on every HTML element you add or visibly change (the element itself, not its parent). One attribute per element, nothing else; it costs nothing at runtime and the preview outlines those elements.
 - Your final message must be ONLY a short bullet list of what changed (one bullet per change, naming the screen), in plain language for a production manager. No preamble, no headings, no code talk.`;
@@ -659,7 +684,7 @@ async function rollbackRun(runId) {
 }
 
 // Retry a failed run from the build step (new draft, same proposals).
-async function retry(runId) {
+async function retry(runId, opts = {}) {
   const run = await getRun(runId);
   if (run.status !== "failed") throw new Error("only failed runs can be retried");
   const step = run.lane === "ui" || run.lane === "module" || run.requirement ? "build" : "confirm_requirement";
@@ -667,15 +692,17 @@ async function retry(runId) {
   const modRow = await registry.getModule(run.company, run.module);
   if (run.step === "campaign") await require("./campaign").afterRunEnds(run, "retried").catch((e) => console.error("[campaign] after retry:", e.message));
   await setRun(runId, { step, status: busy ? "queued" : "running", from_version: modRow.live_version });
-  await log(runId, { step, note: busy ? `manager retried; queued behind run #${busy.id}` : "manager retried the run" });
+  const who = opts.auto ? "the platform started the run again" : "manager retried the run";
+  await log(runId, { step, note: busy ? `${opts.auto ? "started again by the platform" : "manager retried"}; queued behind run #${busy.id}` : who });
   if (!busy) advance(runId).catch((e) => failRun(runId, e));
 }
 
-const MAX_FIX_ROUNDS = Number(process.env.SOS_MAX_FIX_ROUNDS || 2);
+// Rounds in all: the automatic ones (AUTO_FIX_ROUNDS, above failRun) and then the manager's.
+const MAX_FIX_ROUNDS = Number(process.env.SOS_MAX_FIX_ROUNDS || 3);
 
 // A failed check (cross-check, tests, visual check) can go back to the agent
-// with the findings, in the same draft version.
-async function fix(runId) {
+// with the findings, in the same draft version. opts.auto: the platform sent it, not a manager.
+async function fix(runId, opts = {}) {
   const run = await getRun(runId);
   if (run.status !== "failed" || !run.to_version || !["cross_check", "test_run", "visual_check", "campaign"].includes(run.step)) throw new Error("only a build that failed a check can be sent back for fixes");
   const ev = run.evidence || {};
@@ -688,7 +715,8 @@ async function fix(runId) {
   const findings = fromCampaign || (ev.cross_check && ev.cross_check.verdict === "fail" && ev.cross_check.summary) || fromChecks || (lastErr ? lastErr.note : "the previous attempt failed its checks");
   const busy = await activeRun(run.company, run.module);
   await setRun(runId, { step: "build", status: busy ? "queued" : "running", evidence: { ...ev, fix_round: round, findings, findings_from: fromCampaign ? "campaign" : fromChecks && !(ev.cross_check && ev.cross_check.verdict === "fail") ? "checks" : "reviewer", cross_check: undefined, test_run: undefined, visual_check: undefined, checks: undefined, campaign: undefined } });
-  await log(runId, { step: "build", note: busy ? `fix round ${round} queued behind run #${busy.id}` : `manager sent the reviewer's findings back to the agent (fix round ${round} of ${MAX_FIX_ROUNDS})` });
+  const who = opts.auto ? "the platform sent the findings back to the agent on its own" : "manager sent the reviewer's findings back to the agent";
+  await log(runId, { step: "build", note: busy ? `fix round ${round} queued behind run #${busy.id}` : `${who} (fix round ${round} of ${MAX_FIX_ROUNDS})` });
   if (!busy) advance(runId).catch((e) => failRun(runId, e));
 }
 
@@ -754,20 +782,30 @@ async function cancel(runId) {
 // Boot: a run that was "running" when the platform restarted has no process
 // behind it any more. Mark it failed so the board offers retry or cancel
 // instead of a spinner that never ends, then let the queue move.
+// A redeploy mid build used to cost a manual retry every time (runs #63 and #73,
+// 2026-09-25). Now a run cut off in an automated step starts again from scratch,
+// once (evidence.restarted), so a platform that keeps restarting cannot keep
+// spending. SOS_RESTART_ORPHANS=0 goes back to marking them failed.
+const RESTART_ORPHANS = process.env.SOS_RESTART_ORPHANS !== "0";
 async function sweepOrphans() {
-  const rows = (await q("SELECT id, company, module, step FROM platform.build_runs WHERE status='running'")).rows;
+  const rows = (await q("SELECT id, company, module, step, evidence FROM platform.build_runs WHERE status='running'")).rows;
+  const again = [];
   for (const r of rows) {
-    await log(r.id, { step: "error", note: "the platform restarted while this build was running; nothing was deployed. Retry or cancel." });
-    await setRun(r.id, { status: "failed" });
-    console.log(`[pipeline] run #${r.id} (${r.company}/${r.module}) was running at restart; marked failed`);
+    const restarted = Number(((r.evidence || {}).restarted) || 0);
+    const canRestart = RESTART_ORPHANS && !restarted && ["build", "cross_check", "test_run", "visual_check"].includes(r.step);
+    await log(r.id, { step: "error", note: canRestart ? "the platform restarted while this build was running; nothing was deployed. Starting it again from scratch." : "the platform restarted while this build was running; nothing was deployed. Retry or cancel." });
+    await setRun(r.id, { status: "failed", evidence: { ...(r.evidence || {}), restarted: restarted + 1 } });
+    console.log(`[pipeline] run #${r.id} (${r.company}/${r.module}) was running at restart; ${canRestart ? "starting again" : "marked failed"}`);
+    if (canRestart) again.push(r.id);
   }
+  for (const id of again) await retry(id, { auto: true }).catch((e) => console.error(`[pipeline] restart of run #${id} failed:`, e.message));
   const mods = (await q("SELECT DISTINCT company, module FROM platform.build_runs WHERE status='queued'")).rows;
   for (const m of mods) kickQueue(m.company, m.module).catch((e) => console.error("queue kick failed:", e));
   return rows.length;
 }
 
 module.exports = {
-  startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, toGate,
+  startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, AUTO_FIX_ROUNDS, autoFix, toGate,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
   setRun, log, addCost, failRun, activeRun, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
   // the cross-check brief, for the replay harness

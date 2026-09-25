@@ -273,6 +273,7 @@ function fakeRunAgent({ dir, prompt }) {
   //   BREAKPROMISE  the first /api/ path of the smoke list answers a list, not an     (checks earlier changes
   //                 object: it still answers, so only what was promised about it breaks  left behind stop it)
   //   BADCHECK      the check left behind by this change expects the impossible      (its own check stops it)
+  //   BADCHECKALWAYS the same, and no fix round clears it                             (the automatic rounds run out)
   //   BADSMOKE      module.json lists a path to check that is not there               (the endpoints stop it)
   //   EDITCHECK     the build rewrites a check an earlier change left behind           (the module gate stops it)
   //   NOCHECK       a functionality change that leaves no check behind                (passes; the run log says so)
@@ -310,7 +311,7 @@ function fakeRunAgent({ dir, prompt }) {
       fs.mkdirSync(chkDir, { recursive: true });
       const mine = existing.find((f) => f.endsWith(`-fake-change-${ver}.json`));
       const name = mine || `${String(existing.length + 1).padStart(3, "0")}-fake-change-${ver}.json`;
-      fs.writeFileSync(path.join(chkDir, name), JSON.stringify({ title: `The fake change of ${ver} keeps ${apiPath} answering with an object`, steps: [{ call: `GET ${apiPath}`, expect: { status: /BADCHECK/.test(prompt) && !fixRound ? 418 : 200, json: { $type: "object" } } }] }, null, 2) + "\n");
+      fs.writeFileSync(path.join(chkDir, name), JSON.stringify({ title: `The fake change of ${ver} keeps ${apiPath} answering with an object`, steps: [{ call: `GET ${apiPath}`, expect: { status: /BADCHECKALWAYS/.test(prompt) || (/BADCHECK/.test(prompt) && !fixRound) ? 418 : 200, json: { $type: "object" } } }] }, null, 2) + "\n");
     }
   }
   return { text: `- Fake agent applied a marker change to ${target || "every page"}\n- Added one additive migration and one check (functionality lane only)\n- No real AI was involved (SOS_FAKE_AGENT=1)`, costUsd: 0 };
