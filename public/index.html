@@ -72,6 +72,16 @@
   /* a self-serve company's AI credit (src/selfserve.js): one quiet line, red when nothing runs any more */
   .creditline { font-size:12.5px; margin:0 0 10px; color:var(--steel); } .creditline a { font-weight:700; margin-left:6px; }
   .creditline.amber { color:var(--amber); font-weight:600; } .creditline.red { color:var(--red); font-weight:700; }
+  /* a demo company from anetix.ai: a thin rolling DEMO strip over the band, and a panel when the credit is gone */
+  .demobar { background:#4c90d1; color:#0d1b2a; overflow:hidden; white-space:nowrap; height:22px; line-height:22px; font-size:11.5px; font-weight:800; letter-spacing:.22em; }
+  .demobar[hidden] { display:none; }
+  .demobar .track { display:inline-block; animation:demoroll 38s linear infinite; }
+  .demobar .track span { padding:0 18px; } .demobar .track i { font-style:normal; font-weight:600; letter-spacing:.04em; opacity:.8; }
+  @keyframes demoroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) { .demobar .track { animation:none; } }
+  .creditout { background:#fff; border:2px solid var(--red); border-radius:12px; padding:14px 16px; margin:0 0 12px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .creditout b { color:var(--red); } .creditout p { margin:2px 0 0; color:var(--steel); font-size:13.5px; } .creditout .grow { flex:1; min-width:220px; }
+  .creditout a.go { background:var(--navy); color:#fff; text-decoration:none; border-radius:8px; padding:10px 16px; font-weight:700; white-space:nowrap; }
   .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; align-items:start; }
   @media (max-width: 1100px) { .cols { grid-template-columns:repeat(2,1fr); } }
   @media (max-width: 640px) { .cols { grid-template-columns:1fr; } .band, .wrap { padding-left:14px; padding-right:14px; } }
@@ -176,6 +186,7 @@
 </style>
 </head>
 <body>
+  <div class="demobar" id="demobar" hidden aria-label="Demo company"><div class="track" id="demotrack"></div></div>
   <div class="band">
     <div class="inner row">
       <h1><img class="mark" id="comark" alt="">Improvement Board <small id="coname"></small></h1>
@@ -387,6 +398,18 @@ function renderBusy() {
   el.style.display = PENDING.size ? "inline-block" : "none";
   document.getElementById("global-busy-text").textContent = PENDING.size ? [...PENDING.values()][0] : "";
 }
+// A run refused because the credit is used up comes back as an error naming the top-up page (selfserve.assertCredit).
+// Wherever this page (or the new-module popout, same window) reports an error with alert(), that one is turned into
+// a question that takes a manager straight to anetix.ai to add more.
+(function () {
+  const plain = window.alert.bind(window);
+  window.alert = function (msg) {
+    const m = /credit is used up[\s\S]*?(https?:\/\/\S+\/credit(?:\?t=[\w.-]+)?)/.exec(String(msg || ""));
+    if (m && MGR()) { if (confirm("Your AI credit is used up, so this cannot run. Everything built so far stays.\n\nAdd credit on anetix.ai now?")) location.href = m[1]; return; }
+    if (m) return plain("The AI credit is used up, so this cannot run. Ask your manager to add credit.");
+    return plain(msg);
+  };
+})();
 async function act(url, body) {
   const [key, label] = pendingKey(url);
   PENDING.set(key, label); renderBusy();
@@ -1082,8 +1105,17 @@ async function load() {
   else w.style.display = "none";
   // a company that came in from anetix.ai runs on the credit it bought: the balance, and where to add more (managers)
   const cl = document.getElementById("creditline");
-  if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}`; }
+  if (DATA.credit && DATA.credit.balance_usd <= 0) {   // nothing runs any more: say so plainly, with the one way on
+    cl.style.display = "flex"; cl.className = "creditout";
+    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? "" : " Ask your manager to add credit."}</p></div>${MGR() ? `<a class="go" href="${esc(DATA.credit.topup_url)}">Add credit on anetix.ai</a>` : ""}`;
+  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}`; }
   else cl.style.display = "none";
+  const demo = Boolean(DATA.company && DATA.company.demo), bar = document.getElementById("demobar");
+  if (demo && bar.hidden) {   // twice the same run of words, so the roll at -50% lands where it started
+    const one = Array.from({ length: 8 }, () => `<span>DEMO</span><span><i>a demo company on Anetix</i></span>`).join("");
+    document.getElementById("demotrack").innerHTML = one + one;
+  }
+  bar.hidden = !demo;
   const me = window.sosPerson && window.sosPerson.me(), anyPeople = window.sosPerson && window.sosPerson.people().length;
   const meHtml = me ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Who is at this screen. Approvals and requests carry this name.">${esc(me.name)}</a>` : anyPeople ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Tap your name and type your PIN so approvals and requests carry your name">who is this?</a>` : "";
   // top right: who is here, one Settings link, sign out. The rest (agent settings, checks log, the record) is on the admin page (Brendan, 2026-09-20).

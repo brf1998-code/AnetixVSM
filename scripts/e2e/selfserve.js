@@ -40,16 +40,23 @@ async function www(method, path, body, key = KEY) {
   // ---- the door
   t("no key: closed", (await www("POST", "/api/www/pin", { pin: "AAAA" }, null)).status === 401);
   t("wrong key: closed", (await www("POST", "/api/www/pin", { pin: "AAAA" }, "not-the-key-but-long-enough-x")).status === 401);
-  const nope = await www("POST", "/api/www/pin", { pin: "ZZZZ-ZZZZ" });
+  const nope = await www("POST", "/api/www/pin", { pin: "ZZZZ-ZZZZ", email: "sam@acme.test" });
   t("a pin nobody made is refused with the reason", nope.status === 403 && /not one we gave out/.test(nope.json.error), nope.json);
 
   // ---- a pin from the admin page
   const bad = await admin.post("/api/admin/pins", { label: "" });
   t("a pin needs a label", bad.status === 400);
-  const made = await admin.post("/api/admin/pins", { label: "Sam at Acme Wire", max_uses: 1, days: 30 });
+  t("and the email of the person it is for", (await admin.post("/api/admin/pins", { label: "Sam at Acme Wire", max_uses: 1, days: 30 })).status === 400 && (await admin.post("/api/admin/pins", { label: "Sam at Acme Wire", email: "not-an-email" })).status === 400);
+  const made = await admin.post("/api/admin/pins", { label: "Sam at Acme Wire", email: " Sam@Acme.TEST ", max_uses: 1, days: 30 });
   t("the admin makes a pin: eight characters, shown with a dash, one use, expires in 30 days", made.status === 200 && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(made.json.pin.shown) && made.json.pin.max_uses === 1 && made.json.pin.expires_at, made.json);
   const PIN = made.json.pin.shown;
-  const ok = await www("POST", "/api/www/pin", { pin: PIN.toLowerCase() });
+  t("the pin keeps its email, cleaned", made.json.pin.email === "sam@acme.test", made.json.pin);
+  const wrong = await www("POST", "/api/www/pin", { pin: PIN, email: "someone@else.test" });
+  t("the pin with another email is refused", wrong.status === 403 && /do not go together/.test(wrong.json.error), wrong.json);
+  t("and with no email at all", (await www("POST", "/api/www/pin", { pin: PIN })).status === 403);
+  t("the pre-checkout check refuses another email too", (await www("POST", "/api/www/check", { pin: PIN, email: "someone@else.test" })).status === 403);
+  t("a company is never made for another email", (await www("POST", "/api/www/companies", { pin: PIN, name: "Wrong Email Co", email: "someone@else.test", ref: "cs_wrong", paid_usd: 30, credit_usd: 30 })).status === 403);
+  const ok = await www("POST", "/api/www/pin", { pin: PIN.toLowerCase(), email: "SAM@acme.test" });
   t("the www service checks it (lower case, with the dash): good, one use left", ok.status === 200 && ok.json.ok && ok.json.label === "Sam at Acme Wire" && ok.json.uses_left === 1, ok.json);
   const list0 = await admin.get("/api/admin/pins");
   t("the Pins view lists it live with no company yet", list0.json.pins.some((p) => p.shown === PIN && !p.problem && !p.companies) && list0.json.companies.length === 0 && list0.json.www_url === WWW, list0.json);
@@ -74,7 +81,7 @@ async function www(method, path, body, key = KEY) {
   const chk = await www("POST", "/api/www/check", { pin: PIN, email: "sam@acme.test" });
   t("the pre-checkout check: a used pin is refused there too", chk.status === 403, chk.json);
   t("one company, one ledger row", (await q("SELECT count(*)::int AS n FROM platform.companies WHERE slug LIKE 'acme-wire%'")).rows[0].n === 1 && (await q("SELECT count(*)::int AS n FROM platform.credit_ledger WHERE company=$1", [SLUG])).rows[0].n === 1);
-  const used = await www("POST", "/api/www/pin", { pin: PIN });
+  const used = await www("POST", "/api/www/pin", { pin: PIN, email: "sam@acme.test" });
   t("the pin is used up now", used.status === 403 && /already been used/.test(used.json.error), used.json);
   const c2 = await www("POST", "/api/www/companies", { pin: PIN, name: "Second Try", email: "x@y.test", ref: "cs_test_2", paid_usd: 30, credit_usd: 30 });
   t("and makes no second company", c2.status === 403, c2.json);
@@ -178,11 +185,11 @@ async function www(method, path, body, key = KEY) {
   t("and 404 for one that does not exist", (await www("GET", "/api/www/companies/nobody")).status === 404);
 
   // ---- a cancelled pin
-  const p2 = await admin.post("/api/admin/pins", { label: "Two uses", max_uses: 2, days: 0 });
+  const p2 = await admin.post("/api/admin/pins", { label: "Two uses", email: "two@uses.test", max_uses: 2, days: 0 });
   t("a pin with two uses and no expiry", p2.json.pin.max_uses === 2 && p2.json.pin.expires_at === null, p2.json);
   const rv3 = await admin.post(`/api/admin/pins/${p2.json.pin.id}/revoke`, {});
   t("cancelled", rv3.status === 200 && rv3.json.pin.revoked_at);
-  const gone = await www("POST", "/api/www/pin", { pin: p2.json.pin.shown });
+  const gone = await www("POST", "/api/www/pin", { pin: p2.json.pin.shown, email: "two@uses.test" });
   t("a cancelled pin is refused as cancelled", gone.status === 403 && /cancelled/.test(gone.json.error), gone.json);
   t("cancelling it again is a 404", (await admin.post(`/api/admin/pins/${p2.json.pin.id}/revoke`, {})).status === 404);
 
@@ -193,14 +200,14 @@ async function www(method, path, body, key = KEY) {
   t("company delete goes through", del.status === 200, del.json);
   t("its ledger, self_serve row and manager account are gone, the pin keeps its count", (await q("SELECT count(*)::int AS n FROM platform.credit_ledger WHERE company=$1", [SLUG])).rows[0].n === 0 && (await q("SELECT count(*)::int AS n FROM platform.self_serve WHERE company=$1", [SLUG])).rows[0].n === 0 && (await q("SELECT count(*)::int AS n FROM platform.accounts WHERE company=$1", [SLUG])).rows[0].n === 0 && (await q("SELECT uses FROM platform.access_pins WHERE id=$1", [made.json.pin.id])).rows[0].uses === 1);
   // a second company on the same email gets a login of its own
-  const p3 = await admin.post("/api/admin/pins", { label: "Sam again", max_uses: 1, days: 30 });
+  const p3 = await admin.post("/api/admin/pins", { label: "Sam again", email: "sam@acme.test", max_uses: 1, days: 30 });
   const c3 = await www("POST", "/api/www/companies", { pin: p3.json.pin.shown, name: "Acme Second Plant", contact: "Sam Jones", email: "sam@acme.test", ref: "cs_test_3", paid_usd: 30, credit_usd: 30, collect: true });
   t("an email that already has an account (demo's grant made none, but a leftover admin might) still gets a company", c3.status === 200 && c3.json.created && c3.json.manager.login, c3.json);
-  const c4pin = await admin.post("/api/admin/pins", { label: "Sam third", max_uses: 1, days: 30 });
+  const c4pin = await admin.post("/api/admin/pins", { label: "Sam third", email: "sam@acme.test", max_uses: 1, days: 30 });
   const c4 = await www("POST", "/api/www/companies", { pin: c4pin.json.pin.shown, name: "Acme Third Plant", contact: "Sam Jones", email: "sam@acme.test", ref: "cs_test_4", paid_usd: 30, credit_usd: 30, collect: true });
   t("a second company on the same email gets the login with the company code in it", c4.status === 200 && c4.json.created && c4.json.manager.login === "sam+acme-third-plant@acme.test", c4.json);
   // the webhook lands first (no collect): the passwords wait for the person's browser
-  const p5 = await admin.post("/api/admin/pins", { label: "Webhook first", max_uses: 1, days: 30 });
+  const p5 = await admin.post("/api/admin/pins", { label: "Webhook first", email: "lee@late.test", max_uses: 1, days: 30 });
   const c5 = await www("POST", "/api/www/companies", { pin: p5.json.pin.shown, name: "Late Browser Co", contact: "Lee", email: "lee@late.test", ref: "cs_test_5", paid_usd: 30, credit_usd: 30 });
   t("made by the webhook: created, but the passwords are kept, not handed to it", c5.status === 200 && c5.json.created && c5.json.kept && c5.json.passwords === null && !c5.json.manager, c5.json);
   const c5b = await www("POST", "/api/www/companies", { pin: p5.json.pin.shown, name: "Late Browser Co", email: "lee@late.test", ref: "cs_test_5", credit_usd: 30, collect: true });
@@ -209,6 +216,23 @@ async function www(method, path, body, key = KEY) {
   t("and never again", c5c.json.passwords === null && !c5c.json.manager && (await q("SELECT handout_enc FROM platform.self_serve WHERE company='late-browser-co'")).rows[0].handout_enc === null, c5c.json);
   const lee = client();
   t("the collected manager password signs in", (await lee.post("/login", { name: "lee@late.test", password: c5b.json.manager.password })).status === 200);
+
+
+  // ---- the demo workflow (2026-09-25 evening): no payment, $15 from us, the password the person picked, the DEMO flag
+  const pd = await admin.post("/api/admin/pins", { label: "Dana at Riverside", email: "dana@riverside.test", max_uses: 1, days: 30 });
+  const DPIN = pd.json.pin.shown;
+  t("a password under twelve characters is refused and nothing is made", (await www("POST", "/api/www/companies", { pin: DPIN, name: "Riverside Wire", contact: "Dana", email: "dana@riverside.test", ref: "demo:x", paid_usd: 0, credit_usd: 15, password: "short", demo: true, collect: true })).status === 400 && (await q("SELECT uses FROM platform.access_pins WHERE id=$1", [pd.json.pin.id])).rows[0].uses === 0);
+  const dm = await www("POST", "/api/www/companies", { pin: DPIN, name: "Riverside Wire", contact: "Dana", email: "dana@riverside.test", ref: `demo:${DPIN}:riverside-wire`, paid_usd: 0, credit_usd: 15, password: "copper-oak-2201-press", demo: true, collect: true });
+  t("a demo is made with $15 and hands out the floor password only (the manager picked theirs)", dm.status === 200 && dm.json.created && dm.json.passwords.floor && dm.json.manager.login === "dana@riverside.test" && !dm.json.manager.password && dm.json.credit.credit_usd === 15, dm.json);
+  const DSLUG = dm.json.company.slug;
+  t("its first credit is a grant from us, not a purchase", (await q("SELECT kind, paid_usd, made_by FROM platform.credit_ledger WHERE company=$1", [DSLUG])).rows.every((r) => r.kind === "grant" && r.paid_usd === null && r.made_by === "anetix.ai"));
+  t("the company is marked a demo", (await q("SELECT demo FROM platform.companies WHERE slug=$1", [DSLUG])).rows[0].demo === true);
+  const dana = client();
+  const ds = await dana.post("/login", { name: "dana@riverside.test", password: "copper-oak-2201-press" });
+  t("the manager signs in with the password they picked and goes to the authenticator setup", ds.status === 200 && ds.json.enroll === true && ds.json.enroll_url === `/c/${DSLUG}/enroll`, ds.json);
+  const db = await admin.get(`/api/c/${DSLUG}/board`);
+  t("the board says demo and carries the $15", db.status === 200 && db.json.company.demo === true && db.json.credit.balance_usd === 15, db.json && db.json.company);
+  t("a company made the old way is not a demo", (await admin.get(`/api/c/late-browser-co/board`)).json.company.demo === false);
 
   R.done();
 })().catch(R.abort);

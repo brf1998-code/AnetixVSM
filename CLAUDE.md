@@ -1148,6 +1148,32 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   from elsewhere, a pin opening and then closing the page, the key). Known
   limit: this product's own `/login` page at app.anetix.ai is still public
   and says "Symbiotic OS" and "floor and manager passwords".
+- **The demo workflow** (2026-09-25 evening, `src/selfserve.js`, the Pins tab,
+  the board's `#demobar` and `.creditout`; Brendan: a pin made for someone
+  needs their email too, then 2FA, then their demo board with a small rolling
+  "Demo" banner, $15 of credit loaded, and when it runs out anetix.ai to add
+  more at $30 for $15). `platform.access_pins.email` (required on a new pin,
+  `makePinRow`; a pin from before, NULL, takes any email) and
+  `pinEmailProblem(row, email)` (pure) are checked on `/api/www/pin`,
+  `/api/www/check` and in `createCompany`, so the product never makes a
+  company for another email whatever the www service sends. `createCompany`
+  takes `password` (the person's own, `accounts.passwordProblem`; the handout
+  then carries only the floor password and the manager's login) and `demo`
+  (`platform.companies.demo`, on the board payload's `company`); `paid_usd` 0
+  writes the first ledger row as a `grant` made by "anetix.ai", not a
+  purchase. The board: a 22px `#4c90d1` strip over the band rolling "DEMO · a
+  demo company on Anetix" (CSS, still under prefers-reduced-motion) for a demo
+  company; at zero credit the quiet credit line becomes a red panel ("Your
+  demo's AI credit is used up. Everything you built stays ...") with "Add
+  credit on anetix.ai" (the keyed top-up link, managers; the floor is told to
+  ask the manager); and `window.alert` on the board page turns any error that
+  says the credit is used up (the board's own actions and the new-module
+  popout) into a question that goes to that link. Tests:
+  `scripts/test-selfserve.js` (43), `scripts/e2e/selfserve.js` (88, the demo
+  section at the end), `board-browser.js` (22, unchanged); the www side's
+  `e2e.js` (56) walks the whole thing, and a headless run went pin and email,
+  the form, the welcome page, the authenticator, the board with its strip, the
+  credit drained to the red panel and on to the $30 page.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the

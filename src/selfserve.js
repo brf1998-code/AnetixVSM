@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS platform.self_serve (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE platform.self_serve ADD COLUMN IF NOT EXISTS handout_enc BYTEA;
+-- the demo workflow (2026-09-25 evening): a pin is made FOR an email and only works with it; a company made from one
+-- is a demo (the board's rolling DEMO banner, the out-of-credit panel)
+ALTER TABLE platform.access_pins ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE platform.companies ADD COLUMN IF NOT EXISTS demo BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS platform.credit_ledger (
   id          SERIAL PRIMARY KEY,
   company     TEXT NOT NULL,
@@ -112,6 +116,12 @@ function pinProblem(row, now = new Date()) {
   if (row.expires_at && new Date(row.expires_at) <= now) return "That pin has expired.";
   if (Number(row.uses) >= Number(row.max_uses)) return "That pin has already been used.";
   return null;
+}
+// A pin made for an email works only with that email (typed any case, spaces around it ignored). A pin from before
+// emails were asked for (email NULL) takes any. Pure.
+function pinEmailProblem(row, email) {
+  if (!row || !row.email) return null;
+  return String(email || "").trim().toLowerCase() === row.email ? null : "That pin and email do not go together. Use the email the pin was made for.";
 }
 // The company's code from its name: "Acme Wire & Cable Inc." -> "acme-wire-cable-inc". Pure.
 function slugFrom(name) {
@@ -202,17 +212,20 @@ async function assertCredit(company) {
 }
 
 // ---- writes ------------------------------------------------------------------------------------------------------
-async function makePinRow({ label, max_uses, days }, by) {
+async function makePinRow({ label, max_uses, days, email }, by) {
   label = clean(label, 80); if (label.length < 2) throw fail(400, "say who the pin is for");
+  const accounts = require("./accounts");
+  email = accounts.cleanLogin(email);
+  if (!accounts.validLogin(email)) throw fail(400, "give the email of the person the pin is for: it only works with that email");
   const uses = Math.max(1, Math.min(50, Number(max_uses) || 1));
   const d = days == null || days === "" ? 30 : Number(days);
   if (!Number.isFinite(d) || d < 0 || d > 3650) throw fail(400, "days: 0 for no expiry, or up to 3650");
   for (let i = 0; i < 5; i++) {
     const pin = makePin();
     try {
-      const row = (await q("INSERT INTO platform.access_pins (pin, label, max_uses, expires_at, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *",
-        [pin, label, uses, d ? new Date(Date.now() + d * 86400000) : null, by || null])).rows[0];
-      await logEvent("pin_made", String(row.id), { label, max_uses: uses, days: d, by });
+      const row = (await q("INSERT INTO platform.access_pins (pin, label, max_uses, expires_at, created_by, email) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+        [pin, label, uses, d ? new Date(Date.now() + d * 86400000) : null, by || null, email])).rows[0];
+      await logEvent("pin_made", String(row.id), { label, email, max_uses: uses, days: d, by });
       return row;
     } catch (e) { if (!/access_pins_pin_key/.test(e.message)) throw e; }
   }
@@ -240,7 +253,10 @@ async function freeSlug(name) {
 // Stripe's webhook and its success page land the SAME payment within milliseconds of each other (seen in the test
 // run: the second one found the pin spent and reported a failure while the first had made the company), so the
 // whole thing runs under a lock on the payment's ref: the second caller waits, then finds the ledger row.
-async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_usd }) {
+// password: the one the person chose on anetix.ai (the demo workflow): their account gets it and the handout carries
+// only the floor password. Without one the platform makes one up and hands it out once, as before. demo: the board
+// shows the rolling DEMO banner. paid_usd 0: the first credit is a grant from us, not a purchase.
+async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_usd, password, demo = false }) {
   ref = clean(ref, 200); if (!ref) throw fail(400, "ref (the payment) is required");
   const existing = async (c) => {
     const had = (await c.query("SELECT company FROM platform.credit_ledger WHERE ref=$1", [ref])).rows[0];
@@ -254,10 +270,12 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
   const auth = require("./auth");
   const { upsertDoc } = require("./db");
   const row = await pinRow(pin);
-  const why = pinProblem(row); if (why) throw fail(403, why);
+  const why = pinProblem(row) || pinEmailProblem(row, email); if (why) throw fail(403, why);
+  if (password != null && password !== "") { const pw = require("./accounts").passwordProblem(String(password)); if (pw) throw fail(400, pw.charAt(0).toUpperCase() + pw.slice(1) + "."); }
+  const chosen = password != null && password !== "";
   let slug = await freeSlug(name);
   const floor = auth.generatePassword();
-  const mgrPassword = require("./accounts").makePassword();
+  const mgrPassword = chosen ? String(password) : require("./accounts").makePassword();
   // the manager's account: the checkout email as the login; a person who already has an account (a second company
   // on the same email) gets "<local>+<slug>@<domain>", so a payment that went through never fails here
   const accounts = require("./accounts");
@@ -275,21 +293,23 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
       "UPDATE platform.access_pins SET uses=uses+1 WHERE id=$1 AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > now()) RETURNING id", [row.id])).rows[0];
     if (!spent) throw fail(403, pinProblem((await client.query("SELECT * FROM platform.access_pins WHERE id=$1", [row.id])).rows[0]) || "That pin has already been used.");
     if ((await client.query("SELECT 1 FROM platform.companies WHERE slug=$1", [slug])).rows[0]) slug = await freeSlug(name);   // taken in the meantime
-    await client.query("INSERT INTO platform.companies (slug, name) VALUES ($1,$2)", [slug, name]);
+    await client.query("INSERT INTO platform.companies (slug, name, demo) VALUES ($1,$2,$3)", [slug, name, Boolean(demo)]);
     // the handout (the floor password, the manager's login and first password) is committed WITH the company, so a
     // browser that collects it the instant the row exists finds it (the webhook's transaction and the page's race)
     let handout = null;
-    try { handout = require("./connections").encrypt({ floor, manager: { login, password: mgrPassword } }); } catch (e) { console.error(`[selfserve] ${slug}: the handout cannot be kept (${e.message}); the passwords are only in this answer`); }
+    try { handout = require("./connections").encrypt({ floor, manager: chosen ? { login } : { login, password: mgrPassword } }); } catch (e) { console.error(`[selfserve] ${slug}: the handout cannot be kept (${e.message}); the passwords are only in this answer`); }
     await client.query("INSERT INTO platform.self_serve (company, pin_id, email, contact, handout_enc) VALUES ($1,$2,$3,$4,$5)", [slug, row.id, clean(email, 200) || null, clean(contact, 120) || null, handout]);
-    await client.query("INSERT INTO platform.credit_ledger (company, delta_usd, kind, ref, paid_usd, note) VALUES ($1,$2,'purchase',$3,$4,$5)", [slug, usd, ref, money(paid_usd) || null, "first purchase from anetix.ai"]);
+    const paid = money(paid_usd);
+    await client.query("INSERT INTO platform.credit_ledger (company, delta_usd, kind, ref, paid_usd, note, made_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [slug, usd, paid > 0 ? "purchase" : "grant", ref, paid || null, paid > 0 ? "first purchase from anetix.ai" : "demo credit from anetix.ai", paid > 0 ? null : "anetix.ai"]);
     await client.query("COMMIT");
   } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
   finally { client.release(); }
   await auth.setPasswords(slug, { floor });   // the floor's shared password; no manager password on purpose
   const made = await accounts.create({ login, display_name: clean(contact, 80) || login, role: "manager", company: slug, password: mgrPassword }, "anetix.ai", null);
   await upsertDoc(slug, null, "COMPANY.md", `# ${name}\n\nWhat the agents should know about this company: what it makes, who is on the floor, what matters most (safety, throughput, quality), vocabulary the floor uses, anything to avoid.\n`, "repo", true);
-  await logEvent("company_created", slug, { name, self_serve: true, pin: row.id, ref, credit_usd: usd, paid_usd: money(paid_usd), manager_account: made.account.id });
-  return { created: true, company: { slug, name }, passwords: { floor }, manager: { login: made.account.login, password: mgrPassword }, credit: await credit(slug) };
+  await logEvent("company_created", slug, { name, self_serve: true, demo: Boolean(demo), pin: row.id, ref, credit_usd: usd, paid_usd: money(paid_usd), manager_account: made.account.id, chose_password: chosen });
+  return { created: true, company: { slug, name }, passwords: { floor }, manager: chosen ? { login: made.account.login } : { login: made.account.login, password: mgrPassword }, credit: await credit(slug) };
 }
 // The passwords a new company's person has not seen yet: handed out once, then gone. null when already collected.
 async function collectHandout(slug) {
@@ -371,8 +391,9 @@ wwwRouter.use("/api/www", (req, res, next) => {
   next();
 });
 wwwRouter.post("/api/www/pin", json, guard(async (req, res) => {
-  const row = await pinRow((req.body || {}).pin);
-  const why = pinProblem(row);
+  const b = req.body || {};
+  const row = await pinRow(b.pin);
+  const why = pinProblem(row) || pinEmailProblem(row, b.email);
   if (why) return res.status(403).json({ ok: false, error: why });
   res.json({ ok: true, label: row.label, uses_left: Number(row.max_uses) - Number(row.uses) });
 }));
@@ -392,7 +413,7 @@ wwwRouter.post("/api/www/companies", json, guard(async (req, res) => {
 wwwRouter.post("/api/www/check", json, guard(async (req, res) => {
   const b = req.body || {};
   const row = await pinRow(b.pin);
-  const why = pinProblem(row);
+  const why = pinProblem(row) || pinEmailProblem(row, b.email);
   if (why) return res.status(403).json({ ok: false, error: why });
   const accounts = require("./accounts");
   const login = accounts.cleanLogin(b.email);
@@ -439,6 +460,7 @@ adminRouter.post("/api/admin/companies/:slug/credit", requireAdmin, json, guard(
 module.exports = {
   init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL,
   creditToken, previewToken, topupUrl, wwwOrigins, loginCors,
+  pinEmailProblem,
   pinRow, selfServeRow, spentSince, credit, assertCredit, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
   wwwRouter, adminRouter, keyOk,
 };
