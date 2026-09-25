@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up your authenticator</title>
+<link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml">
+<style>
+  /* A manager account's first sign-in (2026-09-25, src/accounts.js the /api/c/<slug>/me routes): the authenticator
+     app is set up here before the account reaches anything else. Same shape as the admin's setup card. */
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --green:#2e7d4f; --red:#b3261e; }
+  body { font-family:system-ui,sans-serif; background:var(--fog); color:var(--ink); margin:0; padding:24px 16px 64px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:20px; max-width:760px; margin:0 auto; font-size:14px; line-height:1.5; }
+  h1 { font-size:20px; margin:0 0 4px; } h1 small { font-weight:400; color:var(--steel); font-size:13px; margin-left:8px; }
+  .sub { color:var(--steel); }
+  button { border:none; border-radius:7px; padding:9px 14px; font-size:13.5px; font-weight:700; cursor:pointer; margin:8px 6px 0 0; min-height:36px; font-family:inherit; }
+  .go { background:var(--green); color:#fff; } .primary { background:var(--navy); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); }
+  input { font-family:inherit; font-size:13px; border:1px solid var(--line); border-radius:7px; padding:7px; }
+  .qr { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; margin-top:10px; }
+  .qr code, .codes { font-family:ui-monospace,monospace; font-size:14px; }
+  .codes { columns:2; margin:10px 0; line-height:1.9; }
+  .note { margin-top:8px; padding:9px 12px; border-radius:9px; background:var(--fog); font-size:13px; border-left:4px solid var(--steel); }
+  .note.bad { border-left-color:var(--red); }
+  .fail { color:var(--red); font-weight:700; }
+  a { color:var(--navy); }
+</style>
+</head>
+<body>
+  <div class="card" id="card"><p class="sub">One moment.</p></div>
+<script>
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const SLUG = (/^\/c\/([a-z0-9][a-z0-9-]{1,40})\//.exec(location.pathname) || [])[1];
+const card = document.getElementById("card");
+let ME = null;
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "failed"); return null; }
+  return j;
+}
+async function load() {
+  const r = await fetch(`/api/c/${SLUG}/me`, { cache: "no-store" });
+  if (r.status === 401) { location.href = `/login?next=${encodeURIComponent(location.pathname)}`; return; }
+  ME = await r.json();
+  if (!ME.me || ME.me.role !== "manager") { card.innerHTML = `<h1>Not for this sign-in</h1><p class="sub">This page sets up the authenticator of a manager account. <a href="/c/${esc(SLUG)}/">Back to the board</a>.</p>`; return; }
+  if (!ME.enroll_required) { card.innerHTML = `<h1>Your authenticator is set up</h1><p class="sub">Nothing to do here. <a href="/c/${esc(SLUG)}/">Go to the board</a>.</p>`; return; }
+  card.innerHTML = `<h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:9px">Set up your authenticator <small>${esc(ME.me.login)}</small></h1>
+    <p class="sub">Before this account can do anything it needs a second factor: an authenticator app on your phone (Google Authenticator, 1Password, Authy, Microsoft Authenticator or the like) that shows a new 6 digit code every 30 seconds. From then on you sign in with your password and the code. It takes about a minute.</p>
+    ${ME.key_pinned ? "" : `<div class="note bad"><b>This instance cannot set up authenticators yet</b> (its key is not set). Tell Anetix.</div>`}
+    <div id="body"><button class="go" onclick="start()">Start</button> <a href="/logout" style="margin-left:8px">sign out</a></div>`;
+}
+async function start() {
+  const j = await post(`/api/c/${SLUG}/me/enroll/start`, {}); if (!j) return;
+  document.getElementById("body").innerHTML = `<div class="qr">${j.qr_svg}<div style="flex:1;min-width:220px">
+      <p><b>1.</b> In the app, add an account and scan this code.</p>
+      <p class="sub" style="margin-top:4px">Cannot scan? Choose "enter a setup key" and type: <code>${esc(j.secret)}</code> (time based, 6 digits).</p>
+      <p style="margin-top:10px"><b>2.</b> Type the 6 digit code the app shows now.</p>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="6 digit code" style="font-size:18px;letter-spacing:.2em;width:170px;margin-top:6px">
+      <div><button class="primary" onclick="verify()">Check the code</button></div>
+    </div></div>`;
+  setTimeout(() => { const el = document.getElementById("code"); if (el) el.focus(); }, 50);
+}
+async function verify() {
+  const j = await post(`/api/c/${SLUG}/me/enroll/verify`, { code: document.getElementById("code").value.trim() }); if (!j) return;
+  const text = j.recovery_codes.join("\n");
+  document.getElementById("body").innerHTML = `<p><b>Done. Now save these ten recovery codes</b> somewhere that is not your phone (a password manager, a printed page in a drawer).</p>
+    <p class="sub" style="margin-top:4px">Each one signs you in once in place of the app's code, for the day the phone is lost. They are shown this once and never again.</p>
+    <div class="codes">${j.recovery_codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
+    <div><button class="quiet" id="copy">Copy them</button><a id="dl" download="anetix-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.href='/c/${esc(SLUG)}/'">I have saved them, go to the board</button></div>`;
+  document.getElementById("dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
+  document.getElementById("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(text);
+}
+load();
+</script>
+</body>
+</html>

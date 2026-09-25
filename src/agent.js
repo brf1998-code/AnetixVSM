@@ -618,6 +618,8 @@ async function companyCap(company) {
 // 2026-09-19 the only cap was instance-wide and did exactly that); and the
 // instance-wide one from the environment, when it is set at all.
 async function assertUnderCap(company) {
+  // a self-serve company (one that came in from anetix.ai) runs on credit it bought: nothing left, nothing runs (src/selfserve.js)
+  await require("./selfserve").assertCredit(company);
   const own = await companyCap(company);
   if (own) {
     const mine = await monthlySpend(company);

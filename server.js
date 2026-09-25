@@ -41,6 +41,7 @@ async function main() {
   await require("./src/testfloor").init();   // the test floor: a third lane per company, switched on by the admin (docs/TEST-ENVIRONMENT.md)
   await require("./src/campaign").init();    // the test campaign: proposed by the AI, approved by the manager, run on the test floor, a step before the deploy gate
   await require("./src/datawall").init();    // the data wall: whether the AI may read a company's data, a switch per company on /admin (src/datawall.js)
+  await require("./src/selfserve").init();   // self-serve companies from anetix.ai: access pins, the credit ledger, the credit gate (src/selfserve.js)
 
   const app = express();
   app.disable("x-powered-by");
@@ -65,6 +66,10 @@ async function main() {
   // to (base URL <this host>/erp-demo/). Static rows, read only, no login.
   app.get("/erp-demo/epicor/BaqSvc/:baq/Data", connections.demoEpicor);   // the same, Epicor Kinetic REST v2 shaped
   app.get("/erp-demo/:entity", connections.demoErp);
+  // The www service (anetix.ai) checks pins, makes companies and adds credit through /api/www/*, opened by the
+  // shared key SOS_WWW_KEY rather than a session (src/selfserve.js). It calls the public address, so the edge check
+  // above still applies to it.
+  app.use(require("./src/selfserve").wwwRouter);
 
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
@@ -95,7 +100,8 @@ async function main() {
   app.get("/c/:slug/checks", auth.requireManager, (_req, res) => res.sendFile(page("checks.html")));
   app.get("/c/:slug/connections", auth.requireManager, (_req, res) => res.sendFile(page("connections.html")));
   app.get("/c/:slug/people", auth.requireManager, (_req, res) => res.sendFile(page("people.html")));
-  app.get("/c/:slug/settings", auth.requireManager, (_req, res) => res.sendFile(page("settings.html")));   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
+  app.get("/c/:slug/settings", auth.requireManager, (_req, res) => res.sendFile(page("settings.html")));
+  app.get("/c/:slug/enroll", auth.requireManager, (_req, res) => res.sendFile(page("enroll.html")));   // a manager account's authenticator setup, its first stop (src/accounts.js)   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
   app.use(accounts.router);  // /api/admin/accounts*: the admin accounts, authenticator setup, sign out everywhere
@@ -103,6 +109,7 @@ async function main() {
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
+  app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*

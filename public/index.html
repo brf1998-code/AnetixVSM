@@ -69,6 +69,9 @@
   .vrow button { border:1px solid var(--line); background:#f6f8fa; color:var(--ink); border-radius:7px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
   .vrow button:disabled { opacity:.45; cursor:default; }
   .warn { color:var(--amber); font-size:12.5px; margin:0 0 10px; font-weight:600; }
+  /* a self-serve company's AI credit (src/selfserve.js): one quiet line, red when nothing runs any more */
+  .creditline { font-size:12.5px; margin:0 0 10px; color:var(--steel); } .creditline a { font-weight:700; margin-left:6px; }
+  .creditline.amber { color:var(--amber); font-weight:600; } .creditline.red { color:var(--red); font-weight:700; }
   .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; align-items:start; }
   @media (max-width: 1100px) { .cols { grid-template-columns:repeat(2,1fr); } }
   @media (max-width: 640px) { .cols { grid-template-columns:1fr; } .band, .wrap { padding-left:14px; padding-right:14px; } }
@@ -183,6 +186,7 @@
   </div>
   <div class="wrap">
     <div class="warn" id="aiwarn" style="display:none"></div>
+    <div class="creditline" id="creditline" style="display:none"></div>
     <div id="vpanel"></div>
     <div class="toolbar" id="toolbar"></div>
     <div id="reviews"></div>
@@ -1076,6 +1080,10 @@ async function load() {
   if (!DATA.aiConfigured) { w.style.display = "block"; w.textContent = "AI is not configured on this instance (set ANTHROPIC_API_KEY). Proposals will be placeholders."; }
   else if (DATA.fakeAgent) { w.style.display = "block"; w.textContent = "Fake agent mode (SOS_FAKE_AGENT=1): the loop runs but the agent only stamps a marker on pages."; }
   else w.style.display = "none";
+  // a company that came in from anetix.ai runs on the credit it bought: the balance, and where to add more (managers)
+  const cl = document.getElementById("creditline");
+  if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}`; }
+  else cl.style.display = "none";
   const me = window.sosPerson && window.sosPerson.me(), anyPeople = window.sosPerson && window.sosPerson.people().length;
   const meHtml = me ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Who is at this screen. Approvals and requests carry this name.">${esc(me.name)}</a>` : anyPeople ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Tap your name and type your PIN so approvals and requests carry your name">who is this?</a>` : "";
   // top right: who is here, one Settings link, sign out. The rest (agent settings, checks log, the record) is on the admin page (Brendan, 2026-09-20).

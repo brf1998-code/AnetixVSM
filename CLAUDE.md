@@ -1,9 +1,11 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-24, evening)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-25)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
-https://sos.finnoperations.com (Railway project `symbiotic-os`, service
-`SymbioticOS` + `Postgres`).
+https://app.anetix.ai (and still https://sos.finnoperations.com; Railway
+project `symbiotic-os`, service `SymbioticOS` + `Postgres`). The public front
+door, anetix.ai, is a SEPARATE small service (the `www/` folder beside `sos/`,
+its own repo and Railway service; see "Self-serve companies from anetix.ai").
 
 ## Shape of the instance (since 2026-09-11)
 
@@ -19,7 +21,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   2026-09-21, see "Named admin accounts"; `SOS_ADMIN_PASSWORD` opens it only
   until the first authenticator is set up) lists companies, their modules,
   docs, spend, and adds companies or library modules to them.
-- **The admin page is six tabs, one job each** (2026-09-21, `public/admin.html`
+- **The admin page is seven tabs, one job each** (2026-09-21, `public/admin.html`; Pins added 2026-09-25
   plus the standard header `public/assets/admin-shell.js` and
   `admin-shell.css`; Brendan: the page had become fix stacked on fix and he got
   lost in it). The header is on every tab: the navy band, who is signed in,
@@ -30,9 +32,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   something on it wants looking at. The tab in view is the address's hash, so it
   can be linked, reloaded and reached with the back button: `/admin#health`
   (the default), `#companies/<slug>`, `#companies/new`, `#library`,
-  `#models`, `#accounts`, `#instance`, `#requests` (Models since 2026-09-22,
+  `#models`, `#accounts`, `#instance`, `#requests`, `#pins` (Models since 2026-09-22,
   see "Two models, one baseline"; Requests since 2026-09-24, see "Requests to
-  Anetix"). **Health**: data requests first when there are any
+  Anetix"; Pins since 2026-09-25, see "Self-serve companies from anetix.ai"). **Health**: data requests first when there are any
   ("waiting on us"), then the fleet tiles and the per-company table; the long
   "how to read these numbers" text is folded. **Companies**: a list on the left
   (open feedback, modules, spend this month, a red line when sign-in needs
@@ -1014,6 +1016,114 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   check's expected values are read; a sheet's shape goes through; staging
   and the test floor hold real rows (between the data and the model, not the
   data and the platform); no per-tool wall.
+- **Self-serve companies from anetix.ai: pins, credit, manager accounts with
+  2FA, and the www service** (2026-09-25, `src/selfserve.js`, the Pins tab and
+  the AI credit and Sign-in sections of the company card on `/admin`, the
+  credit line on the board, `public/enroll.html`, the manager half of
+  `src/accounts.js` and `src/auth.js`; the front door is the `www/` folder
+  beside `sos/`, its own repo `AnetixWWW` and Railway service `anetix-www`,
+  its README has the deploy and Stripe steps). Brendan: a home page on
+  anetix.ai with a brief description, not open to the public yet ("only to
+  people that we give an access pin to", "I do not want everyone using this
+  willy nilly"), a Stripe payment that sets them up a demo company with credit,
+  top-ups when they need more, the first purchase $30 for $30 of credit and
+  top-ups at two dollars for one, and "all demo should be 2FA". **Pins**
+  (`platform.access_pins`: pin as typed, eight characters from an alphabet
+  with no 0/O/1/I, shown `XXXX-XXXX`; label = who it is for; `max_uses`
+  default 1; `expires_at` default 30 days; `revoked_at`; `uses`): made on the
+  Pins tab (`POST /api/admin/pins { label, max_uses, days }`, shown once big
+  and readable again in the table), cancelled there (`POST
+  /api/admin/pins/:id/revoke`; the company it made stays), `pinProblem(row)`
+  (pure) is the one reason a pin is refused ("not one we gave out" / cancelled
+  / expired / already been used). **Credit** is a balance, not a monthly
+  budget: `platform.credit_ledger` (delta_usd, kind purchase | grant | adjust,
+  ref = the Stripe checkout session id UNIQUE, paid_usd, note, made_by) and
+  `platform.self_serve` (one row per such company: pin_id, email, contact,
+  `handout_enc`, created_at); `credit(company)` = the ledger's sum minus
+  `spentSince(company, self_serve.created_at)` (the same five sources as
+  `monthlySpend`), with `balanceOf` (pure) giving level ok / amber under $5 /
+  red at zero and the line the board shows; `agent.assertUnderCap` calls
+  `selfserve.assertCredit` FIRST, so a self-serve company with nothing left is
+  refused at every AI run with "Add credit at <SOS_WWW_URL>/c/<slug>/credit"
+  (the company's own monthly cap and the instance cap still apply on top; a
+  company with no self_serve row is untouched). A grant from the admin (`POST
+  /api/admin/companies/:slug/credit { usd, note }`, negative takes back) makes
+  a company self-serve from that moment (its spend counts from then), which is
+  how a pilot company gets an allowance. `GET .../credit` is the ledger. The
+  board payload carries `credit` (null unless self-serve) and `index.html`
+  draws one quiet `.creditline` under the warnings, red when out, with an Add
+  credit link for managers. **The www routes**, mounted in server.js BEFORE
+  `auth.middleware` and opened by `X-SOS-WWW-Key` = `SOS_WWW_KEY` (constant
+  time; under 16 characters or unset means the door is closed): `POST
+  /api/www/pin`, `POST /api/www/check { pin, email }` (before the checkout),
+  `POST /api/www/companies { pin, name, contact, email, ref, paid_usd,
+  credit_usd, collect }`, `POST /api/www/credit { slug, ref, paid_usd,
+  credit_usd }`, `GET /api/www/companies/:slug` (name, balance, managers).
+  They are called on the PUBLIC address, so the edge check applies to them.
+  **A company from a payment** (`createCompany`): slug from the name
+  (`slugFrom`, pure; `-2`, `-3` when taken), a floor password
+  (`auth.setPasswords({ floor })` only: NO shared manager password exists for
+  such a company), a manager ACCOUNT (below), the pin's use spent, the first
+  ledger row, all in one transaction under `pg_advisory_xact_lock(hashtext(
+  'selfserve:' || ref))`, because Stripe's webhook and its success page land
+  the same payment within milliseconds (seen in the test run: the second
+  caller found the pin spent); the same ref again returns the company with
+  `created:false`. **The handout**: the floor password and the manager's
+  first password wait encrypted in `self_serve.handout_enc` (AES-GCM under
+  `SOS_CONNECTION_KEY` through `connections.encrypt`) and are handed to the
+  first caller that says `collect: true` (the person's browser, never the
+  webhook), then wiped (`collectHandout`, a CTE, because `UPDATE ... RETURNING`
+  gives the NEW value); an admin resets them from the company card if they
+  were lost. **Manager accounts** (`platform.accounts` with `role='manager'`
+  and `company=<slug>`, the shape reserved on 2026-09-21): login = the checkout
+  email (`<local>+<slug>@<domain>` when that email already has an account), a
+  made-up first password, the same scrypt, lock, recovery codes, trusted
+  devices and sign-in log as an admin account. Sign-in: the login page's
+  account form ("Sign in with an account (managers, Anetix staff)", opened by
+  `?account=<login>` with the name filled in), `POST /login { name, password,
+  code }` through `accounts.signIn` (role admin or manager), the cookie
+  `manager.<slug>~<account id>.<account generation>...` (`auth.signManager`;
+  `verify` answers `{ role: "manager", company, account }`), the middleware
+  checks `accounts.sessionState` (active, a manager of THAT company, the
+  generation) and sets `req.sosAccount = { id, login, name, role: "manager",
+  company, enrolled }` (an admin's carries `role: "admin"` now). **Enrollment
+  is the first stop**: until the authenticator is verified the account
+  reaches only `auth.managerEnrollPath` (`/c/<slug>/enroll`,
+  `/api/c/<slug>/me`, `.../me/enroll/start|verify`, `/logout`); a page
+  request is redirected to `/c/<slug>/enroll` (`public/enroll.html`: Start,
+  the QR and the setup key, the code, ten recovery codes shown once) and an
+  API call gets 403 `enroll_required` with `enroll_url`. `POST
+  /api/c/<slug>/me/password { current, password }` changes it (signs out
+  everywhere). The Accounts tab lists admins only (`accounts.list`);
+  `accounts.managersOf(slug)` feeds the company card's Sign-in section (login,
+  enrolled or not, last sign-in, New password and Reset authenticator through
+  the existing `/api/admin/accounts/:id/<action>` routes with the step-up
+  code) and `coFlag` no longer flags a company whose manager is an account.
+  `SOS_ADMIN_2FA=off` (break glass) covers managers too. Company delete
+  removes the ledger, the self_serve row and the manager accounts (factors,
+  codes and devices cascade); the three tables are in the backup. **Env**:
+  `SOS_WWW_KEY` (shared with the www service; `openssl rand -hex 24`),
+  `SOS_WWW_URL` (default https://anetix.ai; the top-up link). **Tests**:
+  `scripts/test-selfserve.js` (29, pure), `scripts/e2e/selfserve.js` (75: the
+  door, a pin's life, the company with its handout both ways round, the 2FA
+  sign-in end to end with real TOTP codes, the credit gate on arrival and on
+  the button, top-up idempotency, grants, delete, backup) in `run-all.sh`;
+  the www service has `scripts/test-www.js` (18) and `scripts/e2e.js` (34,
+  the whole way in with a fake Stripe, the webhook racing the page). **Known
+  limits**: the manager account's session windows are the manager's (30 days
+  idle) not the admin's; the person who closes the welcome page before
+  writing the passwords down needs an admin (New password on the card); no
+  email is sent by anything (Stripe's receipt is the only mail); a pin is
+  stored as typed (it is an invitation, not a password); the www service
+  keeps the welcome passwords in a signed cookie on that browser for seven
+  days so a reload shows them again.
+- **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
+  with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
+  the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
+  login page, the enrollment page, as the favicon of those pages, and as the
+  default company icon (`DEFAULT_ICON` in `src/feedback.js`; a brand with a
+  primary colour and no icon gets the square in that colour). The www
+  service carries the same two files under `/img/`.
 - **Per-company AI budget** (2026-09-19). `assertUnderCap(company)` now checks
   the company's own monthly cap (`platform.companies.monthly_cap_usd`, set on
   the admin page) against that company's own spend AND the instance cap, so one
@@ -2106,6 +2216,10 @@ tool list, 401 from the API) proves the CLI itself starts.
 
 ## Live instance env vars (Railway service `SymbioticOS`)
 
+- `SOS_WWW_KEY`: the shared key the anetix.ai service (`www/`) sends in
+  `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on
+  both services; unset = those routes answer 401). `SOS_WWW_URL`: the front
+  door's address (default https://anetix.ai), used in the top-up link.
 - `SOS_CONNECTION_KEY`: the key the ERP logins are encrypted under (any long
   random string; `openssl rand -hex 32`). Optional: without it the platform
   derives a key from SESSION_SECRET, so rotating that secret would make every

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Symbiotic OS · Sign in</title>
+<link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml">
 <style>
   :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --red:#b3261e; }
   * { box-sizing:border-box; margin:0; }
@@ -24,7 +25,7 @@
 </head>
 <body>
   <form class="card" id="f">
-    <h1>Symbiotic OS</h1>
+    <h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:34px;height:34px;border-radius:8px;vertical-align:middle;margin-right:10px">Symbiotic OS</h1>
     <div class="sub" id="sub">Enter the password you were given. Floor and manager passwords both work here.</div>
     <input id="co" type="text" placeholder="Company code" autocomplete="organization" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
     <input id="nm" type="email" placeholder="Your name (email address)" autocomplete="username" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
@@ -37,7 +38,7 @@
     </div>
     <button type="submit">Sign in</button>
     <div class="err" id="err">That password did not match.</div>
-    <a href="#" class="staff" id="staff">Anetix staff sign in</a>
+    <a href="#" class="staff" id="staff">Sign in with an account (managers, Anetix staff)</a>
   </form>
 <script>
 // A login belongs to one company. The link or the wall code that brought the
@@ -52,13 +53,15 @@ if (company) sub.textContent = "Signing in to " + company + ". Enter the passwor
 // Anetix's own people sign in by name, with a code from an authenticator app after the password. The floor never
 // needs this, so it stays behind a small link (and opens by itself when the link that brought you here was /admin).
 let staff = false;
-function staffMode() {
+function staffMode(login) {
   staff = true; nm.style.display = "block"; co.style.display = "none"; document.getElementById("staff").style.display = "none";
-  sub.textContent = "Anetix staff: your own name and password, then the code from your authenticator app.";
-  nm.focus();
+  // a manager account (a company from anetix.ai, 2026-09-25) signs in the same way: email, password, the app's code
+  sub.textContent = login ? "Your account: the email address, your password, then the code from your authenticator app (set up on the first sign-in)." : "Anetix staff: your own name and password, then the code from your authenticator app.";
+  if (login) { nm.value = login; document.getElementById("pw").focus(); } else nm.focus();
 }
 document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); };
 if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
+else if (params.get("account")) staffMode(params.get("account"));
 // recovery is for getting back in, not for minting a trusted device: the box goes when a recovery code is chosen
 let recovery = false;
 document.getElementById("userec").onclick = (e) => {
@@ -88,6 +91,10 @@ document.getElementById("f").onsubmit = async (e) => {
     if (j.need_company) { co.style.display = "block"; co.focus(); }
     err.textContent = res.status === 429 ? (j.error || "Too many tries. Wait a few minutes.") : j.need_company ? "Which company is this login for? Type its code, the word after /c/ in its address." : "That password did not match.";
     err.style.display = "block"; return;
+  }
+  if (staff && j.role === "manager") {   // a manager account: its enrollment first, else the page asked for inside its company, else its board
+    const own = "/c/" + j.company + "/";
+    location.href = j.enroll ? (j.enroll_url || own + "enroll") : next && next.startsWith(own) ? next : own; return;
   }
   if (staff) { location.href = next && /^\/(?!\/)/.test(next) && !j.enroll ? next : "/admin"; return; }
   // a company login lands on its own board unless the link asked for a page inside that company

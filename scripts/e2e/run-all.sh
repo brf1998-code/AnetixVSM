@@ -79,6 +79,9 @@ run campaign               node scripts/e2e/campaign.js
 fresh; rm -f "$LOG/prompts.jsonl"; start "SOS_BROWSER=off SOS_CAMPAIGN_WATCH_MS=1500 SOS_PROMPT_LOG=$LOG/prompts.jsonl"
 run datawall               env SOS_PROMPT_LOG=$LOG/prompts.jsonl node scripts/e2e/datawall.js
 
+fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
+run selfserve              env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/selfserve.js
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop

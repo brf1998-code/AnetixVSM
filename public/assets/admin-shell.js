@@ -35,7 +35,7 @@
     mount(c) {
       cfg = c;
       document.getElementById("shell").innerHTML = `<div class="inner">
-        <div class="top"><h1>${esc(c.product || "Symbiotic OS")}<small>${esc(c.title)}</small></h1><div class="who"><span id="shell-who"></span><a href="/logout">sign out</a></div></div>
+        <div class="top"><h1><img class="mark" src="/assets/anetix-mark.svg" alt="Anetix">${esc(c.product || "Symbiotic OS")}<small>${esc(c.title)}</small></h1><div class="who"><span id="shell-who"></span><a href="/logout">sign out</a></div></div>
         <div class="pills" id="shell-pills"></div>
         <nav aria-label="${esc(c.title)} sections"></nav></div>`;
       window.addEventListener("hashchange", show);

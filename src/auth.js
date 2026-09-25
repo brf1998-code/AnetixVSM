@@ -224,13 +224,20 @@ function verify(token, now = Date.now()) {
   const issued = parseInt(ts1, 36), refreshed = parseInt(ts2, 36);
   if (!alive(role, issued, refreshed, now)) return null;   // expired, or a forged time
   const times = { slot: company, issued, refreshed, legacy, refresh: refreshDue(role, refreshed, legacy, now) };
-  if (role !== "admin") return SLUG.test(company) ? { role, company, gen: Number(gen) || 0, ...times } : null;
+  if (role !== "admin") {
+    if (SLUG.test(company)) return { role, company, gen: Number(gen) || 0, ...times };
+    // a manager ACCOUNT (2026-09-25, self-serve companies): "<slug>~<account id>", gen = the account's generation
+    const a = role === "manager" ? /^([a-z0-9][a-z0-9-]{1,40})~(\d{1,9})$/.exec(company) : null;
+    return a ? { role, company: a[1], gen: Number(gen) || 0, account: Number(a[2]), ...times } : null;
+  }
   // admin: "*<account id>". The admin cookie from before named accounts ("*" alone) is no longer accepted: sign in again.
   const m = /^\*(\d{1,9})$/.exec(company);
   return m ? { role, company: ALL, gen: Number(gen) || 0, account: Number(m[1]), ...times } : null;
 }
 // The cookie value for an admin session. accountId 0: the shared admin password's session.
 function signAdmin(accountId, gen, times, now) { return sign("admin", `${ALL}${Number(accountId) || 0}`, gen, times, now); }
+// The cookie value for a manager account's session: the company and the account, under the account's generation.
+function signManager(accountId, company, gen, times, now) { return sign("manager", `${company}~${Number(accountId) || 0}`, gen, times, now); }
 // The Set-Cookie line for a session, the same attributes at sign-in and at every refresh.
 function cookieHeader(req, value, maxAge) {
   const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
@@ -305,7 +312,7 @@ function middleware(req, res, next) {
     // a named account: still there, still switched on, and not signed out everywhere since this cookie was made
     return accounts.sessionState(session.account).then((st) => {
       if (!st || st.role !== "admin" || st.status !== "active" || st.generation !== session.gen) return toLogin(req, res, 401, "login required");
-      req.sosAccount = { id: st.id, login: st.login, name: st.name, enrolled: st.enrolled };
+      req.sosAccount = { id: st.id, login: st.login, name: st.name, role: "admin", enrolled: st.enrolled };
       if (!st.enrolled && !accounts.twoFaOff() && !ENROLL_PATHS.test(p)) {
         if (req.method === "GET" && !/(^|\/)api\//.test(p)) return res.redirect("/admin");
         return res.status(403).json({ error: "set up your authenticator app first", enroll_required: true });
@@ -313,8 +320,25 @@ function middleware(req, res, next) {
       accept();
     }).catch(next);
   }
+  if (session.role === "manager" && session.account) {
+    // a manager account: still there, switched on, a manager of this company, not signed out everywhere since
+    return accounts.sessionState(session.account).then((st) => {
+      if (!st || st.role !== "manager" || st.company !== session.company || st.status !== "active" || st.generation !== session.gen) return toLogin(req, res, 401, "login required");
+      req.sosAccount = { id: st.id, login: st.login, name: st.name, role: "manager", company: st.company, enrolled: st.enrolled };
+      if (!st.enrolled && !accounts.twoFaOff() && !managerEnrollPath(p, session.company)) {
+        if (req.method === "GET" && !/(^|\/)api\//.test(p)) return res.redirect(`/c/${session.company}/enroll`);
+        return res.status(403).json({ error: "set up your authenticator app first", enroll_required: true, enroll_url: `/c/${session.company}/enroll` });
+      }
+      accept();
+    }).catch(next);
+  }
   // a company's password changed since this cookie was signed: sign in again
   generationOf(session.company).then((gen) => (gen && gen === session.gen ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
+}
+// All a manager account may reach before its authenticator is set up: its company's enrollment page, who-am-I, the
+// two setup calls, and the way out.
+function managerEnrollPath(p, company) {
+  return p === "/logout" || p === `/c/${company}/enroll` || p === `/api/c/${company}/me` || p === `/api/c/${company}/me/enroll/start` || p === `/api/c/${company}/me/enroll/verify`;
 }
 // All an admin account may reach before its authenticator is set up: the admin page (which shows the setup and
 // nothing else), who-am-I, and the two setup calls.
@@ -431,10 +455,13 @@ async function loginHandler(req, res) {
         return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code) });
       }
       loginFails.delete(ip);
-      const set = [cookieHeader(req, signAdmin(r.account.id, r.account.generation, null, now), maxAgeFor("admin", now, now))];
+      const manager = r.account.role === "manager";
+      const set = [manager
+        ? cookieHeader(req, signManager(r.account.id, r.account.company, r.account.generation, null, now), maxAgeFor("manager", now, now))
+        : cookieHeader(req, signAdmin(r.account.id, r.account.generation, null, now), maxAgeFor("admin", now, now))];
       if (r.device) set.push(devices.cookieHeader(req, `${r.device.id}.${r.device.token}`, devices.DAYS * 86400));
       res.set("Set-Cookie", set);
-      return res.json({ ok: true, role: "admin", company: null, enroll: r.enroll, trusted: Boolean(r.trusted), remembered: Boolean(r.device) });
+      return res.json({ ok: true, role: manager ? "manager" : "admin", company: manager ? r.account.company : null, enroll: r.enroll, enroll_url: manager && r.enroll ? `/c/${r.account.company}/enroll` : undefined, trusted: Boolean(r.trusted), remembered: Boolean(r.device) });
     }
     let session = await sessionFor(password, company);
     if (session && session.refused_shared) { await accounts.event("legacy_admin_refused", { ip }); session = null; }
@@ -459,6 +486,6 @@ function logoutHandler(_req, res) {
 
 module.exports = {
   middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
-  setPasswords, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, verify, OPEN, ALL, hmac, parseCookies,
+  setPasswords, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

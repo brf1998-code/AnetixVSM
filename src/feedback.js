@@ -28,6 +28,7 @@ const arrival = require("./arrival");
 const testfloor = require("./testfloor");
 const campaign = require("./campaign");
 const datawall = require("./datawall");
+const selfserve = require("./selfserve");   // self-serve companies from anetix.ai: the credit on the board and the company card, gone with the company
 
 const router = express.Router();
 // the restore route carries a whole backup and parses its own body; a request from the floor may carry one photo
@@ -278,10 +279,10 @@ router.get("/api/c/:slug/modules/:name/staged-changes", async (req, res) => {
 
 // Company icon for the tab and the phone home screen: the brand icon when the
 // guide found one, else the platform's own mark.
-const DEFAULT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1f3a5f"/><path d="M20 40c0 5 5 8 12 8s12-3 12-8-5-6-12-7-12-3-12-8 5-8 12-8 12 3 12 8" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"/></svg>`;
+const DEFAULT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="180" fill="#14171c"/><path fill="#4c90d1" d="M468 146h87l387 733H775L512 383 248 879H81z"/><path fill="#4c90d1" d="M439 616h145l68 127H371z"/></svg>`;   // the Anetix mark (2026-09-25; public/assets/anetix-mark.svg is the same file)
 // A short fingerprint of the icon the company has now: the board puts it in the icon's address (?v=) so a browser
 // that keys its icon cache by URL never shows one company's mark on another's board (Safari did, 2026-09-24).
-const iconVersion = (b) => require("crypto").createHash("sha1").update(b && b.icon ? String(b.icon) : `default:${b && b.colors && b.colors.primary ? b.colors.primary : "#1f3a5f"}`).digest("hex").slice(0, 10);
+const iconVersion = (b) => require("crypto").createHash("sha1").update(b && b.icon ? String(b.icon) : `anetix:${b && b.colors && b.colors.primary ? b.colors.primary : "#14171c"}`).digest("hex").slice(0, 10);
 router.get("/api/c/:slug/icon", async (req, res) => {
   const co = await company(req.params.slug);
   const b = co && co.brand;
@@ -292,8 +293,8 @@ router.get("/api/c/:slug/icon", async (req, res) => {
     const [head, data] = b.icon.split(",", 2);
     return res.type(head.slice(5, head.indexOf(";"))).send(Buffer.from(data, "base64"));
   }
-  const primary = b && b.colors && b.colors.primary ? b.colors.primary : "#1f3a5f";
-  res.type("image/svg+xml").send(DEFAULT_ICON.replace("#1f3a5f", primary));
+  const primary = b && b.colors && b.colors.primary ? b.colors.primary : "#14171c";
+  res.type("image/svg+xml").send(DEFAULT_ICON.replace("#14171c", primary));
 });
 
 function brandPublic(b) {
@@ -355,6 +356,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
     campaigns: co.test_floor || runs.some((r) => r.step === "campaign" || (r.evidence && r.evidence.campaign_id)) ? await campaign.forBoard(co.slug) : {},
     boardUrl: boardUrl(req, co.slug),
     spend: await agent.monthlySpend(co.slug),
+    credit: await selfserve.credit(co.slug),   // null unless the company came in from anetix.ai; then its balance and the top-up page
     models: { list: agent.MODELS, build: (await agent.buildModelFor(co.slug, await agent.modelFor(co.slug, "build"))).model },
     role: req.sosRole,
     boot: process.env.SOS_BOOT_ID,
@@ -673,6 +675,10 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
     FROM platform.companies c`)).rows;
   const runs = (await q("SELECT company, count(*)::int AS n, count(*) FILTER (WHERE status='deployed')::int AS deployed FROM platform.build_runs GROUP BY company")).rows;
   const access = (await q("SELECT * FROM platform.company_access")).rows;
+  const selfServe = {};   // the balance of every company that came in from anetix.ai (src/selfserve.js)
+  for (const c of (await selfserve.adminView()).companies) selfServe[c.slug] = c;
+  const managersBy = {};
+  for (const c of companies) { const ms = await selfserve.managers(c.slug); if (ms.length) managersBy[c.slug] = ms; }
   res.json({
     companies: companies.map((c) => ({
       ...c,
@@ -687,6 +693,8 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       brand: brandPublic(c.brand),
       test_floor: Boolean(c.test_floor),
       ...datawall.status(c),
+      credit: selfServe[c.slug] || null,
+      managers: managersBy[c.slug] || [],   // manager accounts (email, authenticator app): self-serve companies (src/selfserve.js)
     })),
     testFloors: Object.fromEntries(await Promise.all(companies.filter((c) => c.test_floor).map(async (c) => [c.slug, await testfloor.status(c.slug)]))),
     library: await libraryView(modules),
@@ -992,6 +1000,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
   try {
     const mods = (await q("SELECT name FROM platform.modules WHERE company=$1", [co.slug])).rows.map((m) => m.name);
     await testfloor.deleteCompany(co.slug);   // its test tables and its test_floors row (the third role goes with the runner below)
+    await selfserve.deleteCompany(co.slug);   // its credit ledger and its self_serve row (the pin it used keeps its count)
     registry.unmountCompany(co.slug);
     for (const m of mods) {
       await q(`DROP SCHEMA IF EXISTS ${migrate.liveSchema(co.slug, m)} CASCADE`);

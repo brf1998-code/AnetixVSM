@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Symbiotic OS · Admin</title>
+<link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/admin-shell.css">
 <style>
-  /* The admin page: six tabs, one job each (the header and the tab row are /assets/admin-shell.*).
+  /* The admin page: seven tabs, one job each (Pins since 2026-09-25: who may come in from anetix.ai, and the companies that did) (the header and the tab row are /assets/admin-shell.*).
      Health: is the loop turning, and what is waiting on us. Companies: one company open at a time.
      Library: every separate module, then the instances of it. Models: which of the two models is the
      baseline, the head-to-head assessment and the live A/B (/assets/admin-models.js). Accounts: Anetix's
@@ -130,6 +131,20 @@
     <div class="card"><details id="req-closed-wrap"><summary style="cursor:pointer;font-weight:700;color:var(--navy)">Closed: fixed or not doing <span class="sub" id="req-closed-sub"></span></summary><div id="req-closed" style="margin-top:8px"></div></details></div>
   </section>
 
+  <!-- ================= Pins: who may come in from anetix.ai, and the companies that did ================= -->
+  <section class="tabpanel" id="tab-pins">
+    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here and handed to them. With it they pay through Stripe and get a company of their own on this instance, with what they paid as AI credit (the first purchase dollar for dollar, top-ups at two dollars for one). A pin is for one person: it makes one company unless you say more, and it expires. Cancel one and it stops working at once; the company it already made stays.</p></div>
+    <div class="card"><h2>Make a pin</h2>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">
+        <label class="sub">Who it is for<br><input id="pin-label" placeholder="e.g. Sam at Acme Wire" style="width:240px" autocomplete="off"></label>
+        <label class="sub">Companies it may make<br><input id="pin-uses" type="number" min="1" max="50" value="1" style="width:90px"></label>
+        <label class="sub">Good for (days)<br><input id="pin-days" type="number" min="0" max="3650" value="30" style="width:90px" title="0 = never expires"></label>
+        <button class="primary" onclick="makePin()" style="margin:0">Make the pin</button>
+      </div></div>
+    <div class="card"><h2>Pins <small id="pins-sub"></small></h2><div id="pins-list" class="hwrap"></div></div>
+    <div class="card"><h2>Self-serve companies <small id="ss-sub"></small></h2><div id="ss-list" class="hwrap"></div></div>
+  </section>
+
   <!-- ================= Companies: the list, and one company open at a time ================= -->
   <section class="tabpanel" id="tab-companies">
     <div class="tabhead"><h2>Companies</h2><p class="sub">Pick a company to work on it: its pages, modules, sign-in, budget, brand. One open at a time.</p></div>
@@ -216,6 +231,7 @@ function drawPills() {
     P.spend && { id: "spend", label: "AI spend", value: P.spend.value, level: P.spend.level, href: "#instance", title: "This month, every company, against the instance cap" },
     P.data && { id: "data", label: "Waiting on us", value: P.data.value, level: P.data.level, href: "#health", title: "Data requests: changes that need ERP data the connection does not give yet" },
     P.requests && { id: "requests", label: "Requests", value: P.requests.value, level: P.requests.level, href: "#requests", title: "Requests to Anetix: feedback about the software itself, from every board" },
+    P.pins && { id: "pins", label: "Self-serve", value: P.pins.value, level: P.pins.level, href: "#pins", title: "Companies that came in from anetix.ai with a pin, and whether any is out of AI credit" },
     P.isolation && { id: "isolation", label: "Isolation", value: P.isolation.value, level: P.isolation.level, href: "#instance", title: "Whether module code runs in a process of its own with a database login of its own" },
     P.edge && { id: "edge", label: "Edge", value: P.edge.value, level: P.edge.level, href: "#instance", title: "Whether a request that did not come through Cloudflare is refused" },
     P.signin && { id: "signin", label: "Sign-in", value: P.signin.value, level: P.signin.level, href: "#accounts", title: P.signin.title },
@@ -224,6 +240,7 @@ function drawPills() {
   const worst = (...xs) => (xs.some((x) => x && x.level === "red") ? "red" : xs.some((x) => x && x.level === "amber") ? "amber" : null);
   AdminShell.setBadge("health", { level: worst(P.data) });
   AdminShell.setBadge("requests", { n: P.requests ? P.requests.open : undefined, level: worst(P.requests) });
+  AdminShell.setBadge("pins", { n: P.pins ? P.pins.live : undefined, level: worst(P.pins) });
   AdminShell.setBadge("accounts", { level: worst(P.signin) });
   AdminShell.setBadge("models", { level: worst(P.models) });
   AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null) });
@@ -469,6 +486,57 @@ async function reqCloseSend(id, answer) {
   const what = document.getElementById("rq-what").value.trim(); if (what.length < 3) return;
   await post(`/api/admin/requests/${id}/close`, { answer, what }); closeModal(); loadRequests();
 }
+// ---- access pins and self-serve companies (src/selfserve.js): who may come in from anetix.ai, and who did ----
+let PINS = null;
+async function loadPins() {
+  const r = await fetch("/api/admin/pins", { cache: "no-store" }); if (!r.ok) return;
+  PINS = await r.json();
+  const live = PINS.pins.filter(p => !p.problem).length, out = PINS.companies.filter(c => c.balance_usd <= 0).length, low = PINS.companies.filter(c => c.level === "amber").length;
+  P.pins = { live, value: `${PINS.companies.length} compan${PINS.companies.length === 1 ? "y" : "ies"}${out ? `, ${out} out of credit` : low ? `, ${low} low` : ""}, ${live} live pin${live === 1 ? "" : "s"}`, level: out ? "red" : low ? "amber" : "ok" };
+  drawPills();
+  document.getElementById("pins-sub").textContent = PINS.pins.length ? `${live} live of ${PINS.pins.length}` : "none yet";
+  document.getElementById("ss-sub").textContent = PINS.companies.length ? `${PINS.companies.length}${out ? `, ${out} out of credit` : ""}` : "none yet";
+  const state = (p) => p.problem ? `<span class="sub">${esc(p.problem.replace(/^That pin /, "").replace(/\.$/, ""))}</span>` : '<span class="ok">live</span>';
+  document.getElementById("pins-list").innerHTML = PINS.pins.length ? `<table class="list"><tr><th>Pin</th><th>For</th><th>Used</th><th>Expires</th><th>Made</th><th>Companies</th><th></th></tr>${PINS.pins.map(p => `<tr data-pin="${p.id}">
+    <td><b style="font-family:ui-monospace,monospace;font-size:14px">${esc(p.shown)}</b></td><td>${esc(p.label)}</td><td>${p.uses} of ${p.max_uses}</td>
+    <td>${p.expires_at ? new Date(p.expires_at).toLocaleDateString() : "never"}</td><td><small>${esc(p.created_by || "")} ${day(p.created_at)}</small></td>
+    <td>${p.companies ? p.companies.split(", ").map(c => `<a href="#companies/${esc(c)}">${esc(c)}</a>`).join(", ") : '<span class="sub">none yet</span>'}</td>
+    <td style="white-space:nowrap">${state(p)}${!p.problem ? ` <button class="danger" onclick="revokePin(${p.id})">Cancel</button>` : ""}</td></tr>`).join("")}</table>`
+    : '<p class="sub">No pins yet. Make one above and send it to the person with the address of anetix.ai.</p>';
+  document.getElementById("ss-list").innerHTML = PINS.companies.length ? `<table class="list"><tr><th>Company</th><th>Contact</th><th>Since</th><th>Bought</th><th>Used</th><th>Left</th><th></th></tr>${PINS.companies.map(c => `<tr data-ss="${esc(c.slug)}">
+    <td><a href="#companies/${esc(c.slug)}"><b>${esc(c.name)}</b></a> <small class="sub">/c/${esc(c.slug)}/</small></td><td>${esc(c.contact || "")}${c.email ? `<br><small>${esc(c.email)}</small>` : ""}</td><td>${day(c.since)}</td>
+    <td>$${c.credit_usd.toFixed(2)}</td><td>$${c.spent_usd.toFixed(2)}</td><td class="${c.level === "red" ? "fail" : c.level === "amber" ? "warn" : "ok"}" style="font-weight:700">$${c.balance_usd.toFixed(2)}</td>
+    <td style="white-space:nowrap"><button class="quiet" onclick="grantCredit('${esc(c.slug)}')">Grant credit</button> <a href="/c/${esc(c.slug)}/" class="sub">board</a></td></tr>`).join("")}</table>`
+    : '<p class="sub">Nobody has come in from anetix.ai yet.</p>';
+}
+async function makePin() {
+  const label = document.getElementById("pin-label").value.trim(); if (label.length < 2) { alert("say who the pin is for"); return; }
+  const j = await post("/api/admin/pins", { label, max_uses: document.getElementById("pin-uses").value, days: document.getElementById("pin-days").value });
+  if (!j.ok) return;
+  document.getElementById("pin-label").value = "";
+  openModal(`<h2>A pin for ${esc(label)}</h2><p class="sub">Send them this with the address. They enter it under "Have a pin?" on <b>${esc(PINS ? PINS.www_url : "anetix.ai")}</b>, pay, and their company is made on the spot.</p>
+    <p style="font-size:30px;letter-spacing:.08em;font-family:ui-monospace,monospace;text-align:center;margin:14px 0"><b id="pin-shown">${esc(j.pin.shown)}</b></p>
+    <p class="sub">${j.pin.max_uses} compan${j.pin.max_uses === 1 ? "y" : "ies"} · ${j.pin.expires_at ? "expires " + new Date(j.pin.expires_at).toLocaleDateString() : "never expires"}. It stays readable on the Pins tab.</p>
+    <div><button class="go" onclick="closeModal()">Done</button></div>`);
+  loadPins();
+}
+async function revokePin(id) {
+  if (!confirm("Cancel this pin? It stops working at once. A company it already made stays.")) return;
+  await post(`/api/admin/pins/${id}/revoke`, {}); loadPins();
+}
+function grantCredit(slug) {
+  const c = (PINS && PINS.companies.find(x => x.slug === slug)) || (D && D.companies.find(x => x.slug === slug)) || { name: slug };
+  const cr = c.credit || (c.balance_usd != null ? c : null);
+  openModal(`<h2>Grant AI credit to ${esc(c.name)}</h2><p class="sub">${cr ? `They have $${cr.balance_usd.toFixed(2)} left of $${cr.credit_usd.toFixed(2)}. ` : "This company is not self-serve yet; a grant makes it one, and its AI spend counts against the credit from now on. "}Free, from us: a negative amount takes credit back.</p>
+    <input id="gc-usd" type="number" step="1" placeholder="dollars" autocomplete="off"><input id="gc-note" placeholder="why (optional), e.g. pilot allowance" autocomplete="off">
+    <div><button class="primary" onclick="grantCreditSend('${esc(slug)}')">Grant it</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+  setTimeout(() => { const el = document.getElementById("gc-usd"); if (el) el.focus(); }, 50);
+}
+async function grantCreditSend(slug) {
+  const usd = Number(document.getElementById("gc-usd").value); if (!usd) return;
+  const j = await post(`/api/admin/companies/${slug}/credit`, { usd, note: document.getElementById("gc-note").value });
+  if (j.ok) { closeModal(); loadPins(); load(); }
+}
 async function load() {
   if (!(await loadMe())) return;
   AdminShell.setWho(ME.me ? (ME.me.name || ME.me.login) : ME.shared_password ? "the shared admin password" : "");
@@ -476,6 +544,7 @@ async function load() {
   loadAccounts().catch((e) => console.error("accounts:", e));
   loadData().catch((e) => console.error("data requests:", e));
   loadRequests().catch((e) => console.error("requests:", e));
+  loadPins().catch((e) => console.error("pins:", e));
   const r = await fetch("/api/admin/overview");
   if (r.status === 401) { location.href = "/login?next=/admin"; return; }
   if (r.status === 403) { document.body.innerHTML = "<p style='padding:20px'>Admin login required.</p>"; return; }
@@ -544,7 +613,7 @@ function openSlug() {
 let LAST_CO = null;
 function coFlag(c) {
   const a = c.access || {};
-  if (a.legacy_login || !(a.own_floor && a.own_manager)) return '<span class="fail">sign-in needs setting</span>';
+  if (a.legacy_login || !(a.own_floor && (a.own_manager || (c.managers || []).length))) return '<span class="fail">sign-in needs setting</span>';
   if (c.brand && c.brand.status === "building") return '<span class="warn">brand guide building</span>';
   return "";
 }
@@ -585,6 +654,8 @@ function companyCard(c) {
       <div class="sec"><h3>AI budget and models</h3>${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "No budget of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}<br>
         <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="width:150px;margin-top:6px"> <button class="quiet" onclick="setCap('${c.slug}')">Save</button>
         <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(${(c.models.pinned || []).length ? `pinned here: ${c.models.pinned.join(", ")}; ` : "all on the platform's models; "}change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
+      <div class="sec"><h3>AI credit</h3>${c.credit ? `<b class="${c.credit.level === "red" ? "fail" : c.credit.level === "amber" ? "warn" : "ok"}">$${c.credit.balance_usd.toFixed(2)} left</b> of $${c.credit.credit_usd.toFixed(2)} bought or granted, $${c.credit.spent_usd.toFixed(2)} used since ${day(c.credit.since)}.${c.credit.balance_usd <= 0 ? " <b class=\"fail\">Nothing runs for them until credit is added.</b>" : ""}${c.credit.contact || c.credit.email ? `<br><small class="sub">${esc(c.credit.contact || "")}${c.credit.email ? ` · ${esc(c.credit.email)}` : ""}</small>` : ""}<br><small class="sub">They add credit at <a href="${esc(c.credit.topup_url)}" target="_blank" rel="noopener">${esc(c.credit.topup_url)}</a>; the ledger is on the <a href="#pins">Pins</a> tab.</small>` : `<span class="sub">Not self-serve: this company was made here, not from anetix.ai, and runs on its budget. A grant makes it self-serve, with its AI spend counted against the credit from then on.</span>`}<br>
+        <button class="quiet" onclick="grantCredit('${c.slug}')">Grant credit</button></div>
       <div class="sec"><h3>Test floor</h3>${testFloorHtml(c)}</div>
       <div class="sec"><h3>What the AI reads</h3>${dataWallHtml(c)}</div>
       <div class="sec wide"><h3>Brand</h3>${brandHtml(c)}</div>
@@ -666,6 +737,8 @@ async function addCompany() {
 function accessText(c) {
   const a = c.access || {};
   if (a.legacy_login) return '<span class="fail">still on the shared floor and manager passwords from before 2026-09-19. Anyone holding those can sign in here.</span>';
+  // a self-serve company: the floor's shared password, and for the manager an account with an authenticator app (never a shared manager password)
+  if ((c.managers || []).length) return `${a.own_floor ? "its own floor password" : '<span class="fail">no floor password yet (the floor cannot sign in)</span>'}; manager sign-in is by account:<br>` + c.managers.map(m => `<b>${esc(m.login)}</b> <small class="sub">(${esc(m.name || "")}${m.status !== "active" ? ", switched off" : ""}; ${m.enrolled ? "authenticator set up" : '<span class="warn">authenticator not set up yet: set up at their first sign-in</span>'}${m.last_sign_in ? `; last sign-in ${new Date(m.last_sign_in).toLocaleDateString()}` : "; never signed in"})</small> <button class="quiet" style="margin:2px 0;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-password','${esc(m.login)}')">New password</button>${m.enrolled ? `<button class="quiet" style="margin:2px 0 2px 4px;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-factor','${esc(m.login)}')">Reset authenticator</button>` : ""}`).join("<br>");
   if (a.own_floor && a.own_manager) return "its own floor and manager passwords" + (a.updated_at ? ", set " + new Date(a.updated_at).toLocaleDateString() : "");
   return `<span class="fail">${a.own_floor ? "no manager password yet (only an admin can manage it)" : a.own_manager ? "no floor password yet (the floor cannot sign in)" : "no passwords yet"}</span>`;
 }
@@ -865,6 +938,7 @@ function accAct(id, action, login) {
     if (j.signed_out) { location.href = "/login?next=/admin"; return; }
     if (j.password) showAccountPassword(login, j.password); else closeModal();
     loadAccounts();
+    if (D && D.companies.some(c => (c.managers || []).some(m => m.id === id))) load();   // a company's manager account: the card says whether the authenticator is set up
   });
 }
 async function accDisable(id, login) {
@@ -923,8 +997,8 @@ async function enrollVerify(inCard) {
 }
 AdminShell.mount({
   title: "Admin",
-  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
-  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); window.scrollTo(0, 0); },
+  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "pins", label: "Pins" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
+  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); window.scrollTo(0, 0); },
 });
 load();
 </script>

@@ -142,7 +142,10 @@ const LIST_SQL = `
     (SELECT max(at) FROM platform.auth_events e WHERE e.account_id=a.id AND e.event IN ('login_ok','recovery_used','break_glass','signin_trusted_device')) AS last_sign_in,
     (SELECT count(*) FROM platform.admin_devices d WHERE d.account_id=a.id AND d.removed_at IS NULL AND d.expires_at > now() AND d.generation = a.generation) AS devices
   FROM platform.accounts a`;
-async function list() { return (await q(`${LIST_SQL} ORDER BY a.id`)).rows.map(publicRow); }
+async function list() { return (await q(`${LIST_SQL} WHERE a.role='admin' ORDER BY a.id`)).rows.map(publicRow); }
+// The manager accounts of one company (2026-09-25: a self-serve company's manager signs in with an account and an
+// authenticator app, never a shared manager password; src/selfserve.js makes the account).
+async function managersOf(company) { return (await q(`${LIST_SQL} WHERE a.role='manager' AND a.company=$1 ORDER BY a.id`, [company])).rows.map((a) => ({ ...publicRow(a), company: a.company })); }
 async function byLogin(login) { return (await q("SELECT * FROM platform.accounts WHERE login=$1", [login])).rows[0] || null; }
 async function byId(id) { return (await q("SELECT * FROM platform.accounts WHERE id=$1", [Number(id)])).rows[0] || null; }
 
@@ -152,7 +155,7 @@ async function sessionState(id) {
   const hit = states.get(id);
   if (hit && Date.now() - hit.at < 10000) return hit.state;
   const a = (await q(`${LIST_SQL} WHERE a.id=$1`, [Number(id)])).rows[0];
-  const state = a ? { id: a.id, login: a.login, name: a.display_name || a.login, role: a.role, status: a.status, generation: Number(a.generation), enrolled: Boolean(a.enrolled) } : null;
+  const state = a ? { id: a.id, login: a.login, name: a.display_name || a.login, role: a.role, company: a.company || null, status: a.status, generation: Number(a.generation), enrolled: Boolean(a.enrolled) } : null;
   states.set(id, { state, at: Date.now() });
   return state;
 }
@@ -245,7 +248,7 @@ async function signIn({ login, password, code, ip, device, remember, ua }) {
   const a = name ? await byLogin(name) : null;
   const wait = a ? lockedFor(a) : phantomLocked(name);
   if (wait) { await event("refused_locked", { account_id: a ? a.id : null, login: name, ip }); return lockedAnswer(wait); }
-  if (!a || a.status !== "active" || a.role !== "admin") {
+  if (!a || a.status !== "active" || !["admin", "manager"].includes(a.role) || (a.role === "manager" && !a.company)) {
     burn(password); notePhantom(name);
     await event("bad_password", { login: name, ip, detail: { known: Boolean(a) } });
     return nope;
@@ -344,18 +347,27 @@ async function enrollVerify(account, code, ip) {
 }
 
 // ---- keeping the list ---------------------------------------------------------------------------------------
-async function create({ login, display_name, password }, by, ip) {
+async function create({ login, display_name, password, role = "admin", company = null }, by, ip) {
   const name = cleanLogin(login);
   if (!validLogin(name)) throw new Error("the name is an email address, like maria@anetix.com");
   if (await byLogin(name)) throw new Error("there is already an account with that name");
+  if (!["admin", "manager"].includes(role)) throw new Error("the role is admin or manager");
+  if (role === "manager" && !company) throw new Error("a manager account belongs to a company");
   const made = password ? null : makePassword();
   const problem = passwordProblem(password || made);
   if (problem) throw new Error(problem);
-  const a = (await q("INSERT INTO platform.accounts (login, display_name, role, password_hash) VALUES ($1,$2,'admin',$3) RETURNING *",
-    [name, cleanName(display_name) || name, authLib().hashPassword(password || made)])).rows[0];
-  await event("account_created", { account_id: a.id, login: a.login, ip, detail: { by } });
-  return { account: publicRow(a), password: made };
+  const a = (await q("INSERT INTO platform.accounts (login, display_name, role, company, password_hash) VALUES ($1,$2,$3,$4,$5) RETURNING *",
+    [name, cleanName(display_name) || name, role, role === "manager" ? company : null, authLib().hashPassword(password || made)])).rows[0];
+  await event("account_created", { account_id: a.id, login: a.login, ip, detail: { by, role, company: a.company } });
+  return { account: { ...publicRow(a), company: a.company }, password: made };
 }
+// A manager's own enrollment and who-am-I, from the company's side (auth.MANAGER_ENROLL_PATHS lets an account
+// without an authenticator reach these and nothing else). The account must be a manager of THIS company.
+const mineManager = (req, res) => {
+  const a = req.sosAccount;
+  if (a && a.id && a.role === "manager" && a.company === req.params.slug) return true;
+  res.status(403).json({ error: "this is for a manager account of this company" }); return false;
+};
 async function setStatus(id, status, by, ip) {
   const a = await byId(id); if (!a) throw new Error("no such account");
   await q("UPDATE platform.accounts SET status=$2, generation=generation+1, failed_count=0, locked_until=NULL, updated_at=now() WHERE id=$1", [a.id, status]);
@@ -463,6 +475,29 @@ router.post("/api/admin/accounts/me/devices/:id(\\d+)/remove", (req, res, next) 
   res.json({ ok: true });
 }));
 
+router.get("/api/c/:slug/me", (req, res, next) => authLib().requireManager(req, res, next), guard(async (req, res) => {
+  const me = req.sosAccount && req.sosAccount.id ? { ...req.sosAccount } : null;
+  res.set("Cache-Control", "no-store").json({ me, role: req.sosRole, company: req.sosCompany, enroll_required: Boolean(me && me.role === "manager" && !me.enrolled && !twoFaOff()), key_pinned: keyPinned(), two_fa_off: twoFaOff() });
+}));
+router.post("/api/c/:slug/me/enroll/start", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
+  if (!mineManager(req, res)) return;
+  res.set("Cache-Control", "no-store").json(await enrollStart(req.sosAccount, edge.clientIp(req), req.headers.origin || req.headers.host));
+}));
+router.post("/api/c/:slug/me/enroll/verify", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
+  if (!mineManager(req, res)) return;
+  const codes = await enrollVerify(req.sosAccount, String((req.body || {}).code || ""), edge.clientIp(req));
+  if (!codes) return res.status(401).json({ error: "that code did not match. Wait for the app to show the next one and try again." });
+  res.set("Cache-Control", "no-store").json({ ok: true, recovery_codes: codes });
+}));
+router.post("/api/c/:slug/me/password", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
+  if (!mineManager(req, res)) return;
+  const { current, password } = req.body || {};
+  const a = await byId(req.sosAccount.id);
+  if (!authLib().checkHash(String(current || ""), a.password_hash)) return res.status(401).json({ error: "the current password did not match" });
+  await setPassword(a.id, password, a.login, edge.clientIp(req));
+  res.json({ ok: true, signed_out: true });
+}));
+
 router.get("/api/admin/accounts", (req, res, next) => authLib().requireAdmin(req, res, next), guard(async (req, res) => {
   const events = (await q("SELECT id, at, account_id, login, ip, event, detail FROM platform.auth_events ORDER BY id DESC LIMIT 60")).rows;
   res.json({ accounts: await list(), events, shared_password_open: await legacyOpen(), two_fa_off: twoFaOff(), key_pinned: keyPinned(), lock: { fails: MAX_FAILS, minutes: LOCK_MINUTES }, edge: edge.status(req), trusted_days: devices.DAYS });
@@ -494,6 +529,7 @@ router.post("/api/admin/accounts/:id(\\d+)/:action", (req, res, next) => authLib
 }));
 
 module.exports = {
+  managersOf, makePassword,
   init, router, signIn, stepUp, sessionState, legacyOpen, forget, twoFaOff, keyPinned, event, list, create,
   enrollStart, enrollVerify, useCode, useRecoveryCode, signOutEverywhere, setStatus, resetFactor, setPassword, remove,
   cleanLogin, validLogin, passwordProblem, makeRecoveryCodes, recoveryHash, MAX_FAILS, LOCK_MINUTES,
