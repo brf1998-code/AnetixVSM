@@ -274,7 +274,7 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
   if (password != null && password !== "") { const pw = require("./accounts").passwordProblem(String(password)); if (pw) throw fail(400, pw.charAt(0).toUpperCase() + pw.slice(1) + "."); }
   const chosen = password != null && password !== "";
   let slug = await freeSlug(name);
-  const floor = auth.generatePassword();
+  const floor = demo ? null : auth.generatePassword();   // a personal demo is one person on one manager account: no floor
   const mgrPassword = chosen ? String(password) : require("./accounts").makePassword();
   // the manager's account: the checkout email as the login; a person who already has an account (a second company
   // on the same email) gets "<local>+<slug>@<domain>", so a payment that went through never fails here
@@ -297,7 +297,7 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
     // the handout (the floor password, the manager's login and first password) is committed WITH the company, so a
     // browser that collects it the instant the row exists finds it (the webhook's transaction and the page's race)
     let handout = null;
-    try { handout = require("./connections").encrypt({ floor, manager: chosen ? { login } : { login, password: mgrPassword } }); } catch (e) { console.error(`[selfserve] ${slug}: the handout cannot be kept (${e.message}); the passwords are only in this answer`); }
+    if (floor || !chosen) try { handout = require("./connections").encrypt({ floor, manager: chosen ? { login } : { login, password: mgrPassword } }); } catch (e) { console.error(`[selfserve] ${slug}: the handout cannot be kept (${e.message}); the passwords are only in this answer`); }
     await client.query("INSERT INTO platform.self_serve (company, pin_id, email, contact, handout_enc) VALUES ($1,$2,$3,$4,$5)", [slug, row.id, clean(email, 200) || null, clean(contact, 120) || null, handout]);
     const paid = money(paid_usd);
     await client.query("INSERT INTO platform.credit_ledger (company, delta_usd, kind, ref, paid_usd, note, made_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -305,11 +305,12 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
     await client.query("COMMIT");
   } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
   finally { client.release(); }
-  await auth.setPasswords(slug, { floor });   // the floor's shared password; no manager password on purpose
+  if (floor) await auth.setPasswords(slug, { floor });   // the floor's shared password; no manager password on purpose
+  else await auth.accountsOnly(slug);                   // a demo: the manager account is the only way in
   const made = await accounts.create({ login, display_name: clean(contact, 80) || login, role: "manager", company: slug, password: mgrPassword }, "anetix.ai", null);
   await upsertDoc(slug, null, "COMPANY.md", `# ${name}\n\nWhat the agents should know about this company: what it makes, who is on the floor, what matters most (safety, throughput, quality), vocabulary the floor uses, anything to avoid.\n`, "repo", true);
   await logEvent("company_created", slug, { name, self_serve: true, demo: Boolean(demo), pin: row.id, ref, credit_usd: usd, paid_usd: money(paid_usd), manager_account: made.account.id, chose_password: chosen });
-  return { created: true, company: { slug, name }, passwords: { floor }, manager: chosen ? { login: made.account.login } : { login: made.account.login, password: mgrPassword }, credit: await credit(slug) };
+  return { created: true, company: { slug, name }, passwords: floor ? { floor } : null, manager: chosen ? { login: made.account.login } : { login: made.account.login, password: mgrPassword }, credit: await credit(slug) };
 }
 // The passwords a new company's person has not seen yet: handed out once, then gone. null when already collected.
 async function collectHandout(slug) {

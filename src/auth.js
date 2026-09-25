@@ -140,6 +140,15 @@ async function setPasswords(slug, { floor, manager }) {
     [slug, floor ? hashPassword(floor) : null, manager ? hashPassword(manager) : null]);
   generations.delete(slug);
 }
+// A company whose only way in is a named account (a personal demo from anetix.ai, 2026-09-25: one person, one
+// manager account with an authenticator, no floor): an access row with no floor or manager password and
+// legacy_login off, so neither a company password nor the shared SOS_FLOOR/MANAGER fallback ever opens it.
+async function accountsOnly(slug) {
+  await q(`INSERT INTO platform.company_access (company, legacy_login) VALUES ($1,false)
+           ON CONFLICT (company) DO UPDATE SET floor_hash=NULL, manager_hash=NULL, legacy_login=false,
+             generation=platform.company_access.generation + 1, updated_at=now()`, [slug]);
+  generations.delete(slug);
+}
 // The generation a company's sessions must carry, remembered for a few seconds
 // so a page full of requests costs one lookup.
 const generations = new Map();   // slug -> { gen, at }
@@ -486,6 +495,6 @@ function logoutHandler(_req, res) {
 
 module.exports = {
   middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
-  setPasswords, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
+  setPasswords, accountsOnly, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

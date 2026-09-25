@@ -1161,7 +1161,13 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   then carries only the floor password and the manager's login) and `demo`
   (`platform.companies.demo`, on the board payload's `company`); `paid_usd` 0
   writes the first ledger row as a `grant` made by "anetix.ai", not a
-  purchase. The board: a 22px `#4c90d1` strip over the band rolling "DEMO · a
+  purchase. A demo has NO floor password (Brendan, same night: one person
+  experimenting, one manager-level account): `createCompany` with `demo` makes
+  none, hands out nothing, and calls `auth.accountsOnly(slug)`, an access row
+  with no floor or manager hash and `legacy_login` false, so neither a company
+  password nor the shared SOS_FLOOR/MANAGER fallback opens it; the manager
+  account with its authenticator is the only way in (an admin can still give
+  it a floor password later from the company card). The board: a 22px `#4c90d1` strip over the band rolling "DEMO · a
   demo company on Anetix" (CSS, still under prefers-reduced-motion) for a demo
   company; at zero credit the quiet credit line becomes a red panel ("Your
   demo's AI credit is used up. Everything you built stays ...") with "Add
@@ -1169,7 +1175,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   ask the manager); and `window.alert` on the board page turns any error that
   says the credit is used up (the board's own actions and the new-module
   popout) into a question that goes to that link. Tests:
-  `scripts/test-selfserve.js` (43), `scripts/e2e/selfserve.js` (88, the demo
+  `scripts/test-selfserve.js` (43), `scripts/e2e/selfserve.js` (93, the demo
   section at the end), `board-browser.js` (22, unchanged); the www side's
   `e2e.js` (56) walks the whole thing, and a headless run went pin and email,
   the form, the welcome page, the authenticator, the board with its strip, the
