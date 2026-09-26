@@ -1290,7 +1290,19 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   a percentage only. Record kinds `sample_filled`, `sample_cleared`. Routes:
   `GET|POST /api/c/:slug/modules/:mod/sample`, `POST .../sample/clear`
   (manager; 404 for a company that is not a demo). Tests:
-  `scripts/e2e/sample.js` (27, in run-all.sh).
+  `scripts/e2e/sample.js` (35, in run-all.sh), `scripts/test-sample.js` (10).
+  Fixed the same day after seancorp/atmosphere-logs: the first fill worked, then
+  every fill after the tool's revision failed "none of the sample rows fit" and
+  the database's reason was thrown away. Now: every refused row's reason is
+  kept (per table, in `sample_fills.error`, the record's `left_out_because`,
+  the log, and the failure message); the AI is told each table's checks and
+  unique columns from the database itself and the newest migrations (a long
+  set keeps its end); a JSON column takes an object or a list (`jsonReady`,
+  `fitProblems`); any one-column primary key with a default (a uuid too) is a
+  made key; placeholders match as text ("1" is 1); a row that clashes on a
+  unique column with a sample row an earlier clear had to keep takes that row
+  over (`leftoverKeys`); when under half the rows fit, nothing goes in and the
+  AI is asked again with what the database said, then whatever fits is kept.
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin

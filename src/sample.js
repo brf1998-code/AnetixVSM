@@ -98,7 +98,22 @@ async function keysOf(schema) {
     WHERE c.contype='f' AND ns.nspname=$1`, [schema])).rows;
   const pk = {}; for (const r of pks) pk[r.tbl] = r.cols;
   const fk = {}; for (const r of fks) if (Number(r.n) === 1) (fk[r.tbl] = fk[r.tbl] || []).push({ col: r.col, table: r.ref_tbl, column: r.ref_col });
-  return { pk, fk };
+  // the rules a row has to meet, told to the AI exactly as the database holds them (2026-09-26: a revision's checks and
+  // unique columns sat past the cut in a long migrations text, and every row of the next fill was refused)
+  const checks = (await q(`SELECT tc.relname::text AS tbl, pg_get_constraintdef(c.oid) AS def
+    FROM pg_constraint c JOIN pg_class tc ON tc.oid=c.conrelid JOIN pg_namespace n ON n.oid=tc.relnamespace
+    WHERE c.contype='c' AND n.nspname=$1`, [schema])).rows;
+  const check = {}; for (const r of checks) (check[r.tbl] = check[r.tbl] || []).push(r.def);
+  return { pk, fk, check, unique: await uniquesOf(schema) };
+}
+// { table: { index name: [columns] } } for every unique index but the primary key's
+async function uniquesOf(schema) {
+  const rows = (await q(`SELECT t.relname::text AS tbl, i.relname::text AS idx, array_agg(a.attname::text ORDER BY k.ord) AS cols
+    FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid JOIN pg_class t ON t.oid=x.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+    JOIN LATERAL unnest(x.indkey) WITH ORDINALITY k(attnum, ord) ON true JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum
+    WHERE n.nspname=$1 AND x.indisunique AND NOT x.indisprimary GROUP BY t.relname, i.relname`, [schema])).rows;
+  const out = {}; for (const r of rows) (out[r.tbl] = out[r.tbl] || {})[r.idx] = r.cols;
+  return out;
 }
 // Parents before children (a cycle, or a table pointing at itself, just keeps its place). extra: { table: [tables it
 // points at without a constraint] } (the <thing>_id columns, see pointers). Pure.
@@ -113,12 +128,36 @@ function fkOrder(tables, fk, extra = {}) {
   for (const t of tables) visit(t);
   return out;
 }
-// The key the database makes for a table, if it has one: a one-column primary key with a sequence or identity.
+// The key the database makes for a table, if it has one: a one-column primary key with a sequence, an identity or any
+// other default (gen_random_uuid(), say).
 function madeKey(table, cols, pk) {
   const k = pk[table];
   if (!k || k.length !== 1) return null;
   const c = (cols[table] || []).find((x) => x.name === k[0]);
-  return c && (c.identity || /^nextval\(/.test(String(c.default || ""))) ? c.name : null;
+  return c && (c.identity || c.default) ? c.name : null;
+}
+const isJson = (c) => Boolean(c && /^json/.test(c.type));
+// A JSON column takes structured values (an object or a list); everything else plain ones. Values for a JSON column go
+// in as JSON text: an object or list as itself, a string that is JSON as it is, any other string as a JSON string. Pure.
+function jsonReady(row, colList) {
+  const out = { ...row };
+  for (const c of colList || []) {
+    if (!isJson(c) || out[c.name] == null) continue;
+    const v = out[c.name];
+    if (typeof v === "string") { try { JSON.parse(v); } catch { out[c.name] = JSON.stringify(v); } }
+    else out[c.name] = JSON.stringify(v);
+  }
+  return out;
+}
+// migrate.rowsProblems, with structured values allowed in JSON columns. Pure.
+function fitProblems(tables, cols) {
+  const flat = {}, plain = {};
+  for (const [t, list] of Object.entries(cols)) flat[t] = list.map((c) => c.name);
+  for (const [t, rows] of Object.entries(tables || {})) {
+    const jc = new Set((cols[t] || []).filter(isJson).map((c) => c.name));
+    plain[t] = Array.isArray(rows) ? rows.map((r) => (isObj(r) ? Object.fromEntries(Object.entries(r).map(([k, v]) => [k, jc.has(k) && v !== null && typeof v === "object" ? JSON.stringify(v) : v])) : r)) : rows;
+  }
+  return migrate.rowsProblems(plain, flat);
 }
 // The columns of a table that point at another table's made key: its foreign keys, and a "<thing>_id" column with no
 // constraint whose <thing> (or <thing>s, <thing>es) is a table with a made key. -> { col: table }. Pure.
@@ -154,9 +193,12 @@ async function toolContext(company, mod, version, cols, keys) {
   for (const f of code) { if (budget <= 0) break; const part = clipText(String(files[f]), Math.min(budget, 20000)); codeText += `\n\n--- ${f}\n${part}`; budget -= part.length; }
   const colText = Object.entries(cols).map(([t, list]) => {
     const made = madeKey(t, cols, keys.pk);
-    return `${t}: ${list.map((c) => `${c.name} ${c.type}${c.nullable ? "" : " not null"}${c.name === made ? " (key the database makes: give 1, 2, 3 as placeholders)" : c.default ? " (has a default)" : ""}`).join(", ")}${(keys.fk[t] || []).length ? `\n  points at: ${keys.fk[t].map((f) => `${f.col} -> ${f.table}.${f.column}`).join(", ")}` : ""}`;
+    const uniq = Object.values((keys.unique || {})[t] || {});
+    return `${t}: ${list.map((c) => `${c.name} ${c.type}${c.nullable ? "" : " not null"}${c.name === made ? " (key the database makes: give 1, 2, 3 as placeholders)" : c.default ? " (has a default)" : ""}${isJson(c) ? " (give an object or a list)" : ""}`).join(", ")}${(keys.fk[t] || []).length ? `\n  points at: ${keys.fk[t].map((f) => `${f.col} -> ${f.table}.${f.column}`).join(", ")}` : ""}${((keys.check || {})[t] || []).length ? `\n  every row must meet: ${keys.check[t].join("; ")}` : ""}${uniq.length ? `\n  no two rows may share: ${uniq.map((u) => u.join(" + ")).join("; ")} (the migrations' own rows count too)` : ""}`;
   }).join("\n");
-  return { ref: ref ? clipText(String(ref.content), 12000) : "", migrations: clipText(migrations, 20000), codeText, colText };
+  // the newest migrations matter most (a revision's), so a long set keeps its end, not its start
+  const mig = migrations.length > 24000 ? `... (the first part cut)\n${migrations.slice(-24000)}` : migrations;
+  return { ref: ref ? clipText(String(ref.content), 12000) : "", migrations: mig, codeText, colText };
 }
 async function writeRows(company, mod, version, cols, keys, title, problemsBefore) {
   const model = await agent.modelFor(company, "propose");
@@ -177,8 +219,8 @@ Write the rows:
 1. About a week of history ending now (${now.toISOString()}), plus the work in progress right now, so every screen has something on it: finished items, items at each stage, something late or stuck, a few recent events. Timestamps are ISO with a time zone, spread over working hours.
 2. Between 5 and ${Math.min(40, PER_TABLE)} rows a table for the tables the screens read; a table the migrations already fill with fixed values (a list of stations, say) needs rows only if more make sense. Never more than ${PER_TABLE}.
 3. A key the database makes: give 1, 2, 3 ... per table as placeholders and use those same numbers in the columns that point at it. Leave out a column with a default unless the value matters to the story.
-4. Only the tables and columns listed. Plain values. Values that meet every check and "not null" in the migrations.
-5. The story: one or two plain sentences on what the week was like.${problemsBefore ? `\n\nAn earlier try did not fit the tables:\n${problemsBefore.join("\n")}\nFix those.` : ""}`;
+4. Only the tables and columns listed. Plain values (an object or a list only where a column says so). Values that meet every rule listed with the table, "not null", and the checks in the migrations. Names and codes of your own, never ones the migrations already insert.
+5. The story: one or two plain sentences on what the week was like.${problemsBefore ? `\n\nAn earlier try did not fit. What the database said:\n${problemsBefore.join("\n")}\nWrite the whole set again so none of that happens.` : ""}`;
   if (agent.fakeMode()) {
     await agent.atWall("structured:sample_data", { company, model, system, prompt });
     return { data: fakeRows(cols, keys), costUsd: 0, model };
@@ -203,6 +245,7 @@ function fakeRows(cols, keys) {
         else if (c.type === "boolean") row[c.name] = i % 2 === 0;
         else if (/timestamp/.test(c.type)) row[c.name] = new Date(t0 + i * 3600e3 * 7).toISOString();
         else if (c.type === "date") row[c.name] = new Date(t0 + i * 86400e3).toISOString().slice(0, 10);
+        else if (/^json/.test(c.type)) row[c.name] = { note: `sample ${i + 1}` };
         else if (/char|text/.test(c.type)) row[c.name] = `Sample ${c.name.replace(/_/g, " ")} ${i + 1}`;
       }
       return row;
@@ -213,17 +256,20 @@ function fakeRows(cols, keys) {
 
 // ---- putting rows in ---------------------------------------------------------------------------------------------------
 const hasIdentity = (list) => (list || []).some((c) => c.identity);
-async function insertRow(client, schema, table, row, colList, { explicit = false } = {}) {
-  const names = Object.keys(row).filter((k) => colList.some((c) => c.name === k));
+// -> the row as it went in, or null; onError(e) hears why a row was refused
+async function insertRow(client, schema, table, row, colList, { explicit = false, onError } = {}) {
+  const ready = jsonReady(row, colList);
+  const names = Object.keys(ready).filter((k) => colList.some((c) => c.name === k));
   if (!names.length) return null;
   const sql = `INSERT INTO ${schema}.${qi(table)} (${names.map(qi).join(", ")}) ${explicit && hasIdentity(colList) ? "OVERRIDING SYSTEM VALUE " : ""}VALUES (${names.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`;
   await client.query("SAVEPOINT r");
   try {
-    const r = await client.query(sql, names.map((k) => row[k]));
+    const r = await client.query(sql, names.map((k) => ready[k]));
     await client.query("RELEASE SAVEPOINT r");
     return r.rows[0];
   } catch (e) {
     await client.query("ROLLBACK TO SAVEPOINT r");
+    if (onError) onError(e);
     return null;
   }
 }
@@ -232,16 +278,25 @@ const plainRow = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k,
 
 // The AI's rows into the primary schema (live, or the preview's for a first build), remapping made keys; then, when a
 // build waits and the primary is live, the same rows with their real keys into the preview.
-// -> { rows: { table: [rows] }, plan, skipped, counts }
-async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, keys }) {
+// leftovers: { table: Set(key) } of rows earlier fills put in that a clear had to keep (something the tool or the person
+// added points at them). A new row that clashes with one on a unique column takes it over instead of being left out
+// (2026-09-26, seancorp: the first fill worked, then every fill after it was refused: its parents clashed with kept
+// ones on a unique name and every child went with them).
+// strict: when fewer than half the rows fit, put nothing in and throw { retry, reasons } so the AI can be asked again
+// with what the database said.
+// -> { rows: { table: [rows] }, plan, skipped, reused, counts, reasons }
+async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, keys, leftovers = {}, strict = false }) {
   const primary = liveOn ? live : stg;
   const primCols = await columnsOf(primary);
+  const primUniq = await uniquesOf(primary);
   const made = {}; for (const t of Object.keys(genCols)) made[t] = madeKey(t, genCols, keys.pk);
   const links = Object.fromEntries(Object.keys(genCols).map((t) => [t, Object.values(pointers(t, genCols, keys, made))]));
   const order = fkOrder(Object.keys(made0).filter((t) => genCols[t]), keys.fk, links);
+  const K = (v) => String(v);   // "1" and 1 are the same placeholder
   const map = {};          // table -> Map(placeholder -> real key or null when the row was left out)
-  const rows = {}, pending = [], liveCols = {};
-  let skipped = 0;
+  const rows = {}, pending = [], liveCols = {}, why = {};
+  let skipped = 0, reused = 0, attempted = 0;
+  const heard = (t) => (e) => { const m = `${e.message}${e.detail ? ` (${e.detail})` : ""}`.slice(0, 300); (why[t] = why[t] || new Map()).set(m, ((why[t] && why[t].get(m)) || 0) + 1); };
   const client = await pool.connect();
   const stgClient = liveOn && stgOn ? await pool.connect() : null;
   try {
@@ -251,34 +306,62 @@ async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, k
     for (const t of order) {
       const inPrimary = Boolean(primCols[t]);
       const cl = inPrimary ? client : stgClient;
-      if (!cl) { skipped += made0[t].length; continue; }
+      const list = Array.isArray(made0[t]) ? made0[t].slice(0, PER_TABLE) : [];
+      if (!cl) { skipped += list.length; continue; }
       if (!inPrimary) pending.push(t);
       else if (liveOn) liveCols[t] = primCols[t].map((c) => c.name);
       const ptr = pointers(t, genCols, keys, made);
       map[t] = new Map();
       rows[t] = [];
-      for (const raw of made0[t].slice(0, PER_TABLE)) {
+      for (const raw of list) {
+        if (!isObj(raw)) continue;
+        attempted++;
         const row = { ...raw };
         // a pointer at a row that was left out: this one is left out too; at a placeholder: the real key
         let orphan = false;
         for (const [c, target] of Object.entries(ptr)) {
           if (row[c] == null || !map[target]) continue;
-          if (map[target].has(row[c])) { const real = map[target].get(row[c]); if (real == null) orphan = true; else row[c] = real; }
+          if (map[target].has(K(row[c]))) { const real = map[target].get(K(row[c])); if (real == null) orphan = true; else row[c] = real; }
         }
         const ph = made[t] ? row[made[t]] : undefined;
         if (made[t]) delete row[made[t]];
-        if (orphan) { if (ph !== undefined) map[t].set(ph, null); skipped++; continue; }
-        const got = await insertRow(cl, inPrimary ? primary : stg, t, row, inPrimary ? primCols[t] : genCols[t]);
-        if (!got) { if (ph !== undefined) map[t].set(ph, null); skipped++; continue; }
-        if (made[t] && ph !== undefined) map[t].set(ph, got[made[t]]);
-        rows[t].push({ ...row, ...plainRow(got) });
+        if (orphan) { if (ph !== undefined) map[t].set(K(ph), null); skipped++; continue; }
+        let err = null;
+        const got = await insertRow(cl, inPrimary ? primary : stg, t, row, inPrimary ? primCols[t] : genCols[t], { onError: (e) => { err = e; } });
+        if (got) {
+          if (made[t] && ph !== undefined) map[t].set(K(ph), got[made[t]]);
+          rows[t].push({ ...row, ...plainRow(got) });
+          continue;
+        }
+        // a clash on a unique column with a sample row an earlier fill left behind: take that row over
+        const cols = err && err.code === "23505" && inPrimary && made[t] ? ((primUniq[t] || {})[err.constraint]) : null;
+        if (cols && cols.every((c) => row[c] != null) && leftovers[t] && leftovers[t].size) {
+          const had = (await cl.query(`SELECT * FROM ${primary}.${qi(t)} WHERE ${cols.map((c, i) => `${qi(c)} = $${i + 1}`).join(" AND ")} LIMIT 1`, cols.map((c) => row[c]))).rows[0];
+          if (had && leftovers[t].has(K(had[made[t]]))) {
+            if (ph !== undefined) map[t].set(K(ph), had[made[t]]);
+            rows[t].push(plainRow(had));   // this fill's now: a clear takes it out if it can
+            reused++;
+            continue;
+          }
+        }
+        if (err) heard(t)(err);
+        if (ph !== undefined) map[t].set(K(ph), null);
+        skipped++;
       }
       // the preview's copy of a table that went into live: the same rows, the same keys, before any child of it
       if (stgClient && inPrimary && stgCols[t]) for (const r of rows[t]) await insertRow(stgClient, stg, t, r, stgCols[t], { explicit: true });
     }
+    const inserted = Object.values(rows).reduce((n, r) => n + r.length, 0);
+    const reasons = Object.entries(why).flatMap(([t, m]) => [...m.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([msg, n]) => `${t}: ${msg}${n > 1 ? ` (${n} rows)` : ""}`)).slice(0, 8);
+    if (strict && attempted && inserted < attempted / 2) {
+      throw Object.assign(new Error(`only ${inserted} of ${attempted} sample rows fit`), { retry: true, reasons, inserted, attempted });
+    }
     if (stgClient) await migrate.setSequencesPastData(stgClient, stg);
     await client.query("COMMIT");
     if (stgClient) await stgClient.query("COMMIT");
+    const counts = Object.fromEntries(Object.entries(rows).map(([t, r]) => [t, r.length]));
+    const keyCols = {}; for (const t of order) keyCols[t] = (keys.pk[t] && keys.pk[t].length) ? keys.pk[t] : null;
+    return { rows, skipped, reused, counts, reasons, plan: { order, keys: keyCols, live_cols: liveOn ? liveCols : {}, pending: liveOn ? pending : order } };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
     if (stgClient) await stgClient.query("ROLLBACK").catch(() => {});
@@ -287,9 +370,18 @@ async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, k
     client.release();
     if (stgClient) stgClient.release();
   }
-  const counts = Object.fromEntries(Object.entries(rows).map(([t, r]) => [t, r.length]));
-  const keyCols = {}; for (const t of order) keyCols[t] = (keys.pk[t] && keys.pk[t].length) ? keys.pk[t] : null;
-  return { rows, skipped, counts, plan: { order, keys: keyCols, live_cols: liveOn ? liveCols : {}, pending: liveOn ? pending : order } };
+}
+// The keys of rows earlier fills of this tool put in, per table (for a clash with one a clear had to keep).
+async function leftoverKeys(company, mod, exceptId) {
+  const out = {};
+  for (const f of (await q("SELECT rows, plan FROM platform.sample_fills WHERE company=$1 AND module=$2 AND id<>$3 AND rows IS NOT NULL", [company, mod, exceptId])).rows) {
+    for (const [t, list] of Object.entries(f.rows || {})) {
+      const k = ((f.plan || {}).keys || {})[t];
+      if (!k || k.length !== 1) continue;
+      for (const r of list || []) if (r[k[0]] != null) (out[t] = out[t] || new Set()).add(String(r[k[0]]));
+    }
+  }
+  return out;
 }
 
 // ---- reads ---------------------------------------------------------------------------------------------------------------
@@ -356,26 +448,36 @@ async function write(f, m, who) {
   const genCols = await columnsOf(genSchema);
   if (!Object.keys(genCols).length) throw new Error("this tool keeps no tables of its own, so there is nothing to fill");
   const keys = await keysOf(genSchema);
-  let out = await writeRows(company, mod, f.version, genCols, keys, m.title || mod);
-  let cost = out.costUsd || 0;
-  const flat = () => Object.fromEntries(Object.entries(genCols).map(([t, c]) => [t, c.map((x) => x.name)]));
-  let tables = isObj(out.data && out.data.tables) ? out.data.tables : {};
-  let problems = migrate.rowsProblems(tables, flat());
-  if (problems.length) {   // one more try with what did not fit
-    out = await writeRows(company, mod, f.version, genCols, keys, m.title || mod, problems);
-    cost += out.costUsd || 0;
-    tables = isObj(out.data && out.data.tables) ? out.data.tables : {};
-    problems = migrate.rowsProblems(tables, flat());
+  let out = null, cost = 0, put = null, model = null;
+  const ask = async (problems) => { const o = await writeRows(company, mod, f.version, genCols, keys, m.title || mod, problems); cost += o.costUsd || 0; model = o.model; return o; };
+  const tablesOf = (o) => (isObj(o && o.data && o.data.tables) ? o.data.tables : {});
+  try {
+    out = await ask();
+    let problems = fitProblems(tablesOf(out), genCols);
+    if (problems.length) { out = await ask(problems); problems = fitProblems(tablesOf(out), genCols); }   // one more try with what did not fit
+    if (problems.length) throw new Error(`the sample rows did not fit this tool's tables: ${problems.slice(0, 3).join("; ")}`);
+    const leftovers = await leftoverKeys(company, mod, f.id);
+    const where = { live, stg, liveOn, stgOn, genCols, keys, leftovers };
+    try { put = await putIn(company, mod, tablesOf(out), { ...where, strict: true }); }
+    catch (e) {
+      if (!e.retry) throw e;
+      // most rows were refused: ask again with the database's own words, then keep whatever fits
+      console.error(`[sample] ${company}/${mod} #${f.id}: ${e.message}; asking again. ${e.reasons.join(" | ")}`);
+      out = await ask(e.reasons.length ? e.reasons : [`only ${e.inserted} of ${e.attempted} rows fit, for reasons the database did not give`]);
+      const again = fitProblems(tablesOf(out), genCols);
+      if (again.length) throw new Error(`the sample rows did not fit this tool's tables: ${again.slice(0, 3).join("; ")}`);
+      put = await putIn(company, mod, tablesOf(out), { ...where, strict: false });
+    }
+  } finally {
+    if (cost > 0 || model) await agent.recordUsage(company, mod, "sample_data", model, cost, { fill: f.id }).catch(() => {});
   }
-  await agent.recordUsage(company, mod, "sample_data", out.model, cost, { fill: f.id });
-  if (problems.length) throw new Error(`the sample rows did not fit this tool's tables: ${problems.slice(0, 3).join("; ")}`);
-  const put = await putIn(company, mod, tables, { live, stg, liveOn, stgOn, genCols, keys });
   const total = Object.values(put.counts).reduce((a, b) => a + b, 0);
-  if (!total) throw new Error("none of the sample rows fit this tool's tables");
+  if (put.reasons.length) console.error(`[sample] ${company}/${mod} #${f.id}: ${put.skipped} rows left out. ${put.reasons.join(" | ")}`);
+  if (!total) throw new Error(`none of the sample rows fit this tool's tables. What the database said: ${put.reasons.slice(0, 3).join("; ") || "nothing"}`);
   const story = String((out.data && out.data.story) || "").replace(/\s*[–—]\s*/g, ", ").slice(0, 600);
-  await q(`UPDATE platform.sample_fills SET status='in', story=$2, rows=$3, plan=$4, in_live=$5, in_preview=$6, skipped=$7, cost_usd=$8, model=$9 WHERE id=$1`,
-    [f.id, story, JSON.stringify(put.rows), JSON.stringify(put.plan), liveOn, stgOn, put.skipped, cost, out.model]);
-  await record("sample_filled", { company, module: mod, actor: who, version: f.version, after: story, detail: { fill: f.id, rows: put.counts, skipped: put.skipped, cost_usd: cost, model: out.model, live: liveOn, preview: stgOn } });
+  await q(`UPDATE platform.sample_fills SET status='in', story=$2, rows=$3, plan=$4, in_live=$5, in_preview=$6, skipped=$7, cost_usd=$8, model=$9, error=$10 WHERE id=$1`,
+    [f.id, story, JSON.stringify(put.rows), JSON.stringify(put.plan), liveOn, stgOn, put.skipped, cost, model, put.reasons.length ? put.reasons.join("\n").slice(0, 2000) : null]);
+  await record("sample_filled", { company, module: mod, actor: who, version: f.version, after: story, detail: { fill: f.id, rows: put.counts, skipped: put.skipped, reused: put.reused, left_out_because: put.reasons, cost_usd: cost, model, live: liveOn, preview: stgOn } });
   await logEvent("sample_filled", `${company}/${mod}`, { fill: f.id, rows: total });
 }
 
@@ -490,4 +592,4 @@ router.post("/api/c/:slug/modules/:mod/sample/clear", requireManager, json, guar
   res.json({ ...(await view(req.params.slug, req.params.mod)), cleared: out });
 }));
 
-module.exports = { init, router, fill, clear, afterDeploy, view, isDemo, fkOrder, madeKey, pointers, fakeRows, SCHEMA };
+module.exports = { init, router, fill, clear, afterDeploy, view, isDemo, fkOrder, madeKey, pointers, fakeRows, jsonReady, fitProblems, SCHEMA };

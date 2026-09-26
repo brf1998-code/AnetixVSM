@@ -105,6 +105,35 @@ const count = async (schema, table) => Number((await q(`SELECT count(*)::int AS 
   const cl2 = await admin.post(`${url}/clear`, {});
   t("clear after the deploy takes out every sample row, live and preview, and leaves mine", cl2.status === 200 && await count(LIVE, "bins") === 1 && (await q(`SELECT id FROM ${LIVE}.travelers WHERE id = ANY($1)`, [ids2])).rows.length === 0 && Boolean((await q(`SELECT 1 FROM ${LIVE}.travelers WHERE id=$1`, [mine])).rows[0]), cl2.json);
 
+  // ---- a revision that adds rules, and a clear that has to keep a row (2026-09-26, seancorp: the first fill worked, every
+  // fill after the tool's revision was refused as "none of the sample rows fit")
+  await q(`CREATE UNIQUE INDEX stations_name_uq ON ${LIVE}.stations (name)`);
+  await q(`ALTER TABLE ${LIVE}.inventory ADD CONSTRAINT inventory_named CHECK (item NOT LIKE 'Sample%')`);
+  await q(`ALTER TABLE ${LIVE}.traveler_log ADD COLUMN IF NOT EXISTS detail JSONB NOT NULL DEFAULT '{}'::jsonb`);
+  await q(`CREATE TABLE ${LIVE}.readings (id SERIAL PRIMARY KEY, station_id INTEGER NOT NULL REFERENCES ${LIVE}.stations(id), value NUMERIC)`);
+  const f3 = await admin.post(url, {});
+  const d3 = await waitFor("the third fill", async () => { const x = (await admin.get(url)).json; return x.fill && x.fill.id !== d2.fill.id && x.fill.status !== "writing" ? x : null; });
+  const fill3 = (await q("SELECT * FROM platform.sample_fills WHERE id=$1", [d3.fill.id])).rows[0];
+  t("after the revision the fill still goes in", f3.status === 200 && d3.fill.status === "in" && d3.fill.tables.stations > 0 && d3.fill.tables.readings > 0, d3.fill);
+  t("a JSON column takes its values", fill3.rows.traveler_log.length > 0 && fill3.rows.traveler_log.every((r) => r.detail && typeof r.detail === "object"), fill3.rows.traveler_log[0]);
+  t("the rows a check refused are left out, and the database's reason is kept", !fill3.rows.inventory || fill3.rows.inventory.length === 0 ? /inventory_named/.test(fill3.error || "") : false, fill3.error);
+  const rec3 = (await q("SELECT detail FROM platform.record WHERE company=$1 AND kind='sample_filled' ORDER BY id DESC LIMIT 1", [A])).rows[0];
+  t("the record says why rows were left out", rec3 && rec3.detail.left_out_because.some((x) => /inventory_named/.test(x)), rec3 && rec3.detail);
+  // something that is not the sample points at one sample station: a clear has to keep that station
+  const keptStation = fill3.rows.stations[0].id;
+  await q(`INSERT INTO ${LIVE}.readings (station_id, value) VALUES ($1, 42)`, [keptStation]);
+  const cl3 = await admin.post(`${url}/clear`, {});
+  t("the clear keeps the station something points at, and says so", cl3.status === 200 && cl3.json.cleared.kept >= 1 && Boolean((await q(`SELECT 1 FROM ${LIVE}.stations WHERE id=$1`, [keptStation])).rows[0]), cl3.json.cleared);
+  // the next fill writes the same station names (fake mode always does; the AI often does): the kept one is taken over
+  const f4 = await admin.post(url, {});
+  const d4 = await waitFor("the fourth fill", async () => { const x = (await admin.get(url)).json; return x.fill && x.fill.id !== d3.fill.id && x.fill.status !== "writing" ? x : null; });
+  const fill4 = (await q("SELECT * FROM platform.sample_fills WHERE id=$1", [d4.fill.id])).rows[0];
+  const rec4 = (await q("SELECT detail FROM platform.record WHERE company=$1 AND kind='sample_filled' ORDER BY id DESC LIMIT 1", [A])).rows[0];
+  t("a fill after a kept row goes in: the clashing station is taken over, not a reason to drop everything", f4.status === 200 && d4.fill.status === "in" && rec4.detail.reused >= 1 && fill4.rows.stations.some((r) => r.id === keptStation) && d4.fill.tables.travelers > 0, { fill: d4.fill, reused: rec4 && rec4.detail.reused });
+  t("its travelers point at stations that exist", (await q(`SELECT count(*)::int AS n FROM ${LIVE}.travelers tr WHERE tr.id = ANY($1) AND tr.station_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${LIVE}.stations s WHERE s.id = tr.station_id)`, [fill4.rows.travelers.map((r) => r.id)])).rows[0].n === 0);
+  const cl4 = await admin.post(`${url}/clear`, {});
+  t("and it clears again, the reading's station still kept", cl4.status === 200 && Boolean((await q(`SELECT 1 FROM ${LIVE}.stations WHERE id=$1`, [keptStation])).rows[0]) && (await q(`SELECT count(*)::int AS n FROM ${LIVE}.stations WHERE name LIKE 'Sample%'`)).rows[0].n === 1, cl4.json.cleared);
+
   // ---- nothing built yet
   const nosuch = await admin.get(`/api/c/${A}/modules/nosuch/sample`);
   t("a tool that does not exist cannot be filled", nosuch.status === 200 && nosuch.json.can_fill === false && (await admin.post(`/api/c/${A}/modules/nosuch/sample`, {})).status === 404, nosuch.json);
