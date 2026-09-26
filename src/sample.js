@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS platform.sample_fills (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   cleared_at  TIMESTAMPTZ
 );
+ALTER TABLE platform.sample_fills ADD COLUMN IF NOT EXISTS answer JSONB;   -- the AI's answer as it came back (2026-09-26: a partial one was taken for a success and nobody could see why)
 CREATE INDEX IF NOT EXISTS sample_fills_mod ON platform.sample_fills (company, module, id);`;
 async function init() {
   await q(SCHEMA);
@@ -65,7 +66,7 @@ async function init() {
   await q("UPDATE platform.sample_fills SET status='failed', error='the platform restarted while the sample data was being written; nothing was put in' WHERE status='writing'");
 }
 
-const PER_TABLE = Number(process.env.SOS_SAMPLE_MAX_ROWS || 1200);   // after the copies (expandRepeats); the AI writes far fewer
+const PER_TABLE = Number(process.env.SOS_SAMPLE_MAX_ROWS || 1500);   // a table's rows after the recipes are expanded (generateSeries)
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const qi = (s) => `"${String(s).replace(/"/g, '""')}"`;
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -174,20 +175,41 @@ function pointers(table, cols, keys, made) {
 }
 
 // ---- the AI's rows ---------------------------------------------------------------------------------------------------
-// Simpler since 2026-09-26 (Brendan: "burning through credits getting failures ... we need a bit of a simpler solution").
-// The first version asked for a whole week of rows; for a tool that logs twenty readings an hour the answer ran past
-// its length limit, came back cut off and empty, and every try cost the demo about fifty cents. Now the AI writes only
-// the latest few rows (at most AI_PER_TABLE a table, AI_TOTAL in all) on the short text model, once, and says which
-// tables repeat; the platform copies those back in time itself (expandRepeats), with the rows that belong to each.
-const AI_PER_TABLE = 10, AI_TOTAL = 80, MAX_ROWS = Number(process.env.SOS_SAMPLE_MAX_ROWS || 1200);
+// Third shape, 2026-09-26 afternoon. The first asked for a whole week of rows and ran past its length limit (seancorp:
+// $2.40, empty answers). The second asked for the latest rows plus "repeat"; on Atmosphere Logs (twenty readings in one
+// JSON column per hourly log) the answer still ran long, came back cut off with the logs missing, and the partial answer
+// was taken as a success: five rows, no week (Brendan: "there should be enough data for full functionality, for
+// example the weekly oxygen graph, with some natural variance included").
+// Now the AI writes two small things: "rows", the few specific rows the story needs (the missed hour and its
+// explanation, the one reading out of limits and its note), and "series", a recipe per table for the bulk: how often
+// one happens, how far back, and each column as a value, a pick from a list, or a number around a middle with a
+// spread. The platform generates the bulk from the recipe (generateSeries): a week of hourly logs with natural
+// variance costs the AI a few lines. A cut-off answer is a failure (refunded), never a quiet partial success.
+const AI_ROWS = 40, MAX_ROWS = Number(process.env.SOS_SAMPLE_MAX_ROWS || 1500), MAX_BACK_HOURS = 168;
+const VALUE_HELP = "Each column is: a plain value; {\"pick\": [values]} (optional \"weights\"); {\"around\": middle, \"spread\": how far either way, \"decimals\": n}; {\"by\": \"<another column>\", \"values\": {\"<that column's value>\": spec}}; {\"pick_from\": \"<table>\"} for a column that points at a row of that table; or, for a JSON column, an object or list whose parts are any of these.";
 const FILL_SCHEMA = {
   type: "object",
   properties: {
-    story: { type: "string", description: "One or two plain sentences a plant manager would read: the made-up work these rows tell (who, what, what is going on right now). No dashes." },
-    tables: { type: "object", description: `{ "<table>": [ { "<column>": value, ... } ] }. Only tables and columns that exist. At most ${AI_PER_TABLE} rows a table, ${AI_TOTAL} in all.`, additionalProperties: { type: "array", items: { type: "object" } } },
-    repeat: { type: "object", description: "Tables that record something again and again (hourly logs, readings, moves): { \"<table>\": { \"covers_minutes\": the time the rows you wrote for it cover, \"back_hours\": how far back the platform should copy them, at most 168 } }. Leave out every other table.", additionalProperties: { type: "object", properties: { covers_minutes: { type: "number" }, back_hours: { type: "number" } } } },
+    story: { type: "string", description: "One or two plain sentences a plant manager would read: the made-up week (who, what, what is going on right now). No dashes." },
+    rows: { type: "object", description: `The few specific rows the story needs: { "<table>": [ { "<column>": value } ] }. At most ${AI_ROWS} in all.`, additionalProperties: { type: "array", items: { type: "object" } } },
+    series: {
+      type: "object",
+      description: `The bulk, as a recipe the platform expands: { "<table>": recipe }. ${VALUE_HELP}`,
+      additionalProperties: {
+        type: "object",
+        properties: {
+          every_minutes: { type: "number", description: "how often one happens (60 = hourly)" },
+          back_hours: { type: "number", description: `how far back from now, at most ${MAX_BACK_HOURS}` },
+          time_column: { type: "string", description: "the timestamp column that says when it happened; the platform sets it (on the grid of every_minutes)" },
+          times: { type: "object", description: "other timestamp columns: { \"<column>\": [least, most] minutes after time_column }" },
+          for_each: { type: "object", description: "instead of every_minutes: rows for each row of another table: { \"table\": \"<table>\", \"column\": \"<column here that points at it>\" }" },
+          combine: { type: "object", description: "with for_each: { \"<column>\": [values] }, one row per combination for each parent row" },
+          columns: { type: "object", description: "the other columns, each a value spec" },
+        },
+      },
+    },
   },
-  required: ["story", "tables"],
+  required: ["story", "rows", "series"],
 };
 const clipText = (s, n) => (s.length > n ? `${s.slice(0, n)}\n... (cut)` : s);
 // The tool as the AI sees it: the design, the migrations, the columns, the code (routes first, then pages), within a budget.
@@ -212,7 +234,7 @@ async function writeRows(company, mod, version, cols, keys, title) {
   const model = await sampleModel();
   const ctx = await toolContext(company, mod, version, cols, keys);
   const now = new Date();
-  const system = `You write sample data for a demo of a small tool that runs a job on a factory floor. The person trying the demo has no data of their own yet; your rows go straight into the tool's own tables so its screens and numbers show what the tool does with real work in it. Write in the tool's own words: the stages, statuses, stations and names its code and design use, exactly as spelled there. Everything is made up; never a real company's or real person's name. Keep the answer short.`;
+  const system = `You write sample data for a demo of a small tool that runs a job on a factory floor. The person trying the demo has no data of their own yet; your data goes straight into the tool's own tables so every screen, chart and number shows what the tool does with about a week of real work in it. Write in the tool's own words: the stages, statuses, stations, codes and names its code and design use, exactly as spelled there, and the shape its code reads (for a JSON column, the keys the code looks up). Everything is made up; never a real company's or real person's name. Keep the answer short: a recipe, not a pile of rows.`;
   const prompt = `The tool is "${title}".
 
 ${ctx.ref ? `Its design:\n${ctx.ref}\n\n` : ""}Its tables, as they stand:
@@ -221,14 +243,13 @@ ${ctx.colText}
 The migrations that made them:
 ${ctx.migrations}
 
-Its code (so the values are the ones the screens and rules expect):${ctx.codeText || " (none stored)"}
+Its code (so the values and shapes are the ones the screens and rules expect):${ctx.codeText || " (none stored)"}
 
-Write the rows. It is now ${now.toISOString()}.
-1. Only the latest part: the most recent work and what is in progress right now, with something late, stuck or out of the ordinary. At most ${AI_PER_TABLE} rows a table and ${AI_TOTAL} in all. A table the migrations already fill (a list of stations, say) needs rows only if more make sense.
-2. A table that records something again and again (hourly logs, readings, moves, counts): write only the latest few and name it in "repeat" with the time those rows cover and how far back to copy them. The platform copies them back in time with small changes to the numbers, and copies the rows that belong to each one along with it. Never write the copies yourself.
-3. A key the database makes: give 1, 2, 3 ... per table as placeholders and use those same numbers in the columns that point at it. Leave out a column with a default unless the value matters.
-4. Only the tables and columns listed. Plain values (an object or a list only where a column says so). Every rule listed with a table, every "not null", the checks in the migrations. Names and codes of your own, never ones the migrations already insert. Timestamps are ISO with a time zone.
-5. The story: one or two plain sentences on what is going on.`;
+It is now ${now.toISOString()}. Give three things:
+1. "series": the bulk, as a recipe per table, never as rows. Every table the screens chart, count or list over time gets one, going back far enough for every screen (a "last 7 days" chart needs ${MAX_BACK_HOURS} hours). ${VALUE_HELP} Keep the numbers well inside the tool's limits, with a small spread for natural variance, and let the categories vary with "pick". Rows that belong to each generated row (lines of an order, readings of a log) are a series with "for_each". A table the migrations already fill (a list of stations, say) needs nothing.
+2. "rows": only the few specific rows that make the story: the thing that is late or stuck, the reading out of limits with its note, the missed hour and its explanation, what is in progress right now. At most ${AI_ROWS} in all. A series skips any time a specific row of the same table already holds, and any time held in another table's column of the same name (a missed hour is not also logged).
+3. "story": one or two plain sentences on what the week was like.
+Rules for both: only the tables and columns listed; a key the database makes is left out of a series and given as 1, 2, 3 placeholders in "rows" (use them in the columns that point at it); every rule listed with a table, every "not null", the checks in the migrations; names and codes of your own, never ones the migrations insert; timestamps ISO with a time zone.`;
   if (agent.fakeMode()) {
     await agent.atWall("structured:sample_data", { company, model, system, prompt });
     return { data: fakeRows(cols, keys), costUsd: 0, model };
@@ -236,27 +257,37 @@ Write the rows. It is now ${now.toISOString()}.
   const { data, costUsd, stopReason } = await agent.runStructured({ model, company, system, prompt, schema: FILL_SCHEMA, toolName: "sample_data", maxTokens: 8000 });
   return { data, costUsd, model, stopReason };
 }
-// The AI's answer made usable, never refused whole: a list given as JSON text is read; an unknown table goes; an unknown
-// column goes from its row; a structured value where a plain one belongs goes; rows past the caps go. Pure.
-// -> { tables, repeat, dropped: [notes] }
+
+// ---- making the answer usable ----------------------------------------------------------------------------------------
+const readJson = (v) => { if (typeof v !== "string") return v; try { return JSON.parse(v); } catch { return null; } };
+// A value spec, checked against the columns it may name. -> the spec, or undefined when it is unusable. Pure.
+function cleanSpec(spec, tableCols, depth = 0) {
+  if (depth > 6) return undefined;
+  if (spec === null || typeof spec !== "object") return spec;
+  if (Array.isArray(spec)) return spec.map((x) => cleanSpec(x, tableCols, depth + 1)).filter((x) => x !== undefined);
+  if (Array.isArray(spec.pick)) return spec.pick.length ? { pick: spec.pick.map((x) => cleanSpec(x, tableCols, depth + 1)), ...(Array.isArray(spec.weights) && spec.weights.length === spec.pick.length ? { weights: spec.weights.map(Number) } : {}) } : undefined;
+  if (typeof spec.around === "number" || (typeof spec.around === "string" && spec.around.trim() !== "" && !Number.isNaN(Number(spec.around)))) return { around: Number(spec.around), spread: Math.abs(Number(spec.spread) || 0), decimals: Math.max(0, Math.min(6, Number.isInteger(Number(spec.decimals)) ? Number(spec.decimals) : 1)) };
+  if (typeof spec.by === "string" && isObj(spec.values)) return tableCols.includes(spec.by) ? { by: spec.by, values: Object.fromEntries(Object.entries(spec.values).map(([k, v]) => [k, cleanSpec(v, tableCols, depth + 1)])) } : undefined;
+  if (typeof spec.pick_from === "string") return { pick_from: spec.pick_from };
+  return Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, cleanSpec(v, tableCols, depth + 1)]).filter(([, v]) => v !== undefined));
+}
+// The AI's answer made usable, never refused whole: JSON text is read; an unknown table goes; an unknown column goes from
+// its row or recipe; a structured value where a plain one belongs goes; a recipe without a usable time or parent goes.
+// Pure. -> { tables, series, dropped: [notes] }
 function tidy(data, cols) {
   const dropped = [];
-  let tables = data && data.tables;
-  if (typeof tables === "string") { try { tables = JSON.parse(tables); } catch { tables = null; } }
-  let repeat = data && data.repeat;
-  if (typeof repeat === "string") { try { repeat = JSON.parse(repeat); } catch { repeat = null; } }
+  const rowsIn = readJson(data && (data.rows || data.tables));
+  const seriesIn = readJson(data && data.series);
   const out = {};
   let total = 0;
-  for (const [t, rows0] of Object.entries(isObj(tables) ? tables : {})) {
-    let rows = rows0;
-    if (typeof rows === "string") { try { rows = JSON.parse(rows); } catch { rows = null; } }
+  for (const [t, rows0] of Object.entries(isObj(rowsIn) ? rowsIn : {})) {
+    const rows = readJson(rows0);
     if (!cols[t]) { dropped.push(`no table named ${t}`); continue; }
     if (!Array.isArray(rows)) { dropped.push(`${t}: not a list of rows`); continue; }
     const byName = Object.fromEntries(cols[t].map((c) => [c.name, c]));
-    const bad = new Set();
-    const list = [];
-    for (const r of rows.slice(0, AI_PER_TABLE * 2)) {
-      if (!isObj(r) || total >= AI_TOTAL * 2) continue;
+    const bad = new Set(), list = [];
+    for (const r of rows) {
+      if (!isObj(r) || total >= AI_ROWS * 2) continue;
       const row = {};
       for (const [k, v] of Object.entries(r)) {
         if (!byName[k]) { bad.add(k); continue; }
@@ -268,76 +299,124 @@ function tidy(data, cols) {
     if (bad.size) dropped.push(`${t}: no column named ${[...bad].join(", ")}`);
     if (list.length) out[t] = list;
   }
-  const rep = {};
-  for (const [t, r] of Object.entries(isObj(repeat) ? repeat : {})) {
-    const cover = Number(r && r.covers_minutes), back = Math.min(168, Number(r && r.back_hours));
-    if (out[t] && cover >= 5 && back > 0 && back * 60 > cover) rep[t] = { covers_minutes: cover, back_hours: back };
-  }
-  return { tables: out, repeat: rep, dropped };
-}
-// Copies of the repeating tables' rows, back in time: copy k moves every timestamp and date back k times the time the
-// rows cover and nudges the decimal numbers by up to 3%; the rows that point at a copied row are copied with it (and
-// theirs), pointing at the copy. Placeholders of copies are "<placeholder>~k". A table copied as part of another's
-// family is not copied again on its own. At most MAX_ROWS rows in all. Pure (seeded, so the same answer copies the same).
-function expandRepeats(tables, repeat, cols, keys, { now = Date.now(), max = MAX_ROWS } = {}) {
-  const made = {}; for (const t of Object.keys(cols)) made[t] = madeKey(t, cols, keys.pk);
-  const ptrs = Object.fromEntries(Object.keys(cols).map((t) => [t, pointers(t, cols, keys, made)]));
-  const children = (t) => Object.keys(tables).filter((c) => c !== t && Object.values(ptrs[c] || {}).includes(t));
-  // a family: the table and every table below it through pointers
-  const family = (t, seen = new Set()) => { if (seen.has(t)) return []; seen.add(t); return [t, ...children(t).flatMap((c) => family(c, seen))]; };
-  const out = Object.fromEntries(Object.entries(tables).map(([t, r]) => [t, r.map((x) => ({ ...x }))]));
-  let total = Object.values(out).reduce((n, r) => n + r.length, 0);
-  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-  const covered = new Set();
-  const K = (v) => String(v);
-  for (const [root, spec] of Object.entries(repeat || {})) {
-    if (covered.has(root) || !tables[root]) continue;
-    if (!made[root] && (keys.pk[root] || []).length) continue;   // a key of the AI's own would clash on every copy
-    const fam = family(root);
-    fam.forEach((t) => covered.add(t));
-    // the rows of one copy: the root's rows, and down the family the rows that point at a row already in the copy
-    const members = { [root]: tables[root] };
-    const inCopy = { [root]: new Set(tables[root].map((r) => (made[root] ? K(r[made[root]]) : null)).filter(Boolean)) };
-    for (const t of fam.slice(1)) {
-      const p = ptrs[t] || {};
-      members[t] = (tables[t] || []).filter((r) => Object.entries(p).some(([c, target]) => inCopy[target] && r[c] != null && inCopy[target].has(K(r[c]))));
-      inCopy[t] = new Set(members[t].map((r) => (made[t] ? K(r[made[t]]) : null)).filter(Boolean));
+  const series = {};
+  for (const [t, r0] of Object.entries(isObj(seriesIn) ? seriesIn : {})) {
+    const r = readJson(r0);
+    if (!cols[t] || !isObj(r)) { dropped.push(`series ${t}: ${cols[t] ? "not a recipe" : "no such table"}`); continue; }
+    const names = cols[t].map((c) => c.name), isTime = (n) => (cols[t].find((c) => c.name === n) || {}).type || "";
+    const rec = { columns: {} };
+    const fe = readJson(r.for_each);
+    if (isObj(fe) && cols[fe.table] && names.includes(fe.column)) {
+      rec.for_each = { table: fe.table, column: fe.column };
+      const comb = readJson(r.combine);
+      if (isObj(comb)) rec.combine = Object.fromEntries(Object.entries(comb).filter(([k, v]) => names.includes(k) && Array.isArray(v) && v.length));
+    } else {
+      const every = Number(r.every_minutes), back = Math.min(MAX_BACK_HOURS, Number(r.back_hours));
+      if (!(every >= 1) || !(back > 0) || !names.includes(r.time_column) || !/timestamp|date/.test(isTime(r.time_column))) { dropped.push(`series ${t}: needs every_minutes, back_hours and a timestamp time_column`); continue; }
+      Object.assign(rec, { every_minutes: every, back_hours: back, time_column: r.time_column });
     }
-    const perCopy = Object.values(members).reduce((n, r) => n + r.length, 0);
-    if (!perCopy) continue;
-    const copies = Math.max(0, Math.min(Math.floor((spec.back_hours * 60) / spec.covers_minutes), Math.floor((max - total) / perCopy)));
-    const shiftMs = spec.covers_minutes * 60e3;
-    for (let k = 1; k <= copies; k++) {
-      for (const t of fam) {
-        const byName = Object.fromEntries((cols[t] || []).map((c) => [c.name, c]));
-        for (const r of members[t] || []) {
-          const c2 = {};
-          for (const [col, v] of Object.entries(r)) {
-            const c = byName[col];
-            if (v == null || !c) { c2[col] = v; continue; }
-            if (col === made[t]) { c2[col] = `${v}~${k}`; continue; }
-            const target = (ptrs[t] || {})[col];
-            if (target && fam.includes(target) && inCopy[target] && inCopy[target].has(K(v))) { c2[col] = `${v}~${k}`; continue; }
-            if (/timestamp|date/.test(c.type) && !Number.isNaN(Date.parse(v))) {
-              const d = new Date(Date.parse(v) - k * shiftMs);
-              c2[col] = c.type === "date" ? d.toISOString().slice(0, 10) : d.toISOString();
-              continue;
-            }
-            if (/numeric|real|double/.test(c.type) && typeof v === "number" && !target) {
-              const dec = (String(v).split(".")[1] || "").length;
-              c2[col] = Number((v * (1 + (rnd() - 0.5) * 0.06)).toFixed(dec));
-              continue;
-            }
-            c2[col] = v;
-          }
-          (out[t] = out[t] || []).push(c2);
-          total++;
-        }
+    const times = readJson(r.times);
+    if (isObj(times)) rec.times = Object.fromEntries(Object.entries(times).filter(([k, v]) => names.includes(k) && /timestamp|date/.test(isTime(k)) && Array.isArray(v) && v.length === 2).map(([k, v]) => [k, [Number(v[0]) || 0, Number(v[1]) || 0]]));
+    const bad = [];
+    for (const [c, spec] of Object.entries(isObj(readJson(r.columns)) ? readJson(r.columns) : {})) {
+      if (!names.includes(c)) { bad.push(c); continue; }
+      const cs = cleanSpec(spec, names);
+      if (cs !== undefined) rec.columns[c] = cs;
+    }
+    if (bad.length) dropped.push(`series ${t}: no column named ${bad.join(", ")}`);
+    series[t] = rec;
+  }
+  return { tables: out, series, dropped };
+}
+
+// ---- the bulk, from the recipe -----------------------------------------------------------------------------------------
+// Rows from the recipes, appended after the specific rows (which keep their place). A timed series runs on the grid of
+// every_minutes back from now; a slot is skipped when a specific row of the table holds that time, or any row of any
+// table holds it in a column of the same name. A for_each series makes one row per parent row (specific or generated)
+// and per combination. Generated rows of a table with a made key get placeholders "s<n>". Seeded, so pure.
+// -> { tables, links: { table: { column: parent table } } (the for_each pointers), counts: { table: generated } }
+// held: { column: [ms] } of times the tool's tables already hold (the person's own rows), left free the same way.
+function generateSeries(tables, series, cols, keys, { now = Date.now(), max = MAX_ROWS, seed = 11, held: heldIn = {} } = {}) {
+  const made = {}; for (const t of Object.keys(cols)) made[t] = madeKey(t, cols, keys.pk);
+  const out = Object.fromEntries(Object.entries(tables).map(([t, r]) => [t, r.map((x) => ({ ...x }))]));
+  const links = {}, counts = {}, base = {};   // base: table -> Map(placeholder -> ms of its time)
+  let total = Object.values(out).reduce((n, r) => n + r.length, 0);
+  let st = seed; const rnd = () => { st = (st * 16807) % 2147483647; return st / 2147483647; };
+  const gauss = () => { let x = 0; for (let i = 0; i < 4; i++) x += rnd(); return (x - 2) / 0.58; };   // about normal, within 3.5
+  const toTime = (ms, type) => (type === "date" ? new Date(ms).toISOString().slice(0, 10) : new Date(ms).toISOString());
+  const typeOf = (t, c) => ((cols[t] || []).find((x) => x.name === c) || {}).type || "";
+  const K = (v) => String(v);
+  const phs = (t) => (made[t] ? (out[t] || []).map((r) => r[made[t]]).filter((v) => v != null) : []);
+  function val(spec, row, t, depth = 0) {
+    if (spec === null || typeof spec !== "object" || depth > 6) return spec;
+    if (Array.isArray(spec)) return spec.map((x) => val(x, row, t, depth + 1));
+    if (spec.pick) {
+      const w = spec.weights, sum = w ? w.reduce((a, b) => a + (b > 0 ? b : 0), 0) : 0;
+      let i = Math.floor(rnd() * spec.pick.length);
+      if (w && sum > 0) { let x = rnd() * sum; i = 0; while (i < w.length - 1 && (x -= Math.max(0, w[i])) > 0) i++; }
+      return val(spec.pick[i], row, t, depth + 1);
+    }
+    if (typeof spec.around === "number") { const v = spec.around + gauss() * (spec.spread / 2); return Number((spec.around >= 0 ? Math.max(0, v) : v).toFixed(spec.decimals)); }
+    if (spec.by) { const key = row[spec.by]; return key != null && spec.values && K(key) in spec.values ? val(spec.values[K(key)], row, t, depth + 1) : null; }
+    if (spec.pick_from) { const p = phs(spec.pick_from); return p.length ? p[Math.floor(rnd() * p.length)] : null; }
+    return Object.fromEntries(Object.entries(spec).map(([k, v]) => [k, val(v, row, t, depth + 1)]));
+  }
+  // every time held anywhere, by column name: a series slot at one of these is left free
+  const held = Object.fromEntries(Object.entries(heldIn).map(([c, list]) => [c, new Set(list)]));
+  for (const [t, rows] of Object.entries(out)) for (const r of rows) for (const [c, v] of Object.entries(r)) if (v != null && /timestamp|date/.test(typeOf(t, c)) && !Number.isNaN(Date.parse(v))) (held[c] = held[c] || new Set()).add(Date.parse(v));
+  // parents before children: a timed series first, then the for_each ones in order of their parents
+  const timed = Object.keys(series).filter((t) => !series[t].for_each);
+  const eachOnes = Object.keys(series).filter((t) => series[t].for_each);
+  const doRow = (t, rec, extra) => {
+    const row = { ...extra };
+    for (const [c, spec] of Object.entries(rec.columns || {})) if (!(c in row)) row[c] = val(spec, row, t);
+    // "by" may name a column set later in the same recipe: a second pass fills what the first could not
+    for (const [c, spec] of Object.entries(rec.columns || {})) if (row[c] === null && spec && spec.by) row[c] = val(spec, row, t);
+    return row;
+  };
+  for (const t of timed) {
+    const rec = series[t], every = rec.every_minutes * 60e3, ty = typeOf(t, rec.time_column);
+    const top = Math.floor(now / every) * every;
+    const slots = Math.floor((rec.back_hours * 3600e3) / every);
+    let n = 0;
+    for (let k = 0; k <= slots && total < max; k++) {
+      const at = top - k * every;
+      if (held[rec.time_column] && held[rec.time_column].has(at)) continue;
+      const extra = { [rec.time_column]: toTime(at, ty) };
+      for (const [c, [lo, hi]] of Object.entries(rec.times || {})) extra[c] = toTime(Math.min(now, at + (lo + rnd() * (hi - lo)) * 60e3), typeOf(t, c));
+      if (made[t]) extra[made[t]] = `s${k}`;
+      const row = doRow(t, rec, extra);
+      (out[t] = out[t] || []).push(row); total++; n++;
+      if (made[t]) (base[t] = base[t] || new Map()).set(K(row[made[t]]), at);
+    }
+    counts[t] = n;
+  }
+  const baseOf = (t, r) => {
+    if (made[t] && base[t] && base[t].has(K(r[made[t]]))) return base[t].get(K(r[made[t]]));
+    const c = (cols[t] || []).find((x) => /timestamp/.test(x.type) && r[x.name] != null && !Number.isNaN(Date.parse(r[x.name])));
+    return c ? Date.parse(r[c.name]) : now;
+  };
+  for (const t of eachOnes) {
+    const rec = series[t], p = rec.for_each.table;
+    if (!made[p]) continue;
+    (links[t] = links[t] || {})[rec.for_each.column] = p;
+    const combos = Object.entries(rec.combine || {}).reduce((acc, [c, vals]) => acc.flatMap((a) => vals.map((v) => ({ ...a, [c]: v }))), [{}]);
+    let n = 0;
+    for (const parent of out[p] || []) {
+      const ph = parent[made[p]];
+      if (ph == null) continue;
+      const at = baseOf(p, parent);
+      for (const combo of combos) {
+        if (total >= max) break;
+        const extra = { ...combo, [rec.for_each.column]: ph };
+        for (const [c, [lo, hi]] of Object.entries(rec.times || {})) extra[c] = toTime(Math.min(now, at + (lo + rnd() * (hi - lo)) * 60e3), typeOf(t, c));
+        if (made[t]) extra[made[t]] = `s${t.length}_${n}`;
+        (out[t] = out[t] || []).push(doRow(t, rec, extra)); total++; n++;
       }
     }
+    counts[t] = n;
   }
-  void now;
-  return out;
+  return { tables: out, links, counts };
 }
 // Fake mode: rows from the column types alone, the same every time. Pure.
 function fakeRows(cols, keys) {
@@ -362,9 +441,21 @@ function fakeRows(cols, keys) {
       return row;
     });
   }
-  // the first table with a timestamp that another table points at repeats: six hours of it, copied back a day
+  // a series for the first timed table another table points at (six hourly for a day), and one row of each child per row of it
   const rep = order.find((t) => made[t] && cols[t].some((c) => /timestamp/.test(c.type)) && order.some((o) => o !== t && Object.values(pointers(o, cols, keys, made)).includes(t)));
-  return { story: "Fake mode: six made-up rows a table from the column types alone. (SOS_FAKE_AGENT=1)", tables, repeat: rep ? { [rep]: { covers_minutes: 360, back_hours: 24 } } : {} };
+  const series = {};
+  if (rep) {
+    const tc = cols[rep].find((c) => /timestamp/.test(c.type)).name;
+    const first = tables[rep][0] || {};
+    series[rep] = { every_minutes: 240, back_hours: 24, time_column: tc, columns: Object.fromEntries(Object.entries(first).filter(([k]) => k !== made[rep] && k !== tc).map(([k, v]) => [k, typeof v === "number" && !Number.isInteger(v) ? { around: v, spread: 1, decimals: 1 } : v])) };
+    const child = order.find((o) => o !== rep && Object.entries(pointers(o, cols, keys, made)).some(([, tt]) => tt === rep));
+    if (child) {
+      const col = Object.entries(pointers(child, cols, keys, made)).find(([, tt]) => tt === rep)[0];
+      const one = tables[child][0] || {};
+      series[child] = { for_each: { table: rep, column: col }, columns: Object.fromEntries(Object.entries(one).filter(([k]) => k !== made[child] && k !== col && !(pointers(child, cols, keys, made)[k]))) };
+    }
+  }
+  return { story: "Fake mode: six made-up rows a table from the column types alone. (SOS_FAKE_AGENT=1)", rows: tables, series };
 }
 
 // ---- putting rows in ---------------------------------------------------------------------------------------------------
@@ -396,12 +487,13 @@ const plainRow = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k,
 // (2026-09-26, seancorp: the first fill worked, then every fill after it was refused: its parents clashed with kept
 // ones on a unique name and every child went with them).
 // -> { rows: { table: [rows] }, plan, skipped, reused, counts, reasons }
-async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, keys, leftovers = {} }) {
+async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, keys, leftovers = {}, links: forEach = {} }) {
   const primary = liveOn ? live : stg;
   const primCols = await columnsOf(primary);
   const primUniq = await uniquesOf(primary);
   const made = {}; for (const t of Object.keys(genCols)) made[t] = madeKey(t, genCols, keys.pk);
-  const links = Object.fromEntries(Object.keys(genCols).map((t) => [t, Object.values(pointers(t, genCols, keys, made))]));
+  const ptrOf = (t) => ({ ...pointers(t, genCols, keys, made), ...(forEach[t] || {}) });   // a for_each recipe's pointer counts too
+  const links = Object.fromEntries(Object.keys(genCols).map((t) => [t, Object.values(ptrOf(t))]));
   const order = fkOrder(Object.keys(made0).filter((t) => genCols[t]), keys.fk, links);
   const K = (v) => String(v);   // "1" and 1 are the same placeholder
   const map = {};          // table -> Map(placeholder -> real key or null when the row was left out)
@@ -421,7 +513,7 @@ async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, k
       if (!cl) { skipped += list.length; continue; }
       if (!inPrimary) pending.push(t);
       else if (liveOn) liveCols[t] = primCols[t].map((c) => c.name);
-      const ptr = pointers(t, genCols, keys, made);
+      const ptr = ptrOf(t);
       map[t] = new Map();
       rows[t] = [];
       for (const raw of list) {
@@ -559,13 +651,23 @@ async function write(f, m, who) {
     const keys = await keysOf(genSchema);
     const out = await writeRows(company, mod, f.version, genCols, keys, m.title || mod);
     cost = out.costUsd || 0; model = out.model;
+    await q("UPDATE platform.sample_fills SET answer=$2 WHERE id=$1", [f.id, JSON.stringify(out.data || null).slice(0, 200000)]).catch(() => {});
+    if (out.stopReason === "max_tokens") throw new Error("the agent's answer ran too long and came back cut off, so nothing was put in");
     const tidied = tidy(out.data, genCols);
-    if (!Object.keys(tidied.tables).length) {
-      throw new Error(out.stopReason === "max_tokens" ? "the agent's answer was too long and came back cut off" : `the agent gave no rows for this tool's tables${tidied.dropped.length ? ` (${tidied.dropped.slice(0, 3).join("; ")})` : ""}`);
+    // the times the tool already holds in a recipe's time column (a log someone took by hand), so none is doubled
+    const heldNow = {};
+    for (const [t, rec] of Object.entries(tidied.series)) {
+      if (!rec.time_column) continue;
+      const got = await q(`SELECT ${qi(rec.time_column)} AS at FROM ${liveOn ? live : stg}.${qi(t)} WHERE ${qi(rec.time_column)} >= now() - interval '8 days'`).catch(() => ({ rows: [] }));
+      for (const r of got.rows) if (r.at) (heldNow[rec.time_column] = heldNow[rec.time_column] || []).push(new Date(r.at).getTime());
     }
-    const rows = expandRepeats(tidied.tables, tidied.repeat, genCols, keys);
+    const gen = generateSeries(tidied.tables, tidied.series, genCols, keys, { held: heldNow });
+    if (!Object.values(gen.tables).some((r) => r.length)) {
+      throw new Error(`the agent gave no rows or recipes for this tool's tables${tidied.dropped.length ? ` (${tidied.dropped.slice(0, 3).join("; ")})` : ""}`);
+    }
+    const rows = gen.tables;
     const leftovers = await leftoverKeys(company, mod, f.id);
-    const put = await putIn(company, mod, rows, { live, stg, liveOn, stgOn, genCols, keys, leftovers });
+    const put = await putIn(company, mod, rows, { live, stg, liveOn, stgOn, genCols, keys, leftovers, links: gen.links });
     const total = Object.values(put.counts).reduce((a, b) => a + b, 0);
     const notes = [...tidied.dropped, ...put.reasons];
     if (notes.length) console.error(`[sample] ${company}/${mod} #${f.id}: ${put.skipped} rows left out. ${notes.join(" | ")}`);
@@ -575,7 +677,7 @@ async function write(f, m, who) {
     done = true;
     await q(`UPDATE platform.sample_fills SET status='in', story=$2, rows=$3, plan=$4, in_live=$5, in_preview=$6, skipped=$7, cost_usd=$8, model=$9, error=$10 WHERE id=$1`,
       [f.id, story, JSON.stringify(put.rows), JSON.stringify(put.plan), liveOn, stgOn, put.skipped, cost, model, notes.length ? notes.join("\n").slice(0, 2000) : null]);
-    await record("sample_filled", { company, module: mod, actor: who, version: f.version, after: story, detail: { fill: f.id, rows: put.counts, repeated: Object.keys(tidied.repeat), skipped: put.skipped, reused: put.reused, left_out_because: notes, cost_usd: cost, model, live: liveOn, preview: stgOn } });
+    await record("sample_filled", { company, module: mod, actor: who, version: f.version, after: story, detail: { fill: f.id, rows: put.counts, series: gen.counts, skipped: put.skipped, reused: put.reused, left_out_because: notes, cost_usd: cost, model, live: liveOn, preview: stgOn } });
     await logEvent("sample_filled", `${company}/${mod}`, { fill: f.id, rows: total });
   } catch (e) {
     // a fill that did not work costs the demo nothing: the spend is filed (the admin sees it) and handed back as credit
@@ -700,4 +802,4 @@ router.post("/api/c/:slug/modules/:mod/sample/clear", requireManager, json, guar
   res.json({ ...(await view(req.params.slug, req.params.mod)), cleared: out });
 }));
 
-module.exports = { init, router, fill, clear, afterDeploy, view, isDemo, fkOrder, madeKey, pointers, fakeRows, jsonReady, fitProblems, tidy, expandRepeats, SCHEMA };
+module.exports = { init, router, fill, clear, afterDeploy, view, isDemo, fkOrder, madeKey, pointers, fakeRows, jsonReady, fitProblems, tidy, generateSeries, cleanSpec, SCHEMA };

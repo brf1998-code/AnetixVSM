@@ -1323,6 +1323,26 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `agent.runStructured` now also returns `stopReason`. Delete a demo from the
   Demos tab too ("Delete this demo", the company card's delete).
   Tests: `scripts/e2e/sample.js` 38, `scripts/test-sample.js` 20.
+  Third shape, same day (the repeat version filled Atmosphere Logs with five
+  rows and no logs: each hourly log holds twenty readings in one JSON column,
+  the answer ran long, came back cut off, and the partial answer was taken as
+  a success; Brendan: "enough data for full functionality, for example the
+  weekly oxygen graph, with some natural variance"). The AI now gives
+  `rows` (the few specific rows the story needs, 40 at most) and `series`, a
+  recipe per table: { every_minutes, back_hours <= 168, time_column, times:
+  { col: [min, max] minutes after }, columns: { col: spec } } or { for_each:
+  { table, column }, combine: { col: [values] }, columns }. A spec is a value,
+  { pick, weights }, { around, spread, decimals }, { by: col, values },
+  { pick_from: table }, or a JSON object or list of specs.
+  `generateSeries` builds the bulk (seeded, capped at 1500 rows): a timed
+  series on the grid back from now, skipping any time a specific row holds,
+  any time held in another table's column of the same name (a missed hour is
+  not also logged), and any time the tool's own table already holds (a log
+  taken by hand); for_each rows per parent and combination, their pointer
+  passed to putIn as a link. `stop_reason` max_tokens is a failure (refunded),
+  never a partial success. The raw answer is kept in `sample_fills.answer`.
+  Record detail `series` counts what was generated per table. Tests:
+  `scripts/e2e/sample.js` 39, `scripts/test-sample.js` 26.
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin
