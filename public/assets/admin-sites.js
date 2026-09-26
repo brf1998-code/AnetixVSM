@@ -2,12 +2,15 @@
 // count at each stage from a demo to a paying site, and one row per site with the fields from the pricing strategy.
 // A row opens a form for what Brendan learns (the site, its legal name and address, the plant manager, its size, what
 // they asked for, the master agreement, the plant manager's approval limit, a note); the band and the price follow
-// the size. Stage 1: nothing here charges anyone. Mounted by admin.html (AdminShell onShow "sites"). No secret lives
-// here: /assets is served before the login, and every call it makes is an admin-only route.
+// the size. Stage 2 (src/golive.js): the switch that opens Go live on anetix.ai to customers, each site's order (the
+// draft, who signs, the signed text, the card), and a link to walk through going live as the site's manager. Nothing
+// here charges anyone yet. Mounted by admin.html (AdminShell onShow "sites"). No secret lives here: /assets is served
+// before the login, and every call it makes is an admin-only route.
 (function () {
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const usd = (x) => `$${Number(x || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
   const num = (x) => Number(x || 0).toLocaleString("en-US");
+  const cap = (x) => String(x || "").replace(/^./, (c) => c.toUpperCase());
   const day = (t) => (t ? new Date(t).toLocaleDateString([], { month: "short", day: "numeric" }) : "");
   const ago = (t) => {
     if (!t) return "never";
@@ -34,6 +37,12 @@
       #sites-root .quote input { display:block; width:150px; margin-top:3px; }
       #sites-root .qline { margin-top:8px; }
       #sites-root td.price b { font-size:14px; }
+      #sites-root .glswitch { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; padding:10px 12px; border:1px solid var(--line); border-radius:10px; margin:8px 0 4px; background:var(--fog); }
+      #sites-root .glswitch.on { border-color:var(--green); background:#eef7f1; } #sites-root .glswitch .grow { flex:1; min-width:240px; font-size:13px; }
+      #sites-root .glswitch button { margin:0; }
+      #sites-modal .order { border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:13px; line-height:1.5; }
+      #sites-modal .order pre { white-space:pre-wrap; font-family:inherit; font-size:12.5px; background:var(--fog); border-radius:8px; padding:10px; margin:8px 0 0; max-height:320px; overflow:auto; }
+      #sites-modal .order .hash { font-family:ui-monospace,Menlo,monospace; font-size:11px; word-break:break-all; color:var(--steel); }
       #sites-modal { display:none; position:fixed; inset:0; background:rgba(28,36,46,.55); z-index:30; align-items:flex-start; justify-content:center; padding:24px 16px; overflow-y:auto; }
       #sites-modal.on { display:flex; }
       #sites-modal .scard { background:#fff; border-radius:14px; padding:18px 20px; width:100%; max-width:640px; }
@@ -76,6 +85,38 @@
        <span class="sub">Fair-use line ${usd(band.fair_use_usd)}. ${esc(band.why)}.</span>${band.flags.map((f) => `<br><small class="sub" style="color:#b26a00">${esc(f.text)}.</small>`).join("")}`
     : "";
 
+  // One line for a site's latest order under its stage (src/golive.js).
+  function orderLine(o) {
+    if (!o) return "";
+    const pre = o.kind === "preview" ? "your preview: " : "";
+    if (o.state === "draft") return `${pre}order being filled in, version ${o.version}${o.approver ? `, waiting on ${o.approver.name}` : ""}`;
+    if (o.state === "signed") return `${pre}signed by ${o.signer ? o.signer.name : "someone"}${o.signed_at ? ` ${day(o.signed_at)}` : ""}${o.card_saved ? `, ${cap(o.card && o.card.brand ? o.card.brand : "card")} ${o.card && o.card.last4 ? o.card.last4 : ""}`.trimEnd() : ", no card yet"}`;
+    if (o.state === "void") return `last order voided${o.note ? `: ${o.note}` : ""}`;
+    return `order ${o.state}`;
+  }
+  // The switch that opens Go live to customers. Off: only an admin's link works (Open go-live on a site).
+  function switchHtml(g) {
+    if (!g) return "";
+    if (!g.key_set) return `<div class="glswitch"><div class="grow"><b>Go live on anetix.ai is not available:</b> SOS_WWW_KEY is not set on this instance.</div></div>`;
+    return g.open
+      ? `<div class="glswitch on"><div class="grow"><b>Go live is on.</b> Every demo's manager sees Go live on their board and in Settings, and can sign an order form on anetix.ai. A signed site is promised it is switched on within 24 hours.</div><button class="quiet" id="gl-toggle" onclick="AdminSites.toggle(false)">Switch it off</button></div>`
+      : `<div class="glswitch"><div class="grow"><b>Go live is off for customers.</b> No manager sees it and their links do not open. Yours do: open a site and press Open go-live to walk through it as its manager.${g.terms_draft ? ` The terms are ${esc(g.terms_version)}, a draft for counsel.` : ""}</div><button class="go" id="gl-toggle" onclick="AdminSites.toggle(true)">Switch it on</button></div>`;
+  }
+  async function toggle(open) {
+    const g = (DATA && DATA.golive) || {};
+    if (open) {
+      const gaps = [
+        g.terms_draft ? `The Terms of Service are ${g.terms_version}, a draft counsel has not reviewed. Customers who sign now sign the draft.` : "",
+        "Activate is not built yet (stage 3), and a signed site is promised it is switched on within 24 hours.",
+        (DATA.book.bands || []).some((b) => b.proposed) ? "Large and Very large prices are still marked proposed." : "",
+      ].filter(Boolean);
+      if (!confirm(`Switch Go live on for customers?\n\n${gaps.map((x) => `- ${x}`).join("\n")}\n\nEvery demo's manager will see Go live and can sign an order form and save a card.`)) return;
+    } else if (!confirm("Switch Go live off? Managers stop seeing it and their links stop opening. Orders already started stay as they are.")) return;
+    const r = await send("/api/admin/golive", { open });
+    if (!r.ok) { alert(r.json.error || "that did not change"); return; }
+    await show();
+  }
+
   // ---- the tab --------------------------------------------------------------------------------------------------------
   function draw() {
     const D = DATA, B = D.book;
@@ -102,7 +143,7 @@
         <td>${r.demo_holder ? `<b>${esc(r.demo_holder)}</b>` : '<span class="none">no demo</span>'}${r.demo_since ? `<small>since ${esc(day(r.demo_since))}, ${r.last_activity ? `active ${esc(ago(r.last_activity))}` : "no activity yet"}</small>` : ""}${r.ai_spent_usd != null ? `<small>AI spent ${usd(r.ai_spent_usd)}${r.credit_percent != null ? `, ${esc(r.credit_percent)}% credit left` : ""}</small>` : ""}</td>
         <td>${r.tools_live ? `<b>${r.tools_live} live</b>` : '<span class="none">none live</span>'}${r.tools.length ? `<small>${r.tools.map((t) => esc(t.title || t.name)).join(", ")}</small>` : ""}</td>
         <td>${dealBits.length ? dealBits.map((x) => `<small>${x}</small>`).join("") : '<span class="none">nothing yet</span>'}</td>
-        <td><b>${esc(r.stage_label)}</b>${r.standing_label ? `<small>${esc(r.standing_label)}</small>` : ""}</td></tr>`;
+        <td><b>${esc(r.stage_label)}</b>${r.standing_label ? `<small>${esc(r.standing_label)}</small>` : ""}${orderLine(r.order) ? `<small>${esc(orderLine(r.order))}</small>` : ""}</td></tr>`;
     }).join("");
     root().innerHTML = `
       <div class="card"><h2>Price book <small>version ${esc(B.version)} · full price from month one</small></h2>
@@ -112,7 +153,9 @@
         <div class="qline" id="sq-line"></div></div>
       <div class="card"><h2>Pipeline <small>from a demo to a paying site</small></h2>
         <div class="stages">${stages}</div>
-        <p class="sub" style="margin:6px 0 0">Every company that came in from anetix.ai is a row. Open one to fill in what you learn; its band and price follow the size. Going live from the board, the signed order form and Activate come in the next stages.</p>
+        ${switchHtml(D.golive)}
+        ${D.golive && D.golive.cards_to_remove && D.golive.cards_to_remove.length ? `<p class="note amber" id="gl-cards">${D.golive.cards_to_remove.length} card${D.golive.cards_to_remove.length === 1 ? "" : "s"} saved at Stripe for withdrawn orders wait to be removed (${D.golive.cards_to_remove.map((c) => `${esc(c.company)}: ${esc(c.payment_method)}`).join(", ")}). Nothing charges them; stage 3 removes them, or remove them in the Stripe dashboard.</p>` : ""}
+        <p class="sub" style="margin:6px 0 0">Every company that came in from anetix.ai is a row. Open one to fill in what you learn; its band and price follow the size, and its order shows as the customer goes. Activate comes in the next stage.</p>
         ${D.rows.length ? `<div style="overflow-x:auto;margin-top:8px"><table class="list" id="sites-table"><tr><th>Company</th><th>Site</th><th>Plant manager</th><th>Size</th><th>Band</th><th>Demo</th><th>Tools</th><th>Deal</th><th>Stage</th></tr>${rows}</table></div>` : '<p class="sub" style="margin-top:10px">Nobody has come in from anetix.ai yet. Make a pin on the Pins tab.</p>'}</div>`;
     const h = document.getElementById("sq-head"), s = document.getElementById("sq-sqft");
     const go = () => quote(h.value, s.value, document.getElementById("sq-line"));
@@ -137,10 +180,17 @@
     EDIT = slug;
     const a = r.site_address || {}, pm = r.plant_manager || {}, d = r.deal || {}, ma = d.master_agreement || {};
     const locked = !["demo", "ordering", "back_to_demo"].includes(r.stage);
+    const openOrder = r.order_open && !locked;   // the customer is filling it in on anetix.ai: the facts are theirs
+    const factsLocked = locked || openOrder;
+    const o = r.order;
     document.getElementById("sites-mcard").innerHTML = `
       <h2>${esc(r.name)}${r.demo ? ' <span class="chip demo">DEMO</span>' : ""}</h2>
       <div class="sub">Stage: ${esc(r.stage_label)}${r.demo_holder ? ` · came in on the pin for ${esc(r.demo_holder)}${r.demo_email ? ` (${esc(r.demo_email)})` : ""}` : ""} · <a href="#demos/${esc(r.slug)}" onclick="AdminSites.close()">Demos tab</a> · <a href="/c/${esc(r.slug)}/" target="_blank" rel="noopener">their board</a></div>
-      ${locked ? '<p class="note amber">This site has a signed order: its facts are the ones signed. Send the order back to change them.</p>' : ""}
+      ${locked ? '<p class="note amber">This site has a signed order: its facts are the ones signed. The note, the approval limit and the master agreement can still change.</p>' : ""}
+      ${openOrder ? '<p class="note amber">An order is being filled in on anetix.ai, so the facts are the customer\'s until it is signed. The note, the approval limit and the master agreement can still change.</p>' : ""}
+      <h3>Order</h3><div class="order" id="sf-order">${o ? orderHtml(o) : '<span class="sub">No order yet.</span>'}
+        <div class="foot" style="margin-top:8px">${o && o.state !== "draft" ? '<button class="quiet" id="sf-text" onclick="AdminSites.orders()">Show the signed order form</button>' : ""}<button class="quiet" id="sf-golive" onclick="AdminSites.openGoLive()">${r.order_open && o.kind !== "preview" ? "Look at their order on anetix.ai" : "Open go-live as their manager"}</button>${r.order_open && ["draft", "signed"].includes(o.state) ? `<button class="quiet" id="sf-void" onclick="AdminSites.voidOrder()">${o.kind === "preview" ? "Void your preview" : "Withdraw this order"}</button>` : ""}</div>
+        <div id="sf-orders"></div></div>
       <h3>The site</h3><div class="fgrid">
         ${field("sf-site", "Site name (what their people call it)", r.site_name)}${field("sf-legal", "Company's legal name", r.legal_name)}
         ${field("sf-l1", "Address", a.line1, { wide: true })}${field("sf-l2", "Address, second line", a.line2, { wide: true })}
@@ -157,13 +207,14 @@
         ${field("sf-madate", "Master agreement signed on", ma.signed_at, { type: "date" })}</div>
       <h3>Note</h3><textarea id="sf-note" style="width:100%">${esc(r.note || "")}</textarea>
       <div class="err" id="sf-err"></div>
-      <div class="foot"><button class="go" id="sf-save"${locked ? " disabled" : ""}>Save</button><button class="quiet" onclick="AdminSites.close()">Cancel</button></div>`;
+      <div class="foot"><button class="go" id="sf-save">Save</button><button class="quiet" onclick="AdminSites.close()">Cancel</button></div>`;
     document.getElementById("sites-modal").classList.add("on");
+    if (factsLocked) for (const id of ["sf-site", "sf-legal", "sf-l1", "sf-l2", "sf-city", "sf-state", "sf-zip", "sf-pmname", "sf-pmtitle", "sf-pmemail", "sf-head", "sf-sqft", "sf-int", "sf-hw"]) document.getElementById(id).disabled = true;
     const again = () => quote(val("sf-head"), val("sf-sqft"), document.getElementById("sf-band"));
     document.getElementById("sf-head").addEventListener("input", again);
     document.getElementById("sf-sqft").addEventListener("input", again);
     document.getElementById("sf-save").onclick = save;
-    document.getElementById("sf-site").focus();
+    (factsLocked ? document.getElementById("sf-note") : document.getElementById("sf-site")).focus();
   }
   async function save() {
     const btn = document.getElementById("sf-save"); btn.disabled = true;
@@ -179,6 +230,42 @@
     if (!r.ok) { document.getElementById("sf-err").textContent = r.json.error || "could not save"; btn.disabled = false; return; }
     close();
     await show();
+  }
+  // A site's latest order in its form: where it stands, who signs, the band and price it was signed at, the card.
+  function orderHtml(o) {
+    const bits = [`<b>${esc({ draft: "Being filled in", signed: o.card_saved ? "Signed, card saved" : "Signed, no card yet", void: "Voided", activating: "Switching on", activated: "Activated", declined: "Declined" }[o.state] || o.state)}</b>${o.kind === "preview" ? ' <span class="chip prop">YOUR PREVIEW</span>' : ""}`];
+    if (o.state === "draft") bits.push(`version ${esc(o.version)}${o.approver ? `, waiting on ${esc(o.approver.name)} (${esc(o.approver.email)})` : ""}`);
+    if (o.band) bits.push(`${esc(o.band.name)} at ${usd(o.price_usd)} a month`);
+    if (o.signer) bits.push(`signed by ${esc(o.signer.name)}${o.signer.title ? `, ${esc(o.signer.title)}` : ""} (${esc(o.signer.email)}${o.signer.via === "approver" ? ", on the approver's link" : ""})${o.signed_at ? ` on ${esc(new Date(o.signed_at).toLocaleString())}` : ""}`);
+    if (o.card_saved) bits.push(`card: ${esc(cap((o.card && o.card.brand) || "card"))} ending ${esc((o.card && o.card.last4) || "")}`);
+    if (o.note) bits.push(esc(o.note));
+    return bits.join("<br>");
+  }
+  // every order of the open site, with the signed text and its hash (the record of what was signed)
+  async function orders() {
+    const into = document.getElementById("sf-orders"); if (!into || !EDIT) return;
+    try {
+      const d = await get(`/api/admin/sites/${encodeURIComponent(EDIT)}/orders`);
+      into.innerHTML = d.orders.filter((o) => o.text).map((o) => `<div style="margin-top:10px"><b>${esc(o.state)}</b> · terms ${esc(o.terms_version)} · price book ${esc(o.price_book)}${o.signed_ip ? ` · from ${esc(o.signed_ip)}` : ""}${o.learning_opt_in ? " · learning opted in" : " · learning not opted in"}
+        <pre>${esc(o.text)}</pre><div class="hash">SHA-256 ${esc(o.text_sha256)}${o.signed_ua ? `<br>${esc(o.signed_ua)}` : ""}</div></div>`).join("") || '<span class="sub">No signed order form yet.</span>';
+    } catch (e) { into.innerHTML = `<span class="fail">${esc(e.message)}</span>`; }
+  }
+  // Withdraw the site's open order: a preview, or a customer's order that will not be activated. The manager is shown
+  // the reason; a card Stripe holds for it is listed for removal.
+  async function voidOrder() {
+    const r = DATA && DATA.rows.find((x) => x.slug === EDIT); const o = r && r.order; if (!o) return;
+    const customer = o.kind !== "preview";
+    const note = prompt(customer ? `Withdraw ${r.name}'s order? Their site goes back to a demo, and the manager sees this reason the next time they open Go live. Why?` : "Void your preview? A reason is optional.", "");
+    if (note === null) return;
+    const res = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/void-order`, { note });
+    if (!res.ok) { alert(res.json.error || "that did not work"); return; }
+    close(); await show();
+  }
+  // an admin's go-live link (24 hours), opened in a new tab: works while Go live is switched off
+  async function openGoLive() {
+    const win = window.open("about:blank", "_blank");
+    try { const d = await get(`/api/admin/sites/${encodeURIComponent(EDIT)}/golive-link`); if (win) win.location = d.url; else location.href = d.url; }
+    catch (e) { if (win) win.close(); alert(e.message); }
   }
   function close() { EDIT = null; const m = document.getElementById("sites-modal"); if (m) m.classList.remove("on"); }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && EDIT) close(); });
@@ -199,5 +286,5 @@
       if (n && window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("sites", { n, level: "amber" });
     } catch (e) {}
   }
-  window.AdminSites = { show, badge, edit, close };
+  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder };
 })();

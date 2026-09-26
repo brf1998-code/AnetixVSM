@@ -1,7 +1,8 @@
 // Paid sites, stage 1 (2026-09-26, docs/PAID-SITES.md): the price book, sizing a site, the fair-use line, the stages
 // a site moves through, the order form's text, the credit a demo gets back when it goes live, and the Sites tab of
-// /admin (the pipeline). Nothing here charges anyone or changes what a company can do yet. Stage 2 adds the go-live
-// screens on anetix.ai, stage 3 activation and the rollover, stage 4 the month to month.
+// /admin (the pipeline). Nothing here charges anyone or changes what a company can do yet. Stage 2 (src/golive.js)
+// adds the go-live screens on anetix.ai, the orders and the signature; stage 3 activation and the rollover, stage 4 the
+// month to month.
 //
 // Brendan's decisions (2026-09-26): priced per site, never per seat or by usage, everything inside a site unlimited;
 // five bands by the people at the site counting every shift (50 to 99 at $1,750 added to smooth the jump at 50);
@@ -219,25 +220,27 @@ const subscribed = (s) => Boolean(s && s.stage === "subscribed");   // "Subscrib
 // The one page a customer signs, with every figure in it. DRAFT for counsel: `terms_version` says so, and stage 2
 // shows it only behind that. The signer's typed name is kept beside the text, never in it: the hash is of the page
 // they read. Pure.
-const TERMS_VERSION = "draft-1";
+const TERMS_VERSION = require("./terms").TERMS_VERSION;   // the Terms of Service the order form points at (src/terms.js)
 const usd = (n) => `$${Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 function addressLine(a) {
   if (!a) return "";
   if (typeof a === "string") return a;
   return [a.line1, a.line2, [a.city, [a.state, a.postal_code].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean).join(", ");
 }
-function orderText({ facts = {}, book = BOOK_V1, terms_version = TERMS_VERSION } = {}) {
+function orderText({ facts = {}, book = BOOK_V1, terms_version = TERMS_VERSION, terms_url = null } = {}) {
   const band = bandOf(facts, book);
   if (!band) throw new Error("the order needs the number of people at the site");
   const sq = facts.sqft == null || facts.sqft === "" ? "not given" : `${Number(facts.sqft).toLocaleString("en-US")} square feet`;
   const pm = facts.plant_manager && facts.plant_manager.name ? facts.plant_manager.name : "not given";
+  const stop = (x) => (/[.!?]$/.test(x) ? x : `${x}.`);   // "Acme Wire & Cable, Inc." ends its own sentence
   return [
     "ANETIX SITE ORDER FORM",
     `Terms version: ${terms_version}. Price book: version ${book.version}.`,
     "",
-    `Customer: ${facts.legal_name || "not given"}.`,
-    `Site: ${facts.site_name || "not given"}, ${addressLine(facts.site_address) || "address not given"}.`,
-    `Plant manager: ${pm}.`,
+    stop(`Customer: ${facts.legal_name || "not given"}`),
+    stop(`Site: ${facts.site_name || "not given"}, ${addressLine(facts.site_address) || "address not given"}`),
+    stop(`Plant manager: ${pm}`),
+    ...(facts.billing && facts.billing.email ? [stop(`Billing email: ${facts.billing.email}`)] : []),
     "",
     `Size, as stated by Customer: ${Number(facts.headcount).toLocaleString("en-US")} people across all shifts; ${sq}.`,
     `Band: ${band.name}${band.moved_up ? " (moved up one band for floor space)" : ""}.`,
@@ -247,10 +250,14 @@ function orderText({ facts = {}, book = BOOK_V1, terms_version = TERMS_VERSION }
     "Included: use of Anetix at the Site by any number of Customer's people, with no limit on tools, requests or changes.",
     `Fair use: if Anetix's own AI cost for the Site in a billing month passes ${Math.round(book.fair_use_share * 100)}% of that month's fee, new AI work pauses until the next billing month. The Site's tools keep working.`,
     "Price: Anetix will not raise the Site's price while this subscription continues, except to move the Site up a band when its stated size grows. Customer confirms the Site's size once a year, and the band can only move up.",
-    "Data: Customer owns the data its people put into Anetix, and Anetix uses it to run the service for Customer. Learning from how the Site uses the system to improve Anetix for all customers happens only if Customer opts in, and Customer's data is never shown to another customer.",
+    "Data: Customer owns the data its people put into Anetix, and Anetix uses it to run the service for Customer. Customer's data is never shown to another customer.",
+    facts.learning === true
+      ? "Learning: Customer opts in. Anetix may learn from how the Site uses the system, to improve Anetix for all customers."
+      : "Learning: Customer does not opt in. Anetix does not learn from how the Site uses the system to improve Anetix for other customers.",
     "After a cancellation: the Site becomes a demo account for Customer's manager. Customer's data is kept until Customer asks for its deletion, or until 12 months pass with no sign-in.",
     "Add-ons: integrations and hardware are optional and quoted separately.",
-    "Terms: this order form is governed by the Anetix Terms of Service, version above.",
+    "Unused demo credit: credit Customer bought for its demo and has not used by the day the Site is switched on comes off the first bill, at the price Customer paid for it.",
+    `Terms: this order form is an Order Form under the Anetix Terms of Service, version ${terms_version}${terms_url ? `, at ${terms_url}` : ""}.`,
     "",
     "Signed for Customer by the person named below, who confirms they may sign for Customer.",
   ].join("\n");
@@ -373,14 +380,18 @@ CREATE TABLE IF NOT EXISTS platform.sites (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_by    TEXT
 );`;
-// Version 1 follows the code until a site has gone past ordering under it; from then on it is frozen.
+// Version 1 follows the code until an order has been signed under it (or a site has gone past ordering); from then on
+// it is frozen, and a new list price is version 2. (Found by the review of 2026-09-26: the orders carry the book, so the
+// freeze has to look at them.)
 async function init() {
   await q(SCHEMA);
+  await q(require("./golive").SCHEMA);   // the orders, so the freeze below can see a signed one (src/golive.js makes them)
   const bad = bookProblems(BOOK_V1);
   if (bad.length) { console.error(`[sites] the price book in the code is not usable: ${bad.join("; ")}`); return; }
   await q(`INSERT INTO platform.price_books (version, book, note, made_by) VALUES (1, $1, $2, 'platform')
            ON CONFLICT (version) DO UPDATE SET book=EXCLUDED.book, note=EXCLUDED.note
-           WHERE NOT EXISTS (SELECT 1 FROM platform.sites WHERE price_book=1 AND stage NOT IN ('demo','ordering'))`,
+           WHERE NOT EXISTS (SELECT 1 FROM platform.sites WHERE price_book=1 AND stage NOT IN ('demo','ordering'))
+             AND NOT EXISTS (SELECT 1 FROM platform.orders WHERE price_book=1 AND state NOT IN ('draft','void'))`,
   [JSON.stringify(BOOK_V1), BOOK_V1.note]);
 }
 async function currentBook() {
@@ -393,6 +404,15 @@ async function bookFor(version) {
   return r ? r.book : currentBook();
 }
 async function siteRow(slug) { return (await q("SELECT * FROM platform.sites WHERE company=$1", [slug])).rows[0] || null; }
+// The fact columns a customer's order carries (the deal's integrations and hardware too: what they asked for).
+const FACT_COLS = ["site_name", "legal_name", "site_address", "plant_manager", "headcount", "sqft"];
+// JSON with the keys sorted, so a value read back from JSONB (which keeps its own key order) compares equal. Pure.
+function stable(v) {
+  if (v === undefined) v = null;
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stable(v[k])}`).join(",")}}`;
+  return JSON.stringify(v);
+}
 
 // Why this company cannot be deleted yet, or null. A subscribed site has a card being billed; the admin delete never
 // talks to Stripe, so End comes first (stage 4). Called from the delete route in src/feedback.js.
@@ -401,7 +421,16 @@ async function deleteRefusal(slug) {
   if (s && ["activating", "subscribed"].includes(s.stage)) return `${slug} is a paying site. End its subscription first, so the card stops being billed.`;
   return null;
 }
-async function deleteCompany(slug) { await q("DELETE FROM platform.sites WHERE company=$1", [slug]); }
+// The site's row goes with the company; its orders stay, keyed by the site's id, because they are the contract record
+// (counsel to confirm). An order still open is voided, so nothing is left waiting on a site that is gone, and a card
+// Stripe holds for it is listed for removal (src/golive.js status: cards_to_remove).
+async function deleteCompany(slug) {
+  const s = await siteRow(slug);
+  if (s) await q(`UPDATE platform.orders SET state='void', note='the company was deleted', voided_by='admin', voided_at=now(), updated_at=now(),
+                     stripe = CASE WHEN payment_method IS NULL THEN stripe ELSE stripe || jsonb_build_object('detach_pending', payment_method) END
+                   WHERE site_id=$1 AND state IN ('draft','signed')`, [s.id]).catch((e) => console.error("[sites] voiding the orders of", slug, e.message));
+  await q("DELETE FROM platform.sites WHERE company=$1", [slug]);
+}
 
 // Several companies' last activity in one query (the same four sources as the Demos tab).
 async function lastActivity(slugs) {
@@ -414,10 +443,24 @@ async function lastActivity(slugs) {
     FROM unnest($1::text[]) AS c`, [slugs])).rows;
   return Object.fromEntries(rows.map((r) => [r.company, r.at]));
 }
+// The site's latest order, as the Sites tab shows it (src/golive.js makes them). null when it has none.
+function orderOut(r) {
+  if (!r.order_id) return null;
+  const signer = r.order_signer || null, approver = r.order_approver || null;
+  return {
+    id: r.order_id, state: r.order_state, version: r.order_version, kind: r.order_kind || "customer",
+    band: r.order_band || null, price_usd: r.order_price_usd == null ? null : Number(r.order_price_usd),
+    signed_at: r.order_signed_at || null, signer: signer ? { name: signer.name, title: signer.title, email: signer.email, via: signer.via } : null,
+    card: r.order_card || null, card_saved: Boolean(r.order_card_saved),
+    approver: approver ? { name: approver.name, email: approver.email } : null,
+    note: r.order_note || null, created_at: r.order_created_at || null, updated_at: r.order_updated_at || null,
+  };
+}
 function rowOut(r, { book, tools, credit, last }) {
   const facts = { headcount: r.headcount, sqft: r.sqft };
   const band = r.headcount ? bandOf(facts, book) : null;
   const stage = r.stage || "demo";
+  const order = orderOut(r);
   return {
     slug: r.slug, name: r.name, demo: Boolean(r.demo), site_id: r.site_id || null,
     // a company that did not come in on a pin (a pilot made on the admin page, say) has not been a demo: "Not ordered yet"
@@ -426,7 +469,8 @@ function rowOut(r, { book, tools, credit, last }) {
     site_name: r.site_name || null, legal_name: r.legal_name || null, site_address: r.site_address || null, address_line: addressLine(r.site_address),
     plant_manager: r.plant_manager || null, headcount: r.headcount == null ? null : Number(r.headcount), sqft: r.sqft == null ? null : Number(r.sqft),
     band, price_book: r.price_book || book.version,
-    deal: r.deal || {}, note: r.note || null,
+    deal: r.deal || {}, note: r.note || null, billing: r.billing || null, stripe_customer: r.stripe_customer || null,
+    order, order_open: Boolean(order && ["draft", "signed", "activating"].includes(order.state)),
     demo_holder: r.pin_label || r.contact || null, demo_email: r.email || null, demo_since: r.demo_since || null,
     tools: tools || [], tools_live: (tools || []).filter((t) => t.live_version).length,
     ai_spent_usd: credit ? credit.spent_usd : null, credit_percent: credit ? credit.percent : null, credit_level: credit ? credit.level : null,
@@ -439,13 +483,20 @@ async function pipeline() {
   const rows = (await q(`
     SELECT c.slug, c.name, c.demo, s.email, s.contact, s.created_at AS demo_since, p.label AS pin_label,
            st.id AS site_id, st.stage, st.standing, st.cancel_at, st.price_book, st.site_name, st.legal_name, st.site_address,
-           st.plant_manager, st.headcount, st.sqft, st.deal, st.note, st.updated_at, st.updated_by
+           st.plant_manager, st.headcount, st.sqft, st.deal, st.note, st.updated_at, st.updated_by, st.billing, st.stripe_customer,
+           lo.*
       FROM platform.companies c
       LEFT JOIN platform.self_serve s ON s.company=c.slug
       LEFT JOIN platform.access_pins p ON p.id=s.pin_id
       LEFT JOIN platform.sites st ON st.company=c.slug
+      LEFT JOIN LATERAL (
+        SELECT o.id AS order_id, o.state AS order_state, o.version AS order_version, o.kind AS order_kind, o.band AS order_band,
+               o.price_usd AS order_price_usd, o.signed_at AS order_signed_at, o.signer AS order_signer, o.card AS order_card,
+               o.payment_method IS NOT NULL AS order_card_saved, o.approver AS order_approver, o.note AS order_note,
+               o.created_at AS order_created_at, o.updated_at AS order_updated_at
+          FROM platform.orders o WHERE o.site_id = st.id ORDER BY o.created_at DESC LIMIT 1) lo ON true
      WHERE s.company IS NOT NULL OR st.company IS NOT NULL
-     ORDER BY GREATEST(COALESCE(st.updated_at, 'epoch'), COALESCE(s.created_at, 'epoch')) DESC, c.slug`)).rows;
+     ORDER BY GREATEST(COALESCE(st.updated_at, 'epoch'), COALESCE(s.created_at, 'epoch'), COALESCE(lo.order_updated_at, 'epoch')) DESC, c.slug`)).rows;
   const slugs = rows.map((r) => r.slug);
   const mods = slugs.length ? (await q("SELECT company, name, title, live_version FROM platform.modules WHERE company = ANY($1) ORDER BY created_at", [slugs])).rows : [];
   const tools = {}; for (const m of mods) (tools[m.company] = tools[m.company] || []).push({ name: m.name, title: m.title, live_version: m.live_version });
@@ -461,7 +512,8 @@ async function pipeline() {
   for (const r of out) stages[r.stage] = (stages[r.stage] || 0) + 1;
   const attention = out.filter((r) => r.stage === "subscribed" && (r.standing && r.standing !== "good")).length;
   const cancelling = out.filter((r) => r.stage === "subscribed" && r.cancel_at).length;
-  return { book: bookView(book), stages, attention, cancelling, rows: out, stage_labels: STAGE_LABEL };
+  const golive = await require("./golive").status().catch(() => null);   // the switch for Go live on anetix.ai (stage 2)
+  return { book: bookView(book), stages, attention, cancelling, rows: out, stage_labels: STAGE_LABEL, golive };
 }
 async function saveFields(slug, body, by) {
   slug = String(slug || "").toLowerCase();
@@ -472,7 +524,19 @@ async function saveFields(slug, body, by) {
   if (problems.length) throw fail(400, problems.join(". ") + ".");
   if (!Object.keys(fields).length) throw fail(400, "nothing to save");
   const had = await siteRow(slug);
-  if (had && !["demo", "ordering", "back_to_demo"].includes(had.stage)) throw fail(409, "this site has a signed order: its facts are the ones signed. Send the order back to change them.");
+  // The facts (and what they asked for) belong to the customer once an order is open: the draft on anetix.ai is the
+  // truth while it is filled in, and a signed order is never edited. The note, the approval limit and the master
+  // agreement are Brendan's at every stage. A save that sends the whole form with the facts unchanged goes through.
+  const factChanges = FACT_COLS.filter((c) => c in fields && stable(fields[c]) !== stable(had ? had[c] : null));
+  const askChanges = fields.deal ? ["integrations", "hardware"].filter((k) => k in fields.deal && stable(fields.deal[k] || null) !== stable(((had && had.deal) || {})[k] || null)) : [];
+  if (had && (factChanges.length || askChanges.length)) {
+    if (!["demo", "ordering", "back_to_demo"].includes(had.stage)) throw fail(409, "this site has a signed order: its facts are the ones signed. Send the order back to change them.");
+    const open = await require("./golive").openOrder(had.id);
+    if (open) throw fail(409, `an order is being filled in on anetix.ai (${open.state === "draft" ? "not signed yet" : "signed, waiting for a card"}), so its facts are the customer's. The note, the approval limit and the master agreement can still change.`);
+  }
+  for (const c of FACT_COLS) if (c in fields && !factChanges.includes(c)) delete fields[c];
+  if (fields.deal) { for (const k of ["integrations", "hardware"]) if (k in fields.deal && !askChanges.includes(k)) delete fields.deal[k]; if (!Object.keys(fields.deal).length) delete fields.deal; }
+  if (!Object.keys(fields).length) return (await pipeline()).rows.find((r) => r.slug === slug) || null;   // nothing changed
   if (fields.deal) fields.deal = { ...((had && had.deal) || {}), ...fields.deal };
   const cols = Object.keys(fields);
   const vals = cols.map((c) => (["site_address", "plant_manager", "deal"].includes(c) ? (fields[c] == null ? null : JSON.stringify(fields[c])) : fields[c]));
@@ -503,6 +567,6 @@ router.post("/api/admin/sites/quote", requireAdmin, json, guard(async (req, res)
 router.post("/api/admin/sites/:slug", requireAdmin, json, guard(async (req, res) => res.json({ ok: true, site: await saveFields(req.params.slug, req.body, who(req)) })));
 
 module.exports = {
-  init, router, pipeline, saveFields, deleteRefusal, deleteCompany, currentBook,
+  init, router, pipeline, saveFields, deleteRefusal, deleteCompany, currentBook, bookFor, siteRow, FACT_COLS, stable, STAGE_LABEL,
   BOOK_V1, TERMS_VERSION, STAGES, STANDINGS, bookProblems, bookView, bandOf, flagsOf, fairUse, next, subscribed, orderText, textHash, addressLine, refundableCredit, cleanFields,
 };

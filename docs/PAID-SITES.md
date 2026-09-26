@@ -1,7 +1,9 @@
 # Paid sites: a demo becomes a subscribed site
 
-Concept, 2026-09-26. Stage 1 (the price book and the Sites tab of /admin) was built
-the same day; stages 2 to 5 are not. Brendan's decisions are marked
+Concept, 2026-09-26. Stage 1 (the price book and the Sites tab of /admin) and stage 2
+(Go live on anetix.ai, as far as Signed, shipped dark behind a switch) were built the
+same day; stages 3 to 5 are not. What stage 2 changed from this plan, and why, is
+"Stage 2 as built" below the build order. Brendan's decisions are marked
 **decided**; everything else is a proposal and says so. The pricing strategy
 Brendan wrote the same day is folded in, with the data it asked for.
 Revised the same day after an adversarial review of the billing design:
@@ -298,8 +300,10 @@ Four screens, one group of questions on each (the module intake's rule):
    feet, the plant manager (with "That's me"), the person's own name and title,
    the billing email, and the billing address (the site's unless changed). Two
    optional boxes: "We'd like to connect our ERP" (which one) and "We'd like
-   hardware (tablets, scanners, a label printer)". The draft is saved on every
-   screen, so a closed tab loses nothing.
+   hardware (tablets, scanners, a label printer)". And the learning opt-in,
+   unticked (as built: it moved here from screen 4 so that it is part of the
+   signed words; see Stage 2 as built). The draft is saved on every screen, so a
+   closed tab loses nothing.
 2. **Your price.** The band from what they entered, worked out by the product
    and never by the page, in one line: "(Site) is a Core site, 100 to 199
    people. $2,500 a month, billed monthly. Cancel any time." Then the "How we
@@ -307,10 +311,9 @@ Four screens, one group of questions on each (the module intake's rule):
 3. **Who signs.** "I'll sign" or "Someone else approves this". The second gives
    a link (HMAC over `order:<id>:<exp>`, 14 days, dead once signed) that opens
    screens 2 to 4 with the answers filled in, for whoever approves spending.
-4. **Sign.** The order form with every figure in it, two tick boxes (the first
-   required: "I have read the order form and the terms, and I can sign for
-   (Company)"; the second optional and unticked: the learning opt-in), and the
-   signer's typed name and title. "Sign and add a card" makes (or reuses) the
+4. **Sign.** The order form with every figure in it, one tick box ("I have read
+   the order form and the terms, and I can sign for (Company)"), and the
+   signer's typed name, title and email. "Sign and add a card" makes (or reuses) the
    site's own Stripe Customer and goes to Stripe Checkout in setup mode for it,
    with `payment_method_types[]=card`: the card is saved and nothing is
    charged. Back from Stripe: "Your order is in. Anetix switches (Site) on
@@ -627,6 +630,11 @@ platform.billing_events  stripe_event (primary key), type, site_id, subscription
 
 Plus `self_serve.credit_since`, the moment the credit counts from.
 
+As built in stage 2, `platform.orders` also keeps `terms_sha256`, `signed_net` (the
+evidence behind the signer's address), `card`, `kind` (customer or preview),
+`from_stage` (the site's stage before the order, for Withdraw) and `voided_by`; and
+`platform.terms_versions` keeps each terms version's words at its first signature.
+
 **Delete and restore.** A company delete is refused while its site is
 subscribed: End first, which voids open invoices, because the admin delete
 (`src/feedback.js`) never talks to Stripe and the card would go on being
@@ -638,6 +646,13 @@ delivered, so after a restore every site with a subscription is checked
 against Stripe before Activate or End will run.
 
 ### Routes
+
+As built in stage 2, the product's side for the www service is `POST
+/api/www/golive/{view,save,approver,sign,checkout,start-over,card}` and `GET
+/api/www/golive/terms`, each with the link the person holds; the admin's are `GET|POST
+/api/admin/golive` (the switch), `GET /api/admin/sites/:slug/golive-link|orders` and
+`POST /api/admin/sites/:slug/void-order`; the manager's is `GET /api/c/:slug/golive`.
+The list below is the plan for all the stages.
 
 anetix.ai (the www service), public:
 
@@ -681,7 +696,7 @@ One page. The parts in parentheses are filled from the order. [TERMS URL] and
 > **Anetix site order form**
 >
 > **Customer:** (legal name). **Site:** (site name), (address). **Plant
-> manager:** (name).
+> manager:** (name). **Billing email:** (email), where notices go.
 >
 > **Size, as stated by Customer:** (n) people across all shifts, (n) square
 > feet. **Band:** (band).
@@ -706,9 +721,13 @@ One page. The parts in parentheses are filled from the order. [TERMS URL] and
 > Customer confirms the Site's size once a year, and the band can only move up.
 >
 > **Data:** Customer owns the data its people put into Anetix, and Anetix uses
-> it to run the service for Customer. (If ticked:) Customer also lets Anetix
-> learn from how the Site uses the system, to improve Anetix for all customers.
-> Customer's data is never shown to another customer.
+> it to run the service for Customer. Customer's data is never shown to another
+> customer.
+>
+> **Learning:** (either) Customer opts in. Anetix may learn from how the Site
+> uses the system, to improve Anetix for all customers. (or) Customer does not
+> opt in. Anetix does not learn from how the Site uses the system to improve
+> Anetix for other customers.
 >
 > **After a cancellation:** the Site becomes a demo account for Customer's
 > manager. Customer's data is kept until Customer asks for its deletion, or
@@ -716,8 +735,12 @@ One page. The parts in parentheses are filled from the order. [TERMS URL] and
 >
 > **Add-ons:** integrations and hardware are optional and quoted separately.
 >
-> **Terms:** this order form is governed by the Anetix Terms of Service at
-> [TERMS URL], version [TERMS VERSION].
+> **Unused demo credit:** credit Customer bought for its demo and has not used by
+> the day the Site is switched on comes off the first bill, at the price Customer
+> paid for it.
+>
+> **Terms:** this order form is an Order Form under the Anetix Terms of
+> Service, version (version), at (anetix.ai/terms).
 >
 > **Signed for Customer** by (name), (title), on (date), who confirms they may
 > sign for Customer.
@@ -776,10 +799,12 @@ Each stage ships and is tested on its own, like the earlier pushes.
    counts, and the pipeline fields editable per site. Company delete refused
    while a site is activating or subscribed. No Stripe yet. End to end:
    `scripts/e2e/sites.js` (32) and `sites-browser.js` (14).
-2. **Go live, as far as Signed.** The four screens on anetix.ai, the draft and
-   its version saved per screen, the approver link, the signed order, the
-   site's Stripe Customer, Checkout in setup mode, `fulfil()` taught setup
-   mode, and `STRIPE_FAKE` taught setup mode, customers and subscriptions.
+2. **Go live, as far as Signed. Built 2026-09-26, dark.** The four screens on
+   anetix.ai, the draft and its version saved per screen, the approver link,
+   the signed order, the site's Stripe Customer, Checkout in setup mode,
+   `fulfil()` taught setup mode, and `STRIPE_FAKE` taught setup mode, customers
+   and subscriptions. Plus the switch, previews, Withdraw and the Terms of
+   Service on Common Paper's standard terms (Stage 2 as built, below).
 3. **Activate and the rollover.** The second listener and its key, the three
    Stripe steps with their ids kept on the order, the rollover as one function
    that is safe to run twice, the unused-credit refund, every row of the
@@ -800,6 +825,72 @@ presses of Activate, a timeout on the subscription step, the first
 subscription's `deleted` after a return, and a restore from before an
 activation. Stages 1 to 4 are one customer's whole life. Stage 5 waits for the
 first master agreement.
+
+## Stage 2 as built (2026-09-26)
+
+`src/golive.js` and `src/terms.js` here, the go-live pages and routes in the www
+repo. It ships **dark**: `platform.settings golive_open` is off until Brendan
+switches it on from the Sites tab, whose confirm lists what is still missing
+(the terms are draft-1, Activate does not exist yet and a signed site is promised
+it is switched on within 24 hours, Large and Very large are proposed prices).
+Off, no manager sees Go live and a customer's link is refused. An admin's link
+(the Sites tab, 24 hours) works either way.
+
+**The flow.** The board's credit line (Add credit · Go live), the out-of-credit
+panel (Add credit, or Go live) and a Settings card carry the manager's link. On
+anetix.ai: About your site, Your price, Who signs, Sign; then Stripe Checkout in
+setup mode for the site's own Customer; back from Stripe, "Your order is in".
+Stripe closed before the card: "One step left: a card", with Add a card (a new
+session, the earlier one expired) and, for the manager, Start the order over.
+The approver's link opens About the site, The price and Sign on the same order.
+Every page and every form comes from the product's view of the order; the band
+and price are never the page's.
+
+**What changed from the plan, and why:**
+
+- **The learning opt-in and the billing email are in the signed words.** The
+  terms name "the billing email on its order form" as the notice address and
+  learning happens "only if Customer opted in on its order form". A tick box
+  beside the text (the plan) was outside the hash, so the opt-in moved to screen
+  1 and both are lines of the order form.
+- **Previews are kept apart.** The adversarial review found that an admin's
+  walk-through on a real demo made a real order: it moved the site to Signed with
+  a test card on it and showed "Your order is in" to the customer. Now an admin's
+  link makes a preview order that never moves the site's stage, never writes to
+  its facts, never shows on the customer's board or page, and saves its card to a
+  Stripe Customer of its own. An admin's link on the customer's own order is read
+  only. A customer's first answer voids an open preview, and anetix.ai detaches
+  its card on the spot.
+- **Withdraw.** Decline and Send back are stage 3, but a signed order needed a
+  way out before then: Withdraw (the site's form on the Sites tab) voids the open
+  order with a note. A customer's site goes back to the stage it had before the
+  order, and the manager sees the note the next time they open Go live.
+- **Cards the product cannot reach.** The product has no line to Stripe. A card
+  refused while anetix.ai is in the loop (a second card, a started-over or
+  deleted order) is detached at once; one saved on an order withdrawn from the
+  Sites tab or a deleted company waits in `orders.stripe.detach_pending`, listed
+  on the Sites tab, until stage 3's channel to anetix.ai removes it. Nothing
+  charges it.
+- **The signer's address.** Express behind a proxy reads the left-most
+  X-Forwarded-For, which the sender writes. anetix.ai now records its best guess
+  the product's way (Cloudflare's header, then the edge's, then the peer) plus
+  the raw evidence (`signed_net`).
+- **The terms as signed.** `platform.terms_versions` keeps a version's words at
+  its first signature, `/terms/<version>` shows them, and a signature under the
+  same version over other words is refused.
+- **Price book 1 freezes on the first signed order**, not only on a site past
+  ordering (nothing wrote the site's book).
+- **The top-up page** no longer takes a card-setup session as its key.
+- **Forms carry a token made from the link**, so a page elsewhere, app.anetix.ai
+  included, cannot post them with the person's cookie.
+
+**Stage 3 picks up:** Decline and Send back (Withdraw is their plain form now),
+removing `detach_pending` cards, the internal channel, Activate.
+
+**Tests.** `scripts/test-golive.js` (52) and `scripts/e2e/golive.js` (99, in
+`run-all.sh`) here; in the www repo, `scripts/test-www.js` (74),
+`scripts/e2e-golive.js` (55) and `scripts/e2e-golive-browser.js` (26) against
+both services in fake Stripe mode.
 
 ## Before the first real activation (Brendan, outside the code)
 
@@ -845,6 +936,14 @@ first master agreement.
 4. The deck's $30,000 per plant and "3,333 plants" against the new mix.
 5. When someone other than the demo's manager signs, whether they also become a
    manager (proposed: no; Add a manager covers it).
+6. The terms page is behind the wall like the rest of anetix.ai: the signer, the
+   approver and a pin holder can read it, the customer's counsel cannot. Decide
+   before switching Go live on whether /terms is public (noindex).
+7. The manager's 31-day link is not tied to the account that loaded the board,
+   so removing a manager does not kill a link they already have (the credit
+   link is the same). Tie it to the account if that matters before launch.
+8. Counsel's brackets in `src/terms.js`: governing law, chosen courts, the
+   liability caps and covered claims, the notice email, technical support.
 
 ## Sources
 

@@ -84,6 +84,9 @@
   .creditout { background:#fff; border:2px solid var(--red); border-radius:12px; padding:14px 16px; margin:0 0 12px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
   .creditout b { color:var(--red); } .creditout p { margin:2px 0 0; color:var(--steel); font-size:13.5px; } .creditout .grow { flex:1; min-width:220px; }
   .creditout a.go { background:var(--navy); color:#fff; text-decoration:none; border-radius:8px; padding:10px 16px; font-weight:700; white-space:nowrap; }
+  .creditout .acts { display:flex; gap:8px; flex-wrap:wrap; } .creditout a.go.alt { background:#fff; color:var(--navy); border:2px solid var(--navy); padding:8px 14px; }
+  /* going live (src/golive.js): the order is in, one quiet line under the credit line */
+  .goliveline { font-size:12.5px; margin:-4px 0 10px; color:var(--green); font-weight:600; } .goliveline a { margin-left:6px; }
   .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; align-items:start; }
   @media (max-width: 1100px) { .cols { grid-template-columns:repeat(2,1fr); } }
   @media (max-width: 640px) { .cols { grid-template-columns:1fr; } .band, .wrap { padding-left:14px; padding-right:14px; } }
@@ -238,6 +241,7 @@
     <div class="warn" id="aiwarn" style="display:none"></div>
     <div class="pknudge" id="pknudge" style="display:none"></div>
     <div class="creditline" id="creditline" style="display:none"></div>
+    <div class="goliveline" id="goliveline" style="display:none"></div>
     <div id="vpanel"></div>
     <div id="reviews"></div>
     <div class="coltabs" id="coltabs" aria-label="Which column to show"></div>
@@ -1205,11 +1209,19 @@ async function load() {
   else w.style.display = "none";
   // a company that came in from anetix.ai runs on the credit it bought: the balance, and where to add more (managers)
   const cl = document.getElementById("creditline");
+  // Go live (src/golive.js, a demo's manager only): the link beside Add credit, a second way on when the credit is
+  // used up, and once the order is in, one line saying so. An admin's link works while Go live is switched off.
+  const gl = MGR() && DATA.golive ? DATA.golive : null;
+  const goText = gl ? `${gl.action}${gl.preview ? " (admin preview)" : ""}` : "";
+  const goOffer = gl && gl.url && !gl.line;
   if (DATA.credit && DATA.credit.balance_usd <= 0) {   // nothing runs any more: say so plainly, with the one way on
     cl.style.display = "flex"; cl.className = "creditout";
-    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? "" : " Ask your manager to add credit."}</p></div>${MGR() ? `<a class="go" href="${esc(DATA.credit.topup_url)}">Add credit on anetix.ai</a>` : ""}`;
-  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}`; }
+    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? "" : " Ask your manager to add credit."}${goOffer ? " Or go live: one price for the site, set by its size, with no credit to run out of." : ""}</p></div>${MGR() ? `<div class="acts"><a class="go" href="${esc(DATA.credit.topup_url)}">Add credit on anetix.ai</a>${goOffer ? `<a class="go alt" id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}</div>` : ""}`;
+  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}${goOffer ? `<span style="margin-left:6px">·</span><a id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
   else cl.style.display = "none";
+  const gline = document.getElementById("goliveline");
+  if (gl && gl.line) { gline.style.display = "block"; gline.innerHTML = `${esc(gl.line)}${gl.url ? `<a href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
+  else gline.style.display = "none";
   const demo = Boolean(DATA.company && DATA.company.demo), bar = document.getElementById("demobar");
   if (demo && bar.hidden) {   // twice the same run of words, so the roll at -50% lands where it started
     const one = Array.from({ length: 8 }, () => `<span>DEMO</span><span><i>a demo company on Anetix</i></span>`).join("");

@@ -41,6 +41,11 @@
 <body>
   <div class="band"><h1>Settings <small id="coname" style="font-size:13px;font-weight:400;opacity:.85"></small></h1><div class="sub"><a id="back" href="#">Back to the improvement board</a></div></div>
   <div class="wrap">
+    <div class="card" id="gl-card" style="display:none">
+      <h2>Go live</h2>
+      <div class="sub" id="gl-sub"></div>
+      <div id="gl-body"></div>
+    </div>
     <div class="card" id="pk-card" style="display:none">
       <h2>Your sign-in</h2>
       <div class="sub">Passkeys on your account. Sign in with your email and Face ID, a fingerprint or the device's PIN.</div>
@@ -107,6 +112,23 @@ async function load() {
   if (D.company.ai_reads_data === false) { const p = document.getElementById("a-photos"); p.checked = false; p.disabled = true; document.getElementById("a-photos-sub").textContent = "Off while the AI is walled off from this company's data (set by Anetix): a photo is a picture of the data."; }
   loadTestFloor();
   loadReview(D.modules || []);
+  loadGoLive();
+}
+// Go live (src/golive.js): a demo becomes a paid site on anetix.ai. Shown to a demo's manager once Anetix has switched
+// it on; the order's progress when one is started.
+async function loadGoLive() {
+  const r = await fetch(`/api/c/${SLUG}/golive`, { cache: "no-store" });
+  if (!r.ok) return;
+  const g = (await r.json()).golive;
+  const card = document.getElementById("gl-card");
+  if (!g) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  document.getElementById("gl-sub").textContent = g.line
+    || (g.stage === "ordering"
+      ? (g.signed_no_card ? "Your order form is signed. Add a card to finish; nothing is charged until Anetix switches the site on."
+        : g.waiting_on ? `Your order is started on anetix.ai and waits for ${g.waiting_on} to sign.` : "Your order is started on anetix.ai. Pick up where you left off.")
+      : "Make this demo your site: one price for the site, set by its size, with no credit to run out of and a way in for the floor. Everything you built stays.");
+  document.getElementById("gl-body").innerHTML = g.url ? `<a class="btn primary" id="gl-go" href="${esc(g.url)}">${esc(g.action)}${g.preview ? " (admin preview)" : ""}</a>` : "";
 }
 // The system review (moved here from the board, 2026-09-26): one select, one button, and a line while one runs.
 let RV_MODULES = [], RV_POLL = null;

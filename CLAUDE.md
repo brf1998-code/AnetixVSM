@@ -1495,8 +1495,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   credit counts as spent first, purchases oldest first, what is left of the
   bought credit comes back at each purchase's rate); `cleanFields` (only the keys
   sent change). Tables: `platform.price_books` (version 1 is rewritten from the
-  code at boot until a site has gone past ordering under it, then frozen; a new
-  list price is version 2) and `platform.sites` (`id` uuid, the permanent id
+  code at boot until an order is signed under it, then frozen; a new list price
+  is version 2) and `platform.sites` (`id` uuid, the permanent id
   orders and Stripe will point at, since a freed slug goes to the next company
   with the same name; `company` unique; the facts, `deal` JSON, note, stage);
   both in the backup. Company delete takes the row and is REFUSED while a site is
@@ -1505,7 +1505,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   /api/admin/sites` (the book, the count per stage, a row per self-serve company
   or site row with its facts, band, pin holder, since, tools live, AI spent and
   the deal), `POST /api/admin/sites/quote { headcount, sqft }`, `POST
-  /api/admin/sites/:slug` (the pipeline fields; 409 once an order is signed).
+  /api/admin/sites/:slug` (the pipeline fields; the facts 409 while an order is
+  open or signed, the note and the deal's own fields never)).
   The tab: the price book with a quick quote for a call, the stage counts, the
   pipeline table, and a form per row (one column on a phone, 16px boxes); a
   company that is not self-serve joins the pipeline once a field is saved for it
@@ -1515,6 +1516,54 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the stage that uses them. Tests: `scripts/test-sites.js` (95),
   `scripts/e2e/sites.js` (32) and `sites-browser.js` (14), both in
   `run-all.sh`; `accounts-browser.js` counts ten tabs.
+- **Paid sites, stage 2: Go live, as far as Signed** (2026-09-26,
+  `src/golive.js`, `src/terms.js`, the go-live screens in the www repo;
+  `docs/PAID-SITES.md` "Stage 2 as built"). A demo's manager answers four
+  screens on anetix.ai (about the site, the price, who signs, sign), signs the
+  order form and saves a card through Stripe Checkout in SETUP mode. **Nothing is
+  charged; the site waits at Signed for Activate (stage 3).** It ships DARK:
+  `platform.settings golive_open` is off until the admin switches it on from the
+  Sites tab (the switch's confirm lists what is still missing); off, the board
+  has no link and a customer's link is refused. Links are the product's: the
+  manager's `<site id>.<exp>.<kind>.<mac>` over `golive:<kind>:<slug>:<site
+  id>:<exp>` (kind m 31 days, kind a an admin's 24 hours), bound to the site's
+  permanent id; the approver's `<exp>.<nonce>.<mac>` on `/order/<id>`, 14 days,
+  the nonce kept on the order and checked again under the lock. anetix.ai hands
+  the link back on EVERY call and the product checks it with the site's stage.
+  Every change to a site's order runs in `withSite` (a lock on the `sites` row).
+  `platform.orders` (uuid id, site_id, state draft/signed/activating/activated/
+  declined/void, version, facts, band, price, price_book, terms_version and
+  terms_sha256, approver, text and text_sha256, signer with `via`, signed_at,
+  signed_ip with `signed_net` (the evidence: cf, real, xff, peer), setup
+  session, payment method and card, stripe JSON, kind customer|preview,
+  from_stage, note, voided_by); a partial unique index keeps ONE open order a
+  site. `platform.terms_versions` keeps the words of each terms version at its
+  first signature, and a later signature over other words is refused (503).
+  `platform.sites` gains `billing` and `stripe_customer` (unique, one Customer a
+  site). Rules: signed is what was shown (the version and the SHA-256 of the text
+  must both match; the text carries the billing email and the learning opt-in,
+  which the terms lean on); the first card wins and any other is answered detach;
+  a customer order's answers write through to the site row; the Sites tab's facts
+  lock while an order is open (the note, approval limit and master agreement stay
+  editable; a save with unchanged facts goes through). PREVIEWS (the review of
+  2026-09-26): an admin's link makes kind preview orders that never move the
+  site's stage, never write to its facts, never show on the customer's board or
+  page, and save their card to a Stripe Customer of their own; an admin's link on
+  a customer's order is read only; a customer's first answer voids an open
+  preview and anetix.ai detaches its card. Withdraw (`POST
+  /api/admin/sites/:slug/void-order { note }`, the Sites tab) voids an open order;
+  a customer's site goes back to its stage before the order and the manager sees
+  the note. A card Stripe holds for a withdrawn order or a deleted company is
+  `orders.stripe.detach_pending`, listed on the Sites tab until stage 3 removes
+  it. Price book 1 freezes once an order is signed under it. The board's credit
+  line and out-of-credit panel and a Settings card carry the link
+  (`forBoard`, managers and admins of a demo only); signed, one line says the
+  order is in. Routes: `/api/www/golive/{view,save,approver,sign,checkout,
+  start-over,card,terms}` (the shared key), `GET|POST /api/admin/golive`, `GET
+  /api/admin/sites/:slug/golive-link|orders`, `POST .../void-order`, `GET
+  /api/c/:slug/golive` (requireManager). Tests: `scripts/test-golive.js` (52),
+  `scripts/e2e/golive.js` (99, in `run-all.sh`); with the www service up:
+  `www/scripts/e2e-golive.js` (55) and `e2e-golive-browser.js` (26).
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the

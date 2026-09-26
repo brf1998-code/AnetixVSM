@@ -360,6 +360,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
     boardUrl: boardUrl(req, co.slug),
     spend: await agent.monthlySpend(co.slug),
     credit: await selfserve.credit(co.slug),   // null unless the company came in from anetix.ai; then its balance and the top-up page
+    golive: await require("./golive").forBoard(co, req.sosRole).catch((e) => { console.error("[golive] board", e.message); return null; }),   // a demo's Go live link, managers only (src/golive.js)
     models: { list: agent.MODELS, build: (await agent.buildModelFor(co.slug, await agent.modelFor(co.slug, "build"))).model },
     role: req.sosRole,
     boot: process.env.SOS_BOOT_ID,
