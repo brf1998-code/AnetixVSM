@@ -1404,6 +1404,30 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `scripts/e2e/passkeys-browser.js` (26, Chromium's virtual authenticator,
   both servers on localhost; the command is at its top). Admin step-up for
   destructive actions still asks for the app's code.
+- **Demo requests** (2026-09-26, `src/demorequests.js`, the form in
+  `www/pages.js` request(); Brendan: "an intake form for someone who wants to
+  get a demo, and what sort of demo they want (just a pin or a call), how they
+  heard about it ... then that will come in on the pins page"). anetix.ai/request
+  (linked from the wall's pin tab, "No pin yet? Request a demo") asks name,
+  work email, company, role, phone, size, what the business makes, pin / call /
+  both (call times shown for a call), what they would like it to help with,
+  how they heard (plus who, for "someone told me"). www posts it with the
+  shared key to `POST /api/www/demo-requests`; a filled hidden field gets the
+  thank-you page and sends nothing; five an hour an address (in www's memory).
+  `platform.demo_requests` (in the backup); the same email again inside a day
+  adds to its open request (asks+1, a blank answer keeps the old one). The
+  Pins tab's first card lists them (new, call booked, and pin sent with no
+  company yet on top; the rest under Handled), a "Demo requests N new" pill
+  and the tab's count while any are new. "Make their pin" makes a pin for
+  their email (one company, 30 days by default) labelled "Name at Company",
+  ties it to the request, sets Pin sent, and shows the message to send with
+  Copy and Open in email: nothing sends mail from the platform yet. A second
+  pin while one is live is refused (409). Call booked, Done, Decline, Back to
+  new and a note. Routes: `GET /api/admin/demo-requests`, `POST
+  /api/admin/demo-requests/:id` { status?, note? }, `POST
+  /api/admin/demo-requests/:id/pin` { days? }. Tests:
+  `scripts/test-demorequests.js` (9), `scripts/e2e/demorequests-browser.js`
+  (33, both servers; the command is at its top).
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin

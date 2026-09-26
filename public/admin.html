@@ -135,6 +135,10 @@
   <section class="tabpanel" id="tab-pins">
     <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here for their email and handed to them. They enter the pin with that email, name their company and pick a password, set up an authenticator app, and land on a demo board of their own with $10 of AI credit from us, about one module and three rounds of changes. When it runs out they add more on anetix.ai through Stripe ($20 buys $10). A build that is already running when the credit runs out still finishes; the overrun is written off at their next refill. A pin works only with its email, makes one company unless you say more, and expires. Cancel one and it stops working at once; the company it already made stays.</p>
       <p style="margin:10px 0 0"><button class="primary" id="www-preview" onclick="openWwwPreview()" style="margin:0">View the pin page</button> <span class="sub">anetix.ai as a person with a pin sees it, in a new tab. A preview cannot make a company; to try the payment, make yourself a pin.</span></p></div>
+    <div class="card" id="dr-card"><h2>Demo requests <small id="dr-sub"></small></h2>
+      <p class="sub" style="margin-top:0">From the form on anetix.ai (<a id="dr-form" href="#" target="_blank" rel="noopener">anetix.ai/request</a>): who they are, the business, whether they want a pin, a call or both, and how they heard. "Make their pin" makes a pin for their email and gives you the message to send; nothing is emailed from here.</p>
+      <div id="dr-list"></div>
+      <details id="dr-closed-wrap" style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:var(--navy)">Handled <span class="sub" id="dr-closed-sub"></span></summary><div id="dr-closed" style="margin-top:8px"></div></details></div>
     <div class="card"><h2>Make a pin</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">
         <label class="sub">Who it is for<br><input id="pin-label" placeholder="e.g. Sam at Acme Wire" style="width:220px" autocomplete="off"></label>
@@ -243,6 +247,7 @@ function drawPills() {
     P.spend && { id: "spend", label: "AI spend", value: P.spend.value, level: P.spend.level, href: "#instance", title: "This month, every company, against the instance cap" },
     P.data && { id: "data", label: "Waiting on us", value: P.data.value, level: P.data.level, href: "#health", title: "Data requests: changes that need ERP data the connection does not give yet" },
     P.requests && { id: "requests", label: "Requests", value: P.requests.value, level: P.requests.level, href: "#requests", title: "Requests to Anetix: feedback about the software itself, from every board" },
+    P.demoreq && P.demoreq.open && { id: "demoreq", label: "Demo requests", value: `${P.demoreq.open} new`, level: "amber", href: "#pins", title: "People who asked for a demo on anetix.ai and have not had an answer yet" },
     P.pins && { id: "pins", label: "Self-serve", value: P.pins.value, level: P.pins.level, href: "#pins", title: "Companies that came in from anetix.ai with a pin, and whether any is out of AI credit" },
     P.isolation && { id: "isolation", label: "Isolation", value: P.isolation.value, level: P.isolation.level, href: "#instance", title: "Whether module code runs in a process of its own with a database login of its own" },
     P.edge && { id: "edge", label: "Edge", value: P.edge.value, level: P.edge.level, href: "#instance", title: "Whether a request that did not come through Cloudflare is refused" },
@@ -252,7 +257,7 @@ function drawPills() {
   const worst = (...xs) => (xs.some((x) => x && x.level === "red") ? "red" : xs.some((x) => x && x.level === "amber") ? "amber" : null);
   AdminShell.setBadge("health", { level: worst(P.data) });
   AdminShell.setBadge("requests", { n: P.requests ? P.requests.open : undefined, level: worst(P.requests) });
-  AdminShell.setBadge("pins", { n: P.pins ? P.pins.live : undefined, level: worst(P.pins) });
+  AdminShell.setBadge("pins", P.demoreq && P.demoreq.open ? { n: P.demoreq.open, level: "amber" } : { n: P.pins ? P.pins.live : undefined, level: worst(P.pins) });
   AdminShell.setBadge("accounts", { level: worst(P.signin) });
   AdminShell.setBadge("models", { level: worst(P.models) });
   AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null) });
@@ -501,6 +506,7 @@ async function reqCloseSend(id, answer) {
 // ---- access pins and self-serve companies (src/selfserve.js): who may come in from anetix.ai, and who did ----
 let PINS = null;
 async function loadPins() {
+  loadDemoReqs().catch((e) => console.error("demo requests:", e));
   const r = await fetch("/api/admin/pins", { cache: "no-store" }); if (!r.ok) return;
   PINS = await r.json();
   const live = PINS.pins.filter(p => !p.problem).length, out = PINS.companies.filter(c => c.balance_usd <= 0).length, low = PINS.companies.filter(c => c.level === "amber").length;
@@ -532,6 +538,82 @@ async function makePin() {
     <p class="sub">${j.pin.max_uses} compan${j.pin.max_uses === 1 ? "y" : "ies"} · ${j.pin.expires_at ? "expires " + new Date(j.pin.expires_at).toLocaleDateString() : "never expires"}. It stays readable on the Pins tab.</p>
     <div><button class="go" onclick="closeModal()">Done</button></div>`);
   loadPins();
+}
+// ---- demo requests from the form on anetix.ai (src/demorequests.js) ----
+let DR = null;
+const DR_WANTS = { pin: "A pin to try it", call: "A call first", both: "A pin and a call" };
+const DR_STATUS = { new: "New", pin_sent: "Pin sent", call_booked: "Call booked", done: "Done", declined: "Declined" };
+async function loadDemoReqs() {
+  const r = await fetch("/api/admin/demo-requests", { cache: "no-store" }); if (!r.ok) return;
+  DR = await r.json();
+  P.demoreq = { open: DR.open }; drawPills();
+  const www = String(DR.www_url || "https://anetix.ai").replace(/\/+$/, "");
+  const fl = document.getElementById("dr-form"); fl.href = www + "/request"; fl.textContent = www.replace(/^https?:\/\//, "") + "/request";
+  const open = DR.requests.filter(d => d.status === "new" || d.status === "call_booked" || (d.status === "pin_sent" && !d.companies));
+  const closed = DR.requests.filter(d => !open.includes(d));
+  document.getElementById("dr-sub").textContent = DR.requests.length ? `${DR.open} new${open.length > DR.open ? `, ${open.length - DR.open} in hand` : ""}` : "none yet";
+  document.getElementById("dr-closed-sub").textContent = closed.length ? `(${closed.length})` : "(none)";
+  document.getElementById("dr-list").innerHTML = open.length ? open.map(drCard).join("") : '<p class="sub">Nothing waiting. New requests land here.</p>';
+  document.getElementById("dr-closed").innerHTML = closed.length ? closed.map(drCard).join("") : '<p class="sub">None yet.</p>';
+}
+function drCard(d) {
+  const tone = d.status === "new" ? "warn" : d.status === "declined" ? "sub" : "ok";
+  const pin = d.pin_shown ? `<b style="font-family:ui-monospace,monospace">${esc(d.pin_shown)}</b> ${d.pin_revoked ? "(cancelled)" : d.pin_uses >= d.pin_max ? "(used)" : d.pin_expires && new Date(d.pin_expires) < new Date() ? "(expired)" : "(not used yet)"}` : "";
+  const line = (k, v) => v ? `<div><span class="sub" style="display:inline-block;min-width:110px">${k}</span> ${v}</div>` : "";
+  const btn = (st, label) => d.status === st ? "" : `<button class="quiet" onclick="drStatus(${d.id},'${st}')">${label}</button>`;
+  return `<div class="dr" data-dr="${d.id}" style="border:1px solid var(--line,#e2e6ee);border-radius:10px;padding:10px 12px;margin:8px 0">
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><b>${esc(d.name)}</b>${d.role ? `, ${esc(d.role)}` : ""} at <b>${esc(d.company)}</b>
+      <span class="${tone}" style="font-weight:700;margin-left:6px">${DR_STATUS[d.status] || esc(d.status)}</span>${d.asks > 1 ? ` <small class="sub">asked ${d.asks} times</small>` : ""}</div>
+      <small class="sub">${day(d.created_at)}${d.handled_by ? ` · ${esc(d.handled_by)}` : ""}</small></div>
+    <div style="margin-top:6px;font-size:14px">
+      ${line("Wants", `<b>${DR_WANTS[d.wants] || esc(d.wants)}</b>`)}
+      ${line("Email", `<a href="mailto:${esc(d.email)}">${esc(d.email)}</a>`)}${line("Phone", esc(d.phone))}
+      ${line("Good times", esc(d.call_times))}${line("Size", d.size ? esc(d.size) + " people" : "")}${line("Makes", esc(d.makes))}
+      ${line("Would like", d.goal ? esc(d.goal).replace(/\n/g, "<br>") : "")}
+      ${line("Heard from", d.heard ? esc(d.heard) + (d.heard_more ? `: ${esc(d.heard_more)}` : "") : esc(d.heard_more))}
+      ${line("Pin", pin)}${line("Company", d.companies ? d.companies.split(", ").map(c => `<a href="#companies/${esc(c)}">${esc(c)}</a>`).join(", ") : "")}
+      ${line("Note", d.note ? esc(d.note) : "")}
+    </div>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="${d.pin_id ? "quiet" : "primary"}" style="margin:0" onclick="drPin(${d.id})">${d.pin_id ? "Make a new pin" : "Make their pin"}</button>
+      ${btn("call_booked", "Call booked")}${btn("done", "Done")}${btn("declined", "Decline")}${d.status !== "new" ? btn("new", "Back to new") : ""}
+      <button class="quiet" onclick="drNote(${d.id})">${d.note ? "Edit note" : "Note"}</button></div></div>`;
+}
+async function drStatus(id, status) {
+  if (status === "declined" && !confirm("Decline this request? Nothing is sent to them; it moves to Handled.")) return;
+  const j = await post(`/api/admin/demo-requests/${id}`, { status }); if (j.ok) loadDemoReqs();
+}
+function drNote(id) {
+  const d = DR.requests.find(x => x.id === id) || {};
+  openModal(`<h2>Note on ${esc(d.name)}</h2><textarea id="dr-note" rows="4" style="width:100%" placeholder="e.g. call Tuesday 2pm, wants to see picking">${esc(d.note || "")}</textarea>
+    <div><button class="primary" onclick="drNoteSave(${id})">Save</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+  setTimeout(() => { const el = document.getElementById("dr-note"); if (el) el.focus(); }, 50);
+}
+async function drNoteSave(id) {
+  const j = await post(`/api/admin/demo-requests/${id}`, { note: document.getElementById("dr-note").value }); if (j.ok) { closeModal(); loadDemoReqs(); }
+}
+function drPin(id) {
+  const d = DR.requests.find(x => x.id === id) || {};
+  openModal(`<h2>A pin for ${esc(d.name)} at ${esc(d.company)}</h2><p class="sub">It works only with <b>${esc(d.email)}</b> and makes one company.</p>
+    <label class="sub">Good for (days)<br><input id="drp-days" type="number" min="0" max="3650" value="30" style="width:90px" title="0 = never expires"></label>
+    <div><button class="primary" onclick="drPinMake(${id})">Make the pin</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+}
+async function drPinMake(id) {
+  const j = await post(`/api/admin/demo-requests/${id}/pin`, { days: Number(document.getElementById("drp-days").value) });
+  if (!j.ok) return;
+  const d = DR.requests.find(x => x.id === id) || {};
+  const mailto = `mailto:${encodeURIComponent(d.email)}?subject=${encodeURIComponent(j.subject)}&body=${encodeURIComponent(j.message)}`;
+  openModal(`<h2>${esc(d.name)}'s pin</h2>
+    <p style="font-size:30px;letter-spacing:.08em;font-family:ui-monospace,monospace;text-align:center;margin:10px 0"><b id="drp-shown">${esc(j.pin.shown)}</b></p>
+    <p class="sub">Send them this. It stays readable on the request and in Pins below.</p>
+    <textarea id="drp-msg" rows="10" style="width:100%;font-size:13px">${esc(j.message)}</textarea>
+    <div><button class="primary" onclick="drCopy()">Copy the message</button><a class="quiet" href="${esc(mailto)}" style="display:inline-block;padding:8px 12px">Open in email</a><button class="go" onclick="closeModal()">Done</button></div>`);
+  loadPins();
+}
+async function drCopy() {
+  const el = document.getElementById("drp-msg");
+  try { await navigator.clipboard.writeText(el.value); } catch { el.select(); document.execCommand("copy"); }
+  const b = event && event.target; if (b) { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy the message"; }, 1500); }
 }
 // anetix.ai behind the wall, as a pin holder sees it: a ten minute key from the product, opened in a new tab (the
 // tab is opened before the fetch so a popup blocker lets it through)

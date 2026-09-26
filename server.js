@@ -44,6 +44,7 @@ async function main() {
   await require("./src/campaign").init();    // the test campaign: proposed by the AI, approved by the manager, run on the test floor, a step before the deploy gate
   await require("./src/datawall").init();    // the data wall: whether the AI may read a company's data, a switch per company on /admin (src/datawall.js)
   await require("./src/selfserve").init();   // self-serve companies from anetix.ai: access pins, the credit ledger, the credit gate (src/selfserve.js)
+  await require("./src/demorequests").init();   // demo requests from anetix.ai's form, on the Pins tab (src/demorequests.js)
   await require("./src/sample").init();      // sample data for a demo's tools: the AI fills a tool with a made-up week, and clears exactly those rows (src/sample.js)
 
   const app = express();
@@ -83,6 +84,7 @@ async function main() {
   // shared key SOS_WWW_KEY rather than a session (src/selfserve.js). It calls the public address, so the edge check
   // above still applies to it.
   app.use(require("./src/selfserve").wwwRouter);
+  app.use(require("./src/demorequests").wwwRouter);   // POST /api/www/demo-requests: anetix.ai's request form, the shared key
 
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
@@ -125,6 +127,7 @@ async function main() {
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
   app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
+  app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
   app.use(require("./src/sample").router);    // /api/c/:slug/modules/:mod/sample*: a demo's sample data (demo companies only)
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build

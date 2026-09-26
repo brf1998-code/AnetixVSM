@@ -474,7 +474,7 @@ adminRouter.post("/api/admin/companies/:slug/credit", requireAdmin, json, guard(
 }));
 
 module.exports = {
-  init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL,
+  init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL, keyOk,
   creditToken, previewToken, topupUrl, wwwOrigins, loginCors,
   pinEmailProblem,
   pinRow, selfServeRow, spentSince, credit, assertCredit, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
