@@ -134,13 +134,15 @@ const publicRow = (a) => ({
   enrolled: Boolean(a.enrolled), locked: Boolean(a.locked_until && new Date(a.locked_until) > new Date()),
   recovery_left: a.recovery_left == null ? null : Number(a.recovery_left), last_sign_in: a.last_sign_in || null, created_at: a.created_at,
   devices: a.devices == null ? 0 : Number(a.devices),
+  passkeys: a.passkeys == null ? 0 : Number(a.passkeys),
 });
 const LIST_SQL = `
   SELECT a.*,
     EXISTS (SELECT 1 FROM platform.account_factors f WHERE f.account_id=a.id AND f.verified_at IS NOT NULL) AS enrolled,
     (SELECT count(*) FROM platform.account_recovery_codes r WHERE r.account_id=a.id AND r.used_at IS NULL) AS recovery_left,
-    (SELECT max(at) FROM platform.auth_events e WHERE e.account_id=a.id AND e.event IN ('login_ok','recovery_used','break_glass','signin_trusted_device')) AS last_sign_in,
-    (SELECT count(*) FROM platform.admin_devices d WHERE d.account_id=a.id AND d.removed_at IS NULL AND d.expires_at > now() AND d.generation = a.generation) AS devices
+    (SELECT max(at) FROM platform.auth_events e WHERE e.account_id=a.id AND e.event IN ('login_ok','recovery_used','break_glass','signin_trusted_device','login_passkey')) AS last_sign_in,
+    (SELECT count(*) FROM platform.admin_devices d WHERE d.account_id=a.id AND d.removed_at IS NULL AND d.expires_at > now() AND d.generation = a.generation) AS devices,
+    (SELECT count(*) FROM platform.account_passkeys k WHERE k.account_id=a.id AND k.removed_at IS NULL) AS passkeys
   FROM platform.accounts a`;
 async function list() { return (await q(`${LIST_SQL} WHERE a.role='admin' ORDER BY a.id`)).rows.map(publicRow); }
 // The manager accounts of one company (2026-09-25: a self-serve company's manager signs in with an account and an
@@ -385,6 +387,7 @@ async function resetFactor(id, by, ip) {
   await q("DELETE FROM platform.account_factors WHERE account_id=$1", [a.id]);
   await q("DELETE FROM platform.account_recovery_codes WHERE account_id=$1", [a.id]);
   await devices.removeAll(a.id);   // a new factor means trusting each computer again
+  await require("./passkeys").removeAll(a.id);   // and a reset is for a lost or taken device: its passkeys go too
   await q("UPDATE platform.accounts SET generation=generation+1, failed_count=0, locked_until=NULL, updated_at=now() WHERE id=$1", [a.id]);
   forget(a.id);
   await event("factor_reset", { account_id: a.id, login: a.login, ip, detail: { by } });

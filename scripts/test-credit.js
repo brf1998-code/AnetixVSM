@@ -54,5 +54,14 @@ t("what a manager reads never carries the raw message, a dash, or blame", ["cred
   t("no balance entered, no slope", c.project({ anchor: null, daily, now }).slope === undefined);
 }
 
+// the meter (2026-09-26): what the API sent back against what the features filed
+{
+  const w = c.withMeter({ spentSince: 80.67, daily: [{ day: "2026-09-25", usd: 30 }, { day: "2026-09-26", usd: 5 }], meterStart: "2026-09-26T16:00:00Z", meteredSince: 9, recordedSince: 5, meteredDaily: [{ day: "2026-09-26", usd: 9 }] });
+  t("what the meter saw beyond the features is added to the spend", Math.abs(w.spentSince - 84.67) < 1e-9 && w.unrecorded === 4, w);
+  t("from the meter's first day a day counts the larger of the two; days before stay as filed", w.daily.find((d) => d.day === "2026-09-26").usd === 9 && w.daily.find((d) => d.day === "2026-09-25").usd === 30, w.daily);
+  const same = c.withMeter({ spentSince: 10, daily: [], meterStart: "2026-09-26T16:00:00Z", meteredSince: 3, recordedSince: 4, meteredDaily: [] });
+  t("a feature that filed more than the meter saw (a price table differs) never lowers the spend", same.spentSince === 10 && same.unrecorded === 0, same);
+  t("no meter yet: nothing changes", c.withMeter({ spentSince: 7, daily: [{ day: "x", usd: 1 }], meterStart: null }).spentSince === 7);
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

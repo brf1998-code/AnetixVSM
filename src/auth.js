@@ -464,13 +464,9 @@ async function loginHandler(req, res) {
         return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code) });
       }
       loginFails.delete(ip);
-      const manager = r.account.role === "manager";
-      const set = [manager
-        ? cookieHeader(req, signManager(r.account.id, r.account.company, r.account.generation, null, now), maxAgeFor("manager", now, now))
-        : cookieHeader(req, signAdmin(r.account.id, r.account.generation, null, now), maxAgeFor("admin", now, now))];
-      if (r.device) set.push(devices.cookieHeader(req, `${r.device.id}.${r.device.token}`, devices.DAYS * 86400));
-      res.set("Set-Cookie", set);
-      return res.json({ ok: true, role: manager ? "manager" : "admin", company: manager ? r.account.company : null, enroll: r.enroll, enroll_url: manager && r.enroll ? `/c/${r.account.company}/enroll` : undefined, trusted: Boolean(r.trusted), remembered: Boolean(r.device) });
+      const extra = r.device ? [devices.cookieHeader(req, `${r.device.id}.${r.device.token}`, devices.DAYS * 86400)] : [];
+      const out = startAccountSession(req, res, r.account, { enroll: r.enroll, extraCookies: extra, now });
+      return res.json({ ...out, trusted: Boolean(r.trusted), remembered: Boolean(r.device) });
     }
     let session = await sessionFor(password, company);
     if (session && session.refused_shared) { await accounts.event("legacy_admin_refused", { ip }); session = null; }
@@ -486,6 +482,17 @@ async function loginHandler(req, res) {
     res.set("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, now, now)));
     res.json({ ok: true, role: session.role, company: session.company === ALL ? null : session.company });
   } catch (e) { res.status(500).json({ error: e.message }); }
+}
+
+// The session a named account gets, however it proved who it is (password and code here, a passkey in
+// src/passkeys.js): the cookie, and the answer the sign-in pages act on.
+function startAccountSession(req, res, account, { enroll = false, extraCookies = [], now = Date.now() } = {}) {
+  const manager = account.role === "manager";
+  const set = [manager
+    ? cookieHeader(req, signManager(account.id, account.company, account.generation, null, now), maxAgeFor("manager", now, now))
+    : cookieHeader(req, signAdmin(account.id, account.generation, null, now), maxAgeFor("admin", now, now)), ...extraCookies];
+  res.set("Set-Cookie", set);
+  return { ok: true, role: manager ? "manager" : "admin", company: manager ? account.company : null, enroll: Boolean(enroll), enroll_url: manager && enroll ? `/c/${account.company}/enroll` : undefined };
 }
 
 // Signing out of a named account (an admin, a demo's manager) lands on the account sign-in, not on the company
@@ -506,7 +513,7 @@ async function loginMode(slug) {
   return row && !row.floor_hash && !row.manager_hash && !row.legacy_login ? "account" : "password";
 }
 
-module.exports = {
+module.exports = { startAccountSession,
   middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
   setPasswords, accountsOnly, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,

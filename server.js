@@ -27,6 +27,7 @@ const page = (name) => path.join(__dirname, "public", name);
 async function main() {
   await initPlatformSchema();
   await accounts.init();      // named admin accounts, their authenticators and recovery codes, the sign-in log (src/accounts.js)
+  await require("./src/passkeys").init();   // passkeys: sign in with an email and Face ID, a fingerprint or the device PIN (src/passkeys.js); after accounts, whose table it points at
   await require("./src/devices").init();   // trusted admin devices: "remember this computer", the code skipped at sign-in for 30 days (src/devices.js)
   await record.init();   // the interaction record: insert-only, what everyone said and decided
   await people.init();        // operator identity: names and PINs per company
@@ -68,6 +69,10 @@ async function main() {
   // addresses and nothing else; any other origin gets no CORS headers and the browser refuses to read the answer.
   app.options("/login", selfserve.loginCors);
   app.post("/login", selfserve.loginCors, express.json(), auth.loginHandler);
+  // a passkey sign-in (src/passkeys.js): the same CORS as /login, since anetix.ai's wall offers it too
+  app.options(["/login/passkey/options", "/login/passkey"], selfserve.loginCors);
+  app.post("/login/passkey/options", selfserve.loginCors, express.json(), require("./src/passkeys").beginSignIn);
+  app.post("/login/passkey", selfserve.loginCors, express.json({ limit: "64kb" }), require("./src/passkeys").finishSignIn);
   app.get("/logout", auth.logoutHandler);
   // A stand-in ERP for the showroom: SAP-shaped OData answers about the paper
   // line's stock, so a demo company's erp connection has something to talk
@@ -113,6 +118,7 @@ async function main() {
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
   app.use(accounts.router);  // /api/admin/accounts*: the admin accounts, authenticator setup, sign out everywhere
+  app.use(require("./src/passkeys").router);   // /api/me/passkeys*: a named account's own passkeys (src/passkeys.js)
   app.use(intake.router);    // /api/c/:slug/intakes, /api/intakes/*, /api/attachments/* (before platformApi: the attach route parses a bigger body)
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
@@ -145,7 +151,8 @@ async function main() {
   if (swept) console.log(`[campaign] ${swept} campaign(s) that were running at the restart marked failed`);
   require("./src/campaign").startWatching();   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
-  for (const m of (await q("SELECT company, name, live_version FROM platform.modules WHERE live_version IS NOT NULL")).rows) {
+  // (only ones never attempted: a failed drawing is not paid for again on every restart; Diagrams on the board redraws on demand)
+  for (const m of (await q("SELECT company, name, live_version FROM platform.modules m WHERE live_version IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform.diagrams d WHERE d.company=m.company AND d.module=m.name AND d.version=m.live_version)")).rows) {
     diagrams.generate(m.company, m.name, m.live_version).catch((e) => console.error(`diagrams ${m.company}/${m.name}:`, e.message));
   }
 

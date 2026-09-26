@@ -17,7 +17,8 @@
   select { font-family:inherit; font-size:14px; border:1px solid var(--line); border-radius:7px; padding:8px 10px; max-width:100%; min-height:38px; margin:0 6px 6px 0; vertical-align:middle; }
   a { color:var(--navy); }
   a.btn, button { display:inline-block; border:none; border-radius:7px; padding:8px 12px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; margin:8px 6px 0 0; min-height:36px; text-decoration:none; line-height:20px; }
-  .primary { background:var(--navy); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); }
+  .primary { background:var(--navy); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); } .go { background:var(--navy); color:#fff; }
+  table.acc { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; } table.acc th, table.acc td { text-align:left; padding:6px 8px 6px 0; border-top:1px solid var(--line); vertical-align:middle; } table.acc th { color:var(--steel); font-weight:600; font-size:12px; border-top:none; } table.acc button { margin:0; }
   label.sw { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line); cursor:pointer; }
   label.sw:first-of-type { border-top:none; }
   label.sw input { width:18px; height:18px; margin-top:2px; flex:none; }
@@ -35,10 +36,16 @@
     #print-sign img { width:440px; height:440px; }
   }
 </style>
+<script src="/assets/passkey.js"></script>
 </head>
 <body>
   <div class="band"><h1>Settings <small id="coname" style="font-size:13px;font-weight:400;opacity:.85"></small></h1><div class="sub"><a id="back" href="#">Back to the improvement board</a></div></div>
   <div class="wrap">
+    <div class="card" id="pk-card" style="display:none">
+      <h2>Your sign-in</h2>
+      <div class="sub">Passkeys on your account. Sign in with your email and Face ID, a fingerprint or the device's PIN.</div>
+      <div id="pk-panel"></div>
+    </div>
     <div class="card">
       <h2>People</h2>
       <div class="sub">Who works here, with a short PIN each, so a request comes back to the person who made it and the board says who asked and who approved.</div>
@@ -168,6 +175,8 @@ async function copyLink() {
   setTimeout(() => { b.textContent = "Copy link"; }, 1500);
 }
 load();
+// a manager signed in with their own account (src/passkeys.js); a shared password's session has no passkeys, and the card stays hidden
+if (window.Passkey) { const pk = document.getElementById("pk-panel"); Passkey.panel(pk).then(() => { if (pk.style.display !== "none") document.getElementById("pk-card").style.display = ""; }).catch(() => {}); }
 </script>
 <script src="/assets/feedback-widget.js" data-module="platform"></script>
 </body>

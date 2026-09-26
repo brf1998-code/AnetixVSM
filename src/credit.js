@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS platform.ai_credit (
   noted_by    TEXT,
   noted_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );`;
-async function init() { await q(SCHEMA); }
+async function init() { await q(SCHEMA); await require("./agent").initMeter(); }
 
 // ---- pure ------------------------------------------------------------------------------------------
 // anchor: { balance_usd, noted_at, autofill } or null; spentSince: platform spend since the anchor;
@@ -99,11 +99,34 @@ const SPEND = (where) => `
   UNION ALL SELECT p.created_at, p.cost_usd FROM platform.proposals p WHERE ${where.replace(/created_at/g, "p.created_at")}
   UNION ALL SELECT created_at, cost_usd FROM platform.reviews WHERE ${where}
   UNION ALL SELECT (brand->>'built_at')::timestamptz, (brand->>'cost_usd')::numeric FROM platform.companies WHERE brand IS NOT NULL AND brand->>'built_at' IS NOT NULL AND ${where.replace(/created_at/g, "(brand->>'built_at')::timestamptz")}
-  UNION ALL SELECT created_at, cost_usd FROM platform.ai_usage WHERE ${where}`;
+  UNION ALL SELECT created_at, cost_usd FROM platform.ai_usage WHERE ${where}
+  UNION ALL SELECT created_at, cost_usd FROM platform.diagrams WHERE ${where}`;   // 2026-09-26: the diagrams drawn after every deploy were missing here ($19.85 in six days), and the key ran out while this said about $14 was left
+// Pure: the meter (platform.ai_calls, every answer the API sent) against what the features filed. From the day the meter
+// started, a day counts the larger of the two, and whatever the meter saw beyond the features since the anchor is added
+// to the spend. -> { spentSince, daily, unrecorded }
+function withMeter({ spentSince, daily, meterStart, meteredSince = 0, recordedSince = 0, meteredDaily = [] }) {
+  if (!meterStart) return { spentSince, daily, unrecorded: 0 };
+  const unrecorded = Math.max(0, Number(meteredSince) - Number(recordedSince));
+  const startDay = new Date(meterStart).toISOString().slice(0, 10);
+  const byDay = new Map((daily || []).map((d) => [d.day, Number(d.usd || 0)]));
+  for (const m of meteredDaily) if (m.day >= startDay) byDay.set(m.day, Math.max(byDay.get(m.day) || 0, Number(m.usd || 0)));
+  return { spentSince: Number(spentSince) + unrecorded, daily: [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([day, usd]) => ({ day, usd })), unrecorded: round2(unrecorded) };
+}
 async function status(now = new Date()) {
   const anchor = (await q("SELECT balance_usd, autofill, note, noted_by, noted_at FROM platform.ai_credit ORDER BY id DESC LIMIT 1")).rows[0] || null;
-  const spentSince = anchor ? Number((await q(`SELECT COALESCE(SUM(usd),0) AS usd FROM (${SPEND("created_at >= $1")}) s`, [anchor.noted_at])).rows[0].usd) : 0;
-  const daily = (await q(`SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, SUM(usd)::float AS usd FROM (${SPEND("created_at >= $1")}) s GROUP BY 1 ORDER BY 1`, [new Date(now.getTime() - 30 * DAY)])).rows;
+  const recordedAll = anchor ? Number((await q(`SELECT COALESCE(SUM(usd),0) AS usd FROM (${SPEND("created_at >= $1")}) s`, [anchor.noted_at])).rows[0].usd) : 0;
+  const recordedDaily = (await q(`SELECT to_char(date_trunc('day', created_at), 'YYYY-MM-DD') AS day, SUM(usd)::float AS usd FROM (${SPEND("created_at >= $1")}) s GROUP BY 1 ORDER BY 1`, [new Date(now.getTime() - 30 * DAY)])).rows;
+  // the meter's view, from the later of the anchor and the meter's first call
+  const meterStart = (await q("SELECT min(at) AS at FROM platform.ai_calls").catch(() => ({ rows: [{}] }))).rows[0].at || null;
+  let m = { spentSince: recordedAll, daily: recordedDaily, unrecorded: 0 };
+  if (meterStart) {
+    const from = anchor && new Date(anchor.noted_at) > new Date(meterStart) ? anchor.noted_at : meterStart;
+    const meteredSince = anchor ? Number((await q("SELECT COALESCE(SUM(cost_usd),0) AS usd FROM platform.ai_calls WHERE at >= $1", [from])).rows[0].usd) : 0;
+    const recordedSince = anchor ? Number((await q(`SELECT COALESCE(SUM(usd),0) AS usd FROM (${SPEND("created_at >= $1")}) s`, [from])).rows[0].usd) : 0;
+    const meteredDaily = (await q("SELECT to_char(date_trunc('day', at), 'YYYY-MM-DD') AS day, SUM(cost_usd)::float AS usd FROM platform.ai_calls WHERE at >= $1 GROUP BY 1 ORDER BY 1", [new Date(now.getTime() - 30 * DAY)])).rows;
+    m = withMeter({ spentSince: recordedAll, daily: recordedDaily, meterStart, meteredSince, recordedSince, meteredDaily });
+  }
+  const spentSince = m.spentSince, daily = m.daily;
   // the last time the service itself failed, and whether any AI call has worked since
   const ev = (await q("SELECT detail, created_at FROM platform.events WHERE kind='ai_unavailable' ORDER BY id DESC LIMIT 1")).rows[0];
   let outage = null;
@@ -111,7 +134,11 @@ async function status(now = new Date()) {
     const later = (await q(`SELECT 1 FROM (${SPEND("created_at > $1")}) s WHERE usd > 0 LIMIT 1`, [ev.created_at])).rows.length > 0;
     outage = { at: ev.created_at, kind: (ev.detail || {}).kind || "credit", where: (ev.detail || {}).where || null, cleared: later || (anchor && new Date(anchor.noted_at) > new Date(ev.created_at)) };
   }
-  return project({ anchor, spentSince, daily, now, outage });
+  const out = project({ anchor, spentSince, daily, now, outage });
+  out.unrecorded_usd = m.unrecorded;
+  out.metered_since = meterStart;
+  if (m.unrecorded >= 0.5) out.line += ` That includes $${m.unrecorded.toFixed(2)} the meter saw that no feature filed as its own spend.`;
+  return out;
 }
 async function setBalance({ balance_usd, autofill, note, by }) {
   const n = Number(balance_usd);
@@ -129,4 +156,4 @@ async function noteFailure(message, where) {
   return kind;
 }
 
-module.exports = { init, SCHEMA, project, slopeOf, classify, plain, status, setBalance, noteFailure };
+module.exports = { init, SCHEMA, project, slopeOf, classify, plain, status, setBalance, noteFailure, withMeter };

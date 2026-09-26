@@ -20,10 +20,11 @@
   .qr code, .codes { font-family:ui-monospace,monospace; font-size:14px; }
   .codes { columns:2; margin:10px 0; line-height:1.9; }
   .note { margin-top:8px; padding:9px 12px; border-radius:9px; background:var(--fog); font-size:13px; border-left:4px solid var(--steel); }
-  .note.bad { border-left-color:var(--red); }
+  .note.bad { border-left-color:var(--red); } .note.good { border-left-color:var(--green); }
   .fail { color:var(--red); font-weight:700; }
   a { color:var(--navy); }
 </style>
+<script src="/assets/passkey.js"></script>
 </head>
 <body>
   <div class="card" id="card"><p class="sub">One moment.</p></div>
@@ -66,9 +67,26 @@ async function verify() {
   document.getElementById("body").innerHTML = `<p><b>Done. Now save these ten recovery codes</b> somewhere that is not your phone (a password manager, a printed page in a drawer).</p>
     <p class="sub" style="margin-top:4px">Each one signs you in once in place of the app's code, for the day the phone is lost. They are shown this once and never again.</p>
     <div class="codes">${j.recovery_codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
-    <div><button class="quiet" id="copy">Copy them</button><a id="dl" download="anetix-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="location.href='/c/${esc(SLUG)}/'">I have saved them, go to the board</button></div>`;
+    <div><button class="quiet" id="copy">Copy them</button><a id="dl" download="anetix-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="offerPasskey()">I have saved them</button></div>`;
   document.getElementById("dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
   document.getElementById("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(text);
+}
+// The last step (2026-09-26): a passkey, so the next sign-in is the email and Face ID, a fingerprint or the device's
+// PIN, with the password and the app kept as the way in from any other device (src/passkeys.js).
+async function offerPasskey() {
+  const board = `/c/${esc(SLUG)}/`;
+  if (!window.Passkey || !Passkey.supported()) { location.href = board; return; }
+  const here = await Passkey.platform();
+  document.getElementById("body").innerHTML = `<p><b>One more, and it makes every sign-in easier: add a passkey.</b></p>
+    <p class="sub" style="margin-top:4px">Next time you type your email and ${here ? "use Face ID, your fingerprint or this device's PIN" : "use your phone or this computer's lock"}, with no password and no code. It is tied to Anetix's own address, so a look-alike page cannot use it. Your password and the app still work from any other device.</p>
+    <div id="pkmsg"></div>
+    <div><button class="go" id="pkadd">Add a passkey</button><button class="quiet" onclick="location.href='${board}'">Not now, go to the board</button></div>`;
+  document.getElementById("pkadd").onclick = async () => {
+    const j = await Passkey.add();
+    const msg = document.getElementById("pkmsg");
+    if (j.ok) { msg.innerHTML = `<div class="note good" style="margin:10px 0">Passkey added (${esc(j.passkey.label)}). Next time: your email, then the passkey.</div>`; document.getElementById("pkadd").style.display = "none"; setTimeout(() => { location.href = board; }, 1600); return; }
+    msg.innerHTML = j.cancelled ? `<p class="sub" style="margin:10px 0">No passkey was made. Try again, or go on without one.</p>` : `<div class="note bad" style="margin:10px 0">${esc(j.error)}</div>`;
+  };
 }
 load();
 </script>

@@ -486,26 +486,32 @@ async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, 
       }
     }
   } catch (e) {
-    if (killed) { const err = new Error("build aborted by the manager"); err.aborted = true; err.costUsd = costUsd || estimate; throw err; }
+    if (signal) signal.removeEventListener("abort", onKill);
+    if (killed || !aborted) await meter({ company, kind: "agent", model, costUsd: Math.max(costUsd || 0, estimate), sdkCostUsd: costUsd || null, ok: false });
+    if (killed) { const err = new Error("build aborted by the manager"); err.aborted = true; err.costUsd = Math.max(costUsd || 0, estimate); throw err; }
     if (!aborted) {
       const lines = stderrTail.trim().split("\n").filter(Boolean);
       const detail = lines.slice(-3).join(" | ");
       const stage = !initSeen ? "the agent process died before it started" : seen < 3 ? "the agent process died right after starting" : `after ${seen} messages`;
       const said = text.trim() ? `; the model's last words: "${text.trim().slice(-200)}"` : "";
       const err = new Error(`build agent failed: ${e.message} (${stage}; model ${model}${detail ? `; ${detail}` : "; nothing on stderr"}${said})`);
-      err.costUsd = costUsd || estimate;
+      err.costUsd = Math.max(costUsd || 0, estimate);
       err.diag = { model, modelsSeen: [...modelsSeen], effort: AGENT_EFFORT, messages: seen, initSeen, stderr: stderrTail.slice(-4000), lastText: text.slice(-600), promptChars: prompt.length, systemChars: (system || "").length };
       throw err;
     }
   }
   if (signal) signal.removeEventListener("abort", onKill);
-  if (killed) { const e = new Error("build aborted by the manager"); e.aborted = true; e.costUsd = costUsd || estimate; throw e; }
+  const spent = Math.max(costUsd || 0, estimate);
+  await meter({ company, kind: "agent", model, costUsd: spent, sdkCostUsd: costUsd || null, ok: !killed && !aborted });
+  if (killed) { const e = new Error("build aborted by the manager"); e.aborted = true; e.costUsd = spent; throw e; }
   if (aborted) {
     const e = new Error(`build stopped: run cost passed the $${cap.toFixed(2)} cap for this run`);
-    e.costUsd = costUsd || estimate;
+    e.costUsd = spent;
     throw e;
   }
-  return { text: text.trim(), costUsd: costUsd || estimate, modelsSeen: [...modelsSeen] };
+  // our own count is kept beside the SDK's: when its price list is behind on a new model it reports too little
+  if (costUsd && estimate > costUsd * 1.2) console.error(`[meter] agent run on ${model}: the SDK reported $${costUsd.toFixed(4)}, our own count $${estimate.toFixed(4)}; the larger is filed`);
+  return { text: text.trim(), costUsd: spent, modelsSeen: [...modelsSeen] };
 }
 
 // One-shot structured call (no file tools) for proposals/classification/verdicts.
@@ -549,6 +555,7 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
       else throw e;
     }
   }
+  await meter({ company, kind: `structured:${toolName}`, model, usage: resp.usage, costUsd: costOf(model, resp.usage || {}), ok: resp.stop_reason !== "max_tokens" });
   let data;
   const use = resp.content.find((b) => b.type === "tool_use");
   if (use) data = use.input;
@@ -558,9 +565,7 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
     if (m) { try { data = JSON.parse(m[0]); } catch { /* fall through */ } }
     if (!data) throw new Error(`model did not return structured output (stop_reason ${resp.stop_reason})`);
   }
-  const usage = resp.usage || {};
-  const price = priceOf(model);
-  const costUsd = (usage.input_tokens || 0) * price.inTok + (usage.output_tokens || 0) * price.outTok;
+  const costUsd = costOf(model, resp.usage || {});
   return { data, costUsd, stopReason: resp.stop_reason };
 }
 
@@ -576,11 +581,41 @@ async function runChat({ model, system, messages, maxTokens, company }) {
   const Anthropic = require("@anthropic-ai/sdk");
   const client = new Anthropic();
   const resp = await client.messages.create({ model, max_tokens: maxTokens || 1500, system, messages });
+  await meter({ company, kind: "chat", model, usage: resp.usage, costUsd: costOf(model, resp.usage || {}) });
   const text = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-  const usage = resp.usage || {};
-  const price = priceOf(model);
-  const costUsd = (usage.input_tokens || 0) * price.inTok + (usage.output_tokens || 0) * price.outTok;
-  return { text, costUsd };
+  return { text, costUsd: costOf(model, resp.usage || {}) };
+}
+
+// ---- the meter (2026-09-26) --------------------------------------------------------------------------------------------
+// Every answer the Anthropic API sends back is written here the moment it arrives, whatever the feature does with it
+// afterwards (a parse that fails, a run that throws, a caller that forgets to file its spend). The features' own tables
+// stay the record of what each thing cost; this is the check on them. Why: the key ran out on 2026-09-26 while the
+// glide slope still showed about $14, because the diagrams drawn after every deploy ($19.85 since the 9/20 anchor)
+// were filed in platform.diagrams, which no spend total read. src/credit.js counts the larger of the two.
+const METER_SCHEMA = `
+CREATE TABLE IF NOT EXISTS platform.ai_calls (
+  id          BIGSERIAL PRIMARY KEY,
+  at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company     TEXT,
+  kind        TEXT NOT NULL,             -- structured:<tool> | chat | agent
+  model       TEXT,
+  input_tokens  INTEGER, output_tokens INTEGER, cache_read INTEGER, cache_write INTEGER,
+  cost_usd    NUMERIC(12,6) NOT NULL DEFAULT 0,
+  sdk_cost_usd NUMERIC(12,6),            -- agent runs: what the agent SDK reported, beside our own count
+  ok          BOOLEAN NOT NULL DEFAULT true
+);
+CREATE INDEX IF NOT EXISTS ai_calls_at ON platform.ai_calls (at);`;
+async function initMeter() { await q(METER_SCHEMA); }
+function costOf(model, u = {}) {
+  const p = priceOf(model);
+  return (u.input_tokens || 0) * p.inTok + (u.output_tokens || 0) * p.outTok + (u.cache_read_input_tokens || 0) * p.inTok * 0.1 + (u.cache_creation_input_tokens || 0) * p.inTok * 1.25;
+}
+async function meter({ company, kind, model, usage, costUsd, sdkCostUsd, ok = true }) {
+  if (fakeMode()) return;
+  const u = usage || {};
+  await q(`INSERT INTO platform.ai_calls (company, kind, model, input_tokens, output_tokens, cache_read, cache_write, cost_usd, sdk_cost_usd, ok) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [company || null, kind, model || null, u.input_tokens || null, u.output_tokens || null, u.cache_read_input_tokens || null, u.cache_creation_input_tokens || null, Number(costUsd || 0), sdkCostUsd == null ? null : Number(sdkCostUsd), ok])
+    .catch((e) => console.error("[meter]", e.message));
 }
 
 // Spend that is not a build run, proposal, review or brand build (chat agents).
@@ -597,7 +632,8 @@ async function monthlySpend(company) {
                       WHERE p.created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR f.company=$1)),0)
          + COALESCE((SELECT SUM(cost_usd) FROM platform.reviews WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0)
          + COALESCE((SELECT SUM((brand->>'cost_usd')::numeric) FROM platform.companies WHERE brand IS NOT NULL AND (brand->>'built_at')::timestamptz >= date_trunc('month', now()) AND ($1::text IS NULL OR slug=$1)),0)
-         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0) AS usd`, [company || null])).rows[0];
+         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0)
+         + COALESCE((SELECT SUM(cost_usd) FROM platform.diagrams WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0) AS usd`, [company || null])).rows[0];
   const usd = Number(r.usd || 0);
   // For one company the cap that counts is its own (set on the admin page);
   // the instance-wide cap is only shown when the company has none.
@@ -640,5 +676,5 @@ module.exports = {
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
   SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,
-  RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT,
+  initMeter, meter, costOf, RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT,
 };

@@ -1343,6 +1343,67 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   never a partial success. The raw answer is kept in `sample_fills.answer`.
   Record detail `series` counts what was generated per table. Tests:
   `scripts/e2e/sample.js` 39, `scripts/test-sample.js` 26.
+- **The AI spend meter** (2026-09-26, `agent.meter`, `platform.ai_calls`,
+  `credit.withMeter`). The key ran out while the glide slope said about $14
+  was left: since the 9/20 anchor ($94.52) the features had filed $80.67, and
+  the diagrams drawn after every deploy (`src/diagrams.js`, Opus reading the
+  whole module source, about $0.30 to $1.00 each) had cost $19.85 more, filed
+  only in `platform.diagrams.cost_usd`, which no total read. Now: `SPEND` in
+  src/credit.js and `agent.monthlySpend` include `platform.diagrams` (a
+  demo's credit, `selfserve.spentSince`, does not: Anetix draws them unasked);
+  every API answer is written to `platform.ai_calls` the moment it arrives
+  (`runStructured` before parsing, `runChat`, `runAgent` on every way out,
+  never in fake mode), with tokens, our cost and, for agent runs, the SDK's
+  own figure; `credit.status` adds whatever the meter saw beyond the features
+  since the anchor (`unrecorded_usd`, said on the line when $0.50 or more) and
+  counts each day from the meter's first as the larger of the two. An agent
+  run files the larger of the SDK's `total_cost_usd` and our own count from
+  the usage (cache reads 0.1x, cache writes 1.25x), logging when ours is over
+  1.2x. At boot only diagrams never attempted are drawn (a failed one was
+  paid for again on every restart; Regenerate on the Diagrams page redraws).
+  Tests: `scripts/test-credit.js` 33.
+- **Passkeys** (2026-09-26, `src/passkeys.js`, `public/assets/passkey.js`,
+  the wall in `www/pages.js`; Brendan: email then the 2FA app would be
+  easier; the answer was passkeys, "much more durable, lets build that").
+  Sign-in is the email, then Face ID, a fingerprint or the device PIN: no
+  password, no code. `@simplewebauthn/server` 14 (CommonJS) checks both
+  ceremonies; user verification required, discoverable credentials
+  (residentKey required), attestation none, ES256 and RS256. The name a
+  passkey is made for (`rpIdFor`): `SOS_PASSKEY_RP_ID`, else the parent the
+  product and the wall share (app.anetix.ai + anetix.ai -> anetix.ai), so one
+  passkey works on both; answers may come from https on that name, www. and
+  app. under it, the wall's own origin, and the product's (http only on
+  localhost). At sign-in the browser offers whatever passkeys it holds for
+  the name (no allowCredentials), the server finds the account by the
+  credential id, and the email typed only has to match: nothing says whether
+  an email has a passkey. A passkey is added only by an account whose
+  authenticator app is set up (the middleware keeps others on their setup
+  page), so the password and app stay the fallback and the recovery codes
+  the way back; Reset authenticator removes an account's passkeys too.
+  `platform.account_passkeys` (credential id, COSE public key, counter,
+  transports, synced, label from the user agent, last used, removed; ten at
+  most per account; in the backup with the account tables) and
+  `accounts.passkey_handle`. Challenges live in the process for five minutes
+  and are used once. Routes: `GET /api/me/passkeys`, `POST
+  /api/me/passkeys/options`, `POST /api/me/passkeys`, `POST
+  /api/me/passkeys/:id/remove` (a named account), `POST
+  /login/passkey/options` and `POST /login/passkey` (public, before the
+  middleware, `selfserve.loginCors` like /login, 30 begins a minute an
+  address); a passkey sign-in gets the session `auth.startAccountSession`
+  gives a password sign-in (one function now). `anx_pk=1` on the parent
+  domain (no secret, not HttpOnly) tells the wall and the product's sign-in
+  this browser has used one: they open passkey-first with the password
+  behind "Use my password instead", and the wall opens on Sign in. Both
+  sign-in pages also start the browser's passkey autofill on the email box
+  (`autocomplete="username webauthn"`, conditional mediation). Where a
+  person adds one: the last step of a manager's setup page, a one-time offer
+  on the board (dismissed per browser, `anx_pk_nudge`), Settings (Your
+  sign-in) and /admin (My passkeys; the accounts list shows how many).
+  auth_events: passkey_added, passkey_removed, login_passkey,
+  passkey_refused. Tests: `scripts/test-passkeys.js` (9),
+  `scripts/e2e/passkeys-browser.js` (26, Chromium's virtual authenticator,
+  both servers on localhost; the command is at its top). Admin step-up for
+  destructive actions still asks for the app's code.
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin

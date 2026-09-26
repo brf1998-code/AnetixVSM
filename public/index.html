@@ -71,6 +71,8 @@
   .warn { color:var(--amber); font-size:12.5px; margin:0 0 10px; font-weight:600; }
   /* a self-serve company's AI credit (src/selfserve.js): one quiet line, red when nothing runs any more */
   .creditline { font-size:12.5px; margin:0 0 10px; color:var(--steel); } .creditline a { font-weight:700; margin-left:6px; }
+  .pknudge { background:#fff; border:1px solid var(--line); border-left:4px solid var(--navy); border-radius:10px; padding:10px 14px; margin:0 0 12px; display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; font-size:13.5px; }
+  .pknudge .grow { flex:1; min-width:220px; } .pknudge button { margin:0; }
   .creditline.amber { color:var(--amber); font-weight:600; } .creditline.red { color:var(--red); font-weight:700; }
   /* a demo company from anetix.ai: a thin rolling DEMO strip over the band, and a panel when the credit is gone */
   .demobar { background:#4c90d1; color:#0d1b2a; overflow:hidden; white-space:nowrap; height:22px; line-height:22px; font-size:11.5px; font-weight:800; letter-spacing:.22em; }
@@ -234,6 +236,7 @@
   </div>
   <div class="wrap">
     <div class="warn" id="aiwarn" style="display:none"></div>
+    <div class="pknudge" id="pknudge" style="display:none"></div>
     <div class="creditline" id="creditline" style="display:none"></div>
     <div id="vpanel"></div>
     <div id="reviews"></div>
@@ -1220,6 +1223,7 @@ async function load() {
   normalizeSel();
   writeSel();   // the URL always shows the pick in force (cleans a stale ?m=, remembers a linked one)
   render();
+  if (!window.PKN) { window.PKN = true; passkeyNudge(); }   // once per page, not on every refresh
   // ?intake=<id> (from the admin page) opens that request's popout once
   const want = new URLSearchParams(location.search).get("intake");
   if (want && !window.INTAKE_OPENED && MGR()) { window.INTAKE_OPENED = true; Intake.open(Number(want)); }
@@ -1302,6 +1306,27 @@ function render() {
 }
 load();
 setInterval(() => { if (EDITING === null) load(); }, 4000);
+</script>
+<script src="/assets/passkey.js"></script>
+<script>
+// A manager signed in with their own account and no passkey yet, on a device that can make one: one small offer above
+// the board, until they add one or say not now (remembered in this browser). src/passkeys.js.
+async function passkeyNudge() {
+  const el = document.getElementById("pknudge");
+  try {
+    if (!window.Passkey || !MGR() || localStorage.getItem("anx_pk_nudge") === "off" || !(await Passkey.platform())) return;
+    const r = await fetch("/api/me/passkeys", { cache: "no-store" }); if (!r.ok) return;
+    if ((await r.json()).passkeys.length) return;
+  } catch (e) { return; }
+  el.innerHTML = `<div class="grow"><b>Sign in faster next time.</b> Add a passkey and your sign-in is your email and Face ID, a fingerprint or this device's PIN. No password, no code.</div><button class="go" id="pkn-add">Add a passkey</button><button class="no" id="pkn-no">Not now</button>`;
+  el.style.display = "flex";
+  document.getElementById("pkn-no").onclick = () => { try { localStorage.setItem("anx_pk_nudge", "off"); } catch (e) {} el.style.display = "none"; };
+  document.getElementById("pkn-add").onclick = async () => {
+    const j = await Passkey.add();
+    if (j.ok) { el.innerHTML = `<div class="grow"><b>Passkey added</b> (${esc(j.passkey.label)}). Next time: your email, then the passkey.</div>`; setTimeout(() => { el.style.display = "none"; }, 4000); return; }
+    if (!j.cancelled) el.querySelector(".grow").innerHTML = `<b>That did not work:</b> ${esc(j.error)}`;
+  };
+}
 </script>
 <script src="/assets/dictate.js"></script>
 <script src="/assets/intake.js"></script>

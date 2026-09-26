@@ -21,14 +21,21 @@
   .hint a { color:var(--navy); }
   .remember { display:flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--steel); margin:10px 0 2px; line-height:1.45; cursor:pointer; }
   .remember input { width:18px; height:18px; margin:1px 0 0; flex:none; }
+  button.pk { background:#fff; color:var(--navy); border:2px solid var(--navy); margin:0 0 4px; display:none; }
+  button.pk.first { background:var(--navy); color:#fff; }
+  .or { display:none; text-align:center; color:var(--steel); font-size:12px; margin:10px 0; }
+  .pwlink { display:none; text-align:center; font-size:13px; margin-top:12px; }
 </style>
+<script src="/assets/passkey.js"></script>
 </head>
 <body>
   <form class="card" id="f">
     <h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:34px;height:34px;border-radius:8px;vertical-align:middle;margin-right:10px">Anetix</h1>
     <div class="sub" id="sub">Enter the password you were given. Floor and manager passwords both work here.</div>
     <input id="co" type="text" placeholder="Company code" autocomplete="organization" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
-    <input id="nm" type="email" placeholder="Your name (email address)" autocomplete="username" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
+    <input id="nm" type="email" placeholder="Your email" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
+    <button type="button" class="pk" id="pk">Sign in with a passkey</button>
+    <div class="or" id="or">or with your password</div>
     <input id="pw" type="password" placeholder="Password" autofocus autocomplete="current-password">
     <div id="codebox" style="display:none">
       <div class="hint" id="codehint">Type the 6 digit code your authenticator app shows for Anetix.</div>
@@ -38,6 +45,7 @@
     </div>
     <button type="submit">Sign in</button>
     <div class="err" id="err">That password did not match.</div>
+    <a href="#" class="pwlink" id="pwlink">Use my password instead</a>
     <a href="#" class="staff" id="staff">Sign in with an account (managers, Anetix staff)</a>
   </form>
 <script>
@@ -58,6 +66,34 @@ function staffMode(login) {
   // a manager account (a company from anetix.ai, 2026-09-25) signs in the same way: email, password, the app's code
   sub.textContent = login ? "Your account: the email address, your password, then the code from your authenticator app (set up on the first sign-in)." : "Anetix staff: your own name and password, then the code from your authenticator app.";
   if (login) { nm.value = login; document.getElementById("pw").focus(); } else nm.focus();
+  offerPasskey();
+}
+// Passkeys (src/passkeys.js): a button, and the browser's own autofill on the email box where it offers passkeys
+// there. A browser that has signed in with a passkey before (the anx_pk cookie) gets the passkey first and the
+// password behind a link.
+let pkOffered = false, pkAbort = null;
+async function offerPasskey() {
+  if (pkOffered || !window.Passkey || !Passkey.supported()) return;
+  pkOffered = true;
+  const btn = document.getElementById("pk"), or = document.getElementById("or"), pw = document.getElementById("pw");
+  btn.style.display = "block"; or.style.display = "block";
+  if (/(?:^|;\s*)anx_pk=1/.test(document.cookie)) {
+    btn.classList.add("first"); or.style.display = "none"; pw.style.display = "none";
+    document.querySelector("#f button[type=submit]").style.display = "none"; document.getElementById("pwlink").style.display = "block";
+  }
+  btn.onclick = () => passkeyNow(false);
+  document.getElementById("pwlink").onclick = (e) => { e.preventDefault(); pw.style.display = "block"; document.querySelector("#f button[type=submit]").style.display = "block"; document.getElementById("pwlink").style.display = "none"; or.style.display = "block"; btn.classList.remove("first"); pw.focus(); };
+  passkeyNow(true);   // the autofill: waits quietly until the person picks a passkey from the email box's list
+}
+async function passkeyNow(conditional) {
+  if (pkAbort) { pkAbort.abort(); pkAbort = null; }
+  const ctl = new AbortController(); pkAbort = ctl;
+  err.style.display = "none";
+  const j = await Passkey.signIn({ email: nm.value.trim(), conditional, signal: ctl.signal });
+  if (pkAbort === ctl) pkAbort = null;
+  if (j.cancelled) { if (!conditional) { err.textContent = "No passkey was used. Try again, or sign in with your password."; err.style.display = "block"; } return; }
+  if (j.error) { err.textContent = j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : "."); err.style.display = "block"; return; }
+  after(j);
 }
 document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); };
 if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
@@ -77,6 +113,7 @@ document.getElementById("userec").onclick = (e) => {
 };
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
+  if (staff && document.getElementById("pw").style.display === "none") { passkeyNow(false); return; }   // the passkey-first form: Enter means the passkey
   if (!staff && co.style.display !== "none") company = co.value.trim().toLowerCase();
   const onCode = codebox.style.display !== "none";
   const body = staff ? { name: nm.value.trim(), password: document.getElementById("pw").value, code: onCode ? code.value.trim() : "", remember: onCode && !recovery && document.getElementById("remember").checked }
@@ -98,15 +135,20 @@ document.getElementById("f").onsubmit = async (e) => {
     err.textContent = res.status === 429 ? (j.error || "Too many tries. Wait a few minutes.") : j.need_company ? "Which company is this login for? Type its code, the word after /c/ in its address." : "That password did not match.";
     err.style.display = "block"; return;
   }
-  if (staff && j.role === "manager") {   // a manager account: its enrollment first, else the page asked for inside its company, else its board
-    const own = "/c/" + j.company + "/";
-    location.href = j.enroll ? (j.enroll_url || own + "enroll") : next && next.startsWith(own) ? next : own; return;
-  }
-  if (staff) { location.href = next && /^\/(?!\/)/.test(next) && !j.enroll ? next : "/admin"; return; }
+  if (staff) { after(j); return; }
   // a company login lands on its own board unless the link asked for a page inside that company
   const own = j.company ? "/c/" + j.company + "/" : "/";
   location.href = next && next.startsWith("/") && !next.startsWith("//") && (!j.company || next.startsWith(own)) ? next : own;
 };
+// Where a named account lands: a manager's enrollment first, else the page asked for inside its company, else its
+// board; an admin at the page asked for, else /admin.
+function after(j) {
+  if (j.role === "manager") {
+    const own = "/c/" + j.company + "/";
+    location.href = j.enroll ? (j.enroll_url || own + "enroll") : next && next.startsWith(own) ? next : own; return;
+  }
+  location.href = next && /^\/(?!\/)/.test(next) && !j.enroll ? next : "/admin";
+}
 </script>
 </body>
 </html>

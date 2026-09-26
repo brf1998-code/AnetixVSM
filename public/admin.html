@@ -189,6 +189,8 @@
       <table class="acc" id="acc-list"></table>
       <div class="two" style="margin-top:14px">
         <div><h3>My account</h3><div id="acc-me"></div>
+          <h3 style="margin-top:14px">My passkeys <small class="sub">sign in with your email and Face ID, a fingerprint or the device PIN</small></h3>
+          <div id="acc-passkeys" class="sub">Loading…</div>
           <h3 style="margin-top:14px">Computers that skip the code <small class="sub" id="acc-devices-sub"></small></h3>
           <div id="acc-devices" class="sub">Loading…</div></div>
         <div><h3>Add an account</h3>
@@ -225,6 +227,7 @@
   </section>
   </main>
   <div id="modal" onclick="if(event.target===this)closeModal()"><div class="mcard" id="mcard"></div></div>
+<script src="/assets/passkey.js"></script>
 <script src="/assets/admin-shell.js"></script>
 <script src="/assets/admin-models.js"></script>
 <script src="/assets/admin-demos.js"></script>
@@ -902,12 +905,14 @@ async function loadAccounts() {
   document.getElementById("acc-list").innerHTML = A.accounts.length ? `<tr><th>Name</th><th>Signs in as</th><th>Authenticator</th><th>Last sign-in</th><th></th></tr>` + A.accounts.map(a => `<tr>
     <td><b>${esc(a.display_name)}</b>${a.id === mine ? ' <small class="sub">(you)</small>' : ""}${a.status !== "active" ? ' <span class="fail">switched off</span>' : ""}${a.locked ? ' <span class="warn">locked for now</span>' : ""}</td>
     <td>${esc(a.login)}</td>
-    <td>${a.enrolled ? `<span class="ok">set up</span> <small class="sub">${a.recovery_left} recovery code${a.recovery_left === 1 ? "" : "s"} left</small>` : '<span class="warn">not set up yet</span>'}</td>
+    <td>${a.enrolled ? `<span class="ok">set up</span> <small class="sub">${a.recovery_left} recovery code${a.recovery_left === 1 ? "" : "s"} left${a.passkeys ? ` · ${a.passkeys} passkey${a.passkeys === 1 ? "" : "s"}` : ""}</small>` : '<span class="warn">not set up yet</span>'}</td>
     <td>${when(a.last_sign_in)}${a.devices ? `<br><small class="sub">${a.devices} trusted computer${a.devices === 1 ? "" : "s"}</small>` : ""}</td>
     <td><button class="quiet" onclick="accSignOut(${a.id}, ${a.id === mine})" title="Ends every session of this account, on every device, and stops every computer it trusted, within ten seconds">Sign out everywhere</button>${a.enrolled ? `<button class="quiet" onclick="accAct(${a.id},'reset-factor','${esc(a.login)}')">Reset authenticator</button>` : ""}${a.id !== mine ? `<button class="quiet" onclick="accAct(${a.id},'reset-password','${esc(a.login)}')">New password</button>` + (a.status === "active" ? `<button class="danger" onclick="accDisable(${a.id},'${esc(a.login)}')">Switch off</button>` : `<button class="quiet" onclick="accAct(${a.id},'enable','${esc(a.login)}')">Switch on</button><button class="danger" onclick="accAct(${a.id},'remove','${esc(a.login)}')" title="Only an account that is switched off can be removed">Remove</button>`) : ""}</td></tr>`).join("")
     : `<tr><td class="sub">No accounts yet.</td></tr>`;
   document.getElementById("acc-me").innerHTML = ME.me ? `<button class="quiet" onclick="changePassword()">Change my password</button>${ME.me.enrolled ? "" : `<button class="go" onclick="enrollStart(false)">Set up my authenticator</button>`}` : "";
   loadDevices(A.trusted_days).catch((e) => console.error("devices:", e));
+  if (window.Passkey && ME.me && ME.me.enrolled) Passkey.panel(document.getElementById("acc-passkeys"), { onChange: () => loadAccounts() }).catch((e) => console.error("passkeys:", e));
+  else document.getElementById("acc-passkeys").textContent = ME.me ? "Set up your authenticator first; a passkey comes after it." : "Sign in with your own account to add one.";
   document.getElementById("acc-events").innerHTML = `<tr><th>When</th><th>What</th><th>Who</th><th>From</th><th>Detail</th></tr>` + A.events.map(e => `<tr><td style="text-align:left;white-space:nowrap">${when(e.at)}</td><td style="text-align:left" class="${/bad_|fail|refused|locked|replayed|break_glass|unreadable/.test(e.event) ? "warn" : ""}">${esc(e.event)}</td><td style="text-align:left">${esc(e.login || "")}</td><td style="text-align:left">${esc(e.ip || "")}</td><td style="text-align:left"><small>${esc(e.detail ? JSON.stringify(e.detail) : "")}</small></td></tr>`).join("");
   const g = A.edge || {};
   P.edge = g.mode === "off" ? { value: "off", level: "amber" } : g.mode === "report" ? { value: "report only", level: "amber" } : { value: "enforced", level: g.this_request_carried_it ? "ok" : "red" };
@@ -948,7 +953,7 @@ function showAccountPassword(login, password) {
     <div><button class="go" onclick="closeModal()">I have it</button></div>`);
 }
 const ACC_ACTIONS = {
-  "reset-factor": (l) => [`Reset the authenticator of ${l}?`, "Their app stops working for this account, their recovery codes too, every computer they trusted, and they are signed out. At their next sign-in they set it up again; until then the account is a password alone."],
+  "reset-factor": (l) => [`Reset the authenticator of ${l}?`, "Their app stops working for this account, their recovery codes and passkeys too, every computer they trusted, and they are signed out. At their next sign-in they set it up again; until then the account is a password alone."],
   "reset-password": (l) => [`Make up a new password for ${l}?`, "The old one stops working and they are signed out. The new one is shown once."],
   "enable": (l) => [`Switch ${l} back on?`, "They can sign in again with the password and authenticator they had."],
   "remove": (l) => [`Remove ${l} for good?`, "The account goes, and with it its password, authenticator and recovery codes. The sign-in log keeps what it already wrote. There is no undo apart from a backup file."],
