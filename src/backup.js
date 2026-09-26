@@ -23,6 +23,7 @@ const PLATFORM_TABLES = [
   "model_arms", "assessments", "assessment_trials", "assessment_picks",
   "test_floors",   // the test floor's switch state and data set (src/testfloor.js); its tst_ tables are a copy and are rebuilt at boot, never dumped
   "access_pins", "self_serve", "credit_ledger",   // self-serve companies from anetix.ai: the pins, who came in, every dollar of credit (src/selfserve.js)
+  "sample_fills",   // a demo's sample data: what each fill put in, so Clear still takes out exactly those rows after a restore (src/sample.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under

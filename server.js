@@ -43,6 +43,7 @@ async function main() {
   await require("./src/campaign").init();    // the test campaign: proposed by the AI, approved by the manager, run on the test floor, a step before the deploy gate
   await require("./src/datawall").init();    // the data wall: whether the AI may read a company's data, a switch per company on /admin (src/datawall.js)
   await require("./src/selfserve").init();   // self-serve companies from anetix.ai: access pins, the credit ledger, the credit gate (src/selfserve.js)
+  await require("./src/sample").init();      // sample data for a demo's tools: the AI fills a tool with a made-up week, and clears exactly those rows (src/sample.js)
 
   const app = express();
   app.disable("x-powered-by");
@@ -119,6 +120,7 @@ async function main() {
   app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
+  app.use(require("./src/sample").router);    // /api/c/:slug/modules/:mod/sample*: a demo's sample data (demo companies only)
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module, /c/:slug/staging/m/:module and /c/:slug/test/m/:module
@@ -126,6 +128,7 @@ async function main() {
   // every deploy redraws the module's diagrams for the new version, and a tool on the test floor follows the floor
   registry.hooks.deployed = async (company, mod, version) => {
     await require("./src/testfloor").afterDeploy(company, mod, version).catch((e) => console.error(`[testfloor] ${company}/${mod}:`, e.message));
+    await require("./src/sample").afterDeploy(company, mod).catch((e) => console.error(`[sample] ${company}/${mod}:`, e.message));   // sample rows that were only in the preview go live with the build
     return diagrams.generate(company, mod, version);
   };
   // can this instance run module code in a process of its own, with a database login of its own? find out before anything is mounted

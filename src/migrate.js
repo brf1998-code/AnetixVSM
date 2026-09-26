@@ -468,7 +468,7 @@ async function restoreSnapshot(company, mod, snapName) {
 }
 
 module.exports = {
-  liveSchema, stagingSchema, testSchema, buildTestSchema, dropTestSchema, rowsProblems, columnsByTable, ROW_CAP,
+  liveSchema, stagingSchema, testSchema, buildTestSchema, dropTestSchema, rowsProblems, columnsByTable, ROW_CAP, setSequencesPastData,
   validateMigrationSql, applyMigrations,
   rebuildStagingClone, snapshotSchema, recordSnapshot, restoreSnapshot, tablesIn, columnsOf,
   indexShape, indexOnLive, ensureIndexes, declaredIndexes,

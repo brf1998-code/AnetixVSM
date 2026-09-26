@@ -868,6 +868,7 @@ function runBlock(fb, run) {
     if (ev.cross_check) html += `<div class="meta">cross-check: ${esc(ev.cross_check.verdict)}${ev.cross_check.overridden ? " (overridden by the manager)" : ""} · ${esc((ev.cross_check.summary || "").slice(0, 400))}</div>`;
     if (ev.fix_round) html += `<div class="meta">fixed by the agent in ${ev.fix_round} round(s) after a failed check</div>`;
     html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${isModule ? `Open the preview of ${esc(fb.message.replace(/^New module: /, ""))} (not live)` : `Open preview of v${run.to_version} (not live)`}</a><br>`;
+    if (MGR() && DEMO()) html += `<a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a><br>`;
     if (MGR()) html += actions(pk, `<button class="go" onclick="act('/api/runs/${run.id}/deploy')">${isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`}</button>`, [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The module is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, isModule ? "The design goes back to Reviewing." : "The proposal goes back to Reviewing.");
@@ -1064,7 +1065,7 @@ function closeItem(id, declined) {
 
 let VMOD = null;
 async function openVersions(mod) {
-  VMOD = mod;
+  VMOD = mod; SMOD = null; clearTimeout(STIMER);
   const r = await fetch(`/api/c/${SLUG}/modules/${mod}/versions`);
   const j = await r.json();
   if (!r.ok) { alert(j.error || "failed"); return; }
@@ -1092,6 +1093,68 @@ async function openVersions(mod) {
   document.getElementById("vpanel").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 function closeVersions() { VMOD = null; document.getElementById("vpanel").innerHTML = ""; }
+
+// ---- sample data (a demo company's tools, src/sample.js) -------------------
+// The agent fills a tool with a made-up week of work, in the live tool and in a waiting build's preview; Clear takes
+// out exactly those rows. Paid from the demo's credit, shown only as a percentage.
+let SMOD = null, STIMER = null;
+const DEMO = () => Boolean(DATA && DATA.company && DATA.company.demo);
+async function openSample(mod, quiet) {
+  if (!quiet) { VMOD = null; }
+  SMOD = mod; clearTimeout(STIMER);
+  const r = await fetch(`/api/c/${SLUG}/modules/${mod}/sample`, { cache: "no-store" });
+  const j = await r.json().catch(() => ({}));
+  if (SMOD !== mod) return;
+  if (!r.ok) { alert(j.error || "failed"); return; }
+  drawSample(j);
+  if (!quiet) document.getElementById("vpanel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function closeSample() { SMOD = null; clearTimeout(STIMER); document.getElementById("vpanel").innerHTML = ""; }
+function drawSample(j) {
+  const title = (DATA.modules.find(m => m.name === j.module) || {}).title || j.module;
+  const f = j.fill;
+  const open = [
+    j.live_version ? `<a class="demo" href="/c/${SLUG}/m/${esc(j.module)}/" target="_blank">Open ${esc(title)}</a>` : "",
+    j.staged_version ? `<a class="demo" href="/c/${SLUG}/staging/m/${esc(j.module)}/" target="_blank">Open the preview (not live)</a>` : "",
+  ].filter(Boolean).join(" &nbsp; ");
+  const btn = (label, fn, cls = "") => `<button class="${cls}" onclick="${fn}">${label}</button>`;
+  let body;
+  if (f && f.status === "writing") {
+    body = `<p><b>Writing sample data for ${esc(title)}...</b></p><p class="hint">The agent is reading the tool and making up a week of work for it. This usually takes about a minute. You can leave this open or come back to it.</p>`;
+    STIMER = setTimeout(() => SMOD === j.module && openSample(j.module, true), 3000);
+  } else if (f && f.status === "in") {
+    const where = f.in_live && f.in_preview ? "in the live tool and the preview" : f.in_preview ? "in the preview (they go live with the build)" : "in the live tool";
+    body = `<p style="margin:0 0 8px">${esc(f.story || "")}</p>
+      <p class="hint">${f.rows} made-up rows ${where}. ${f.credit_percent ? `Used about ${f.credit_percent}% of your AI credit.` : ""}${f.skipped ? ` ${f.skipped} rows did not fit the tool and were left out.` : ""} Anything you add stays when you clear them.</p>
+      <p style="margin:0 0 10px">${open}</p>
+      <div class="vrow">${btn("Clear sample data", "clearSample()")}${btn("Replace with a fresh set", "fillSample(true)")}</div>`;
+  } else {
+    const last = f && f.status === "failed" ? `<p class="hint" style="color:var(--red)">The last try did not work: ${esc(f.error || "")}</p>`
+      : f && f.status === "cleared" ? `<p class="hint">The sample data was cleared${f.kept ? `, except ${f.kept} rows that something you added points at` : ""}.</p>` : "";
+    body = `<p class="hint">Fill ${esc(title)} with a made-up week of work: finished jobs, things in progress, something running late. You see what the tool does with real-looking data in it. The agent reads the tool and writes the rows, which takes about a minute and a small part of your AI credit. Every sample row is remembered, so Clear takes out exactly those and never anything you add.</p>
+      ${last}
+      <div class="vrow">${j.can_fill ? btn("Fill with sample data", "fillSample(false)") : `<button disabled>Fill with sample data</button><span class="vs">${esc(j.why_not || "")}</span>`}</div>`;
+  }
+  document.getElementById("vpanel").innerHTML = `<div class="vpanel" id="samplepanel">
+    <h3>${esc(title)}: sample data <span class="x" onclick="closeSample()">close</span></h3>${body}</div>`;
+}
+async function fillSample(replace) {
+  const mod = SMOD; if (!mod) return;
+  if (replace && !confirm("Replace the sample data with a fresh set? The sample rows there now are taken out first. Anything you added stays.")) return;
+  const r = await fetch(`/api/c/${SLUG}/modules/${mod}/sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ replace: Boolean(replace) }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "failed"); return; }
+  drawSample(j);
+}
+async function clearSample() {
+  const mod = SMOD; if (!mod) return;
+  const title = (DATA.modules.find(m => m.name === mod) || {}).title || mod;
+  if (!confirm(`Take the sample rows out of ${title}? Anything you added yourself stays.`)) return;
+  const r = await fetch(`/api/c/${SLUG}/modules/${mod}/sample/clear`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "failed"); return; }
+  drawSample(j);
+}
 async function gotoVersion(version, restore) {
   const msg = restore
     ? `Put version ${version} on the floor AND replace the line's data with what it was when v${version} was last live? Everything recorded since then is set aside (the current state is saved first).`
@@ -1175,6 +1238,7 @@ function render() {
     DATA.test_floor && m.live_version ? `<a class="violet" href="/c/${SLUG}/test/m/${m.name}/" title="The test floor: every tool together on data that is not the floor's. Nothing done there is real.">Test floor${m.test_version ? ` v${m.test_version}` : ""}</a>` : "",
     m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}">Diagrams</a>` : "",
     MGR() && m.live_version ? `<button class="vbtn" onclick="openVersions('${m.name}')">Versions</button>` : "",
+    MGR() && DEMO() && (m.live_version || m.staged_version) ? `<button class="vbtn" onclick="openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>');
   // the phone's one-line summary of the strip: which modules the board is showing
   const summary = !many ? (DATA.modules[0] ? DATA.modules[0].title : "none yet")

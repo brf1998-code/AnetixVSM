@@ -1260,6 +1260,37 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   (`localStorage anx_signed_in`) opens on Sign in, every other browser on the
   pin box. The admin's new-pin box gives the link `<www>/pin`, which opens the
   pin box directly.
+- **Sample data for a demo's tools** (2026-09-26, `src/sample.js`, the board's
+  "Sample data" link on a tool and "Try the preview with sample data" on a
+  build at the gate; Brendan: "simulate data for the current build so they can
+  get a better representation of what it does"; his choices: demo companies
+  only, into the tool itself and its preview, a filled snapshot not live
+  motion, paid from the demo's credit). The AI (the propose job's model) reads
+  the tool's reference.md, migrations, columns and code (routes first, 45k
+  characters) and writes about a week of history plus work in progress, never
+  a row of the company's data; `migrate.rowsProblems` checks it, one retry with
+  the problems. Keys the database makes (serial or identity, one column) are
+  placeholders from the AI and remapped to the real ones; a foreign key or a
+  `<thing>_id` column naming a table in the set (thing, things, thinges)
+  follows, and tables are ordered by both (`fkOrder(tables, fk, extra)`). A row
+  that does not fit is left out with every row pointing at it, so a sample row
+  never lands on the person's own. Columns come from the newest schema (stg_
+  while a build waits, else mod_); rows go into live and, same keys, into the
+  preview; a table or column only the waiting build has (and a first build not
+  live yet) is filled in the preview and carried into live by
+  `sample.afterDeploy` from `registry.hooks.deployed`. Clear deletes by key
+  (or by the values given, for a table without one) from live and the
+  preview, children first; a sample row something of the person's points at
+  is kept and counted. `platform.sample_fills` (status writing, in, cleared,
+  failed; `rows`, `plan` { order, keys, live_cols, pending }), in the backup,
+  deleted with the company; a fill still writing at boot is marked failed. One
+  fill in force per tool (replace clears first); refused while a build of the
+  tool is running and when the credit is gone (`assertUnderCap`, a fill is a
+  start); spend filed as `ai_usage` kind `sample_data`, shown to the person as
+  a percentage only. Record kinds `sample_filled`, `sample_cleared`. Routes:
+  `GET|POST /api/c/:slug/modules/:mod/sample`, `POST .../sample/clear`
+  (manager; 404 for a company that is not a demo). Tests:
+  `scripts/e2e/sample.js` (27, in run-all.sh).
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin
