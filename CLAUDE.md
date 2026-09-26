@@ -2050,6 +2050,20 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   round and Close on the first line and the title under them, uses 16px boxes
   (so iOS does not zoom on focus) and full-width foot buttons. Desktop is
   untouched; `.modcard .links` is `display:contents` there.
+- **System review lives on the settings page** (2026-09-26, Brendan: only what
+  is used every day stays on the board). The board's toolbar (`renderToolbar`,
+  `.toolbar`, `startReview`) is gone; `settings.html` has a System review card
+  (`loadReview`, `startReview`, same `POST /api/c/<slug>/reviews`) with the
+  module select, the button and a polling line while one runs. The board still
+  shows a running review and its recommendations in `renderReviews`.
+- **A named account's requests carry its name** (2026-09-26, Brendan: Taylor,
+  signed in as an admin with a code, sent a request that arrived as "no name").
+  `POST /api/feedback` files the name as: the person tapped on the device
+  (name and PIN) first, else the account behind the session
+  (`req.sosAccount.name` or login), else the typed name. `/api/c/<slug>/who`
+  returns `account: { name }` beside `me`, and the feedback button shows
+  "Sending as <name>" and hides the name box for an account too. The floor's
+  nameless path is unchanged.
 - **Board band** (2026-09-19): one title row and one quiet module line
   (`.band`, `.modstrip`, `.modcard`), 70px on a desktop against roughly a
   third of the screen before. Module names are the filter toggles, versions

@@ -342,15 +342,18 @@
   const who = { people: [], me: null, listeners: [] };
   const peopleApi = (p, opts) => fetch("/api/c/" + encodeURIComponent(company) + "/who" + p, Object.assign({ credentials: "same-origin" }, opts || {}));
   async function loadWho() {
-    try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; who.photos = j.photos !== false; drawExtras(); } } catch (e) { /* the list is a nicety; the button works without it */ }
+    try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; who.account = j.account || null; who.photos = j.photos !== false; drawExtras(); } } catch (e) { /* the list is a nicety; the button works without it */ }
     renderWho(); who.listeners.forEach((f) => { try { f(who.me); } catch (e) {} });
   }
   const BTN_ICON = btn.innerHTML;
   function renderWho() {
     // the button itself says who is signed in (a name can stay on a shared tablet for days now, so it is never hidden)
-    btn.innerHTML = BTN_ICON + (who.me ? ' <span id="sos-fb-me" style="opacity:.85;font-weight:600">\u00b7 ' + esc(who.me.name) + "</span>" : "");
+    const shown = who.me || who.account;
+    btn.innerHTML = BTN_ICON + (shown ? ' <span id="sos-fb-me" style="opacity:.85;font-weight:600">\u00b7 ' + esc(shown.name) + "</span>" : "");
     const el = panel.querySelector("#fbw-who"), nameEl = panel.querySelector("#fbw-name"); if (!el) return;
     if (who.me) { el.style.display = "block"; nameEl.style.display = "none"; el.innerHTML = "Sending as <b>" + esc(who.me.name) + "</b> · <a href=\"#\" id=\"fbw-switch\" style=\"color:#1f3a5f\">not you?</a>"; }
+    // a named account (signed in with a code): the server files under its name, so there is nothing to type
+    else if (who.account) { el.style.display = "block"; nameEl.style.display = "none"; el.innerHTML = "Sending as <b>" + esc(who.account.name) + "</b>" + (who.people.length ? " · <a href=\"#\" id=\"fbw-switch\" style=\"color:#1f3a5f\">someone else?</a>" : ""); }
     else if (who.people.length) { el.style.display = "block"; nameEl.style.display = ""; el.innerHTML = "<a href=\"#\" id=\"fbw-switch\" style=\"color:#1f3a5f;font-weight:700\">Tap your name</a> so this comes back to you, or just type it below."; }
     else { el.style.display = "none"; nameEl.style.display = ""; }
     const sw = panel.querySelector("#fbw-switch"); if (sw) sw.onclick = (e) => { e.preventDefault(); openPicker(); };
@@ -758,7 +761,7 @@
       try { localStorage.setItem("sos.name", nameEl.value); } catch (e) {}
       const res = await fetch("/api/feedback", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, module: mod, page: location.pathname, message: msg, name: who.me ? who.me.name : nameEl.value, element: extra.element || undefined, photo: extra.photo || undefined }),
+        body: JSON.stringify({ company, module: mod, page: location.pathname, message: msg, name: who.me ? who.me.name : who.account ? who.account.name : nameEl.value, element: extra.element || undefined, photo: extra.photo || undefined }),
       });
       if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
       if (!res.ok) { const e = panel.querySelector("#fbw-extra-err"); if (e) e.textContent = res.status === 413 ? " The photo is too large to send. Remove it and send again." : " That did not send. Try again."; return; }

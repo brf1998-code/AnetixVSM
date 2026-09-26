@@ -14,6 +14,7 @@
   .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin:10px 0; font-size:13.5px; line-height:1.5; }
   .card h2 { font-size:15px; margin-bottom:4px; }
   .sub { color:var(--steel); font-size:12.5px; }
+  select { font-family:inherit; font-size:14px; border:1px solid var(--line); border-radius:7px; padding:8px 10px; max-width:100%; min-height:38px; margin:0 6px 6px 0; vertical-align:middle; }
   a { color:var(--navy); }
   a.btn, button { display:inline-block; border:none; border-radius:7px; padding:8px 12px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; margin:8px 6px 0 0; min-height:36px; text-decoration:none; line-height:20px; }
   .primary { background:var(--navy); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); }
@@ -62,6 +63,12 @@
       <label class="sw"><input type="checkbox" id="a-photos" onchange="saveArrival()"><span><b>Photos</b><span class="sub" id="a-photos-sub">People may add a photo to a request. It goes with the words to nobody outside this company. Switch it off where cameras are not allowed on the floor.</span></span></label>
       <span class="ok" id="a-ok"></span>
     </div>
+    <div class="card" id="rv-card" style="display:none">
+      <h2>System review</h2>
+      <div class="sub">Now and then, not every day: the AI reads one whole module, its feedback and build history and the live data, then files what it would change as held recommendations on the board's Reviewing column. You approve them one by one, or all together, or decline them. Nothing is built until you say so.</div>
+      <div id="rv-body" style="margin-top:10px"></div>
+      <span class="ok" id="rv-ok"></span>
+    </div>
     <div class="card" id="tf-card" style="display:none">
       <h2>Test floor</h2>
       <div class="sub">Every tool together on data that is not the floor's. Walk around in it, try things, print a label; nothing there is real. A build gets its test campaign here before it goes on the floor. Anetix switches it on for you.</div>
@@ -92,6 +99,36 @@ async function load() {
   // the data wall (set by Anetix): a photo is a picture of the data, so photos are off while the AI is walled off
   if (D.company.ai_reads_data === false) { const p = document.getElementById("a-photos"); p.checked = false; p.disabled = true; document.getElementById("a-photos-sub").textContent = "Off while the AI is walled off from this company's data (set by Anetix): a photo is a picture of the data."; }
   loadTestFloor();
+  loadReview(D.modules || []);
+}
+// The system review (moved here from the board, 2026-09-26): one select, one button, and a line while one runs.
+let RV_MODULES = [], RV_POLL = null;
+async function loadReview(modules) {
+  if (modules) RV_MODULES = modules;
+  const card = document.getElementById("rv-card");
+  if (!RV_MODULES.length) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  const r = await fetch(`/api/c/${SLUG}/reviews`, { cache: "no-store" });
+  const reviews = r.ok ? await r.json() : [];
+  const running = reviews.find((x) => x.status === "running");
+  const sel = document.getElementById("rv-module");
+  const keep = sel ? sel.value : (RV_MODULES[0] || {}).name;
+  document.getElementById("rv-body").innerHTML = running
+    ? `<span class="sub"><b>Review #${running.id} is reading ${esc(running.module)}.</b> It takes a few minutes. The recommendations land in Reviewing on <a href="/c/${SLUG}/">the board</a> when it finishes.</span>`
+    : `<label class="sub" for="rv-module" style="display:block;margin-bottom:6px">Which module</label><select id="rv-module">${RV_MODULES.map((m) => `<option value="${m.name}" ${m.name === keep ? "selected" : ""}>${esc(m.title)}</option>`).join("")}</select> <button class="primary" id="rv-go" onclick="startReview()">Review the whole module</button>`;
+  if (running && !RV_POLL) RV_POLL = setInterval(() => loadReview(), 5000);
+  if (!running && RV_POLL) { clearInterval(RV_POLL); RV_POLL = null; }
+}
+async function startReview() {
+  const sel = document.getElementById("rv-module"); const mod = sel.value;
+  const title = (RV_MODULES.find((m) => m.name === mod) || { title: mod }).title;
+  if (!confirm(`Review ${title}? It reads the whole module, the feedback and build history, and the live data, then files its recommendations as held proposals you approve one by one.`)) return;
+  const b = document.getElementById("rv-go"); b.disabled = true;
+  const r = await fetch(`/api/c/${SLUG}/reviews`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: mod, requested_by: "manager" }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { b.disabled = false; alert(j.error || "that did not start"); return; }
+  document.getElementById("rv-ok").textContent = "started"; setTimeout(() => { document.getElementById("rv-ok").textContent = ""; }, 2500);
+  loadReview();
 }
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 // The test floor (docs/TEST-ENVIRONMENT.md): the card shows only while Anetix has switched it on for this company.

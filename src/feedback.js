@@ -61,13 +61,16 @@ router.post("/api/feedback", async (req, res) => {
   } else if (page) {
     screen = /\/agents/.test(page) ? "Agent settings page" : /\/admin/.test(page) ? "Admin page" : "Improvement board";
   }
-  // a person signed in on this device (name and PIN) files under their own name; a typed name is only for a device nobody is signed in on
+  // a person signed in on this device (name and PIN) files under their own name; a named account (an admin or a
+  // demo's manager, signed in with a code) files under the account's name (Brendan, 2026-09-26: the system knows who
+  // it is, so no request from an account should arrive nameless); a typed name is only for a device nobody is signed in on
   const mine = req.sosPersonId && req.sosPersonCompany === co.slug;
+  const accountName = req.sosAccount ? (req.sosAccount.name || req.sosAccount.login || "") : "";
   // what the person pointed at, for the proposer (src/arrival.js); a token so the device that sent a nameless request can answer its question
   const pointed = mod && mod !== "platform" ? arrival.cleanElement(element) : null;
   const r = await q(
     `INSERT INTO platform.feedback (company, module, page, screen, target_file, message, name, person_id, element, reply_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [co.slug, mod || "platform", page || null, screen, target, message.trim().slice(0, 2000), ((mine ? req.sosPerson : name) || "").slice(0, 80) || null, mine ? req.sosPersonId : null, pointed ? JSON.stringify(pointed) : null, arrival.newToken()]);
+    [co.slug, mod || "platform", page || null, screen, target, message.trim().slice(0, 2000), ((mine ? req.sosPerson : accountName || name) || "").slice(0, 80) || null, mine ? req.sosPersonId : null, pointed ? JSON.stringify(pointed) : null, arrival.newToken()]);
   const fb = r.rows[0];
   // one photo, already scaled down by the widget; a company can switch photos off (Agent settings)
   let photoNote = null;
@@ -731,7 +734,8 @@ router.get("/api/admin/health", requireAdmin, async (req, res) => {
 // /people is the manager's list: add, new PIN, switch off. ----
 const whoAmI = (req) => (req.sosPersonId && req.sosPersonCompany === req.params.slug ? { id: req.sosPersonId, name: req.sosPerson, role: req.sosPersonRole } : null);
 router.get("/api/c/:slug/who", async (req, res) => {
-  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), photos: (await arrival.settings(req.params.slug)).allow_photos }); }
+  // account: the named account behind this session (an admin, a demo's manager), so the feedback button can say who it sends as when nobody tapped a name
+  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), account: req.sosAccount ? { name: req.sosAccount.name || req.sosAccount.login } : null, photos: (await arrival.settings(req.params.slug)).allow_photos }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.get("/api/c/:slug/people", requireManager, async (req, res) => {
