@@ -824,7 +824,7 @@ function requestCard(fb) {
   }
   switch (it.status) {
     case "answering":
-      html += `<div class="stat">${it.round > 1 ? `<b>The agent has ${it.round_total} more question${it.round_total === 1 ? "" : "s"}</b> (round ${it.round} of 3). ` : ""}${it.round_answered} of ${it.round_total} answered${it.round_done ? ", ready to send to Fable" : ""}.</div>`;
+      html += `<div class="stat">${it.round > 1 ? `<b>The agent has ${it.round_total} more question${it.round_total === 1 ? "" : "s"}</b> (round ${it.round} of 3). ` : ""}${it.round_answered} of ${it.round_total} answered${it.round_done ? ", ready to send to the agent" : ""}.</div>`;
       html += actions(pk, openBtn(it.round_answered ? "Continue" : "Start answering"), [withdraw]);
       break;
     case "thinking":
@@ -1200,7 +1200,7 @@ async function load() {
   document.getElementById("coname").textContent = DATA.company.name;
   applyBrand(DATA.brand, DATA.icon_v);
   const w = document.getElementById("aiwarn");
-  if (!DATA.aiConfigured) { w.style.display = "block"; w.textContent = "AI is not configured on this instance (set ANTHROPIC_API_KEY). Proposals will be placeholders."; }
+  if (!DATA.aiConfigured) { w.style.display = "block"; w.textContent = "The agent is not set up on this instance yet. Proposals will be placeholders."; }
   else if (DATA.fakeAgent) { w.style.display = "block"; w.textContent = "Fake agent mode (SOS_FAKE_AGENT=1): the loop runs but the agent only stamps a marker on pages."; }
   else w.style.display = "none";
   // a company that came in from anetix.ai runs on the credit it bought: the balance, and where to add more (managers)

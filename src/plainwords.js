@@ -20,6 +20,9 @@ const BANNED = [
   "prompt", "prompts", "LLM", "LLMs", "UI", "UX",
   "integration", "integrations", "integrate", "integrated",
   "exception", "exceptions",
+  // Model and vendor names (Brendan, 2026-09-26): the agent is "the agent".
+  // "Claude" is left off on purpose, it is a common first name on a people list.
+  "Fable", "Opus", "Anthropic",
 ];
 const PATTERNS = BANNED.map((w) => ({ word: w, re: new RegExp(`(?<![A-Za-z0-9-])${w.replace(/[-\s]/g, (c) => (c === " " ? "\\s+" : "\\-"))}(?![A-Za-z0-9-])`, "i") }));
 

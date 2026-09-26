@@ -236,8 +236,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   is rough (fixed token sizes); a build trial runs the gate and the reviewers
   but not the acceptance checks or the page load (those need a staged mount,
   the live A/B covers them); a proposal trial reads today's company docs;
-  "Fable" is still the name of the designer in the intake flow whichever
-  model runs it.
+  "the agent" is the only name for the designer in the intake flow, whichever model runs it; no model or vendor name in anything a company sees.
 - **Boot id**: `SOS_BOOT_ID` is set at process start and returned by the
   board API; the board reloads itself when it changes, so an open tab picks
   up a redeploy instead of running old page code against new data.

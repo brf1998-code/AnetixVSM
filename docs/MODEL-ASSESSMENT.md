@@ -117,5 +117,4 @@ has no more misses and no more rollbacks than the Fable side, give or take one.
   request came in.
 - The cost estimate per case uses fixed token sizes. The spend line on each
   assessment is the real number.
-- "Fable" is still the name of the designer in the intake flow, whichever
-  model runs it.
+- "the agent" is the only name for the designer in the intake flow, whichever model runs it; no model or vendor name in anything a company sees.

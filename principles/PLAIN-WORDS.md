@@ -3,7 +3,7 @@
 Who reads the module creation flow: a production manager or a supervisor who
 knows the operation and has never needed to know how software is built. The
 words below never appear in anything that person reads during the flow: the
-questions Fable asks, the design summary, the manager's half of a setup
+questions the agent asks, the design summary, the manager's half of a setup
 walkthrough, and every visible string on a built page. They describe how the
 tool is made, not what it does for the floor.
 
@@ -22,7 +22,8 @@ may use the technical words; it is marked as such.
 | backend, frontend, front-end, back-end, server, client | "the tool", "the screen", "behind the scenes" |
 | sync, synchronize | "keeps up to date", "matches", "refreshes" |
 | token, credential, authenticate, auth | "login", "password", "access" |
-| prompt, AI model, language model, LLM | "the question", "Fable", "the assistant" |
+| prompt, AI model, language model, LLM | "the question", "the agent" |
+| any model or vendor name: Fable, Opus, Sonnet, Haiku, Claude, Anthropic | "the agent" (never name what runs behind it) |
 | UI, UX, user interface, frontend | "the screen", "the page", "what people see" |
 | integration, integrate | "connects to", "works with" |
 | bug, exception, stack trace, error log | "a problem", "what went wrong" |
