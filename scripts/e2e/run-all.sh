@@ -92,6 +92,10 @@ run demos                  env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scr
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
 run sample                 env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/sample.js
 
+fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
+run sites                  env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/sites.js
+[ -z "$QUICK" ] && run sites-browser env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/sites-browser.js
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop

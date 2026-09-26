@@ -34,7 +34,12 @@ const R = runner(), t = R.t;
   t("top right: who is here, Settings, sign out, nothing else", /signed in as manager/.test(who) && /Brendan F/.test(who) && /Settings/.test(who) && /sign out/.test(who) && !/agent settings|checks log|connections|record|wall sign|people/.test(who), who);
   t("the Settings link goes to the company's settings page", (await b.locator('#who a[href="/c/demo/settings"]').count()) === 1);
   t("no numbers strip above the columns", (await b.locator("#kpis, .kpis, .kpi").count()) === 0);
-  t("the system review offers the module and the button, no model, no estimate", (await b.locator("#rv-module").count()) === 1 && (await b.locator("#rv-model, #rv-est").count()) === 0 && /Review the whole module/.test(await b.locator("#toolbar").innerText()));
+  // the system review left the board for the settings page on 2026-09-26 (only what is used every day stays on the board)
+  t("the system review is not on the board", (await b.locator("#toolbar, #rv-module").count()) === 0);
+  const st = await ctxM.newPage(); watch(st, "settings");
+  await st.goto(BASE + "/c/demo/settings"); await st.waitForSelector("#rv-module", { timeout: 10000 }).catch(() => {});
+  t("the settings page's system review offers the module and the button, no model, no estimate", (await st.locator("#rv-module").count()) === 1 && (await st.locator("#rv-model, #rv-est").count()) === 0 && /Review the whole module/.test(await st.locator("#rv-card").innerText()));
+  await st.close();
   const body0 = await b.locator("body").innerText();
   t("no cost and no model anywhere on the board", noMoneyNoModel(body0), body0.match(/.{0,40}(\$\d|Sonnet|Opus|Haiku|claude-|cost|AI spend).{0,40}/i));
 

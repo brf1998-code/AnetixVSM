@@ -158,6 +158,12 @@
     <div id="demos-root"><div class="card sub">Loading…</div></div>
   </section>
 
+  <!-- ================= Sites: the price book, and the pipeline from a demo to a paying site (/assets/admin-sites.js) ================= -->
+  <section class="tabpanel" id="tab-sites">
+    <div class="tabhead"><h2>Sites</h2><p class="sub">The price book, and every company on its way from a demo to a paying site. A site is priced by the people who work there, every shift counted, at full price from the first month; floor space can move it up one band. Fill in what you learn on a call and the band and the price follow. Only Anetix admins see this.</p></div>
+    <div id="sites-root"><div class="card sub">Loading…</div></div>
+  </section>
+
   <section class="tabpanel" id="tab-companies">
     <div class="tabhead"><h2>Companies</h2><p class="sub">Pick a company to work on it: its pages, modules, sign-in, budget, brand. One open at a time.</p></div>
     <div class="split">
@@ -235,6 +241,7 @@
 <script src="/assets/admin-shell.js"></script>
 <script src="/assets/admin-models.js"></script>
 <script src="/assets/admin-demos.js"></script>
+<script src="/assets/admin-sites.js"></script>
 <script>
 let D = null;
 // ---- the standard header (/assets/admin-shell.js): pills that stay on every tab, and a dot on a tab that wants a look.
@@ -651,6 +658,7 @@ async function load() {
   loadRequests().catch((e) => console.error("requests:", e));
   loadPins().catch((e) => console.error("pins:", e));
   if (window.AdminDemos) AdminDemos.badge();
+  if (window.AdminSites) AdminSites.badge();
   const r = await fetch("/api/admin/overview");
   if (r.status === 401) { location.href = "/login?next=/admin"; return; }
   if (r.status === 403) { document.body.innerHTML = "<p style='padding:20px'>Admin login required.</p>"; return; }
@@ -1106,8 +1114,8 @@ async function enrollVerify(inCard) {
 }
 AdminShell.mount({
   title: "Admin",
-  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "pins", label: "Pins" }, { id: "demos", label: "Demos" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
-  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); if (id === "demos" && window.AdminDemos) AdminDemos.show(rest); window.scrollTo(0, 0); },
+  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "pins", label: "Pins" }, { id: "demos", label: "Demos" }, { id: "sites", label: "Sites" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
+  onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); if (id === "demos" && window.AdminDemos) AdminDemos.show(rest); if (id === "sites" && window.AdminSites) AdminSites.show(rest); window.scrollTo(0, 0); },
 });
 load();
 </script>

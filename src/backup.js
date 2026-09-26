@@ -25,6 +25,7 @@ const PLATFORM_TABLES = [
   "access_pins", "self_serve", "credit_ledger",   // self-serve companies from anetix.ai: the pins, who came in, every dollar of credit (src/selfserve.js)
   "demo_requests",  // who asked for a demo on anetix.ai, and the pin made for them (src/demorequests.js)
   "sample_fills",   // a demo's sample data: what each fill put in, so Clear still takes out exactly those rows after a restore (src/sample.js)
+  "price_books", "sites",   // paid sites: the price book's versions and the pipeline (src/sites.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under

@@ -21,7 +21,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   2026-09-21, see "Named admin accounts"; `SOS_ADMIN_PASSWORD` opens it only
   until the first authenticator is set up) lists companies, their modules,
   docs, spend, and adds companies or library modules to them.
-- **The admin page is seven tabs, one job each** (2026-09-21, `public/admin.html`; Pins and Demos added 2026-09-25, nine now
+- **The admin page is seven tabs, one job each** (2026-09-21, `public/admin.html`; Pins and Demos added 2026-09-25, Sites 2026-09-26, ten now
   plus the standard header `public/assets/admin-shell.js` and
   `admin-shell.css`; Brendan: the page had become fix stacked on fix and he got
   lost in it). The header is on every tab: the navy band, who is signed in,
@@ -32,7 +32,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   something on it wants looking at. The tab in view is the address's hash, so it
   can be linked, reloaded and reached with the back button: `/admin#health`
   (the default), `#companies/<slug>`, `#companies/new`, `#library`,
-  `#models`, `#accounts`, `#instance`, `#requests`, `#pins` (Models since 2026-09-22,
+  `#models`, `#accounts`, `#instance`, `#requests`, `#pins`, `#demos`, `#sites` (Models since 2026-09-22,
   see "Two models, one baseline"; Requests since 2026-09-24, see "Requests to
   Anetix"; Pins since 2026-09-25, see "Self-serve companies from anetix.ai"). **Health**: data requests first when there are any
   ("waiting on us"), then the fleet tiles and the per-company table; the long
@@ -1469,6 +1469,52 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   page now has nine tabs. Tests: `scripts/test-demos.js` (7),
   `scripts/e2e/demos.js` (21, in `run-all.sh`), `accounts-browser.js` counts
   nine tabs.
+- **Paid sites, stage 1: the price book and the Sites tab** (2026-09-26,
+  `src/sites.js`, `public/assets/admin-sites.js`, the Sites tab of `/admin`
+  between Demos and Companies; the whole plan, the data behind the prices and
+  Brendan's decisions are `docs/PAID-SITES.md`). Brendan: a pipeline where a
+  demo converts to a paying site on a subscription it can cancel any time, no
+  usage limits beyond a fair-use line at 80% of the fee, priced per site.
+  Decided 2026-09-26: five bands by the people at the site counting every shift
+  (Small 1 to 49 $1,000; Mid 50 to 99 $1,750; Core 100 to 199 $2,500; Large 200
+  to 499 $3,500 and Very large 500+ $5,000, those two still "proposed"); floor
+  space moves a site up ONE band at most (proposed thresholds 75,000 / 150,000 /
+  300,000 / 750,000 sq ft, 1,500 a person at each edge); no start rate (full
+  price from month one); the admin activates every site, within 24 hours of the
+  signature; cancelling returns a site to a demo; AI cost in a billing period may
+  not pass 80% of the fee. **Stage 1 plans and shows; nothing charges anyone.**
+  Pure: `BOOK_V1` and `bookProblems`; `bandOf({ headcount, sqft })` (the band,
+  its annual price, fair-use line and alert, `moved_up` with `why`, and `flags`:
+  within five below a band edge, floor space per person under 150 or over
+  5,000); `fairUse({ spend_usd, fee_usd, lifted })`; `next(state, event)`, the
+  stage machine (demo, ordering, signed, activating, subscribed, back_to_demo;
+  standing good / past_due / unpaid; the cancel date; every event in the plan
+  and every refusal, with the effects stages 2 to 4 carry out, e.g. a cancel on
+  an unpaid month answers `end_now`); `orderText` and `textHash` (the order form,
+  `TERMS_VERSION` "draft-1" until counsel has read it); `refundableCredit` (free
+  credit counts as spent first, purchases oldest first, what is left of the
+  bought credit comes back at each purchase's rate); `cleanFields` (only the keys
+  sent change). Tables: `platform.price_books` (version 1 is rewritten from the
+  code at boot until a site has gone past ordering under it, then frozen; a new
+  list price is version 2) and `platform.sites` (`id` uuid, the permanent id
+  orders and Stripe will point at, since a freed slug goes to the next company
+  with the same name; `company` unique; the facts, `deal` JSON, note, stage);
+  both in the backup. Company delete takes the row and is REFUSED while a site is
+  activating or subscribed (`sites.deleteRefusal`: end the subscription first,
+  because the delete never talks to Stripe). Routes, admin only: `GET
+  /api/admin/sites` (the book, the count per stage, a row per self-serve company
+  or site row with its facts, band, pin holder, since, tools live, AI spent and
+  the deal), `POST /api/admin/sites/quote { headcount, sqft }`, `POST
+  /api/admin/sites/:slug` (the pipeline fields; 409 once an order is signed).
+  The tab: the price book with a quick quote for a call, the stage counts, the
+  pipeline table, and a form per row (one column on a phone, 16px boxes); a
+  company that is not self-serve joins the pipeline once a field is saved for it
+  and reads "Not ordered yet". Next: the go-live screens and the signed order on
+  anetix.ai (stage 2), Activate and the rollover (3), the month to month (4),
+  master agreements (5); `orders`, `customers` and `billing_events` arrive with
+  the stage that uses them. Tests: `scripts/test-sites.js` (95),
+  `scripts/e2e/sites.js` (32) and `sites-browser.js` (14), both in
+  `run-all.sh`; `accounts-browser.js` counts ten tabs.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2250,6 +2296,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   (`loadReview`, `startReview`, same `POST /api/c/<slug>/reviews`) with the
   module select, the button and a polling line while one runs. The board still
   shows a running review and its recommendations in `renderReviews`.
+  `scripts/e2e/board-browser.js` checks the card on the settings page and its
+  absence from the board (it still looked on the board until the Sites push).
 - **A named account's requests carry its name** (2026-09-26, Brendan: Taylor,
   signed in as an admin with a code, sent a request that arrived as "no name").
   `POST /api/feedback` files the name as: the person tapped on the device

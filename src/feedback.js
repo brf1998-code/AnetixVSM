@@ -1001,11 +1001,14 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
   if (!gate.ok) { await logEvent("company_delete_refused", co.slug, { reason: gate.error, by: req.sosAccount ? req.sosAccount.login : null }); return res.status(403).json({ error: gate.error }); }
   const busy = (await q("SELECT count(*)::int AS n FROM platform.build_runs WHERE company=$1 AND status IN ('running','queued','waiting')", [co.slug])).rows[0].n;
   if (busy) return res.status(409).json({ error: `${busy} build(s) still open on this company; cancel them first` });
+  const paying = await require("./sites").deleteRefusal(co.slug);   // a subscribed site's card is still being billed (src/sites.js)
+  if (paying) return res.status(409).json({ error: paying });
   try {
     const mods = (await q("SELECT name FROM platform.modules WHERE company=$1", [co.slug])).rows.map((m) => m.name);
     await testfloor.deleteCompany(co.slug);   // its test tables and its test_floors row (the third role goes with the runner below)
     await selfserve.deleteCompany(co.slug);   // its credit ledger and its self_serve row (the pin it used keeps its count)
     await q("DELETE FROM platform.sample_fills WHERE company=$1", [co.slug]);   // what its sample fills put in (the rows go with the schemas below)
+    await require("./sites").deleteCompany(co.slug);   // its row in the pipeline (src/sites.js)
     registry.unmountCompany(co.slug);
     for (const m of mods) {
       await q(`DROP SCHEMA IF EXISTS ${migrate.liveSchema(co.slug, m)} CASCADE`);

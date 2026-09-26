@@ -46,6 +46,7 @@ async function main() {
   await require("./src/selfserve").init();   // self-serve companies from anetix.ai: access pins, the credit ledger, the credit gate (src/selfserve.js)
   await require("./src/demorequests").init();   // demo requests from anetix.ai's form, on the Pins tab (src/demorequests.js)
   await require("./src/sample").init();      // sample data for a demo's tools: the AI fills a tool with a made-up week, and clears exactly those rows (src/sample.js)
+  await require("./src/sites").init();       // paid sites: the price book and the pipeline on the Sites tab of /admin (src/sites.js, docs/PAID-SITES.md)
 
   const app = express();
   app.disable("x-powered-by");
@@ -126,6 +127,7 @@ async function main() {
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
   app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
+  app.use(require("./src/sites").router);        // /api/admin/sites*: the Sites tab of /admin (the price book, the pipeline from a demo to a paying site)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
