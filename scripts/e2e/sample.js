@@ -134,6 +134,18 @@ const count = async (schema, table) => Number((await q(`SELECT count(*)::int AS 
   const cl4 = await admin.post(`${url}/clear`, {});
   t("and it clears again, the reading's station still kept", cl4.status === 200 && Boolean((await q(`SELECT 1 FROM ${LIVE}.stations WHERE id=$1`, [keptStation])).rows[0]) && (await q(`SELECT count(*)::int AS n FROM ${LIVE}.stations WHERE name LIKE 'Sample%'`)).rows[0].n === 1, cl4.json.cleared);
 
+  // ---- a fill that does not work is on the record (and would be handed back had it cost anything)
+  await q(`ALTER SCHEMA ${LIVE} RENAME TO hold_sample_e2e`);
+  await admin.post(url, {});
+  const bad = await waitFor("the failed fill", async () => { const x = (await admin.get(url)).json; return x.fill && x.fill.id !== d4.fill.id && x.fill.status !== "writing" ? x : null; });
+  await q(`ALTER SCHEMA hold_sample_e2e RENAME TO ${LIVE}`);
+  t("a fill that cannot work fails and says why", bad.fill.status === "failed" && /not there yet/.test(bad.fill.error), bad.fill);
+  const failRec = (await q("SELECT after, detail FROM platform.record WHERE company=$1 AND kind='sample_failed' ORDER BY id DESC LIMIT 1", [A])).rows[0];
+  t("the failure is on the record, for the Demos export", failRec && /not there yet/.test(failRec.after) && failRec.detail.fill === bad.fill.id, failRec);
+  const lastOk = (await q("SELECT detail FROM platform.record WHERE company=$1 AND kind='sample_filled' ORDER BY id DESC LIMIT 1", [A])).rows[0].detail;
+  const repT = (lastOk.repeated || [])[0];
+  t("the latest rows were copied back in time by the platform, not written out by the agent", repT && lastOk.rows[repT] > 6, { repeated: lastOk.repeated, rows: lastOk.rows });
+
   // ---- nothing built yet
   const nosuch = await admin.get(`/api/c/${A}/modules/nosuch/sample`);
   t("a tool that does not exist cannot be filled", nosuch.status === 200 && nosuch.json.can_fill === false && (await admin.post(`/api/c/${A}/modules/nosuch/sample`, {})).status === 404, nosuch.json);

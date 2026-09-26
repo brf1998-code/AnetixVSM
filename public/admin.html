@@ -824,6 +824,7 @@ async function doDelete(slug) {
   const r = await fetch(`/api/admin/companies/${slug}/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm_slug, ...stepValue("del") }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) return alert(j.error || "failed");
+  if (location.hash.startsWith("#demos/")) location.hash = "#demos";   // deleted from its page on the Demos tab: back to the list
   closeModal(); load();
 }
 // ---- restore from a backup file

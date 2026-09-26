@@ -1129,7 +1129,7 @@ function drawSample(j) {
       <p style="margin:0 0 10px">${open}</p>
       <div class="vrow">${btn("Clear sample data", "clearSample()")}${btn("Replace with a fresh set", "fillSample(true)")}</div>`;
   } else {
-    const last = f && f.status === "failed" ? `<p class="hint" style="color:var(--red)">The last try did not work: ${esc(f.error || "")}</p>`
+    const last = f && f.status === "failed" ? `<p class="hint" style="color:var(--red)">The last try did not work, and it cost you nothing: ${esc(f.error || "")}</p>`
       : f && f.status === "cleared" ? `<p class="hint">The sample data was cleared${f.kept ? `, except ${f.kept} rows that something you added points at` : ""}.</p>` : "";
     body = `<p class="hint">Fill ${esc(title)} with a made-up week of work: finished jobs, things in progress, something running late. You see what the tool does with real-looking data in it. The agent reads the tool and writes the rows, which takes about a minute and a small part of your AI credit. Every sample row is remembered, so Clear takes out exactly those and never anything you add.</p>
       ${last}

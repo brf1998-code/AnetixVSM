@@ -126,7 +126,7 @@
     root().innerHTML = `
       <a class="back" href="#demos">← All demos</a>
       <div class="card"><div class="cohead"><h2>${esc(d.name)}${d.demo ? '<span class="chip demo">DEMO</span>' : ""}</h2>
-        <div class="links"><a href="/c/${esc(d.slug)}/" target="_blank" rel="noopener">Open their board</a><a href="#companies/${esc(d.slug)}">Company card</a><a href="/api/c/${esc(d.slug)}/record/export">Download the record</a></div></div>
+        <div class="links"><a href="/c/${esc(d.slug)}/" target="_blank" rel="noopener">Open their board</a><a href="#companies/${esc(d.slug)}">Company card</a><a href="/api/c/${esc(d.slug)}/record/export">Download the record</a><a href="#" style="color:var(--red)" data-slug="${esc(d.slug)}" data-name="${esc(d.name)}" onclick="openDelete(this.dataset.slug, this.dataset.name);return false" title="Delete this demo company and everything in it (the slug typed back and your code)">Delete this demo</a></div></div>
         <p class="sub">${esc(d.contact || "")}${d.email ? ` · ${esc(d.email)}` : ""} · came in ${when(d.since)}${d.pin ? ` on pin ${esc(d.pin.shown)} (${esc(d.pin.label)})` : ""} · ${d.manager ? `${esc(d.manager.login)}, ${d.manager.enrolled ? "2FA set up" : "no 2FA yet"}, ${d.manager.last_sign_in ? `signed in ${esc(ago(d.manager.last_sign_in))}` : "never signed in"}` : "no account"} · active ${esc(ago(d.last_activity))}</p>
         <div class="grid">
           ${kpi("Credit left", pct(m), `${usd(m.bought_credit_usd + m.granted_usd + m.adjusted_usd)} of credit in all`)}

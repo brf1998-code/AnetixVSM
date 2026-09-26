@@ -1303,6 +1303,26 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   unique column with a sample row an earlier clear had to keep takes that row
   over (`leftoverKeys`); when under half the rows fit, nothing goes in and the
   AI is asked again with what the database said, then whatever fits is kept.
+  Simpler the same afternoon (Brendan: "burning through credits getting
+  failures ... we need a bit of a simpler solution"). The logs showed why:
+  seancorp's five fills cost $2.40 and the last one had no database reason at
+  all, because the agent tried to write a week of hourly readings (5 spaces x
+  4 gases x 168 hours), ran past its length limit and came back cut off and
+  empty. Now: ONE call on the short text model (`agent.summaryModel()`,
+  Sonnet 5; `SOS_SAMPLE_MODEL` overrides), 8000 tokens at most, asking for
+  only the latest rows (10 a table, 80 in all) plus a `repeat` list
+  { table: { covers_minutes, back_hours <= 168 } }; the platform copies those
+  back in time itself (`expandRepeats`: timestamps moved, decimals nudged up
+  to 3%, the rows pointing at each copied row copied with it, placeholders
+  "<ph>~k", at most `SOS_SAMPLE_MAX_ROWS` 1200 rows). The answer is never
+  refused whole (`tidy`: JSON text read, unknown tables and columns dropped),
+  no second AI call, and whatever the database takes is kept. A fill that
+  fails costs the demo nothing: its spend is filed as `sample_data_failed`
+  and handed back as an `adjust` ledger row by `platform`; every failure is
+  a `sample_failed` record row (so the Demos export shows it).
+  `agent.runStructured` now also returns `stopReason`. Delete a demo from the
+  Demos tab too ("Delete this demo", the company card's delete).
+  Tests: `scripts/e2e/sample.js` 38, `scripts/test-sample.js` 20.
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin

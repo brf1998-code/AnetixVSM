@@ -561,7 +561,7 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
   const usage = resp.usage || {};
   const price = priceOf(model);
   const costUsd = (usage.input_tokens || 0) * price.inTok + (usage.output_tokens || 0) * price.outTok;
-  return { data, costUsd };
+  return { data, costUsd, stopReason: resp.stop_reason };
 }
 
 // Plain chat call (no tools): a module's conversational agent. Returns

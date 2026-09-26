@@ -65,7 +65,7 @@ async function init() {
   await q("UPDATE platform.sample_fills SET status='failed', error='the platform restarted while the sample data was being written; nothing was put in' WHERE status='writing'");
 }
 
-const PER_TABLE = Number(process.env.SOS_SAMPLE_MAX_ROWS || 60);
+const PER_TABLE = Number(process.env.SOS_SAMPLE_MAX_ROWS || 1200);   // after the copies (expandRepeats); the AI writes far fewer
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const qi = (s) => `"${String(s).replace(/"/g, '""')}"`;
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -174,11 +174,18 @@ function pointers(table, cols, keys, made) {
 }
 
 // ---- the AI's rows ---------------------------------------------------------------------------------------------------
+// Simpler since 2026-09-26 (Brendan: "burning through credits getting failures ... we need a bit of a simpler solution").
+// The first version asked for a whole week of rows; for a tool that logs twenty readings an hour the answer ran past
+// its length limit, came back cut off and empty, and every try cost the demo about fifty cents. Now the AI writes only
+// the latest few rows (at most AI_PER_TABLE a table, AI_TOTAL in all) on the short text model, once, and says which
+// tables repeat; the platform copies those back in time itself (expandRepeats), with the rows that belong to each.
+const AI_PER_TABLE = 10, AI_TOTAL = 80, MAX_ROWS = Number(process.env.SOS_SAMPLE_MAX_ROWS || 1200);
 const FILL_SCHEMA = {
   type: "object",
   properties: {
-    story: { type: "string", description: "One or two plain sentences a plant manager would read: the made-up week these rows tell (who, what was made, what is going on right now). No dashes." },
-    tables: { type: "object", description: "{ \"<table>\": [ { \"<column>\": value, ... } ] }. Only tables and columns that exist. Plain values only (text, numbers, true/false, null, ISO timestamps).", additionalProperties: { type: "array", items: { type: "object" } } },
+    story: { type: "string", description: "One or two plain sentences a plant manager would read: the made-up work these rows tell (who, what, what is going on right now). No dashes." },
+    tables: { type: "object", description: `{ "<table>": [ { "<column>": value, ... } ] }. Only tables and columns that exist. At most ${AI_PER_TABLE} rows a table, ${AI_TOTAL} in all.`, additionalProperties: { type: "array", items: { type: "object" } } },
+    repeat: { type: "object", description: "Tables that record something again and again (hourly logs, readings, moves): { \"<table>\": { \"covers_minutes\": the time the rows you wrote for it cover, \"back_hours\": how far back the platform should copy them, at most 168 } }. Leave out every other table.", additionalProperties: { type: "object", properties: { covers_minutes: { type: "number" }, back_hours: { type: "number" } } } },
   },
   required: ["story", "tables"],
 };
@@ -189,22 +196,23 @@ async function toolContext(company, mod, version, cols, keys) {
   const ref = (await q("SELECT content FROM platform.agent_docs WHERE company=$1 AND module=$2 AND name='reference.md'", [company, mod])).rows[0];
   const migrations = Object.keys(files).filter((f) => /^migrations\/.*\.sql$/.test(f)).sort().map((f) => `-- ${f}\n${files[f]}`).join("\n\n");
   const code = Object.keys(files).filter((f) => /\.(js|html)$/.test(f) && !/^checks\//.test(f)).sort((a, b) => (/routes/.test(b) ? 1 : 0) - (/routes/.test(a) ? 1 : 0) || a.localeCompare(b));
-  let budget = 45000, codeText = "";
-  for (const f of code) { if (budget <= 0) break; const part = clipText(String(files[f]), Math.min(budget, 20000)); codeText += `\n\n--- ${f}\n${part}`; budget -= part.length; }
+  let budget = 30000, codeText = "";
+  for (const f of code) { if (budget <= 0) break; const part = clipText(String(files[f]), Math.min(budget, 15000)); codeText += `\n\n--- ${f}\n${part}`; budget -= part.length; }
   const colText = Object.entries(cols).map(([t, list]) => {
     const made = madeKey(t, cols, keys.pk);
     const uniq = Object.values((keys.unique || {})[t] || {});
     return `${t}: ${list.map((c) => `${c.name} ${c.type}${c.nullable ? "" : " not null"}${c.name === made ? " (key the database makes: give 1, 2, 3 as placeholders)" : c.default ? " (has a default)" : ""}${isJson(c) ? " (give an object or a list)" : ""}`).join(", ")}${(keys.fk[t] || []).length ? `\n  points at: ${keys.fk[t].map((f) => `${f.col} -> ${f.table}.${f.column}`).join(", ")}` : ""}${((keys.check || {})[t] || []).length ? `\n  every row must meet: ${keys.check[t].join("; ")}` : ""}${uniq.length ? `\n  no two rows may share: ${uniq.map((u) => u.join(" + ")).join("; ")} (the migrations' own rows count too)` : ""}`;
   }).join("\n");
-  // the newest migrations matter most (a revision's), so a long set keeps its end, not its start
-  const mig = migrations.length > 24000 ? `... (the first part cut)\n${migrations.slice(-24000)}` : migrations;
-  return { ref: ref ? clipText(String(ref.content), 12000) : "", migrations: mig, codeText, colText };
+  const mig = migrations.length > 16000 ? `... (the first part cut)\n${migrations.slice(-16000)}` : migrations;
+  return { ref: ref ? clipText(String(ref.content), 8000) : "", migrations: mig, codeText, colText };
 }
-async function writeRows(company, mod, version, cols, keys, title, problemsBefore) {
-  const model = await agent.modelFor(company, "propose");
+// The model: SOS_SAMPLE_MODEL, else the short text jobs' model (/admin#models, Sonnet 5 by default).
+async function sampleModel() { return process.env.SOS_SAMPLE_MODEL || (await agent.summaryModel()); }
+async function writeRows(company, mod, version, cols, keys, title) {
+  const model = await sampleModel();
   const ctx = await toolContext(company, mod, version, cols, keys);
   const now = new Date();
-  const system = `You write sample data for a demo of a small tool that runs a job on a factory floor. The person trying the demo has no data of their own yet; your rows go straight into the tool's own tables so every screen and number shows what the tool does with a normal week of work in it. Write in the tool's own words: the stages, statuses, stations and names its code and design use, exactly as spelled there. Everything is made up; never a real company's or real person's name.`;
+  const system = `You write sample data for a demo of a small tool that runs a job on a factory floor. The person trying the demo has no data of their own yet; your rows go straight into the tool's own tables so its screens and numbers show what the tool does with real work in it. Write in the tool's own words: the stages, statuses, stations and names its code and design use, exactly as spelled there. Everything is made up; never a real company's or real person's name. Keep the answer short.`;
   const prompt = `The tool is "${title}".
 
 ${ctx.ref ? `Its design:\n${ctx.ref}\n\n` : ""}Its tables, as they stand:
@@ -215,18 +223,121 @@ ${ctx.migrations}
 
 Its code (so the values are the ones the screens and rules expect):${ctx.codeText || " (none stored)"}
 
-Write the rows:
-1. About a week of history ending now (${now.toISOString()}), plus the work in progress right now, so every screen has something on it: finished items, items at each stage, something late or stuck, a few recent events. Timestamps are ISO with a time zone, spread over working hours.
-2. Between 5 and ${Math.min(40, PER_TABLE)} rows a table for the tables the screens read; a table the migrations already fill with fixed values (a list of stations, say) needs rows only if more make sense. Never more than ${PER_TABLE}.
-3. A key the database makes: give 1, 2, 3 ... per table as placeholders and use those same numbers in the columns that point at it. Leave out a column with a default unless the value matters to the story.
-4. Only the tables and columns listed. Plain values (an object or a list only where a column says so). Values that meet every rule listed with the table, "not null", and the checks in the migrations. Names and codes of your own, never ones the migrations already insert.
-5. The story: one or two plain sentences on what the week was like.${problemsBefore ? `\n\nAn earlier try did not fit. What the database said:\n${problemsBefore.join("\n")}\nWrite the whole set again so none of that happens.` : ""}`;
+Write the rows. It is now ${now.toISOString()}.
+1. Only the latest part: the most recent work and what is in progress right now, with something late, stuck or out of the ordinary. At most ${AI_PER_TABLE} rows a table and ${AI_TOTAL} in all. A table the migrations already fill (a list of stations, say) needs rows only if more make sense.
+2. A table that records something again and again (hourly logs, readings, moves, counts): write only the latest few and name it in "repeat" with the time those rows cover and how far back to copy them. The platform copies them back in time with small changes to the numbers, and copies the rows that belong to each one along with it. Never write the copies yourself.
+3. A key the database makes: give 1, 2, 3 ... per table as placeholders and use those same numbers in the columns that point at it. Leave out a column with a default unless the value matters.
+4. Only the tables and columns listed. Plain values (an object or a list only where a column says so). Every rule listed with a table, every "not null", the checks in the migrations. Names and codes of your own, never ones the migrations already insert. Timestamps are ISO with a time zone.
+5. The story: one or two plain sentences on what is going on.`;
   if (agent.fakeMode()) {
     await agent.atWall("structured:sample_data", { company, model, system, prompt });
     return { data: fakeRows(cols, keys), costUsd: 0, model };
   }
-  const { data, costUsd } = await agent.runStructured({ model, company, system, prompt, schema: FILL_SCHEMA, toolName: "sample_data", maxTokens: 16000 });
-  return { data, costUsd, model };
+  const { data, costUsd, stopReason } = await agent.runStructured({ model, company, system, prompt, schema: FILL_SCHEMA, toolName: "sample_data", maxTokens: 8000 });
+  return { data, costUsd, model, stopReason };
+}
+// The AI's answer made usable, never refused whole: a list given as JSON text is read; an unknown table goes; an unknown
+// column goes from its row; a structured value where a plain one belongs goes; rows past the caps go. Pure.
+// -> { tables, repeat, dropped: [notes] }
+function tidy(data, cols) {
+  const dropped = [];
+  let tables = data && data.tables;
+  if (typeof tables === "string") { try { tables = JSON.parse(tables); } catch { tables = null; } }
+  let repeat = data && data.repeat;
+  if (typeof repeat === "string") { try { repeat = JSON.parse(repeat); } catch { repeat = null; } }
+  const out = {};
+  let total = 0;
+  for (const [t, rows0] of Object.entries(isObj(tables) ? tables : {})) {
+    let rows = rows0;
+    if (typeof rows === "string") { try { rows = JSON.parse(rows); } catch { rows = null; } }
+    if (!cols[t]) { dropped.push(`no table named ${t}`); continue; }
+    if (!Array.isArray(rows)) { dropped.push(`${t}: not a list of rows`); continue; }
+    const byName = Object.fromEntries(cols[t].map((c) => [c.name, c]));
+    const bad = new Set();
+    const list = [];
+    for (const r of rows.slice(0, AI_PER_TABLE * 2)) {
+      if (!isObj(r) || total >= AI_TOTAL * 2) continue;
+      const row = {};
+      for (const [k, v] of Object.entries(r)) {
+        if (!byName[k]) { bad.add(k); continue; }
+        if (v !== null && typeof v === "object" && !isJson(byName[k])) continue;
+        row[k] = v;
+      }
+      if (Object.keys(row).length) { list.push(row); total++; }
+    }
+    if (bad.size) dropped.push(`${t}: no column named ${[...bad].join(", ")}`);
+    if (list.length) out[t] = list;
+  }
+  const rep = {};
+  for (const [t, r] of Object.entries(isObj(repeat) ? repeat : {})) {
+    const cover = Number(r && r.covers_minutes), back = Math.min(168, Number(r && r.back_hours));
+    if (out[t] && cover >= 5 && back > 0 && back * 60 > cover) rep[t] = { covers_minutes: cover, back_hours: back };
+  }
+  return { tables: out, repeat: rep, dropped };
+}
+// Copies of the repeating tables' rows, back in time: copy k moves every timestamp and date back k times the time the
+// rows cover and nudges the decimal numbers by up to 3%; the rows that point at a copied row are copied with it (and
+// theirs), pointing at the copy. Placeholders of copies are "<placeholder>~k". A table copied as part of another's
+// family is not copied again on its own. At most MAX_ROWS rows in all. Pure (seeded, so the same answer copies the same).
+function expandRepeats(tables, repeat, cols, keys, { now = Date.now(), max = MAX_ROWS } = {}) {
+  const made = {}; for (const t of Object.keys(cols)) made[t] = madeKey(t, cols, keys.pk);
+  const ptrs = Object.fromEntries(Object.keys(cols).map((t) => [t, pointers(t, cols, keys, made)]));
+  const children = (t) => Object.keys(tables).filter((c) => c !== t && Object.values(ptrs[c] || {}).includes(t));
+  // a family: the table and every table below it through pointers
+  const family = (t, seen = new Set()) => { if (seen.has(t)) return []; seen.add(t); return [t, ...children(t).flatMap((c) => family(c, seen))]; };
+  const out = Object.fromEntries(Object.entries(tables).map(([t, r]) => [t, r.map((x) => ({ ...x }))]));
+  let total = Object.values(out).reduce((n, r) => n + r.length, 0);
+  let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const covered = new Set();
+  const K = (v) => String(v);
+  for (const [root, spec] of Object.entries(repeat || {})) {
+    if (covered.has(root) || !tables[root]) continue;
+    if (!made[root] && (keys.pk[root] || []).length) continue;   // a key of the AI's own would clash on every copy
+    const fam = family(root);
+    fam.forEach((t) => covered.add(t));
+    // the rows of one copy: the root's rows, and down the family the rows that point at a row already in the copy
+    const members = { [root]: tables[root] };
+    const inCopy = { [root]: new Set(tables[root].map((r) => (made[root] ? K(r[made[root]]) : null)).filter(Boolean)) };
+    for (const t of fam.slice(1)) {
+      const p = ptrs[t] || {};
+      members[t] = (tables[t] || []).filter((r) => Object.entries(p).some(([c, target]) => inCopy[target] && r[c] != null && inCopy[target].has(K(r[c]))));
+      inCopy[t] = new Set(members[t].map((r) => (made[t] ? K(r[made[t]]) : null)).filter(Boolean));
+    }
+    const perCopy = Object.values(members).reduce((n, r) => n + r.length, 0);
+    if (!perCopy) continue;
+    const copies = Math.max(0, Math.min(Math.floor((spec.back_hours * 60) / spec.covers_minutes), Math.floor((max - total) / perCopy)));
+    const shiftMs = spec.covers_minutes * 60e3;
+    for (let k = 1; k <= copies; k++) {
+      for (const t of fam) {
+        const byName = Object.fromEntries((cols[t] || []).map((c) => [c.name, c]));
+        for (const r of members[t] || []) {
+          const c2 = {};
+          for (const [col, v] of Object.entries(r)) {
+            const c = byName[col];
+            if (v == null || !c) { c2[col] = v; continue; }
+            if (col === made[t]) { c2[col] = `${v}~${k}`; continue; }
+            const target = (ptrs[t] || {})[col];
+            if (target && fam.includes(target) && inCopy[target] && inCopy[target].has(K(v))) { c2[col] = `${v}~${k}`; continue; }
+            if (/timestamp|date/.test(c.type) && !Number.isNaN(Date.parse(v))) {
+              const d = new Date(Date.parse(v) - k * shiftMs);
+              c2[col] = c.type === "date" ? d.toISOString().slice(0, 10) : d.toISOString();
+              continue;
+            }
+            if (/numeric|real|double/.test(c.type) && typeof v === "number" && !target) {
+              const dec = (String(v).split(".")[1] || "").length;
+              c2[col] = Number((v * (1 + (rnd() - 0.5) * 0.06)).toFixed(dec));
+              continue;
+            }
+            c2[col] = v;
+          }
+          (out[t] = out[t] || []).push(c2);
+          total++;
+        }
+      }
+    }
+  }
+  void now;
+  return out;
 }
 // Fake mode: rows from the column types alone, the same every time. Pure.
 function fakeRows(cols, keys) {
@@ -251,7 +362,9 @@ function fakeRows(cols, keys) {
       return row;
     });
   }
-  return { story: "Fake mode: six made-up rows a table from the column types alone. (SOS_FAKE_AGENT=1)", tables };
+  // the first table with a timestamp that another table points at repeats: six hours of it, copied back a day
+  const rep = order.find((t) => made[t] && cols[t].some((c) => /timestamp/.test(c.type)) && order.some((o) => o !== t && Object.values(pointers(o, cols, keys, made)).includes(t)));
+  return { story: "Fake mode: six made-up rows a table from the column types alone. (SOS_FAKE_AGENT=1)", tables, repeat: rep ? { [rep]: { covers_minutes: 360, back_hours: 24 } } : {} };
 }
 
 // ---- putting rows in ---------------------------------------------------------------------------------------------------
@@ -282,10 +395,8 @@ const plainRow = (r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k,
 // added points at them). A new row that clashes with one on a unique column takes it over instead of being left out
 // (2026-09-26, seancorp: the first fill worked, then every fill after it was refused: its parents clashed with kept
 // ones on a unique name and every child went with them).
-// strict: when fewer than half the rows fit, put nothing in and throw { retry, reasons } so the AI can be asked again
-// with what the database said.
 // -> { rows: { table: [rows] }, plan, skipped, reused, counts, reasons }
-async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, keys, leftovers = {}, strict = false }) {
+async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, keys, leftovers = {} }) {
   const primary = liveOn ? live : stg;
   const primCols = await columnsOf(primary);
   const primUniq = await uniquesOf(primary);
@@ -351,11 +462,7 @@ async function putIn(company, mod, made0, { live, stg, liveOn, stgOn, genCols, k
       // the preview's copy of a table that went into live: the same rows, the same keys, before any child of it
       if (stgClient && inPrimary && stgCols[t]) for (const r of rows[t]) await insertRow(stgClient, stg, t, r, stgCols[t], { explicit: true });
     }
-    const inserted = Object.values(rows).reduce((n, r) => n + r.length, 0);
     const reasons = Object.entries(why).flatMap(([t, m]) => [...m.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([msg, n]) => `${t}: ${msg}${n > 1 ? ` (${n} rows)` : ""}`)).slice(0, 8);
-    if (strict && attempted && inserted < attempted / 2) {
-      throw Object.assign(new Error(`only ${inserted} of ${attempted} sample rows fit`), { retry: true, reasons, inserted, attempted });
-    }
     if (stgClient) await migrate.setSequencesPastData(stgClient, stg);
     await client.query("COMMIT");
     if (stgClient) await stgClient.query("COMMIT");
@@ -440,45 +547,46 @@ async function fill(company, mod, who, { replace = false } = {}) {
 }
 async function write(f, m, who) {
   const { company, module: mod } = f;
-  const live = migrate.liveSchema(company, mod), stg = migrate.stagingSchema(company, mod);
-  const liveOn = m.live_version != null && await schemaExists(live);
-  const stgOn = m.staged_version != null && await schemaExists(stg);
-  if (!liveOn && !stgOn) throw new Error("the tool's tables are not there yet");
-  const genSchema = stgOn ? stg : live;
-  const genCols = await columnsOf(genSchema);
-  if (!Object.keys(genCols).length) throw new Error("this tool keeps no tables of its own, so there is nothing to fill");
-  const keys = await keysOf(genSchema);
-  let out = null, cost = 0, put = null, model = null;
-  const ask = async (problems) => { const o = await writeRows(company, mod, f.version, genCols, keys, m.title || mod, problems); cost += o.costUsd || 0; model = o.model; return o; };
-  const tablesOf = (o) => (isObj(o && o.data && o.data.tables) ? o.data.tables : {});
+  let cost = 0, model = null, done = false;
   try {
-    out = await ask();
-    let problems = fitProblems(tablesOf(out), genCols);
-    if (problems.length) { out = await ask(problems); problems = fitProblems(tablesOf(out), genCols); }   // one more try with what did not fit
-    if (problems.length) throw new Error(`the sample rows did not fit this tool's tables: ${problems.slice(0, 3).join("; ")}`);
-    const leftovers = await leftoverKeys(company, mod, f.id);
-    const where = { live, stg, liveOn, stgOn, genCols, keys, leftovers };
-    try { put = await putIn(company, mod, tablesOf(out), { ...where, strict: true }); }
-    catch (e) {
-      if (!e.retry) throw e;
-      // most rows were refused: ask again with the database's own words, then keep whatever fits
-      console.error(`[sample] ${company}/${mod} #${f.id}: ${e.message}; asking again. ${e.reasons.join(" | ")}`);
-      out = await ask(e.reasons.length ? e.reasons : [`only ${e.inserted} of ${e.attempted} rows fit, for reasons the database did not give`]);
-      const again = fitProblems(tablesOf(out), genCols);
-      if (again.length) throw new Error(`the sample rows did not fit this tool's tables: ${again.slice(0, 3).join("; ")}`);
-      put = await putIn(company, mod, tablesOf(out), { ...where, strict: false });
+    const live = migrate.liveSchema(company, mod), stg = migrate.stagingSchema(company, mod);
+    const liveOn = m.live_version != null && await schemaExists(live);
+    const stgOn = m.staged_version != null && await schemaExists(stg);
+    if (!liveOn && !stgOn) throw new Error("the tool's tables are not there yet");
+    const genSchema = stgOn ? stg : live;
+    const genCols = await columnsOf(genSchema);
+    if (!Object.keys(genCols).length) throw new Error("this tool keeps no tables of its own, so there is nothing to fill");
+    const keys = await keysOf(genSchema);
+    const out = await writeRows(company, mod, f.version, genCols, keys, m.title || mod);
+    cost = out.costUsd || 0; model = out.model;
+    const tidied = tidy(out.data, genCols);
+    if (!Object.keys(tidied.tables).length) {
+      throw new Error(out.stopReason === "max_tokens" ? "the agent's answer was too long and came back cut off" : `the agent gave no rows for this tool's tables${tidied.dropped.length ? ` (${tidied.dropped.slice(0, 3).join("; ")})` : ""}`);
     }
-  } finally {
-    if (cost > 0 || model) await agent.recordUsage(company, mod, "sample_data", model, cost, { fill: f.id }).catch(() => {});
+    const rows = expandRepeats(tidied.tables, tidied.repeat, genCols, keys);
+    const leftovers = await leftoverKeys(company, mod, f.id);
+    const put = await putIn(company, mod, rows, { live, stg, liveOn, stgOn, genCols, keys, leftovers });
+    const total = Object.values(put.counts).reduce((a, b) => a + b, 0);
+    const notes = [...tidied.dropped, ...put.reasons];
+    if (notes.length) console.error(`[sample] ${company}/${mod} #${f.id}: ${put.skipped} rows left out. ${notes.join(" | ")}`);
+    if (!total) throw new Error(`none of the sample rows fit this tool's tables${put.reasons.length ? `: ${put.reasons.slice(0, 2).join("; ")}` : ""}`);
+    const story = String((out.data && out.data.story) || "").replace(/\s*[–—]\s*/g, ", ").slice(0, 600);
+    await agent.recordUsage(company, mod, "sample_data", model, cost, { fill: f.id });
+    done = true;
+    await q(`UPDATE platform.sample_fills SET status='in', story=$2, rows=$3, plan=$4, in_live=$5, in_preview=$6, skipped=$7, cost_usd=$8, model=$9, error=$10 WHERE id=$1`,
+      [f.id, story, JSON.stringify(put.rows), JSON.stringify(put.plan), liveOn, stgOn, put.skipped, cost, model, notes.length ? notes.join("\n").slice(0, 2000) : null]);
+    await record("sample_filled", { company, module: mod, actor: who, version: f.version, after: story, detail: { fill: f.id, rows: put.counts, repeated: Object.keys(tidied.repeat), skipped: put.skipped, reused: put.reused, left_out_because: notes, cost_usd: cost, model, live: liveOn, preview: stgOn } });
+    await logEvent("sample_filled", `${company}/${mod}`, { fill: f.id, rows: total });
+  } catch (e) {
+    // a fill that did not work costs the demo nothing: the spend is filed (the admin sees it) and handed back as credit
+    if (!done && cost > 0) {
+      await agent.recordUsage(company, mod, "sample_data_failed", model, cost, { fill: f.id }).catch(() => {});
+      const ss = require("./selfserve");
+      if (await ss.credit(company).catch(() => null)) await ss.addCredit({ slug: company, credit_usd: cost, kind: "adjust", note: `a sample fill that did not work (#${f.id}), handed back`, by: "platform" }).catch((x) => console.error("[sample] refund:", x.message));
+    }
+    await record("sample_failed", { company, module: mod, actor: who, version: f.version, after: String(e.message || e).slice(0, 500), detail: { fill: f.id, cost_usd: cost, refunded: !done && cost > 0, model } });
+    throw e;
   }
-  const total = Object.values(put.counts).reduce((a, b) => a + b, 0);
-  if (put.reasons.length) console.error(`[sample] ${company}/${mod} #${f.id}: ${put.skipped} rows left out. ${put.reasons.join(" | ")}`);
-  if (!total) throw new Error(`none of the sample rows fit this tool's tables. What the database said: ${put.reasons.slice(0, 3).join("; ") || "nothing"}`);
-  const story = String((out.data && out.data.story) || "").replace(/\s*[–—]\s*/g, ", ").slice(0, 600);
-  await q(`UPDATE platform.sample_fills SET status='in', story=$2, rows=$3, plan=$4, in_live=$5, in_preview=$6, skipped=$7, cost_usd=$8, model=$9, error=$10 WHERE id=$1`,
-    [f.id, story, JSON.stringify(put.rows), JSON.stringify(put.plan), liveOn, stgOn, put.skipped, cost, model, put.reasons.length ? put.reasons.join("\n").slice(0, 2000) : null]);
-  await record("sample_filled", { company, module: mod, actor: who, version: f.version, after: story, detail: { fill: f.id, rows: put.counts, skipped: put.skipped, reused: put.reused, left_out_because: put.reasons, cost_usd: cost, model, live: liveOn, preview: stgOn } });
-  await logEvent("sample_filled", `${company}/${mod}`, { fill: f.id, rows: total });
 }
 
 // Take the fill's rows out of one schema, children first. -> { deleted, kept }
@@ -592,4 +700,4 @@ router.post("/api/c/:slug/modules/:mod/sample/clear", requireManager, json, guar
   res.json({ ...(await view(req.params.slug, req.params.mod)), cleared: out });
 }));
 
-module.exports = { init, router, fill, clear, afterDeploy, view, isDemo, fkOrder, madeKey, pointers, fakeRows, jsonReady, fitProblems, SCHEMA };
+module.exports = { init, router, fill, clear, afterDeploy, view, isDemo, fkOrder, madeKey, pointers, fakeRows, jsonReady, fitProblems, tidy, expandRepeats, SCHEMA };
