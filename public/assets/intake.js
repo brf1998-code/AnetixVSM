@@ -1,5 +1,5 @@
 // Module creation popout (docs/MODULE-CREATION.md, "The intake popout").
-// One popout serves the fixed questions, Fable's generated rounds and the
+// One popout serves the fixed questions, the agent's generated rounds and the
 // design gate. Opened from the request card on the board. Every answer saves
 // as it is given; closing at any point is safe. Platform code: the in-app
 // build agent never touches this file.
@@ -61,7 +61,28 @@ window.Intake = (() => {
   .ik-gate { font-size:12.5px; color:var(--steel,#51606f); margin-top:8px; }
   .ik-done { text-align:center; padding:30px 10px; }
   .ik-done b { display:block; font-size:18px; margin-bottom:8px; }
-  @media (max-width: 640px) { .ik-back { padding:0; } .ik-box { max-width:none; max-height:none; height:100%; border-radius:0; } .ik-q { font-size:17px; } }`;
+  /* the phone: full screen, the head on two lines (the round and Close first, the title under them), 16px
+     boxes so iOS does not zoom the page on focus, and the foot's buttons full width (Brendan, 2026-09-26) */
+  @media (max-width: 640px) {
+    .ik-back { padding:0; }
+    .ik-box { max-width:none; max-height:none; height:100%; border-radius:0; font-size:15px; }
+    .ik-head { flex-wrap:wrap; gap:4px 10px; padding:10px 14px; }
+    .ik-head .ik-round { order:1; flex:1 1 auto; }
+    .ik-head .ik-prog { order:2; }
+    .ik-head .ik-x { order:3; min-height:36px; padding:6px 12px; }
+    .ik-head .ik-title { order:4; flex:1 1 100%; white-space:normal; font-size:15px; line-height:1.3; }
+    .ik-body { padding:14px; }
+    .ik-q { font-size:18px; }
+    .ik-hint, .ik-why { font-size:14px; }
+    .ik-box textarea, .ik-box input[type=text], .ik-box input[type=number] { font-size:16px; }
+    .ik-chip { font-size:15px; padding:10px 14px; min-height:42px; }
+    .ik-row button { min-height:38px; min-width:38px; }
+    .ik-item input { width:22px; height:22px; }
+    .ik-ref textarea { min-height:50vh; }
+    .ik-foot { padding:10px 14px; gap:8px; }
+    .ik-foot .ik-sp { display:none; }
+    .ik-foot button { flex:1 1 auto; min-height:44px; font-size:14.5px; }
+  }`;
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const api = async (url, body, method) => {
@@ -174,21 +195,21 @@ window.Intake = (() => {
   }
 
   // ---- rendering -----------------------------------------------------------------
-  const roundLabel = () => (MODE === "design" || MODE === "edit" ? "The design" : MODE === "confirmed" ? "Confirmed" : V.round > 1 ? `Fable's questions, round ${V.round}` : "Your answers");
+  const roundLabel = () => (MODE === "design" || MODE === "edit" ? "The design" : MODE === "confirmed" ? "Confirmed" : V.round > 1 ? `The agent's questions, round ${V.round}` : "Your answers");
   const titleText = () => (V.name ? `New module: ${V.name}` : "New module");
-  const progressText = () => (MODE === "q" ? `${V.round_answered} of ${V.round_total} answered` : MODE === "think" ? "Fable is working" : "");
+  const progressText = () => (MODE === "q" ? `${V.round_answered} of ${V.round_total} answered` : MODE === "think" ? "The agent is working" : "");
   const progressPct = () => (MODE === "q" ? Math.round(100 * (V.round_answered / Math.max(1, V.round_total))) : MODE === "think" ? 100 : 100);
   function render() {
     if (!ROOT || !V) return;
     if (window.Dictate) Dictate.stop(ROOT);   // the box being listened to is about to be redrawn; keep what was heard
     let body = "", foot = "";
     if (MODE === "q") { body = questionHtml(cur()); foot = questionFoot(); }
-    else if (MODE === "think") { body = `<div class="ik-think"><div class="ik-spin"></div><b>Fable is reading your answers${V.attachments && V.attachments.length ? " and the files you attached" : ""}.</b><div class="ik-hint" style="margin-top:8px">${V.rounds_generated || V.enough ? "Writing the design summary." : "Deciding whether it needs to ask anything else, or can write the design."} This takes a minute or two. You can close this and come back; the card on the board shows when it is ready.</div></div>`; foot = `<span class="ik-sp"></span><button class="quiet" onclick="Intake.close()">Close for now</button>`; }
+    else if (MODE === "think") { body = `<div class="ik-think"><div class="ik-spin"></div><b>The agent is reading your answers${V.attachments && V.attachments.length ? " and the files you attached" : ""}.</b><div class="ik-hint" style="margin-top:8px">${V.rounds_generated || V.enough ? "Writing the design summary." : "Deciding whether it needs to ask anything else, or can write the design."} This takes a minute or two. You can close this and come back; the card on the board shows when it is ready.</div></div>`; foot = `<span class="ik-sp"></span><button class="quiet" onclick="Intake.close()">Close for now</button>`; }
     else if (MODE === "design") { body = designHtml(); foot = designFoot(); }
     else if (MODE === "edit") { body = editHtml(); foot = `<button class="quiet" onclick="Intake.cancelEdit()">Cancel</button><span class="ik-sp"></span><button class="go" onclick="Intake.reissue()">Re-issue the design with my edits</button>`; }
     else if (MODE === "confirmed") {
       const msg = V.status === "done" ? `<b>${esc(V.name)} is on the floor.</b><div class="ik-hint">Open it from the module strip. From here it improves through feedback like any other module. What you confirmed is kept as its reference.</div>`
-        : V.status === "building" ? `<b>Fable is building ${esc(V.name)}.</b><div class="ik-hint">Watch the card on the board: it shows each step, then a preview and the button that puts it on the floor. Building takes several minutes.</div>`
+        : V.status === "building" ? `<b>The agent is building ${esc(V.name)}.</b><div class="ik-hint">Watch the card on the board: it shows each step, then a preview and the button that puts it on the floor. Building takes several minutes.</div>`
         : V.error ? `<b>Design confirmed, but the build did not start.</b><div class="ik-hint">${esc(V.error)}. Use "Build it now" on the card to try again.</div>`
         : `<b>Design confirmed.</b><div class="ik-hint">The build starts from the card on the board ("Build it now").</div>`;
       body = `<div class="ik-done">${msg}${refDetails()}</div>`; foot = `<span class="ik-sp"></span><button class="primary" onclick="Intake.close()">Close</button>`;
@@ -197,7 +218,7 @@ window.Intake = (() => {
     ROOT.innerHTML = `<div class="ik-back" onclick="if(event.target===this)Intake.close()"><div class="ik-box" role="dialog" aria-modal="true">
       <div class="ik-head"><span class="ik-round">${esc(roundLabel())}</span><span class="ik-title">${esc(titleText())}</span><span class="ik-prog">${esc(progressText())}</span><button class="ik-x" onclick="Intake.close()">Close</button></div>
       <div class="ik-bar"><i style="width:${progressPct()}%"></i></div>
-      <div class="ik-body">${body}${ERR ? `<div class="ik-err">${esc(ERR)}</div>` : ""}${V.error && MODE !== "think" ? `<div class="ik-err">Last time Fable was asked, it did not finish: ${esc(V.error)}. Try again below.</div>` : ""}</div>
+      <div class="ik-body">${body}${ERR ? `<div class="ik-err">${esc(ERR)}</div>` : ""}${V.error && MODE !== "think" ? `<div class="ik-err">Last time the agent was asked, it did not finish: ${esc(V.error)}. Try again below.</div>` : ""}</div>
       <div class="ik-foot">${foot}</div></div></div>`;
     // every answer box can be talked into instead of typed (dictate.js); the words save like typing does
     if (window.Dictate) Dictate.scan(ROOT, ".ik-body textarea");
@@ -209,7 +230,7 @@ window.Intake = (() => {
     const list = qs(), last = IDX >= list.length - 1;
     const roundOne = V.round === 1;
     return `<button class="quiet" ${IDX === 0 ? "disabled" : ""} onclick="Intake.prev()">Back</button><span class="ik-sp"></span>`
-      + (last ? `<button class="go" onclick="Intake.finishRound()">${roundOne ? "Done with these, ask Fable" : "Done, back to Fable"}</button>` : `<button class="primary" onclick="Intake.next()">Next</button>`);
+      + (last ? `<button class="go" onclick="Intake.finishRound()">${roundOne ? "Done with these, ask the agent" : "Done, back to the agent"}</button>` : `<button class="primary" onclick="Intake.next()">Next</button>`);
   }
   function questionHtml(q) {
     if (!q) return `<div class="ik-done"><b>Nothing to answer right now.</b></div>`;
@@ -288,7 +309,7 @@ window.Intake = (() => {
     return `<button class="quiet" onclick="Intake.edit()">Adjust the text</button><button class="quiet" onclick="Intake.restart()">Start over</button><span class="ik-sp"></span><button class="go" id="ik-approve" ${all ? "" : "disabled"} onclick="Intake.approve()">Approve build</button>`;
   }
   function editHtml() {
-    return `<div class="ik-q">Adjust the reference</div><div class="ik-hint">Change anything. Fable re-issues the whole design to match what you write here; your edit is the authority.</div><div class="ik-ref"><textarea id="ik-edit">${esc((V.design || {}).reference_md || "")}</textarea></div>`;
+    return `<div class="ik-q">Adjust the reference</div><div class="ik-hint">Change anything. The agent re-issues the whole design to match what you write here; your edit is the authority.</div><div class="ik-ref"><textarea id="ik-edit">${esc((V.design || {}).reference_md || "")}</textarea></div>`;
   }
 
   // ---- actions --------------------------------------------------------------------
@@ -353,7 +374,7 @@ window.Intake = (() => {
     catch (e) { ERR = e.message; render(); }
   }
   async function restart() {
-    if (!confirm("Start over? Your answers to the fixed questions are kept; Fable's questions and the design are dropped.")) return;
+    if (!confirm("Start over? Your answers to the fixed questions are kept; the agent's questions and the design are dropped.")) return;
     try { V = await api(`/api/intakes/${ID}/restart`, {}); MODE = "q"; IDX = firstOpen(); CHECKS = new Set(); ERR = ""; render(); }
     catch (e) { ERR = e.message; render(); }
   }

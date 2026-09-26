@@ -1,7 +1,7 @@
 // Attachments to a module intake: a photo of the whiteboard, the spreadsheet
 // they keep, a pdf. Stored in platform.attachments (bytea, never on the
 // container disk, which is ephemeral). Spreadsheets are parsed here to rows so
-// Fable reads them as text; photos and pdfs go to the model as image and
+// the model reads them as text; photos and pdfs go to the model as image and
 // document blocks. No new dependencies: csv by hand, xlsx through a small zip
 // reader (xlsx is a zip of xml).
 const zlib = require("zlib");
@@ -121,7 +121,7 @@ function parseSheet(buf, mime, filename) {
 // ---- storage ----------------------------------------------------------------
 async function add({ company, intakeId, questionId, filename, mime, data }) {
   const kind = kindOf(mime, filename);
-  if (!kind) throw new Error("That kind of file is not one Fable can read here. A photo, a pdf, a csv or an xlsx spreadsheet works.");
+  if (!kind) throw new Error("That kind of file is not one the agent can read here. A photo, a pdf, a csv or an xlsx spreadsheet works.");
   const buf = Buffer.from(String(data || ""), "base64");
   if (!buf.length) throw new Error("the file was empty");
   if (buf.length > MAX_BYTES) throw new Error(`that file is bigger than ${Math.round(MAX_BYTES / 1048576)} MB`);

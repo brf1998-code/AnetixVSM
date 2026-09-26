@@ -1,11 +1,11 @@
 // Module creation intake (docs/MODULE-CREATION.md). A manager answers the
-// fixed questions, Fable asks up to two more rounds of its own, then writes
+// fixed questions, the agent asks up to two more rounds of its own, then writes
 // the design summary the manager confirms. Everything here is platform code;
 // the in-app build agent never touches it. Confirm hands the design to
 // src/modulebuild.js, which builds the first version through the same gates
 // as any change.
 //
-// Statuses: answering (a round is open) -> thinking (Fable is working) ->
+// Statuses: answering (a round is open) -> thinking (the agent is working) ->
 // answering (a new round) or design (summary ready) -> confirmed -> building
 // -> done. Also abandoned, and failed (a model call died; the card offers
 // Try again).
@@ -142,7 +142,7 @@ async function answer(id, qid, value) {
   return setIntake(id, fields);
 }
 
-// The person finished the open round: check it, then let Fable think.
+// The person finished the open round: check it, then let the agent think.
 async function next(id) {
   const it = await getIntake(id);
   if (!it) throw new Error("intake not found");
@@ -160,7 +160,7 @@ async function next(id) {
   return getIntake(id);
 }
 
-// Fable's turn: another round of questions, or the design summary.
+// The agent's turn: another round of questions, or the design summary.
 async function think(id) {
   let it = await getIntake(id);
   const generated = (it.rounds || []).length;
@@ -187,7 +187,7 @@ async function think(id) {
   await record("intake_design", { company: it.company, module: it.slug || null, actor: "agent", intake_id: id, feedback_id: it.feedback_id, after: design.reference_md, detail: { bluf: design.bluf, items: design.items, estimate_usd: design.estimate_usd, model: design.model, cost_usd: design.cost_usd } });
 }
 
-// The manager edited the summary text: Fable re-issues the design against it.
+// The manager edited the summary text: the agent re-issues the design against it.
 async function adjust(id, text) {
   const it = await getIntake(id);
   if (!it || it.status !== "design") throw new Error("there is no design to adjust right now");
@@ -250,7 +250,7 @@ async function abandon(id) {
   return out;
 }
 
-// ---- Fable ------------------------------------------------------------------------
+// ---- The agent ------------------------------------------------------------------------
 const CONNECTION_KINDS = "files (a spreadsheet or photo they upload), scanners (barcode or QR scanners in keyboard mode: nothing to connect), printer (a label printer, printed from the device on the plant network), erp (their ERP or scheduling system, read only, a short list of named lookups), spreadsheet (one they keep), machine (a machine or PLC: later, through a plant-side helper), scale, other";
 
 function answersText(questions, answers, files) {
@@ -269,7 +269,7 @@ async function contextFor(it) {
   const blocks = await attachments.blocksFor(it.id, { walled });   // fake mode ignores them; the prompt log still sees the text parts
   return {
     questions, files, mods, allow, blocks, walled,
-    system: `You are Fable, the assistant inside a factory operating system, helping a production manager design a new module (a small tracker with a few screens) by asking the right questions and then writing its design. The manager knows the operation and nothing about how software is made. Everything you write is read by that manager.${walled ? `\n\n${require("./datawall").PROMPT_NOTE}` : ""}\n\n${plain.rules()}\n\n${guidance.text}`,
+    system: `You are the agent inside a factory operating system (call yourself "the agent" if you ever need a name; never name the model or the company that makes it), helping a production manager design a new module (a small tracker with a few screens) by asking the right questions and then writing its design. The manager knows the operation and nothing about how software is made. Everything you write is read by that manager.${walled ? `\n\n${require("./datawall").PROMPT_NOTE}` : ""}\n\n${plain.rules()}\n\n${guidance.text}`,
     answersText: answersText(questions, it.answers || {}, files),
     modulesText: mods.length ? `Modules this company already has: ${mods.map((m) => `${m.title} (${m.name})`).join(", ")}.` : "This company has no other modules yet.",
   };

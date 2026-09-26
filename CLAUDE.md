@@ -2032,9 +2032,24 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the sign prints just the sign, Copy link), and the two arrival switches
   (moved off the agents page, same `/api/c/<slug>/agents/arrival`). The
   admin company card links Settings, Agent settings and docs, Checks log,
-  People, Connections and the record. Left as is on purpose: "Fable" in the
-  module request card and popout (the designer's name in the intake flow),
-  to be renamed only if Brendan wants it.
+  People, Connections and the record.
+- **No model names in the module creation flow** (2026-09-26, Brendan: "I do
+  not want to give that back door information to what we are doing"). The
+  intake popout, the request card, the question hints, the attachment error
+  and the intake system prompt all say "the agent", never Fable or any model
+  or vendor name. Keep it that way in any copy a company's people can see;
+  model names stay on the admin pages only.
+- **Phone layout of the board** (2026-09-26, Brendan walked his dad through
+  the demo on a phone with large text and the band was unusable). At 640px
+  and under: the module strip folds behind one "Modules" button whose summary
+  says what the board is showing (`.modtoggle`, `MODOPEN` kept across the 4s
+  reload), each module is a full-width row (name, version, links on their own
+  wrapped line, 34px+ tap targets), "+ New module" is a full-width row, the
+  four columns show one at a time behind a 2 by 2 tab row (`.coltabs`,
+  `COLTAB`, `showCol`), and the column `h2`s hide. The intake popout puts the
+  round and Close on the first line and the title under them, uses 16px boxes
+  (so iOS does not zoom on focus) and full-width foot buttons. Desktop is
+  untouched; `.modcard .links` is `display:contents` there.
 - **Board band** (2026-09-19): one title row and one quiet module line
   (`.band`, `.modstrip`, `.modcard`), 70px on a desktop against roughly a
   third of the screen before. Module names are the filter toggles, versions

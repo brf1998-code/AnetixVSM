@@ -669,7 +669,7 @@ function companyCard(c) {
           <td style="white-space:nowrap">${m.live_version ? `<a href="/c/${c.slug}/m/${m.name}/">Open</a>${hasTour(m.name) ? ` <a class="tourlink" style="margin-left:6px" href="/c/${c.slug}/m/${m.name}/?tour=1">Start tour</a>` : ""}` : ""}</td></tr>`).join("")}</table>` : '<div class="sub">None yet.</div>'}
         <div style="margin-top:8px"><select id="lib-${c.slug}">${addable.map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
           <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
-          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; Fable designs it">New module</button></div></div>
+          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; the agent designs it">New module</button></div></div>
       <div class="sec"><h3>Sign-in</h3>${accessText(c)}<br><button class="quiet" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button>
         <div class="sub" style="margin-top:6px">Names and PINs for the people on the floor are on its <a href="/c/${c.slug}/people">People</a> page.</div></div>
       <div class="sec"><h3>AI budget and models</h3>${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "No budget of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}<br>

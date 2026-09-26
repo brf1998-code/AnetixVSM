@@ -180,7 +180,48 @@
   details.platform .hint { font-size:12.5px; color:var(--steel); margin:8px 0; line-height:1.5; }
   details.platform .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
   .empty { color:var(--steel); font-size:12.5px; padding:10px 4px; }
-  @media (max-width: 640px) { .band .right { margin-left:0; white-space:normal; } .modcard { white-space:normal; flex-wrap:wrap; row-gap:2px; } }
+  /* the links after a module's name: inline on a desk, their own wrapped row on a phone */
+  .modcard .links { display:contents; }
+  /* the phone: the module strip folds behind one "Modules" button (Brendan, 2026-09-26: the band got
+     crowded and hard to walk someone through with large text on), the columns show one at a time
+     behind a tab row, and every tap target is at least 36px tall */
+  .modtoggle, .coltabs { display:none; }
+  @media (max-width: 640px) {
+    .band { padding:8px 14px 8px; }
+    .band .inner.row { gap:6px 12px; }
+    .band h1 { font-size:16px; flex-wrap:wrap; row-gap:2px; }
+    .band .right { margin-left:0; white-space:normal; font-size:12.5px; line-height:1.9; }
+    #global-busy { margin-left:0; }
+    .modtoggle { display:flex; width:100%; align-items:center; gap:8px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.28); color:#fff; border-radius:8px; padding:8px 12px; font-family:inherit; font-size:14px; font-weight:800; min-height:42px; margin:0; text-align:left; cursor:pointer; }
+    .modtoggle .sum { font-weight:500; opacity:.88; flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .modtoggle .caret { flex:none; transition:transform .15s; font-size:12px; }
+    .modstrip.open .modtoggle .caret { transform:rotate(180deg); }
+    .band .inner.modstrip { flex-direction:column; align-items:stretch; gap:6px; margin-top:8px; }
+    .modstrip > :not(.modtoggle) { display:none; }
+    .modstrip.open > * { display:flex; }
+    .modall { width:100%; justify-content:flex-start; min-height:40px; font-size:14px; padding:6px 10px; background:rgba(255,255,255,.07); }
+    .modall.newmod { justify-content:center; font-size:14px; padding:8px 10px; }
+    .modcard { flex-direction:column; align-items:stretch; padding:8px 10px 10px; gap:2px; white-space:normal; background:rgba(255,255,255,.1); }
+    .modcard .tog, .modcard b { font-size:15px; min-height:36px; padding:4px 0; justify-content:flex-start; text-align:left; }
+    .modcard .tog::before { width:10px; height:10px; }
+    .modcard .v { font-size:12px; margin-top:-4px; }
+    .modcard .links { display:flex; flex-wrap:wrap; gap:2px 16px; margin-top:2px; }
+    .modcard .sep { display:none; }
+    .modcard .links a, .modcard .links button.vbtn { font-size:13.5px; min-height:34px; display:inline-flex; align-items:center; opacity:.95; text-decoration:underline; text-underline-offset:3px; }
+    .modstrip .filterhint { display:none; }
+    .coltabs { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:0 0 10px; }
+    .coltabs button { margin:0; min-height:40px; padding:6px 10px; border-radius:9px; background:#e9edf2; color:var(--steel); font-size:13px; display:inline-flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; }
+    .coltabs button::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--steel); }
+    .coltabs button.t-new::before { background:var(--navy); } .coltabs button.t-reviewing::before { background:var(--amber); }
+    .coltabs button.t-in_progress::before { background:var(--teal); } .coltabs button.t-done::before { background:var(--green); }
+    .coltabs button .n { background:#fff; border-radius:10px; padding:1px 7px; font-size:11.5px; color:var(--ink); }
+    .coltabs button.on { background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(28,36,46,.18); }
+    .cols .col { display:none; } .cols .col.show { display:block; }
+    .cols .col h2 { display:none; }
+    .toolbar { font-size:13px; } .toolbar select { max-width:100%; }
+    .card { font-size:13.5px; } .card .msg { font-size:14.5px; }
+    button { min-height:40px; }
+  }
   .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--amber); margin-right:5px; animation:p 1s infinite alternate; }
   @keyframes p { from { opacity:.3 } to { opacity:1 } }
 </style>
@@ -201,6 +242,7 @@
     <div id="vpanel"></div>
     <div class="toolbar" id="toolbar"></div>
     <div id="reviews"></div>
+    <div class="coltabs" id="coltabs" aria-label="Which column to show"></div>
     <div class="cols">
       <div class="col c-new"><h2>Feedback <span class="n" id="n-new">0</span></h2><div id="col-new"></div></div>
       <div class="col c-reviewing"><h2>Reviewing <span class="n" id="n-reviewing">0</span></h2><div id="together"></div><div id="col-reviewing"></div></div>
@@ -240,6 +282,17 @@ const OPEN_BATCH = new Set();   // batch tiles whose "See the N changes" is open
 const CHECKED = new Set();     // "runId:i" boxes the manager has ticked at the requirement gate (survives the 4s reload)
 const OPEN_MORE = new Set();    // cards whose "more" is open; kept across the 4 s redraw
 const OPEN_FOLDS = new Set();   // every other fold on a card (the full requirement, what a check saw); kept across the 4 s redraw
+let MODOPEN = false;           // phone: the Modules list in the band is unfolded (kept across the 4 s redraw)
+let COLTAB = "new";            // phone: the one column showing
+const COL_TITLE = { new: "Feedback", reviewing: "Reviewing", in_progress: "In progress", done: "Done" };
+function toggleModStrip() { MODOPEN = !MODOPEN; document.getElementById("modules").classList.toggle("open", MODOPEN); }
+function showCol(k) { COLTAB = k; applyColTab(); }
+function applyColTab() {
+  for (const k of ["new", "reviewing", "in_progress", "done"]) {
+    document.querySelector(".col.c-" + k).classList.toggle("show", k === COLTAB);
+    const t = document.getElementById("tab-" + k); if (t) t.classList.toggle("on", k === COLTAB);
+  }
+}
 // A <details> that stays open across the redraw. Until this the full requirement folded itself shut within four
 // seconds of being opened (Brendan, 2026-09-24: "you cannot actually read any of it").
 function fold(key, summary, body, style) {
@@ -762,7 +815,7 @@ function rollbackBtn(run) {
 }
 
 // A module request: the tile is the status and the way in; the intake popout
-// (assets/intake.js) is where the answering, Fable's questions and the design
+// (assets/intake.js) is where the answering, the agent's questions and the design
 // gate happen. Statuses come from DATA.intakes[fb.intake_id].
 function requestCard(fb) {
   const it = (DATA.intakes || {})[fb.intake_id] || {};
@@ -788,11 +841,11 @@ function requestCard(fb) {
   }
   switch (it.status) {
     case "answering":
-      html += `<div class="stat">${it.round > 1 ? `<b>Fable has ${it.round_total} more question${it.round_total === 1 ? "" : "s"}</b> (round ${it.round} of 3). ` : ""}${it.round_answered} of ${it.round_total} answered${it.round_done ? ", ready to send to Fable" : ""}.</div>`;
+      html += `<div class="stat">${it.round > 1 ? `<b>The agent has ${it.round_total} more question${it.round_total === 1 ? "" : "s"}</b> (round ${it.round} of 3). ` : ""}${it.round_answered} of ${it.round_total} answered${it.round_done ? ", ready to send to Fable" : ""}.</div>`;
       html += actions(pk, openBtn(it.round_answered ? "Continue" : "Start answering"), [withdraw]);
       break;
     case "thinking":
-      html += `<div class="stat"><span class="pulse"></span>Fable is reading the answers${it.rounds_generated ? " and writing the design" : ""}. A minute or two.</div>` + actions(pk, "", [openBtn("Open", "quiet"), withdraw]);
+      html += `<div class="stat"><span class="pulse"></span>The agent is reading the answers${it.rounds_generated ? " and writing the design" : ""}. A minute or two.</div>` + actions(pk, "", [openBtn("Open", "quiet"), withdraw]);
       break;
     case "design":
       html += `<div class="stat"><b>Design ready to review.</b> ${esc(it.bluf || "")}${it.flags ? ` (${it.flags} line${it.flags === 1 ? "" : "s"} flagged for wording)` : ""}</div>`;
@@ -802,7 +855,7 @@ function requestCard(fb) {
       html += `<div class="stat"><b>Design confirmed.</b> ${esc(it.bluf || "")}${it.error ? ` <span style="color:var(--red)">${esc(it.error)}</span>` : " The build has not started."}</div>` + actions(pk, MGR() ? `<button class="go" onclick="act('/api/intakes/${fb.intake_id}/build')">Build it now</button>` : "", [openBtn("Open the design", "quiet"), withdraw]);
       break;
     case "failed":
-      html += `<div class="fail-note">Fable did not finish: ${esc(it.error || "unknown problem")}. Open it and try again.</div>` + actions(pk, openBtn("Open and try again"), [withdraw]);
+      html += `<div class="fail-note">The agent did not finish: ${esc(it.error || "unknown problem")}. Open it and try again.</div>` + actions(pk, openBtn("Open and try again"), [withdraw]);
       break;
     default:
       html += `<div class="stat">${esc(it.status || "unknown")}</div>` + actions(pk, openBtn("Open", "quiet"), [withdraw]);
@@ -1143,14 +1196,22 @@ function render() {
     m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}">Diagrams</a>` : "",
     MGR() && m.live_version ? `<button class="vbtn" onclick="openVersions('${m.name}')">Versions</button>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>');
-  document.getElementById("modules").innerHTML =
+  // the phone's one-line summary of the strip: which modules the board is showing
+  const summary = !many ? (DATA.modules[0] ? DATA.modules[0].title : "none yet")
+    : !SEL ? `All ${DATA.modules.length} modules`
+    : SEL.size === 1 ? (DATA.modules.find(m => SEL.has(m.name)) || { title: "one module" }).title
+    : `${SEL.size} of ${DATA.modules.length} modules`;
+  const strip = document.getElementById("modules");
+  strip.classList.toggle("open", MODOPEN);
+  strip.innerHTML =
+    `<button class="modtoggle" onclick="toggleModStrip()" aria-expanded="${MODOPEN}">Modules <span class="sum">${esc(summary)}</span><span class="caret">&#9660;</span></button>` +
     (many ? `<button class="modall ${SEL ? "" : "on"}" onclick="selectAll()" title="Show every module's feedback">All</button>` : "") +
     DATA.modules.map(m => {
       const on = visible(m.name);
       return `<span class="modcard ${many ? (on ? "on" : "off") : ""}">
-      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this module's feedback" : "Show only this module's feedback") : "Show this module's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span>${links(m)}</span>`;
+      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this module's feedback" : "Show only this module's feedback") : "Show this module's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span><span class="links">${links(m)}</span></span>`;
     }).join("") +
-    (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new module in plain words; Fable designs it, you confirm, then it is built">+ New module</button>` : "") +
+    (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new module in plain words; the agent designs it, you confirm, then it is built">+ New module</button>` : "") +
     (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one module" : SEL.size + " modules"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "");
   const runs = DATA.runs.filter(r => visible(r.module));
   // the counts on the column headers are the board's only numbers; spend and the loop's health are on the admin page
@@ -1179,6 +1240,7 @@ function render() {
   renderReviews();
   renderTogether();
   const empty = SEL ? '<div class="empty">Nothing here for the modules shown.</div>' : '<div class="empty">Nothing here.</div>';
+  const counts = {};
   for (const k of ["new", "reviewing", "in_progress", "done", "platform"]) {
     const all = (tiles[k] || []).map(t => batchCard({ ...t.run, feedback_ids: t.ids })).concat(buckets[k].map(card));
     // a column shows the first few tiles; the rest fold under one button (Brendan, 2026-09-17)
@@ -1189,7 +1251,11 @@ function render() {
       : (EXPANDED.has(k) && all.length > limit ? `<button class="quiet" style="width:100%;margin:0 0 8px" onclick="EXPANDED.delete('${k}');render()">Show fewer</button>` : "");
     document.getElementById("col-" + k).innerHTML = (shown.join("") + fold) || (k === "platform" ? '<div class="empty">Nothing here.</div>' : empty);
     document.getElementById("n-" + k).textContent = all.length;
+    if (k !== "platform") counts[k] = all.length;
   }
+  document.getElementById("coltabs").innerHTML = ["new", "reviewing", "in_progress", "done"].map(k =>
+    `<button class="t-${k} ${k === COLTAB ? "on" : ""}" id="tab-${k}" onclick="showCol('${k}')">${COL_TITLE[k]} <span class="n">${counts[k]}</span></button>`).join("");
+  applyColTab();
 }
 load();
 setInterval(() => { if (EDITING === null) load(); }, 4000);
