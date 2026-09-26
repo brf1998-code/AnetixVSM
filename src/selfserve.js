@@ -4,7 +4,7 @@
 // is not open to the public yet), and the ones who do pay a small amount through Stripe and get a company of their
 // own on this instance with that amount as AI credit: enough to build a first module and run a couple of loops.
 // When it runs low they pay again. Brendan, 2026-09-25: "I do not want everyone using this willy nilly (yet)", per
-// person pins issued from /admin, the first purchase $30 for $30 of credit, top-ups at two dollars for one.
+// person pins issued from /admin, a demo starts with $10 of credit from us (2026-09-26, was $15), top-ups at two dollars for one ($20 buys $10).
 //
 // Three tables, all in the backup and all gone with the company:
 //   platform.access_pins    a pin per invitee: who it is for, how many companies it may make (default one), when it
@@ -130,11 +130,11 @@ function slugFrom(name) {
   return s;
 }
 // The balance and the line the board shows. Pure. The board says a PERCENTAGE, never dollars (Brendan, 2026-09-25:
-// "I do not want to show what $ credits, just a percentage"), measured against ONE demo allowance (UNIT, $15):
-// balance / $15. Nothing is lost at a refill: 5% left plus a refill reads 105% ("I do not want to have a frustrating
+// "I do not want to show what $ credits, just a percentage"), measured against ONE demo allowance (UNIT, $10 since
+// 2026-09-26, was $15): balance / $10. Nothing is lost at a refill: 5% left plus a refill reads 105% ("I do not want to have a frustrating
 // rip off system there"), so it can go past 100. The dollar fields stay for the admin page and the www service,
 // which never show them to the company.
-const UNIT = () => Math.max(1, Number(process.env.SOS_CREDIT_UNIT_USD || 15));
+const UNIT = () => Math.max(1, Number(process.env.SOS_CREDIT_UNIT_USD || 10));
 function balanceOf({ credit_usd = 0, spent_usd = 0, unit_usd = UNIT() }) {
   const balance = money(money(credit_usd) - money(spent_usd));   // from the cents shown, so the line adds up
   const percent = balance <= 0 ? 0 : Math.max(1, Math.round((balance / unit_usd) * 100));   // never "0%" while something is left
@@ -210,9 +210,12 @@ async function credit(company) {
   return { ...balanceOf({ credit_usd: bought, spent_usd: spent }), topup_url: topupUrl(company), since: ss.created_at, email: ss.email, contact: ss.contact };
 }
 // The gate every AI run passes through (called from agent.assertUnderCap). Throws for a self-serve company with
-// nothing left; does nothing for any other company.
-async function assertCredit(company) {
-  if (!company) return;
+// nothing left; does nothing for any other company. opts.started: the call is part of work that already passed
+// the gate when it began (a build run, a module creation), so it goes through: "a build already started always
+// finishes even if credit runs out" (Brendan, 2026-09-26). The balance can then go below zero; the next refill
+// writes that off (addCredit), so the person never pays for it.
+async function assertCredit(company, opts = {}) {
+  if (!company || opts.started) return;
   const c = await credit(company); if (!c) return;
   if (c.balance_usd <= 0) throw new Error(`this company's AI credit is used up. Add credit at ${c.topup_url} to keep going.`);
 }
@@ -344,6 +347,10 @@ async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", n
     ref = null;
     if (!usd) throw fail(400, "give a dollar amount");
   }
+  // a build that finished after the credit ran out left the balance under zero: that overrun is on Anetix, so a
+  // refill starts from zero, never from a debt (5% left plus a refill still reads 105%; -8% plus a refill reads 100%)
+  const before = usd > 0 ? await credit(slug) : null;
+  const overrun = before && before.balance_usd < 0 ? money(-before.balance_usd) : 0;
   const client = await require("./db").pool.connect();
   try {
     await client.query("BEGIN");
@@ -351,6 +358,8 @@ async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", n
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`selfserve:${ref}`]);   // the webhook and the page, the same payment (see createCompany)
       if ((await client.query("SELECT 1 FROM platform.credit_ledger WHERE ref=$1", [ref])).rows[0]) { await client.query("COMMIT"); return { added: false, company: co, credit: await credit(slug) }; }
     }
+    if (overrun > 0) await client.query("INSERT INTO platform.credit_ledger (company, delta_usd, kind, ref, paid_usd, note, made_by) VALUES ($1,$2,'adjust',NULL,NULL,$3,'platform')",
+      [slug, overrun, "overrun written off: a build that was already running finished after the credit ran out"]);
     // a grant to a company that was not self-serve makes it one from now: its spend counts from this moment
     await client.query("INSERT INTO platform.self_serve (company) VALUES ($1) ON CONFLICT (company) DO NOTHING", [slug]);
     await client.query("INSERT INTO platform.credit_ledger (company, delta_usd, kind, ref, paid_usd, note, made_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
@@ -358,7 +367,7 @@ async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", n
     await client.query("COMMIT");
   } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
   finally { client.release(); }
-  await logEvent("credit_added", slug, { kind, usd, paid_usd: money(paid_usd) || null, ref, by });
+  await logEvent("credit_added", slug, { kind, usd, paid_usd: money(paid_usd) || null, ref, by, ...(overrun ? { overrun_written_off: overrun } : {}) });
   return { added: true, company: co, credit: await credit(slug) };
 }
 async function ledger(slug) {

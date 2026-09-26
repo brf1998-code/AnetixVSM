@@ -109,7 +109,7 @@ async function www(method, path, body, key = KEY) {
   const ev = await mgr.post(`/api/c/${SLUG}/me/enroll/verify`, { code: await codeFor(es.json.secret.replace(/\s/g, "")) });
   t("the right code enrolls and hands over ten recovery codes", ev.status === 200 && ev.json.recovery_codes && ev.json.recovery_codes.length === 10, ev.json);
   const board = await mgr.get(`/api/c/${SLUG}/board`);
-  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && board.json.credit.line === "200% left." && board.json.credit.percent === 200 && board.json.credit.level === "ok", board.json.credit);
+  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && board.json.credit.line === "300% left." && board.json.credit.percent === 300 && board.json.credit.level === "ok", board.json.credit);
   // a second sign-in now needs the code
   const m2 = client();
   const need = await m2.post("/login", { name: MGRLOGIN, password: MGRPW });
@@ -146,10 +146,10 @@ async function www(method, path, body, key = KEY) {
   t("the library has paperline to add", Boolean(lib));
   const add = await admin.post(`/api/admin/companies/${SLUG}/modules`, { module: "paperline" });
   t("paperline added to the new company", add.status === 200, add.json);
-  await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',27.5,'{}')", [SLUG]);
+  await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',28,'{}')", [SLUG]);
   const low = await mgr.get(`/api/c/${SLUG}/board`);
-  t("$27.50 spent: $2.50 left, amber", low.json.credit.balance_usd === 2.5 && low.json.credit.level === "amber", low.json.credit);
-  await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',2.5,'{}')", [SLUG]);
+  t("$28 spent: $2 left, 20% of the $10 unit, amber", low.json.credit.balance_usd === 2 && low.json.credit.percent === 20 && low.json.credit.level === "amber", low.json.credit);
+  await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',2,'{}')", [SLUG]);
   const out = await mgr.get(`/api/c/${SLUG}/board`);
   t("$30 spent: out, red, the line says nothing runs", out.json.credit.balance_usd === 0 && out.json.credit.level === "red" && /used up/.test(out.json.credit.line) && out.json.credit.percent === 0 && !/\$/.test(out.json.credit.line), out.json.credit);
   const fb = await floor.post("/api/feedback", { company: SLUG, module: "paperline", page: "/", message: "the timer should count down", name: "Sam" });
@@ -164,20 +164,31 @@ async function www(method, path, body, key = KEY) {
   const drv = await demoMgr.post(`/api/feedback/${dfb.json.id}/review`, {});
   t("the demo company (no credit gate) still proposes", drv.status === 200 || drv.status === 409, drv.json);
 
+  // ---- a build that already started finishes (Brendan, 2026-09-26): its later steps pass the gate, a new start does not
+  const ssv = require("../../src/selfserve");
+  t("out of credit, a new start is refused", await ssv.assertCredit(SLUG).then(() => false, (e) => /credit is used up/.test(e.message)));
+  t("out of credit, a step of work already started goes through", await ssv.assertCredit(SLUG, { started: true }).then(() => true, () => false));
+  t("and so does the whole gate for it", await require("../../src/agent").assertUnderCap(SLUG, { started: true }).then(() => true, (e) => e.message));
+  await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',1.5,'{}')", [SLUG]);
+  const over = await mgr.get(`/api/c/${SLUG}/board`);
+  t("the build that ran past zero: 0% shown, never a negative", over.json.credit.balance_usd === -1.5 && over.json.credit.percent === 0 && over.json.credit.level === "red", over.json.credit);
+
   // ---- a top-up, idempotent; an admin grant
   const top = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
-  t("a top-up adds credit: $10 for $20", top.status === 200 && top.json.added && top.json.credit.balance_usd === 10 && top.json.credit.credit_usd === 40 && top.json.credit.percent === 67 && top.json.credit.line === "67% left.", top.json);
+  t("a top-up adds credit: $10 for $20, the $1.50 overrun written off so it reads a full 100%", top.status === 200 && top.json.added && top.json.credit.balance_usd === 10 && top.json.credit.credit_usd === 41.5 && top.json.credit.percent === 100 && top.json.credit.line === "100% left.", top.json);
+  const wo = (await q("SELECT delta_usd, made_by, note FROM platform.credit_ledger WHERE company=$1 AND kind='adjust'", [SLUG])).rows;
+  t("the write-off is its own ledger row, by the platform", wo.length === 1 && Number(wo[0].delta_usd) === 1.5 && wo[0].made_by === "platform" && /overrun/.test(wo[0].note), wo);
   const top2 = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
-  t("the same top-up again adds nothing", top2.status === 200 && !top2.json.added && top2.json.credit.credit_usd === 40, top2.json);
+  t("the same top-up again adds nothing", top2.status === 200 && !top2.json.added && top2.json.credit.credit_usd === 41.5, top2.json);
   t("a top-up for a company that does not exist is refused", (await www("POST", "/api/www/credit", { slug: "nobody", ref: "cs_x", paid_usd: 2, credit_usd: 1 })).status === 404);
   const rv2 = await mgr.post(`/api/feedback/${fb.json.id}/review`, {});
   t("with credit back, Review with AI runs", rv2.status === 200 || rv2.status === 409, rv2.json);
   const grant = await admin.post(`/api/admin/companies/${SLUG}/credit`, { usd: 5, note: "pilot allowance" });
-  t("an admin grant adds credit with a note", grant.status === 200 && grant.json.credit.credit_usd === 45, grant.json);
+  t("an admin grant adds credit with a note", grant.status === 200 && grant.json.credit.credit_usd === 46.5, grant.json);
   const take = await admin.post(`/api/admin/companies/${SLUG}/credit`, { usd: -3 });
-  t("a negative grant takes it back", take.status === 200 && take.json.credit.credit_usd === 42, take.json);
+  t("a negative grant takes it back", take.status === 200 && take.json.credit.credit_usd === 43.5, take.json);
   const led = await admin.get(`/api/admin/companies/${SLUG}/credit`);
-  t("the ledger lists purchase, top-up, grant and adjust with who", led.json.ledger.length === 4 && led.json.ledger.map((l) => l.kind).sort().join() === "adjust,grant,purchase,purchase" && led.json.ledger.find((l) => l.kind === "grant").note === "pilot allowance" && led.json.ledger.find((l) => l.kind === "grant").made_by, led.json.ledger);
+  t("the ledger lists purchase, top-up, grant and adjust with who", led.json.ledger.length === 5 && led.json.ledger.map((l) => l.kind).sort().join() === "adjust,adjust,grant,purchase,purchase" && led.json.ledger.find((l) => l.kind === "grant").note === "pilot allowance" && led.json.ledger.find((l) => l.kind === "grant").made_by, led.json.ledger);
   const gDemo = await admin.post("/api/admin/companies/demo/credit", { usd: 12 });
   t("a grant to a company made here makes it self-serve from now", gDemo.status === 200 && gDemo.json.credit.credit_usd === 12 && gDemo.json.credit.balance_usd === 12, gDemo.json);
   const info = await www("GET", `/api/www/companies/${SLUG}`);

@@ -133,7 +133,7 @@
 
   <!-- ================= Pins: who may come in from anetix.ai, and the companies that did ================= -->
   <section class="tabpanel" id="tab-pins">
-    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here for their email and handed to them. They enter the pin with that email, name their company and pick a password, set up an authenticator app, and land on a demo board of their own with $15 of AI credit from us. When it runs out they add more on anetix.ai through Stripe ($30 buys $15). A pin works only with its email, makes one company unless you say more, and expires. Cancel one and it stops working at once; the company it already made stays.</p>
+    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here for their email and handed to them. They enter the pin with that email, name their company and pick a password, set up an authenticator app, and land on a demo board of their own with $10 of AI credit from us, about one module and three rounds of changes. When it runs out they add more on anetix.ai through Stripe ($20 buys $10). A build that is already running when the credit runs out still finishes; the overrun is written off at their next refill. A pin works only with its email, makes one company unless you say more, and expires. Cancel one and it stops working at once; the company it already made stays.</p>
       <p style="margin:10px 0 0"><button class="primary" id="www-preview" onclick="openWwwPreview()" style="margin:0">View the pin page</button> <span class="sub">anetix.ai as a person with a pin sees it, in a new tab. A preview cannot make a company; to try the payment, make yourself a pin.</span></p></div>
     <div class="card"><h2>Make a pin</h2>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:6px">
@@ -524,7 +524,7 @@ async function makePin() {
   const j = await post("/api/admin/pins", { label, email, max_uses: document.getElementById("pin-uses").value, days: document.getElementById("pin-days").value });
   if (!j.ok) return;
   document.getElementById("pin-label").value = ""; document.getElementById("pin-email").value = "";
-  openModal(`<h2>A pin for ${esc(label)}</h2><p class="sub">Send them this with the address. They enter it with <b>${esc(j.pin.email || email)}</b> under "Have a pin?" on <b>${esc(PINS ? PINS.www_url : "anetix.ai")}</b>, set up their sign-in, and their demo is made on the spot.</p>
+  openModal(`<h2>A pin for ${esc(label)}</h2><p class="sub">Send them the pin with this link, which opens straight to the pin box: <b>${esc((PINS ? PINS.www_url : "https://anetix.ai").replace(/\/+$/, ""))}/pin</b>. They enter it with <b>${esc(j.pin.email || email)}</b>, set up their sign-in, and their demo is made on the spot.</p>
     <p style="font-size:30px;letter-spacing:.08em;font-family:ui-monospace,monospace;text-align:center;margin:14px 0"><b id="pin-shown">${esc(j.pin.shown)}</b></p>
     <p class="sub">${j.pin.max_uses} compan${j.pin.max_uses === 1 ? "y" : "ies"} · ${j.pin.expires_at ? "expires " + new Date(j.pin.expires_at).toLocaleDateString() : "never expires"}. It stays readable on the Pins tab.</p>
     <div><button class="go" onclick="closeModal()">Done</button></div>`);

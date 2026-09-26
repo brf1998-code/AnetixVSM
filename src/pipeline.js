@@ -258,7 +258,7 @@ async function advance(runId) {
     }
 
     if (run.step === "build") {
-      await assertUnderCap(company);
+      await assertUnderCap(company, { started: true });   // startRun checked the credit; a build that started finishes
       const ev0 = run.evidence || {};
       let draft;
       if (ev0.fix_round && run.to_version) {
@@ -688,6 +688,9 @@ async function retry(runId, opts = {}) {
   const run = await getRun(runId);
   if (run.status !== "failed") throw new Error("only failed runs can be retried");
   const step = run.lane === "ui" || run.lane === "module" || run.requirement ? "build" : "confirm_requirement";
+  // a manager's retry starts the build over from scratch, so it needs credit like a new build; the platform's own
+  // restart of an orphaned run (opts.auto) is the same build carrying on. Fix rounds (below) are part of the build.
+  if (!opts.auto) await require("./selfserve").assertCredit(run.company);
   const busy = await activeRun(run.company, run.module);
   const modRow = await registry.getModule(run.company, run.module);
   if (run.step === "campaign") await require("./campaign").afterRunEnds(run, "retried").catch((e) => console.error("[campaign] after retry:", e.message));

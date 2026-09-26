@@ -34,7 +34,7 @@ t("balance is credit minus spend, to the cent (kept for the admin)", b.balance_u
 t("the line is the balance over $15 as a percentage, no dollars", b.percent === 118 && b.line === "118% left." && !/\$/.test(b.line), b.line);
 t("a fresh demo is 100%", s.balanceOf({ credit_usd: 15, spent_usd: 0, unit_usd: 15 }).percent === 100);
 t("5% left plus a $15 refill is 105%, nothing lost at the refill", s.balanceOf({ credit_usd: 30, spent_usd: 14.25, unit_usd: 15 }).percent === 105);
-t("the default unit is $15", s.balanceOf({ credit_usd: 15, spent_usd: 7.5 }).percent === 50);
+t("the default unit is $10 (2026-09-26, was $15)", s.balanceOf({ credit_usd: 10, spent_usd: 5 }).percent === 50);
 t("plenty left is ok", b.level === "ok");
 t("under a quarter of $15 is amber", s.balanceOf({ credit_usd: 15, spent_usd: 11.5, unit_usd: 15 }).level === "amber" && s.balanceOf({ credit_usd: 15, spent_usd: 11, unit_usd: 15 }).level === "ok");
 const out = s.balanceOf({ credit_usd: 30, spent_usd: 31.2 });

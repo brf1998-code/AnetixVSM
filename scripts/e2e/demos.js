@@ -17,7 +17,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   t("with nobody in yet the list is empty", empty.status === 200 && empty.json.demos.length === 0 && empty.json.totals.companies === 0 && empty.json.use_cases.length === 0, empty.json);
   const mk = async (label, email, name) => {
     const pin = (await admin.post("/api/admin/pins", { label, email, max_uses: 1, days: 30 })).json.pin.shown;
-    return www("/api/www/companies", { pin, email, name, contact: label.split(" at ")[0], ref: `demo:${pin}`, paid_usd: 0, credit_usd: 15, password: "copper-oak-2201-press", demo: true, collect: true });
+    return www("/api/www/companies", { pin, email, name, contact: label.split(" at ")[0], ref: `demo:${pin}`, paid_usd: 0, credit_usd: 10, password: "copper-oak-2201-press", demo: true, collect: true });
   };
   const A = (await mk("Dana at Riverside", "dana@riverside.test", "Riverside Wire")).company.slug;
   const B = (await mk("Omar at Keystone", "omar@keystone.test", "Keystone Fab")).company.slug;
@@ -26,7 +26,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   await ship(admin, [f1.json.id], A);
   await admin.post("/api/feedback", { company: A, module: "paperline", page: "/", message: "Add a count of scrap per shift", name: "Dana" });
   await admin.post("/api/feedback", { company: A, module: "platform", page: "/", message: "The board is hard to read on my phone", name: "Dana" });
-  await www("/api/www/credit", { slug: A, ref: "cs_demos_1", paid_usd: 30, credit_usd: 15 });
+  await www("/api/www/credit", { slug: A, ref: "cs_demos_1", paid_usd: 20, credit_usd: 10 });
   const it = (await admin.post(`/api/c/${B}/intakes`, {})).json;
   await admin.post(`/api/intakes/${it.id}/answer`, { id: "name", value: "Weld cell tracker" });
   await admin.post(`/api/intakes/${it.id}/answer`, { id: "purpose", value: "Track which weld jobs are waiting for inspection and who signed them off." });
@@ -36,13 +36,13 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   // ---- the list
   const L = (await admin.get("/api/admin/demos")).json;
   t("both demos listed, newest first", L.demos.length === 2 && L.demos[0].slug === B && L.demos[1].slug === A && L.demos.every((d) => d.demo), L.demos.map((d) => d.slug));
-  t("the totals: $30 paid in one refill, $30 of credit given, two tools-or-requests counted", L.totals.companies === 2 && L.totals.demos === 2 && L.totals.paid_usd === 30 && L.totals.purchases === 1 && L.totals.granted_usd === 30 && L.totals.modules_live === 1 && L.totals.requests === 2 && L.totals.builds_deployed === 1 && L.totals.use_cases === 1, L.totals);
+  t("the totals: $20 paid in one refill, $20 of credit given, two tools-or-requests counted", L.totals.companies === 2 && L.totals.demos === 2 && L.totals.paid_usd === 20 && L.totals.purchases === 1 && L.totals.granted_usd === 20 && L.totals.modules_live === 1 && L.totals.requests === 2 && L.totals.builds_deployed === 1 && L.totals.use_cases === 1, L.totals);
   const a = L.demos.find((d) => d.slug === A), b = L.demos.find((d) => d.slug === B);
-  t("Riverside's money: paid $30, 200% of credit left, spend and paid-minus-spend", a.money.paid_usd === 30 && a.money.purchases === 1 && a.money.granted_usd === 15 && a.money.bought_credit_usd === 15 && a.money.percent === 200 && a.money.margin_usd === a.money.paid_usd - a.money.spent_usd, a.money);
+  t("Riverside's money: paid $20, 200% of credit left, spend and paid-minus-spend", a.money.paid_usd === 20 && a.money.purchases === 1 && a.money.granted_usd === 10 && a.money.bought_credit_usd === 10 && a.money.percent === 200 && a.money.margin_usd === a.money.paid_usd - a.money.spent_usd, a.money);
   t("what it built and did: paperline live, 2 requests (1 shipped), 1 to Anetix, 1 build live", a.modules.length === 1 && a.modules[0].name === "paperline" && a.modules[0].live_version >= 2 && a.counts.requests === 2 && a.counts.requests_shipped === 1 && a.counts.to_anetix === 1 && a.counts.deployed === 1, { m: a.modules, c: a.counts });
   t("the loop's own numbers ride along", a.loop && a.loop.builds_shipped === 1 && a.loop.approved === 1, a.loop);
   t("who: the pin it came in on, the manager account, not enrolled yet", a.pin && a.pin.label === "Dana at Riverside" && /^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(a.pin.shown) && a.manager && a.manager.login === "dana@riverside.test" && a.manager.enrolled === false && a.last_activity, { pin: a.pin, manager: a.manager });
-  t("Keystone: nothing built, one new-tool request, $15 given, 100%", b.modules.length === 0 && b.counts.intakes === 1 && b.money.paid_usd === 0 && b.money.granted_usd === 15 && b.money.percent === 100, b);
+  t("Keystone: nothing built, one new-tool request, $10 given, 100%", b.modules.length === 0 && b.counts.intakes === 1 && b.money.paid_usd === 0 && b.money.granted_usd === 10 && b.money.percent === 100, b);
   const uc = L.use_cases[0];
   t("the use case: what they called it, what it is for, what it tracks, not live", uc.company === B && uc.company_name === "Keystone Fab" && uc.name === "Weld cell tracker" && /inspection/.test(uc.purpose) && uc.thing === "A welded frame" && uc.live === false && uc.status === "answering", uc);
 
@@ -51,7 +51,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   t("the full view has every section", ["money", "modules", "intakes", "feedback", "runs", "ledger", "spend", "timeline"].every((k) => k in D));
   t("its requests in its own words, with where each is", D.feedback.length === 3 && D.feedback.some((f) => /timer bigger/.test(f.message) && f.status === "done" && f.outcome) && D.feedback.some((f) => /scrap per shift/.test(f.message) && f.proposal && f.proposal_status === "draft") && D.feedback.some((f) => f.module === "platform"), D.feedback.map((f) => [f.message, f.status, f.proposal_status]));
   t("the build, deployed, with what it changed", D.runs.length === 1 && D.runs[0].status === "deployed" && D.runs[0].module === "paperline" && (D.runs[0].title || D.runs[0].what_changed), D.runs);
-  t("the ledger: the grant from anetix.ai, then the $30 refill", D.ledger.length === 2 && D.ledger[0].kind === "grant" && D.ledger[0].made_by === "anetix.ai" && D.ledger[1].kind === "purchase" && D.ledger[1].paid_usd === 30 && D.ledger[1].delta_usd === 15, D.ledger);
+  t("the ledger: the grant from anetix.ai, then the $20 refill", D.ledger.length === 2 && D.ledger[0].kind === "grant" && D.ledger[0].made_by === "anetix.ai" && D.ledger[1].kind === "purchase" && D.ledger[1].paid_usd === 20 && D.ledger[1].delta_usd === 10, D.ledger);
   t("where the spend went is broken down", Array.isArray(D.spend) && D.spend.some((s) => s.kind === "builds" && s.n === 1), D.spend);
   t("the process, newest first, from the record", D.timeline.length >= 5 && D.timeline.some((r) => r.kind === "feedback_filed") && D.timeline.some((r) => r.kind === "deployed") && new Date(D.timeline[0].created_at) >= new Date(D.timeline[D.timeline.length - 1].created_at), D.timeline.map((r) => r.kind));
   const DB = (await admin.get(`/api/admin/demos/${B}`)).json;

@@ -618,9 +618,12 @@ async function companyCap(company) {
 // own spend, so one company running out never stops another (until
 // 2026-09-19 the only cap was instance-wide and did exactly that); and the
 // instance-wide one from the environment, when it is set at all.
-async function assertUnderCap(company) {
-  // a self-serve company (one that came in from anetix.ai) runs on credit it bought: nothing left, nothing runs (src/selfserve.js)
-  await require("./selfserve").assertCredit(company);
+// opts.started: the call belongs to work that already passed this gate when it began (a build run past its start, a
+// module creation past its first screen): the credit check lets it through so it finishes (src/selfserve.js
+// assertCredit). The budgets below still apply.
+async function assertUnderCap(company, opts = {}) {
+  // a self-serve company (one that came in from anetix.ai) runs on credit it bought: nothing left, nothing new starts (src/selfserve.js)
+  await require("./selfserve").assertCredit(company, opts);
   const own = await companyCap(company);
   if (own) {
     const mine = await monthlySpend(company);

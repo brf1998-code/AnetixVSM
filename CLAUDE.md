@@ -1141,8 +1141,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   gates, `selfserve.loginCors`, `selfserve.creditToken` / `topupUrl`; Brendan:
   "nothing visible or showing what we are doing that is publicly accessible
   without a pin"). Without a pin anetix.ai is one page: a sign-in (name,
-  password, the authenticator code) with "Have a pin?" in the corner and
-  "Public site coming soon"; the description, the people, the prices and the
+  password, the authenticator code) and a pin box, as two tabs at the top of
+  one card ("Have a pin?" first, "Sign in"; the corner link before
+  2026-09-26 was missed and people typed the pin into the password), with
+  "Public site coming soon" under the card; the description, the people, the prices and the
   pictures open only with a good pin (re-checked on every view). The wall's
   sign-in posts to THIS product's `POST /login` across the origin:
   `loginCors` (in front of the route in server.js, plus `app.options`) answers
@@ -1172,7 +1174,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the board's `#demobar` and `.creditout`; Brendan: a pin made for someone
   needs their email too, then 2FA, then their demo board with a small rolling
   "Demo" banner, $15 of credit loaded, and when it runs out anetix.ai to add
-  more at $30 for $15). `platform.access_pins.email` (required on a new pin,
+  more at $30 for $15; $10 and $20 for $10 since 2026-09-26, below). `platform.access_pins.email` (required on a new pin,
   `makePinRow`; a pin from before, NULL, takes any email) and
   `pinEmailProblem(row, email)` (pure) are checked on `/api/www/pin`,
   `/api/www/check` and in `createCompany`, so the product never makes a
@@ -1215,7 +1217,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   credit line is `AI credit: 64% left.` (or "used up. Nothing new will be
   proposed or built until more is added."), never dollars. `balanceOf` returns
   `percent` = the balance over ONE demo allowance, `SOS_CREDIT_UNIT_USD`
-  (default $15), so a new demo reads 100% and it can go past 100: Brendan the
+  (default $10 since 2026-09-26, was $15), so a new demo reads 100% and it can go past 100: Brendan the
   same night, "if they have 5% left it should take them to 105% ... I do not
   want to have a frustrating rip off system there" (an earlier version that
   reset to 100% at a refill was replaced before it shipped); amber under 25%;
@@ -1233,6 +1235,31 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `e2e.js` (56); the headless walk (13) signed out, came back through a board
   link to the account form, signed in with a real code and read "AI credit:
   100% left.".
+- **$10 demo credit; a started build finishes** (2026-09-26, Brendan, on the
+  Opus 5.5 baseline: the free credit should build one module and run about
+  three rounds of changes, not much more). A demo starts with $10 (www
+  `DEMO_CREDIT_USD`), the percentage unit is $10 (`SOS_CREDIT_UNIT_USD`), a
+  refill is $20 for $10 (`TOPUP_USD` 20, `TOPUP_RATE` 0.5), so a refill is
+  still exactly +100%. Demos made before keep their $15 grant and read 150%
+  when new. "A build already started always finishes even if credit runs
+  out": `assertCredit(company, { started: true })` / `assertUnderCap(company,
+  { started: true })` let through work that passed the gate when it began:
+  the pipeline's build step (so the first build after `startRun` or a
+  confirmed requirement, every fix round, and the platform's own restart of
+  an orphaned run) and a module creation's rounds and design (the gate is at
+  `intake.create`, `restart`, and the `/build` route for a design whose build
+  never started). A manager's Retry (a build from scratch) needs credit again
+  (`pipeline.retry` unless `opts.auto`). The monthly budgets still apply to
+  everything. A balance under zero shows 0%, and `addCredit` writes the
+  overrun off before any refill or grant (an `adjust` row by `platform`,
+  "overrun written off ..."), so a refill always starts from zero. The wall
+  also catches a pin typed into the sign-in (`caughtPin` in `signinScript`: 8
+  characters of the pin alphabet, or the name field with a dash or a digit;
+  no password is that short), never sends it to `/login`, and moves it to the
+  pin box with the email; a browser that has signed in there
+  (`localStorage anx_signed_in`) opens on Sign in, every other browser on the
+  pin box. The admin's new-pin box gives the link `<www>/pin`, which opens the
+  pin box directly.
 - **Rebranded to Anetix** (2026-09-25, Brendan: "rebrand anywhere with
   Symbiotic OS to Anetix"). Everything a person sees: every page title
   (`Anetix · Board`, `Anetix · Sign in`, ...), the login card, the admin

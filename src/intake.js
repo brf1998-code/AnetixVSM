@@ -100,6 +100,9 @@ async function view(intake) {
 
 // ---- lifecycle ------------------------------------------------------------------
 async function create(company, role) {
+  // starting a module needs credit; once started, its rounds, design and build go through to the end (the
+  // generateRound / generateDesign gates pass started: true)
+  await require("./selfserve").assertCredit(company);
   const fb = (await q(
     `INSERT INTO platform.feedback (company, module, page, screen, message, name, status, kind) VALUES ($1,NULL,$2,'Module request','New module',$3,'new','module_request') RETURNING id`,
     [company, `/c/${company}/`, role || "manager"])).rows[0];
@@ -231,6 +234,7 @@ async function confirm(id) {
 async function restart(id) {
   const it = await getIntake(id);
   if (!it || ["confirmed", "building", "done"].includes(it.status)) throw new Error("this intake can no longer be restarted");
+  await require("./selfserve").assertCredit(it.company);   // starting over is a new start
   const answers = {};
   for (const [k, v] of Object.entries(it.answers || {})) if (!/^r\d+q\d+$/.test(k)) answers[k] = v;   // keep the fixed answers, drop the generated rounds'
   const out = await setIntake(id, { rounds: [], design: null, answers, status: "answering", error: null });
@@ -315,7 +319,7 @@ async function generateRound(it) {
     await agent.atWall("structured:intake_round", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText, blocks: ctx.blocks });
     return fakeRound(roundNo, it);
   }
-  await agent.assertUnderCap(it.company);
+  await agent.assertUnderCap(it.company, { started: true });   // the credit was checked when the intake began
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
@@ -375,7 +379,7 @@ async function generateDesign(it, adjustedText, opts = {}) {
     await agent.atWall("structured:module_design", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText + (adjustedText ? `\n\n${adjustedText}` : ""), blocks: ctx.blocks });
     return fakeDesign(it, adjustedText);
   }
-  await agent.assertUnderCap(it.company);
+  await agent.assertUnderCap(it.company, { started: true });   // the credit was checked when the intake began
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
@@ -503,6 +507,7 @@ router.post("/api/intakes/:id/build", requireManager, freshPin, json, async (req
     if (!it) return res.status(404).json({ error: "not found" });
     if (it.status !== "confirmed" || !it.design) return res.status(400).json({ error: `nothing to build while the intake is ${it.status}` });
     if (await slugTaken(it.company, it.slug, it.id, it.name)) return res.status(409).json({ error: `a module named "${it.name}" now exists; rename this one first` });
+    await require("./selfserve").assertCredit(it.company);   // a build that never started is a new start
     await require("./modulebuild").startBuild(it);
     res.json(await view(await getIntake(it.id)));
   } catch (e) { fail(res, e); }
