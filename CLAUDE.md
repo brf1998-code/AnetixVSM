@@ -1238,7 +1238,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   Opus 5.5 baseline: the free credit should build one module and run about
   three rounds of changes, not much more). A demo starts with $10 (www
   `DEMO_CREDIT_USD`), the percentage unit is $10 (`SOS_CREDIT_UNIT_USD`), a
-  refill is $20 for $10 (`TOPUP_USD` 20, `TOPUP_RATE` 0.5), so a refill is
+  refill is $30 for $10 since 2026-09-27 (`TOPUP_USD` 30, `TOPUP_CREDIT_USD` 10; was $20), so a refill is
   still exactly +100%. Demos made before keep their $15 grant and read 150%
   when new. "A build already started always finishes even if credit runs
   out": `assertCredit(company, { started: true })` / `assertUnderCap(company,
@@ -3105,3 +3105,21 @@ Passwords live only in Railway; never commit them.
   addition only if a device-side program must be reached, and gate rules for
   its declaration. Never let module code hold a credential, a printer address
   or a file the platform did not hand it.
+
+## 2026-09-27: five fixes from Brendan before the next phase of the audit
+
+- **Back to the board from a tool, demo only.** Every page of a demo company's tool carries an "Improvement board" pill
+  bottom left (the feedback widget, `data-demo="1"` from `registry.widgetInject`, which reads `companies.demo` with a
+  15 s memo). A paid site's floor never gets it: activation sets `demo=false`. Not drawn inside a frame.
+- **A refill is $30 for $10** (www `TOPUP_USD` 30, new `TOPUP_CREDIT_USD` 10; `TOPUP_RATE` defaults to credit over
+  price). Still +100% a refill. Brendan: "to help our rate of recouping demo credits".
+- **The deploy gate is the top of the card and of In progress.** `gateTopHtml` puts "Next step: make it live" (or put
+  it on the floor), the button and the preview right under the card's title; cards at the gate sort first in the
+  column. Discard stays under more. A floor login still sees only the preview link, where it was.
+- **A passkey answers for the authenticator code on admin-level actions** (delete, restore, account actions, activate,
+  stop activating, end a site). `POST /api/me/passkeys/step-up/options` makes a challenge for this account's own
+  passkeys; the answer rides in the action's body as `{ passkey }`; `accounts.stepUp(..., req)` checks it through
+  `passkeys.checkStepUp` (used once, five minutes). `auth.checkAdminCode` reads `req.body.passkey`, so no route
+  changed. On /admin a code box left empty makes the button ask for the passkey; the step-up modal has "Use my passkey".
+- **Low credit no longer lights /admin.** Only out of credit does, and "Seen, clear it" on the Pins tab clears it
+  (`self_serve.credit_seen_usd`, the credit bought at that moment) until the company refills and runs out again.

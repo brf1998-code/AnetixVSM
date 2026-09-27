@@ -4,7 +4,7 @@
 // is not open to the public yet), and the ones who do pay a small amount through Stripe and get a company of their
 // own on this instance with that amount as AI credit: enough to build a first module and run a couple of loops.
 // When it runs low they pay again. Brendan, 2026-09-25: "I do not want everyone using this willy nilly (yet)", per
-// person pins issued from /admin, a demo starts with $10 of credit from us (2026-09-26, was $15), top-ups at two dollars for one ($20 buys $10).
+// person pins issued from /admin, a demo starts with $10 of credit from us (2026-09-26, was $15), top-ups at three dollars for one ($30 buys $10 since 2026-09-27; was $20).
 //
 // Three tables, all in the backup and all gone with the company:
 //   platform.access_pins    a pin per invitee: who it is for, how many companies it may make (default one), when it
@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS platform.self_serve (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE platform.self_serve ADD COLUMN IF NOT EXISTS handout_enc BYTEA;
+-- out of credit, seen on /admin (2026-09-27, Brendan: "do not notify me if people are low on credits ... I should be able
+-- to clear or acknowledge"): the credit the company had bought when it was cleared. The light comes back only after a
+-- refill runs out again. Low credit lights nothing on /admin.
+ALTER TABLE platform.self_serve ADD COLUMN IF NOT EXISTS credit_seen_usd NUMERIC(10,2);
 -- the demo workflow (2026-09-25 evening): a pin is made FOR an email and only works with it; a company made from one
 -- is a demo (the board's rolling DEMO banner, the out-of-credit panel)
 ALTER TABLE platform.access_pins ADD COLUMN IF NOT EXISTS email TEXT;
@@ -499,7 +503,11 @@ async function adminView() {
     .map((r) => ({ ...r, shown: r.pin && r.pin.length === 8 ? showPin(r.pin) : r.pin, why: PIN_SHORT[r.reason] || r.reason }));
   const ss = (await q("SELECT s.*, c.name FROM platform.self_serve s JOIN platform.companies c ON c.slug=s.company ORDER BY s.created_at DESC")).rows;
   const companies = [];
-  for (const s of ss) companies.push({ slug: s.company, name: s.name, email: s.email, contact: s.contact, since: s.created_at, ...(await credit(s.company)) });
+  for (const s of ss) {
+    const c = (await credit(s.company)) || {};
+    companies.push({ slug: s.company, name: s.name, email: s.email, contact: s.contact, since: s.created_at, ...c,
+      seen: s.credit_seen_usd != null && c.credit_usd != null && Number(s.credit_seen_usd) >= Number(c.credit_usd) });
+  }
   return { pins, companies, refusals, www_url: WWW_URL() };
 }
 // gone with the company (src/feedback.js, the delete route)
@@ -600,6 +608,15 @@ adminRouter.post("/api/admin/companies/:slug/credit", requireAdmin, json, guard(
   const usd = Number(b.usd);
   if (!Number.isFinite(usd) || usd === 0 || Math.abs(usd) > 10000) throw fail(400, "give a dollar amount (negative takes credit back)");
   res.json({ ok: true, ...(await addCredit({ slug: req.params.slug, credit_usd: usd, kind: usd < 0 ? "adjust" : "grant", note: b.note, by: who(req) })) });
+}));
+
+// Out of credit, seen: clears the red light on /admin until the company refills and runs out again (2026-09-27)
+adminRouter.post("/api/admin/companies/:slug/credit/seen", requireAdmin, guard(async (req, res) => {
+  const slug = String(req.params.slug || "").toLowerCase();
+  const c = await credit(slug);
+  if (!c) throw fail(404, "not a self-serve company");
+  await q("UPDATE platform.self_serve SET credit_seen_usd=$2 WHERE company=$1", [slug, c.credit_usd]);
+  res.json({ ok: true });
 }));
 
 module.exports = {

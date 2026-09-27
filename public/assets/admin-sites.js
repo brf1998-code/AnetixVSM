@@ -221,6 +221,16 @@
 
   // ---- one site's form --------------------------------------------------------------------------------------------------
   const val = (id) => (document.getElementById(id) || {}).value || "";
+  // a fresh code from the authenticator, or with the box left empty, the account's passkey (2026-09-27, Brendan)
+  const hasPk = () => typeof ME !== "undefined" && ME && ME.me && ME.me.passkeys > 0 && window.Passkey && Passkey.supported();
+  async function stepFrom(code, err) {
+    if (code) return { code };
+    if (!hasPk()) { err.textContent = "Type a fresh code from your authenticator."; return null; }
+    const out = await Passkey.stepUp();
+    if (out.passkey) return { passkey: out.passkey };
+    err.textContent = out.cancelled ? "No passkey was used. Press again, or type a code from your authenticator." : (out.error || "the passkey did not work");
+    return null;
+  }
   const field = (id, label, value, opts = {}) => `<label class="${opts.wide ? "wide" : ""}">${esc(label)}<input id="${id}" value="${esc(value == null ? "" : value)}"${opts.type ? ` type="${opts.type}"` : ""}${opts.mode ? ` inputmode="${opts.mode}"` : ""}${opts.ph ? ` placeholder="${esc(opts.ph)}"` : ""} autocomplete="off"></label>`;
   function edit(slug) {
     const r = DATA && DATA.rows.find((x) => x.slug === slug); if (!r) return;
@@ -276,7 +286,7 @@
         <br>Learning: ${sub.learning_opt_in ? "opted in" : "not opted in (the Demos tab shows the demo period only)"}.${sub.tenancy_note ? `<br>Tenancy: ${esc(sub.tenancy_note)}` : ""}
         <br>Payment: ${sub.standing === "past_due" ? '<span class="bad">past due</span> (Stripe is retrying; the manager sees a line)' : sub.standing === "unpaid" ? '<span class="bad">unpaid</span> (retries ran out; new AI work is paused, the tools run)' : sub.standing === "canceled_at_stripe" ? '<span class="bad">Stripe cancelled the subscription</span> (the floor still works until you End it)' : "good"}.${sub.cancel_at ? ` <b>Cancelled by the customer</b>: ends ${esc(day(sub.cancel_at))}, then back to a demo.` : ""}
         ${f && !f.lifted ? `<div class="foot"><input type="text" id="sf-lift" placeholder="why lift the line (a big first month, say)" style="flex:1;min-width:200px"><button class="quiet" id="sf-liftgo" onclick="AdminSites.lift()">Lift the line for this period</button></div>` : ""}
-        ${["unpaid", "canceled_at_stripe"].includes(sub.standing) ? `<div class="foot"><input type="text" id="sf-endnote" placeholder="why end it (the manager reads this)" style="flex:1;min-width:200px"><input inputmode="numeric" id="sf-endcode" placeholder="authenticator code" autocomplete="one-time-code" maxlength="10"><button class="quiet" id="sf-end" onclick="AdminSites.endSite()">End: back to a demo</button></div><div class="err" id="sf-enderr"></div>` : ""}</div>`;
+        ${["unpaid", "canceled_at_stripe"].includes(sub.standing) ? `<div class="foot"><input type="text" id="sf-endnote" placeholder="why end it (the manager reads this)" style="flex:1;min-width:200px"><input inputmode="numeric" id="sf-endcode" placeholder="authenticator code, or empty for your passkey" autocomplete="one-time-code" maxlength="10"><button class="quiet" id="sf-end" onclick="AdminSites.endSite()">End: back to a demo</button></div><div class="err" id="sf-enderr"></div>` : ""}</div>`;
       return;
     }
     if (!o || !["signed", "activating"].includes(o.state) || (o.state === "signed" && !o.card_saved)) { into.innerHTML = ""; return; }
@@ -300,7 +310,7 @@
       <b>What changes</b><ul>${c.plan.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
       ${preview ? "" : `<label class="check" style="margin-top:6px"><input type="checkbox" id="sf-clear" checked> Take the sample data out of their tools</label>`}
       ${c.test_mode && o.state !== "activating" ? `<label class="check"><input type="checkbox" id="sf-testmode"> Stripe is in ${esc(ch.stripe)} mode: switch this company on with no real charge anyway (your own test company, say)</label>` : ""}
-      <div class="foot"><input inputmode="numeric" id="sf-code" placeholder="authenticator code" autocomplete="one-time-code" maxlength="10">
+      <div class="foot"><input inputmode="numeric" id="sf-code" placeholder="authenticator code, or empty for your passkey" autocomplete="one-time-code" maxlength="10">
         <button class="go" id="sf-activate" onclick="AdminSites.activate()">${o.state === "activating" ? "Activate again" : preview ? "Run the preview" : "Activate"}</button>
         ${!preview && o.state === "signed" ? `<button class="quiet" id="sf-decline" onclick="AdminSites.decline()">Decline</button><button class="quiet" id="sf-sendback" onclick="AdminSites.sendBack()">Send back</button>` : ""}
         ${o.state === "activating" ? `<button class="quiet" id="sf-stop" onclick="AdminSites.stopActivating()">Stop switching on</button>` : ""}</div>
@@ -309,10 +319,9 @@
   }
   async function activate() {
     const btn = document.getElementById("sf-activate"), err = document.getElementById("sf-acterr");
-    const code = val("sf-code").trim();
-    if (!code) { err.textContent = "Type a fresh code from your authenticator."; return; }
+    const step = await stepFrom(val("sf-code").trim(), err); if (!step) return;
     btn.disabled = true; btn.textContent = "Switching on…"; err.textContent = "";
-    const body = { code, clear_sample: !document.getElementById("sf-clear") || document.getElementById("sf-clear").checked };
+    const body = { ...step, clear_sample: !document.getElementById("sf-clear") || document.getElementById("sf-clear").checked };
     const tm = document.getElementById("sf-testmode"); if (tm && tm.checked) body.test_mode_ok = true;
     const tn = document.getElementById("sf-tenancy"); if (tn) body.tenancy_note = tn.value;
     const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/activate`, body);
@@ -344,10 +353,11 @@
   async function stopActivating() {
     const btn = document.getElementById("sf-stop"), err = document.getElementById("sf-acterr");
     const code = val("sf-code").trim();
-    if (!code) { err.textContent = "Type a fresh code from your authenticator."; return; }
+    if (!code && !hasPk()) { err.textContent = "Type a fresh code from your authenticator."; return; }
     if (!confirm("Stop switching this site on? Stripe is asked what it holds first: a subscription that went through finishes the rollover, anything else is undone (credit reversed, card removed).")) return;
+    const step = await stepFrom(code, err); if (!step) return;
     btn.disabled = true; btn.textContent = "Stopping…"; err.textContent = "";
-    const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/stop-activating`, { code });
+    const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/stop-activating`, step);
     if (!r.ok) { err.textContent = r.json.error || "that did not work"; btn.disabled = false; btn.textContent = "Stop switching on"; return; }
     if (r.json.activated) alert("Stripe had the subscription after all, so the site finished switching on.");
     close(); await show();
@@ -357,9 +367,10 @@
   async function endSite() {
     const err = document.getElementById("sf-enderr"), code = val("sf-endcode").trim(), note = val("sf-endnote").trim();
     if (!note) { err.textContent = "Say why, in a few words: the manager reads it."; return; }
-    if (!code) { err.textContent = "Type a fresh code from your authenticator."; return; }
+    if (!code && !hasPk()) { err.textContent = "Type a fresh code from your authenticator."; return; }
     if (!confirm("End this site's subscription now? Stripe is asked to cancel it and void any invoice it left open, the floor is signed out, and the site goes back to a demo with its tools and data. The manager's notice carries your reason.\n\nThe Terms (5.8): only once fees are 30 days overdue, and on notice to the customer.")) return;
-    const res = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/end`, { code, note });
+    const step = await stepFrom(code, err); if (!step) return;
+    const res = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/end`, { ...step, note });
     if (!res.ok) { err.textContent = res.json.error || "that did not work"; return; }
     close(); await show();
   }

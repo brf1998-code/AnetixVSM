@@ -133,10 +133,24 @@ function screenFor(manifest, pagePath) {
   return entries.find((e) => routeMatches(e.route, rel)) || null;
 }
 
+// A demo's tool pages carry a link back to the improvement board (Brendan, 2026-09-27: "it is easy to get lost then
+// struggle to get back to the improvement board"). A paid site's floor keeps its own view of the tool: activation sets
+// companies.demo false (src/activate.js). Remembered 15 seconds so a page load is not a query every time.
+const demoSeen = new Map();
+async function isDemoCompany(company) {
+  const hit = demoSeen.get(company);
+  if (hit && Date.now() - hit.at < 15000) return hit.demo;
+  let demo = false;
+  try { demo = Boolean(((await q("SELECT demo FROM platform.companies WHERE slug=$1", [company])).rows[0] || {}).demo); } catch (e) { return false; }
+  if (demoSeen.size > 1000) demoSeen.clear();
+  demoSeen.set(company, { demo, at: Date.now() });
+  return demo;
+}
+
 // The widget tag carries the company, version and mount so the page can notice a
 // deploy and reload itself, and flag itself when it is the staged preview.
-function widgetInject(html, company, mod, version, mount, manifest) {
-  let tag = `<script src="/assets/feedback-widget.js" data-company="${company}" data-module="${mod}" data-version="${version}" data-mount="${mount}"></script>`;
+function widgetInject(html, company, mod, version, mount, manifest, { demo = false } = {}) {
+  let tag = `<script src="/assets/feedback-widget.js" data-company="${company}" data-module="${mod}" data-version="${version}" data-mount="${mount}"${demo ? ' data-demo="1"' : ""}></script>`;
   // a module with a printer connection gets the platform's print helper: it
   // carries queued labels from this device to the printer chosen on it
   if (hasPrinter(manifest)) tag += `\n<script src="/assets/print-helper.js" data-company="${company}" data-module="${mod}"></script>`;
@@ -158,9 +172,9 @@ async function buildRouter(company, mod, version, schema, { inline = false } = {
 
   // pages (feedback widget injected into every page)
   for (const { route, file } of pageEntries(manifest)) {
-    router.get(route, (req, res) => {
+    router.get(route, async (req, res, next) => { try {
       const html = fs.readFileSync(path.join(dir, file), "utf8");
-      res.set("Cache-Control", "no-cache").type("html").send(widgetInject(html, company, mod, version, mount, manifest));
+      res.set("Cache-Control", "no-cache").type("html").send(widgetInject(html, company, mod, version, mount, manifest, { demo: await isDemoCompany(company) })); } catch (e) { next(e); }
     });
   }
 

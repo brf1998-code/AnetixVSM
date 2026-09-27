@@ -97,6 +97,10 @@
   .paid .pw { font:700 20px ui-monospace,Menlo,monospace; letter-spacing:.04em; background:var(--fog, #f4f6f8); border-radius:8px; padding:8px 12px; margin:8px 0 4px; display:inline-block; }
   .paid .err { color:var(--red); margin:6px 0 0; }
   .approvenote { font-size:12px; color:var(--steel); margin:6px 0 0; }
+  /* a build waiting for the OK: the next step is the top of the card (Brendan, 2026-09-27) */
+  .gatetop { background:var(--greenSoft); border:2px solid var(--green); border-radius:9px; padding:10px; margin:8px 0 6px; }
+  .gatetop .gnext { font-weight:800; color:var(--green); font-size:13.5px; }
+  .gatetop button.go { display:block; width:100%; font-size:15px; min-height:44px; margin:8px 0 0; }
   /* a board with no tools yet: what to do first (the launch audit 1.4) */
   .firsttool { background:#fff; border:2px solid var(--teal); border-radius:12px; padding:16px 18px; margin:0 0 14px; display:flex; gap:12px 18px; align-items:center; flex-wrap:wrap; }
   .firsttool b { font-size:17px; } .firsttool p { margin:4px 0 0; color:var(--steel); font-size:14px; line-height:1.5; max-width:640px; } .firsttool .grow { flex:1; min-width:240px; }
@@ -831,6 +835,7 @@ function batchCard(run) {
   let html = `<div class="card batch ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="bhead"><span class="n">${items.length}</span>${ev.title ? esc(ev.title) : `${items.length} changes built as one`}${review ? `<span class="chip review">REVIEW #${review.review_id}</span>` : ""}<span class="chip ${run.lane}">${run.lane === "ui" ? "UI" : "FUNCTIONALITY"}</span></div>`;
   html += `<div class="meta">run #${run.id} · ${esc(mod.title || run.module)} · v${run.from_version}${run.to_version ? " → v" + run.to_version : ""}</div>`;
+  html += gateTopHtml(run, null);
   if (run.status === "deployed" || run.status === "rolled_back") {
     html += `<div class="${run.status === "deployed" ? "outcome" : "fail-note"}">${run.status === "deployed" ? "We did: " : "Rolled back: "}${esc(ev.what_changed || ev.build_summary || "").slice(0, 600)}</div>` + campaignLineHtml(run);
   }
@@ -847,8 +852,8 @@ function batchCard(run) {
   if (run.step === "await_deploy" && run.status === "waiting") {
     if (ev.what_changed || ev.build_summary) html += `<div class="prop">${esc(ev.what_changed || ev.build_summary)}</div>`;
     html += checksLineHtml(ev, run.id) + campaignLineHtml(run);
-    html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;
-    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(false, run)}</button><div class="approvenote">${goLiveNote()}</div>`, [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (!MGR()) html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;   // a manager has it at the top (gateTopHtml)
+    if (MGR()) html += actions(pk, "", [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, `The ${items.length} proposals go back to Reviewing.`);
   const open = run.status === "deployed" ? items.filter(canCloseOut) : [];
@@ -859,6 +864,21 @@ function batchCard(run) {
 // The one button at the gate. A demo has no floor, so it says "Make it live" (the launch audit 1.8); a site keeps its words.
 function goLiveLabel(isModule, run) { return DEMO() ? "Make it live" : isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`; }
 function goLiveNote() { return DEMO() ? "It goes live in your demo and you can open it from the Tools line at the top. Try it in the preview first." : "This goes live for your floor. Check it in the preview first."; }
+// A build waiting for the OK is the top of its card, and those cards are the top of In progress (Brendan, 2026-09-27:
+// people built a change and left the tile sitting there without ever putting it live). The button first, the preview
+// right under it; what changed, the checks and Discard stay further down the card. Managers only: the floor cannot deploy.
+const runOf = (fb) => DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
+function atGate(run) { return Boolean(run && run.step === "await_deploy" && run.status === "waiting"); }
+function gateTopHtml(run, fb) {
+  if (!atGate(run) || !MGR()) return "";
+  const isModule = run.lane === "module";
+  const preview = isModule && fb ? `Open the preview of ${esc(toolName(fb))} (not live)` : `Open preview of v${run.to_version} (not live)`;
+  return `<div class="gatetop"><div class="gnext">Next step: ${DEMO() ? "make it live" : "put it on the floor"}</div>`
+    + `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(isModule, run)}</button><div class="approvenote">${goLiveNote()}</div>`
+    + `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${preview}</a>`
+    + (DEMO() ? `<br><a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a>` : "")
+    + `</div>`;
+}
 // a tool request's name, whichever words the server used ("New tool: ..." now, "New module: ..." on older rows)
 const toolName = (fb) => String(fb.message || "").replace(/^New (module|tool): /, "");
 // Abort a build in flight: the agent process is stopped and the draft dropped.
@@ -878,6 +898,7 @@ function requestCard(fb) {
   const pk = "fb:" + fb.id;
   let html = `<div class="card request ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
+  if (fb.status === "in_progress") html += gateTopHtml(runOf(fb), fb);
   html += `<div class="meta">#${fb.id} · <span class="chip screen">New tool request</span> · started by ${esc(fb.name || "a manager")}</div>`;
   const openBtn = (label, cls) => (MGR() ? `<button class="${cls || "primary"}" onclick="Intake.open(${fb.intake_id})">${label}</button>` : "");
   const withdraw = MGR() && !["building", "done"].includes(it.status) ? `<button class="no" onclick="if(confirm('Withdraw this tool request? The answers are kept on the record but nothing is built.'))act('/api/intakes/${fb.intake_id}/abandon')">Withdraw</button>` : "";
@@ -941,9 +962,8 @@ function runBlock(fb, run) {
     const ev = run.evidence || {};
     if (ev.what_changed || ev.build_summary) html += `<div class="prop">${esc(ev.what_changed || ev.build_summary)}</div>`;
     html += checksLineHtml(ev, run.id) + campaignLineHtml(run);
-    html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${isModule ? `Open the preview of ${esc(toolName(fb))} (not live)` : `Open preview of v${run.to_version} (not live)`}</a><br>`;
-    if (MGR() && DEMO()) html += `<a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a><br>`;
-    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(isModule, run)}</button><div class="approvenote">${goLiveNote()}</div>`, [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The tool is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (!MGR()) html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${isModule ? `Open the preview of ${esc(toolName(fb))} (not live)` : `Open preview of v${run.to_version} (not live)`}</a><br>`;
+    if (MGR()) html += actions(pk, "", [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The tool is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, isModule ? "The design goes back to Reviewing." : "The proposal goes back to Reviewing.");
   return html;
@@ -1061,6 +1081,7 @@ function card(fb) {
   const pk = run && fb.status === "in_progress" ? "run:" + run.id : "fb:" + fb.id;
   let html = `<div class="card ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
+  if (fb.status === "in_progress" && run) html += gateTopHtml(run, fb);
   html += `<div class="meta">#${fb.id} · ${isPlatform ? '<span class="chip platform">TO ANETIX</span>' : esc(fb.module)} · ${esc(fb.name || "anonymous")}`
        + (fb.recurrence > 1 && !(fb.dupes && fb.dupes.length) ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "") + `</div>`;
   html += `<div class="meta"><span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>${/^\/c\/[^/]+\/test\/m\//.test(fb.page || "") ? `<span class="chip testfloor" title="Sent from the test floor, where nothing is real; the screen is the same as on the floor">from the test floor</span>` : ""}${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
@@ -1450,7 +1471,11 @@ function render() {
   const empty = SEL ? '<div class="empty">Nothing here for the tools shown.</div>' : '<div class="empty">Nothing here.</div>';
   const counts = {};
   for (const k of ["new", "reviewing", "in_progress", "done", "platform"]) {
-    const all = (tiles[k] || []).map(t => batchCard({ ...t.run, feedback_ids: t.ids })).concat(buckets[k].map(card));
+    // In progress: builds waiting for the OK go first, so the next step is the first thing seen (Brendan, 2026-09-27)
+    let items = (tiles[k] || []).map(t => ({ gate: atGate(t.run), html: () => batchCard({ ...t.run, feedback_ids: t.ids }) }))
+      .concat(buckets[k].map(fb => ({ gate: k === "in_progress" && atGate(runOf(fb)), html: () => card(fb) })));
+    if (k === "in_progress") items = items.filter(x => x.gate).concat(items.filter(x => !x.gate));
+    const all = items.map(x => x.html());
     // a column shows the first few tiles; the rest fold under one button (Brendan, 2026-09-17)
     const limit = k === "platform" ? all.length : TILES_PER_COLUMN;
     const shown = EXPANDED.has(k) ? all : all.slice(0, limit);

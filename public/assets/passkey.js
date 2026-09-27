@@ -5,6 +5,7 @@
 //   Passkey.platform()                          -> Promise<bool>: this device has Face ID, a fingerprint or Windows Hello
 //   Passkey.add({ label })                      -> { ok, passkey } | { cancelled } | { error }   (signed in already)
 //   Passkey.signIn({ email, conditional, signal }) -> the /login answer plus passkey: true | { cancelled } | { error }
+//   Passkey.stepUp()                            -> { passkey } | { cancelled } | { error }   a fresh check for an admin action
 (function () {
   const b2u = (buf) => { const a = new Uint8Array(buf); let s = ""; for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
   const u2b = (s) => { s = String(s).replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; const bin = atob(s); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a.buffer; };
@@ -53,6 +54,25 @@
     if (!f.ok) return { error: j.error || `the platform answered ${f.status}`, status: f.status };
     return j;
   }
+  // A fresh passkey check for an admin-level action (2026-09-27, Brendan: "allow me to use passkey and not just
+  // authenticator apps for my things that are admin level permission items"). The answer goes in the action's own body
+  // as { passkey }, where a code would; the server checks it once against this account's passkeys.
+  async function stepUp() {
+    if (!supported()) return { error: "this browser cannot use passkeys" };
+    const r = await fetch("/api/me/passkeys/step-up/options", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    if (!r.ok) return { error: await said(r) };
+    const o = await r.json();
+    let cred;
+    try {
+      cred = await navigator.credentials.get({ publicKey: { ...o, challenge: u2b(o.challenge), allowCredentials: (o.allowCredentials || []).map((c) => ({ ...c, id: u2b(c.id) })) } });
+    } catch (e) { return cancelled(e) ? { cancelled: true } : { error: e.message || String(e) }; }
+    if (!cred) return { cancelled: true };
+    const a = cred.response;
+    return { passkey: { id: cred.id, rawId: b2u(cred.rawId), type: cred.type, authenticatorAttachment: cred.authenticatorAttachment || undefined,
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+      response: { clientDataJSON: b2u(a.clientDataJSON), authenticatorData: b2u(a.authenticatorData), signature: b2u(a.signature), userHandle: a.userHandle ? b2u(a.userHandle) : undefined } } };
+  }
+
   // A signed-in person's own passkeys, drawn into el: the list, Add a passkey, Remove. Used by /admin (My account)
   // and the company's Settings. Hides el when the session is not a named account.
   const esc = (x) => String(x == null ? "" : x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -85,5 +105,5 @@
       await panel(el, { onChange }); if (onChange) onChange();
     }; });
   }
-  window.Passkey = { supported, platform, conditionalOk, add, signIn, panel };
+  window.Passkey = { supported, platform, conditionalOk, add, signIn, panel, stepUp };
 })();

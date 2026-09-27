@@ -408,9 +408,11 @@ function ownsCompany(req, slug) { return OPEN || req.sosRole === "admin" || (slu
 // session, which exists only until the first authenticator is set up, types
 // that password again, as before. With no passwords set (local dev) anything
 // passes. -> { ok, error }
-async function checkAdminCode(req, { code, password } = {}, what) {
+async function checkAdminCode(req, { code, password, passkey } = {}, what) {
   if (OPEN) return { ok: true };
-  if (req.sosAccount && req.sosAccount.id) return accounts.stepUp(req.sosAccount, { code, password }, edge.clientIp(req), what);
+  // a passkey answers for the code (2026-09-27): every caller passes the body's code, so its passkey is read from the body here
+  if (passkey === undefined && req.body && typeof req.body === "object") passkey = req.body.passkey;
+  if (req.sosAccount && req.sosAccount.id) return accounts.stepUp(req.sosAccount, { code, password, passkey }, edge.clientIp(req), what, req);
   const ok = (await accounts.legacyOpen()) && same(password, ADMIN || MANAGER);
   await accounts.event(ok ? "legacy_admin_password" : "step_up_fail", { ip: edge.clientIp(req), detail: { at: "step_up", what } });
   return ok ? { ok: true } : { ok: false, error: "wrong admin password" };

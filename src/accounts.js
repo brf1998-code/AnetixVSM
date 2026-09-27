@@ -320,11 +320,19 @@ async function signIn({ login, password, code, ip, device, remember, ua }) {
 // ---- step-up: a fresh code at the moment of a destructive action -----------------------------------------------
 // The code that signed the person in does not count: its step is already claimed. Under break glass there is no
 // code to give, so the account's own password stands in, and the record says so.
-async function stepUp(account, { code, password }, ip, what) {
+async function stepUp(account, { code, password, passkey } = {}, ip, what, req = null) {
   const a = await byId(account.id);
   if (!a || a.status !== "active") return { ok: false, error: "this account is switched off" };
   const wait = lockedFor(a);
   if (wait) return { ok: false, error: lockedAnswer(wait).error };
+  // a passkey answers for the code (2026-09-27, Brendan): this account's own, on a challenge made for it, used once
+  // (src/passkeys.js checkStepUp). Only with the request in hand, which is where the site's name and origin come from.
+  if (passkey && req) {
+    const r = await require("./passkeys").checkStepUp(req, a, passkey);
+    if (r.ok) { await event("step_up_ok", { account_id: a.id, login: a.login, ip, detail: { what, via: "passkey", passkey: r.passkey } }); return { ok: true }; }
+    await noteFail(a, "step_up_fail", ip, { what, kind: "passkey", why: r.why });
+    return { ok: false, error: r.error };
+  }
   if (twoFaOff()) {
     if (authLib().checkHash(String(password || ""), a.password_hash)) { await event("break_glass", { account_id: a.id, login: a.login, ip, detail: { at: "step_up", what } }); return { ok: true }; }
     await noteFail(a, "step_up_fail", ip, { what, kind: "password" });
@@ -473,7 +481,7 @@ const guard = (fn) => async (req, res) => { try { await fn(req, res); } catch (e
 async function needStepUp(req, res, what) {
   const a = authLib();
   if (a.OPEN || !req.sosAccount || !req.sosAccount.id) return true;
-  const r = await stepUp(req.sosAccount, req.body || {}, edge.clientIp(req), what);
+  const r = await stepUp(req.sosAccount, req.body || {}, edge.clientIp(req), what, req);
   if (!r.ok) res.status(403).json({ error: r.error, step_up: true });
   return r.ok;
 }

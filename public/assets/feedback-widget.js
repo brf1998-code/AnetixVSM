@@ -13,6 +13,19 @@
   const company = (script && script.getAttribute("data-company")) || ((/^\/c\/([^/]+)/.exec(location.pathname) || [])[1]) || "demo";
   const staged = mount === "staged";
   const onTest = mount === "test";   // the company's test floor (docs/TEST-ENVIRONMENT.md): a violet bar, nothing here is real
+  // A demo's tool pages: a way back to the improvement board, bottom left (Brendan, 2026-09-27: "it is easy to get lost
+  // then struggle to get back to the improvement board"). The platform marks demo pages with data-demo="1"; a paid
+  // site's floor never gets it, so operators keep their own view of the tool. Not drawn inside a frame.
+  if (script && script.getAttribute("data-demo") === "1" && mod && mod !== "platform" && window.top === window.self) {
+    const back = document.createElement("a");
+    back.id = "sos-board-link";
+    back.href = "/c/" + encodeURIComponent(company) + "/";
+    back.title = "Back to your improvement board";
+    back.textContent = "\u2190 Improvement board";
+    back.style.cssText = "position:fixed!important;left:12px!important;bottom:12px!important;right:auto!important;top:auto!important;z-index:9999;background:#fff!important;color:#1f3a5f!important;border:1px solid #1f3a5f!important;border-radius:18px!important;padding:8px 12px!important;font-size:12.5px!important;font-weight:700!important;line-height:1!important;text-decoration:none!important;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,sans-serif!important;opacity:.95;";
+    const put = () => document.body.appendChild(back);
+    if (document.body) put(); else document.addEventListener("DOMContentLoaded", put);
+  }
 
   // Small pill, bottom right, out of the way of the work. Opens a panel on tap.
   const btn = document.createElement("button");

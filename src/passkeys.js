@@ -31,6 +31,8 @@
 //   POST /api/me/passkeys/options         begin adding one (the challenge is kept five minutes, one per account)
 //   POST /api/me/passkeys                 finish adding it { response, label? }
 //   POST /api/me/passkeys/:id/remove      remove one (asks for nothing: it only tightens)
+//   POST /api/me/passkeys/step-up/options begin a fresh check for an admin-level action (2026-09-27); the answer goes
+//                                         in that action's own body as { passkey }, where a code would (accounts.stepUp)
 //   POST /login/passkey/options           begin a sign-in (public; CORS for anetix.ai like /login)
 //   POST /login/passkey                   finish it { response, email? }: the same session /login gives
 // auth_events: passkey_added, passkey_removed, login_passkey, passkey_refused.
@@ -234,6 +236,41 @@ async function authenticate(req, { response, email } = {}) {
   return { ok: true, account: a };
 }
 
+// ---- a fresh check at the moment of an admin-level action -------------------------------------------------------------
+// 2026-09-27, Brendan: "allow me to use passkey and not just authenticator apps for my things that are admin level
+// permission items". The same Face ID, fingerprint or PIN check as a sign-in, but against THIS account's own passkeys,
+// on a challenge made for this account and used once. The answer rides in the action's own body as { passkey }, where a
+// code would; src/accounts.js stepUp checks it. A code from the app still works everywhere it did.
+const stepChallenges = new Map();   // account id -> { challenge, at, rp }
+async function stepUpOptions(req, account) {
+  const have = await live(account.id);
+  if (!have.length) throw Object.assign(new Error("this account has no passkey yet; add one under My account, or type a code from your authenticator"), { status: 400 });
+  const rp = rpId(req);
+  const options = await lib().generateAuthenticationOptions({ rpID: rp, userVerification: "required", allowCredentials: have.map((p) => ({ id: p.credential_id, transports: p.transports || undefined })) });
+  sweep(stepChallenges);
+  stepChallenges.set(account.id, { challenge: options.challenge, at: Date.now(), rp });
+  return options;
+}
+// -> { ok: true, passkey } | { ok: false, why, error }
+async function checkStepUp(req, account, response) {
+  const pending = stepChallenges.get(account.id);
+  stepChallenges.delete(account.id);
+  if (!response || typeof response !== "object" || !response.id || !response.response) return { ok: false, why: "shape", error: "no passkey answer came back" };
+  if (!pending || Date.now() - pending.at > CHALLENGE_MS) return { ok: false, why: "challenge", error: "that took too long; use your passkey again" };
+  const pk = (await q("SELECT * FROM platform.account_passkeys WHERE credential_id=$1 AND account_id=$2 AND removed_at IS NULL", [String(response.id), account.id])).rows[0];
+  if (!pk) return { ok: false, why: "not_this_account", error: "that passkey is not one of this account's" };
+  let v;
+  try {
+    v = await lib().verifyAuthenticationResponse({
+      response, expectedChallenge: pending.challenge, expectedOrigin: origins(req, pending.rp), expectedRPID: pending.rp, requireUserVerification: true,
+      credential: { id: pk.credential_id, publicKey: new Uint8Array(pk.public_key), counter: Number(pk.counter), transports: pk.transports || undefined },
+    });
+  } catch (e) { return { ok: false, why: "verify", error: "the passkey could not be checked" }; }
+  if (!v.verified) return { ok: false, why: "verify", error: "the passkey could not be checked" };
+  await q("UPDATE platform.account_passkeys SET counter=$2, last_used_at=now() WHERE id=$1", [pk.id, Number(v.authenticationInfo.newCounter || 0)]);
+  return { ok: true, passkey: pk.id };
+}
+
 // A cookie anetix.ai's own page can read, so the wall knows this browser has signed in with a passkey and offers it
 // first. It carries no secret and opens nothing (the session cookie is the product's own, HttpOnly).
 function hintCookie(req, rp) {
@@ -271,6 +308,11 @@ router.post("/api/me/passkeys/:id(\\d{1,9})/remove", json, guard(async (req, res
   if (!gone) return res.status(404).json({ error: "no such passkey on your account" });
   res.json({ ok: true });
 }));
+router.post("/api/me/passkeys/step-up/options", json, guard(async (req, res) => {
+  if (!named(req, res)) return;
+  res.set("Cache-Control", "no-store").json(await stepUpOptions(req, req.sosAccount));
+}));
+
 // public: mounted before auth.middleware, with selfserve.loginCors in front (server.js)
 async function beginSignIn(req, res) {
   try {
@@ -290,4 +332,4 @@ async function finishSignIn(req, res) {
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
-module.exports = { init, router, beginSignIn, finishSignIn, removeAll, listFor, rpIdFor, originsFor, labelFrom, SCHEMA, MAX_PER_ACCOUNT };
+module.exports = { init, router, beginSignIn, finishSignIn, removeAll, checkStepUp, listFor, rpIdFor, originsFor, labelFrom, SCHEMA, MAX_PER_ACCOUNT };

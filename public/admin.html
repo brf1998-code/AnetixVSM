@@ -133,7 +133,7 @@
 
   <!-- ================= Pins: who may come in from anetix.ai, and the companies that did ================= -->
   <section class="tabpanel" id="tab-pins">
-    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here for their email and handed to them. They enter the pin with that email, name their company and pick a password, set up an authenticator app, and land on a demo board of their own with $10 of AI credit from us, about one module and three rounds of changes. When it runs out they add more on anetix.ai through Stripe ($20 buys $10). A build that is already running when the credit runs out still finishes; the overrun is written off at their next refill. A pin works only with its email, makes one company unless you say more, and expires. Cancel one and it stops working at once; the company it already made stays.</p>
+    <div class="tabhead"><h2>Access pins</h2><p class="sub">anetix.ai is not open to the public: a person gets in with a pin made here for their email and handed to them. They enter the pin with that email, name their company and pick a password, set up an authenticator app, and land on a demo board of their own with $10 of AI credit from us, about one module and three rounds of changes. When it runs out they add more on anetix.ai through Stripe ($30 buys $10). A build that is already running when the credit runs out still finishes; the overrun is written off at their next refill. A pin works only with its email, makes one company unless you say more, and expires. Cancel one and it stops working at once; the company it already made stays.</p>
       <p style="margin:10px 0 0"><button class="primary" id="www-preview" onclick="openWwwPreview()" style="margin:0">View the pin page</button> <span class="sub">anetix.ai as a person with a pin sees it, in a new tab. A preview cannot make a company; to try the payment, make yourself a pin.</span></p></div>
     <div class="card" id="dr-card"><h2>Demo requests <small id="dr-sub"></small></h2>
       <p class="sub" style="margin-top:0">From the form on anetix.ai (<a id="dr-form" href="#" target="_blank" rel="noopener">anetix.ai/request</a>): who they are, the business, whether they want a pin, a call or both, and how they heard. "Make their pin" makes a pin for their email and gives you the message to send; nothing is emailed from here.</p>
@@ -540,8 +540,10 @@ async function loadPins() {
   loadDemoReqs().catch((e) => console.error("demo requests:", e));
   const r = await fetch("/api/admin/pins", { cache: "no-store" }); if (!r.ok) return;
   PINS = await r.json();
-  const live = PINS.pins.filter(p => !p.problem).length, out = PINS.companies.filter(c => c.balance_usd <= 0).length, low = PINS.companies.filter(c => c.level === "amber").length;
-  P.pins = { live, value: `${PINS.companies.length} compan${PINS.companies.length === 1 ? "y" : "ies"}${out ? `, ${out} out of credit` : low ? `, ${low} low` : ""}, ${live} live pin${live === 1 ? "" : "s"}`, level: out ? "red" : low ? "amber" : "ok" };
+  // low credit is the demo's own business and lights nothing here; out of credit lights red until it is marked seen
+  // (Brendan, 2026-09-27: "do not notify me if people are low on credits ... I should be able to clear or acknowledge")
+  const live = PINS.pins.filter(p => !p.problem).length, out = PINS.companies.filter(c => c.balance_usd <= 0 && !c.seen).length;
+  P.pins = { live, value: `${PINS.companies.length} compan${PINS.companies.length === 1 ? "y" : "ies"}${out ? `, ${out} out of credit` : ""}, ${live} live pin${live === 1 ? "" : "s"}`, level: out ? "red" : "ok" };
   drawPills();
   document.getElementById("pins-sub").textContent = PINS.pins.length ? `${live} live of ${PINS.pins.length}` : "none yet";
   document.getElementById("ss-sub").textContent = PINS.companies.length ? `${PINS.companies.length}${out ? `, ${out} out of credit` : ""}` : "none yet";
@@ -555,7 +557,7 @@ async function loadPins() {
   document.getElementById("ss-list").innerHTML = PINS.companies.length ? `<table class="list"><tr><th>Company</th><th>Contact</th><th>Since</th><th>Bought</th><th>Used</th><th>Left</th><th></th></tr>${PINS.companies.map(c => `<tr data-ss="${esc(c.slug)}">
     <td><a href="#companies/${esc(c.slug)}"><b>${esc(c.name)}</b></a> <small class="sub">/c/${esc(c.slug)}/</small></td><td>${esc(c.contact || "")}${c.email ? `<br><small>${esc(c.email)}</small>` : ""}</td><td>${day(c.since)}</td>
     <td>$${c.credit_usd.toFixed(2)}</td><td>$${c.spent_usd.toFixed(2)}</td><td class="${c.level === "red" ? "fail" : c.level === "amber" ? "warn" : "ok"}" style="font-weight:700">$${c.balance_usd.toFixed(2)}</td>
-    <td style="white-space:nowrap"><button class="quiet" onclick="grantCredit('${esc(c.slug)}')">Grant credit</button> <a href="/c/${esc(c.slug)}/" class="sub">board</a></td></tr>`).join("")}</table>`
+    <td style="white-space:nowrap">${c.balance_usd <= 0 && !c.seen ? `<button class="quiet" onclick="creditSeen('${esc(c.slug)}')" title="Clears the red light until they refill and run out again">Seen, clear it</button> ` : ""}<button class="quiet" onclick="grantCredit('${esc(c.slug)}')">Grant credit</button> <a href="/c/${esc(c.slug)}/" class="sub">board</a></td></tr>`).join("")}</table>`
     : '<p class="sub">Nobody has come in from anetix.ai yet.</p>';
   // refused pins (the launch audit 0.3): what each person was told, so a stuck pin holder can be helped
   const RF = PINS.refusals || [], WHERE = { pin: "the pin box", home: "coming back to the pin page", check: "before a checkout" };
@@ -669,6 +671,7 @@ async function revokePin(id) {
   if (!confirm("Cancel this pin? It stops working at once. A company it already made stays.")) return;
   await post(`/api/admin/pins/${id}/revoke`, {}); loadPins();
 }
+async function creditSeen(slug) { const j = await post(`/api/admin/companies/${encodeURIComponent(slug)}/credit/seen`, {}); if (j && j.ok) loadPins(); }
 function grantCredit(slug) {
   const c = (PINS && PINS.companies.find(x => x.slug === slug)) || (D && D.companies.find(x => x.slug === slug)) || { name: slug };
   const cr = c.credit || (c.balance_usd != null ? c : null);
@@ -955,7 +958,8 @@ function openDelete(slug, name) {
 async function doDelete(slug) {
   const confirm_slug = document.getElementById("del-slug").value.trim();
   if (confirm_slug !== slug) return alert("the slug does not match");
-  const r = await fetch(`/api/admin/companies/${slug}/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm_slug, ...stepValue("del") }) });
+  const step = await stepBody("del"); if (!step) return;
+  const r = await fetch(`/api/admin/companies/${slug}/delete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm_slug, ...step }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) return alert(j.error || "failed");
   if (location.hash.startsWith("#demos/")) location.hash = "#demos";   // deleted from its page on the Demos tab: back to the list
@@ -980,7 +984,8 @@ async function doRestore() {
   try { doc = JSON.parse(await f.text()); } catch (e) { return alert("that file is not valid JSON"); }
   if (!confirm(`Restore the backup taken ${doc.taken_at || "(unknown time)"}? Everything on the instance is replaced.`)) return;
   document.getElementById("rs-note").textContent = "Restoring…";
-  const body = { ...stepValue("rs"), backup: doc, admin_reason: document.getElementById("rs-why").value, admin_note: document.getElementById("rs-why-note").value };
+  const step = await stepBody("rs"); if (!step) { document.getElementById("rs-note").textContent = ""; return; }
+  const body = { ...step, backup: doc, admin_reason: document.getElementById("rs-why").value, admin_note: document.getElementById("rs-why-note").value };
   let r = await fetch("/api/admin/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   let j = await r.json().catch(() => ({}));
   // a file older than a paying site's subscription: said plainly, restored only on a second yes
@@ -1005,6 +1010,7 @@ async function loadMe() {
 }
 function stepField(id) {
   if (!ME || ME.open) return "";
+  if (ME.step_up === "code" && hasPasskey()) return `<input id="${id}-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="a fresh 6 digit code, or leave it empty for your passkey"><p class="sub" style="margin-top:4px">Leave it empty and the button asks for your passkey (Face ID, a fingerprint or the device PIN). The code you signed in with does not count.</p>`;
   if (ME.step_up === "code") return `<input id="${id}-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="a fresh 6 digit code from your authenticator"><p class="sub" style="margin-top:4px">The code you signed in with does not count. If it is refused, wait for the app to show the next one.</p>`;
   if (ME.step_up === "password") return `<input id="${id}-pw" type="password" placeholder="your own password (2FA is switched off on this instance)" autocomplete="current-password">`;
   return `<input id="${id}-pw" type="password" placeholder="the shared admin password" autocomplete="current-password">`;
@@ -1013,12 +1019,27 @@ function stepValue(id) {
   const c = document.getElementById(id + "-code"), p = document.getElementById(id + "-pw");
   return { ...(c ? { code: c.value.trim() } : {}), ...(p ? { password: p.value } : {}) };
 }
+// A passkey answers for the code on every admin-level action (2026-09-27, Brendan): with the code box left empty, the
+// action's own button asks for the passkey (Face ID, a fingerprint or the device PIN). -> the body's step part, or null.
+const hasPasskey = () => Boolean(ME && ME.me && ME.me.passkeys > 0 && window.Passkey && Passkey.supported());
+async function stepBody(id) {
+  const c = document.getElementById(id + "-code");
+  if (c && !c.value.trim() && hasPasskey()) {
+    const out = await Passkey.stepUp();
+    if (out.passkey) return { passkey: out.passkey };
+    if (!out.cancelled) alert(out.error || "the passkey did not work");
+    return null;
+  }
+  return stepValue(id);
+}
 // Ask for the step-up in a modal, then run the call with it. A session on the shared password (or local dev) is not asked.
 function withStepUp(title, text, run) {
   if (!ME.me || ME.open) return run({});
   openModal(`<h2>${esc(title)}</h2><p class="sub">${esc(text)}</p>${stepField("su")}
-    <div><button class="primary" id="su-go">Go ahead</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
-  document.getElementById("su-go").onclick = () => run(stepValue("su"));
+    <div>${hasPasskey() ? `<button class="go" id="su-pk">Use my passkey</button>` : ""}<button class="primary" id="su-go">Go ahead</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+  document.getElementById("su-go").onclick = async () => { const s = await stepBody("su"); if (s) run(s); };
+  const pkb = document.getElementById("su-pk");
+  if (pkb) pkb.onclick = async () => { const out = await Passkey.stepUp(); if (out.passkey) run({ passkey: out.passkey }); else if (!out.cancelled) alert(out.error || "the passkey did not work"); };
   setTimeout(() => { const el = document.getElementById("su-code") || document.getElementById("su-pw"); if (el) el.focus(); }, 50);
 }
 async function accPost(url, body) {
