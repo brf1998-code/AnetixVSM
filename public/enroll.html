@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Set up your authenticator</title>
+<title>Anetix · Secure your account</title>
 <link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml">
 <style>
   /* A manager account's first sign-in (2026-09-25, src/accounts.js the /api/c/<slug>/me routes): the authenticator
@@ -23,6 +23,10 @@
   .note.bad { border-left-color:var(--red); } .note.good { border-left-color:var(--green); }
   .fail { color:var(--red); font-weight:700; }
   a { color:var(--navy); }
+  .big { font-size:16px; padding:14px 18px; width:100%; max-width:360px; }
+  a.btn { display:inline-block; text-decoration:none; border-radius:7px; padding:11px 16px; font-weight:700; font-size:15px; }
+  button.small { padding:4px 9px; min-height:0; font-size:12px; margin:0 0 0 4px; }
+  input { font-size:16px; }
 </style>
 <script src="/assets/passkey.js"></script>
 </head>
@@ -40,37 +44,93 @@ async function post(url, body) {
   if (!r.ok) { alert(j.error || "failed"); return null; }
   return j;
 }
+// Who is on what (the launch audit 1.2 and 1.3, 2026-09-27). On a phone with Face ID or a fingerprint, the first
+// factor offered is a passkey on that phone (Brendan's call: passkey first on phones), with the app one tap away; the
+// recovery codes come with it either way. Anywhere else the app comes first, with a passkey as the other choice.
+// ?app=1 is Settings' way back here to add the app to an account that signed up with a passkey.
+const PHONE = matchMedia("(pointer:coarse)").matches && Math.min(screen.width, screen.height) < 820;
+const APPLE = /iPhone|iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document;
+const LOCKWORD = APPLE ? "Face ID" : "your fingerprint or screen lock";
+const WANT_APP = new URLSearchParams(location.search).get("app") === "1";
+const BOARD = `/c/${SLUG}/`;
+const head = (title) => `<h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:9px">${esc(title)} <small>${esc(ME.me.login)}</small></h1>`;
 async function load() {
   const r = await fetch(`/api/c/${SLUG}/me`, { cache: "no-store" });
   if (r.status === 401) { location.href = `/login?next=${encodeURIComponent(location.pathname)}`; return; }
   ME = await r.json();
-  if (!ME.me || ME.me.role !== "manager") { card.innerHTML = `<h1>Not for this sign-in</h1><p class="sub">This page sets up the authenticator of a manager account. <a href="/c/${esc(SLUG)}/">Back to the board</a>.</p>`; return; }
-  if (!ME.enroll_required) { card.innerHTML = `<h1>Your authenticator is set up</h1><p class="sub">Nothing to do here. <a href="/c/${esc(SLUG)}/">Go to the board</a>.</p>`; return; }
-  card.innerHTML = `<h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:9px">Set up your authenticator <small>${esc(ME.me.login)}</small></h1>
-    <p class="sub">Before this account can do anything it needs a second factor: an authenticator app on your phone (Google Authenticator, 1Password, Authy, Microsoft Authenticator or the like) that shows a new 6 digit code every 30 seconds. From then on you sign in with your password and the code. It takes about a minute.</p>
+  if (!ME.me || ME.me.role !== "manager") { card.innerHTML = `<h1>Not for this sign-in</h1><p class="sub">This page sets up the sign-in of a manager account. <a href="${esc(BOARD)}">Back to the board</a>.</p>`; return; }
+  if (WANT_APP && !ME.me.app) return appIntro(true);
+  if (!ME.enroll_required) { card.innerHTML = `<h1>Your sign-in is set up</h1><p class="sub">Nothing to do here. <a href="${esc(BOARD)}">Go to the board</a>.</p>`; return; }
+  const pk = window.Passkey && Passkey.supported() && (await Passkey.platform());
+  if (pk && PHONE) return passkeyFirst();
+  appIntro(false, pk);
+}
+// A passkey as the first factor: one tap and Face ID, and the recovery codes
+function passkeyFirst() {
+  card.innerHTML = `${head("Secure your account")}
+    <p>One step: turn on ${esc(LOCKWORD)} for Anetix on this phone.</p>
+    <p class="sub">From then on you sign in with your email and ${esc(LOCKWORD)}: no password to type and no code. It takes a few seconds, and a look-alike page cannot use it.</p>
+    ${ME.key_pinned ? "" : `<div class="note bad"><b>This instance cannot set up sign-ins yet</b> (its key is not set). Tell Anetix.</div>`}
+    <div id="body"><div id="pkmsg"></div>
+      <button class="go big" id="pkfirst">Use ${esc(APPLE ? "Face ID" : "my fingerprint or screen lock")}</button>
+      <div><button class="quiet" onclick="appIntro(false, false)">Use an authenticator app instead</button> <a href="/logout" style="margin-left:8px">sign out</a></div></div>`;
+  document.getElementById("pkfirst").onclick = usePasskey;
+}
+async function usePasskey() {
+  const b = document.getElementById("pkfirst") || document.getElementById("pkinstead"), msg = document.getElementById("pkmsg");
+  if (b) b.disabled = true;
+  const j = await Passkey.add();
+  if (b) b.disabled = false;
+  if (j.ok && j.recovery_codes) return showCodes(j.recovery_codes, "passkey");
+  if (j.ok) { location.href = BOARD; return; }
+  if (msg) msg.innerHTML = j.cancelled ? `<p class="sub" style="margin:10px 0">Nothing was set up. Try again, or use the app instead.</p>` : `<div class="note bad" style="margin:10px 0">${esc(j.error)}</div>`;
+}
+// The authenticator app. adding: the account already signs in with a passkey and is adding the app from Settings.
+function appIntro(adding, passkeyToo) {
+  card.innerHTML = `${head(adding ? "Add the authenticator app" : "Set up your authenticator")}
+    <p class="sub">${adding ? "With the app as well as your passkey you can sign in from a device that does not hold the passkey: your password and the app's code." : "Before this account can do anything it needs a second factor: an authenticator app on your phone (Google Authenticator, 1Password, Authy, Microsoft Authenticator or the like) that shows a new 6 digit code every 30 seconds. From then on you sign in with your password and the code. It takes about a minute."}</p>
     ${ME.key_pinned ? "" : `<div class="note bad"><b>This instance cannot set up authenticators yet</b> (its key is not set). Tell Anetix.</div>`}
-    <div id="body"><button class="go" onclick="start()">Start</button> <a href="/logout" style="margin-left:8px">sign out</a></div>`;
+    <div id="body"><button class="go" onclick="start()">Start</button> ${adding ? `<a href="${esc(BOARD)}settings" style="margin-left:8px">back to Settings</a>` : `<a href="/logout" style="margin-left:8px">sign out</a>`}
+      ${passkeyToo ? `<p class="sub" style="margin-top:14px">Or skip the app: <a href="#" id="pkinstead">use this device's ${esc(APPLE ? "Touch ID or Face ID" : "fingerprint, face or PIN")} instead (a passkey)</a>.</p><div id="pkmsg"></div>` : ""}</div>`;
+  const alt = document.getElementById("pkinstead");
+  if (alt) alt.onclick = (e) => { e.preventDefault(); usePasskey(); };
 }
 async function start() {
   const j = await post(`/api/c/${SLUG}/me/enroll/start`, {}); if (!j) return;
-  document.getElementById("body").innerHTML = `<div class="qr">${j.qr_svg}<div style="flex:1;min-width:220px">
+  const key = j.secret.replace(/\s/g, "");
+  // on the phone that will hold the app, a QR code on its own screen cannot be scanned: a link that opens the app with
+  // the account, and the key with a Copy button (the launch audit 1.2)
+  const onPhone = `<p><b>1.</b> Put Anetix into your authenticator app.</p>
+      <p><a class="btn go" href="${esc(j.uri)}" id="openapp">Add to my authenticator app</a></p>
+      <p class="sub" style="margin-top:6px">Nothing opened? In the app choose "enter a setup key", paste this key and choose time based: <code id="key">${esc(j.secret)}</code> <button class="quiet small" type="button" id="copykey">Copy the key</button></p>
+      <details style="margin-top:6px"><summary class="sub">Or scan it from another device</summary><div style="margin-top:8px">${j.qr_svg}</div></details>`;
+  const onComputer = `<div class="qr">${j.qr_svg}<div style="flex:1;min-width:220px">
       <p><b>1.</b> In the app, add an account and scan this code.</p>
-      <p class="sub" style="margin-top:4px">Cannot scan? Choose "enter a setup key" and type: <code>${esc(j.secret)}</code> (time based, 6 digits).</p>
+      <p class="sub" style="margin-top:4px">Cannot scan? Choose "enter a setup key" and type: <code id="key">${esc(j.secret)}</code> <button class="quiet small" type="button" id="copykey">Copy the key</button> (time based, 6 digits).</p></div></div>`;
+  document.getElementById("body").innerHTML = `${PHONE ? onPhone : onComputer}
+    <form id="codeform" autocomplete="off">
       <p style="margin-top:10px"><b>2.</b> Type the 6 digit code the app shows now.</p>
-      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="6 digit code" style="font-size:18px;letter-spacing:.2em;width:170px;margin-top:6px">
-      <div><button class="primary" onclick="verify()">Check the code</button></div>
-    </div></div>`;
-  setTimeout(() => { const el = document.getElementById("code"); if (el) el.focus(); }, 50);
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" maxlength="7" placeholder="6 digit code" style="font-size:18px;letter-spacing:.2em;width:170px;margin-top:6px">
+      <div><button class="primary" type="submit">Check the code</button></div>
+    </form>`;
+  document.getElementById("codeform").onsubmit = (e) => { e.preventDefault(); verify(); };
+  document.getElementById("copykey").onclick = async (e) => { const b = e.target; try { await navigator.clipboard.writeText(key); b.textContent = "Copied"; } catch (x) { b.textContent = "Select it and copy"; } setTimeout(() => { b.textContent = "Copy the key"; }, 1800); };
+  setTimeout(() => { const el = document.getElementById("code"); if (el && !PHONE) el.focus(); }, 50);
 }
 async function verify() {
   const j = await post(`/api/c/${SLUG}/me/enroll/verify`, { code: document.getElementById("code").value.trim() }); if (!j) return;
-  const text = j.recovery_codes.join("\n");
+  showCodes(j.recovery_codes, WANT_APP ? "settings" : "app");
+}
+// The ten recovery codes, once. then: "app" offers a passkey next; "passkey" and "settings" go on.
+function showCodes(codes, then) {
+  const text = codes.join("\n");
   document.getElementById("body").innerHTML = `<p><b>Done. Now save these ten recovery codes</b> somewhere that is not your phone (a password manager, a printed page in a drawer).</p>
-    <p class="sub" style="margin-top:4px">Each one signs you in once in place of the app's code, for the day the phone is lost. They are shown this once and never again.</p>
-    <div class="codes">${j.recovery_codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
-    <div><button class="quiet" id="copy">Copy them</button><a id="dl" download="anetix-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" onclick="offerPasskey()">I have saved them</button></div>`;
+    <p class="sub" style="margin-top:4px">Each one signs you in once in place of ${then === "passkey" ? esc(LOCKWORD) : "the app's code"}, for the day the phone is lost or you are on a computer without it. They are shown this once and never again.</p>
+    <div class="codes">${codes.map(c => `<div>${esc(c)}</div>`).join("")}</div>
+    <div><button class="quiet" id="copy">Copy them</button><a id="dl" download="anetix-recovery-codes.txt"><button class="quiet">Download as a text file</button></a><button class="go" id="saved">I have saved them</button></div>`;
   document.getElementById("dl").href = "data:text/plain;charset=utf-8," + encodeURIComponent(`Anetix recovery codes for ${ME.me.login}\nEach works once.\n\n${text}\n`);
   document.getElementById("copy").onclick = () => navigator.clipboard && navigator.clipboard.writeText(text);
+  document.getElementById("saved").onclick = () => { if (then === "app") offerPasskey(); else location.href = then === "settings" ? BOARD + "settings" : BOARD; };
 }
 // The last step (2026-09-26): a passkey, so the next sign-in is the email and Face ID, a fingerprint or the device's
 // PIN, with the password and the app kept as the way in from any other device (src/passkeys.js).

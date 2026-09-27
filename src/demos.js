@@ -84,7 +84,7 @@ async function spendByKind(slug, since, until = null) {
       UNION ALL SELECT 'proposals', p.cost_usd, p.created_at FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE f.company=$1 AND p.created_at >= $2
       UNION ALL SELECT 'system reviews', cost_usd, created_at FROM platform.reviews WHERE company=$1 AND created_at >= $2
       UNION ALL SELECT 'brand guide', (brand->>'cost_usd')::numeric, (brand->>'built_at')::timestamptz FROM platform.companies WHERE slug=$1 AND brand IS NOT NULL AND (brand->>'built_at')::timestamptz >= $2
-      UNION ALL SELECT COALESCE(kind, 'other'), cost_usd, created_at FROM platform.ai_usage WHERE company=$1 AND created_at >= $2
+      UNION ALL SELECT COALESCE(kind, 'other'), cost_usd, created_at FROM platform.ai_usage WHERE company=$1 AND created_at >= $2 AND kind IS DISTINCT FROM 'assess'
     ) s WHERE ($3::timestamptz IS NULL OR at < $3) GROUP BY kind ORDER BY usd DESC NULLS LAST`, [slug, since, until])).rows;
   return rows.map((r) => ({ kind: r.kind, usd: money(r.usd), n: r.n })).filter((r) => r.usd > 0 || r.n > 0);
 }
@@ -183,7 +183,8 @@ async function list() {
   };
   // the Terms, 6.3 and 10.7: a company's data may go after 12 months with no sign-in; these are a month from it (src/dataexport.js)
   const idle = await require("./dataexport").idle();
-  return { totals, demos, use_cases, idle };
+  const stops = await require("./demostops").list().catch(() => ({ open: [], addressed: [] }));   // builds that stopped before a preview (the launch audit 1.20)
+  return { totals, demos, use_cases, idle, stops };
 }
 
 async function detail(slug) {

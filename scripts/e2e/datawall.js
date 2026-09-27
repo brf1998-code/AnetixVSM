@@ -65,7 +65,7 @@ const PAGE = "/c/demo/m/paperline/";
   t("a manager cannot", (await mgr.post("/api/admin/companies/demo/data-wall", { walled: false })).status === 403);
   t("the overview says so", (await admin.get("/api/admin/overview")).json.companies.find((c) => c.slug === "demo").walled === true);
   t("it is on the record", (await kinds("datawall_on")).length === 1);
-  t("photos are off for the floor while walled", (await floor.get("/api/c/demo/who")).json.photos === false && (await mgr.get("/api/c/demo/agents")).json.company.ai_reads_data === false);
+  t("photos are off for the floor while walled", (await floor.get("/api/c/demo/who")).json.photos === false && (await mgr.get("/api/c/demo/settings-view")).json.company.ai_reads_data === false);
   const mark = prompts().length;
 
   // ---- every flow, wall up: a proposal with a pointed-at element, a change build with a fix round, a review, diagrams, a campaign, an intake with a sheet, Jonah

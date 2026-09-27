@@ -64,6 +64,28 @@
   const pct = (m) => `<strong class="pct ${m.level || ""}">${esc(m.percent)}%</strong> <small class="sub">(${usd(m.balance_usd)})</small>`;
   const kpi = (label, value, small) => `<div class="kpi"><span>${esc(label)}</span><b>${value}</b>${small ? `<small>${small}</small>` : ""}</div>`;
 
+  // ---- builds that stopped before a preview (src/demostops.js, the launch audit 1.20) ---------------------------------
+  // Each one handed its spend back to the demo and stays here, open, until someone says what was done about it.
+  function stopsCard(S) {
+    if (!S || (!S.open.length && !S.addressed.length)) return "";
+    const row = (s) => `<tr><td><a href="#demos/${esc(s.company)}">${esc(s.company_name || s.company)}</a><br><small class="sub">${when(s.created_at)}</small></td>
+      <td>run #${s.run_id}<br><small class="sub">${s.lane === "module" ? "new tool" : "change"}${s.module ? ` · ${esc(s.module)}` : ""} · ${esc(s.step || "")}</small></td>
+      <td><div class="words" style="max-width:520px">${esc(s.why || "")}</div>${s.ai_down ? `<small class="warn">the AI service ${s.ai_down === "busy" ? "was too busy" : "refused"}</small>` : ""}</td>
+      <td>${usd(s.refunded_usd)}</td>
+      <td>${s.addressed_at ? `<small class="sub">${when(s.addressed_at)} · ${esc(s.addressed_by || "")}</small><div class="words">${esc(s.note || "")}</div>`
+        : `<textarea id="ds-note-${s.id}" rows="2" style="width:100%;min-width:200px" placeholder="What was done about it"></textarea><button class="btn" onclick="AdminDemos.addressed(${s.id})">Addressed</button><div class="err" id="ds-err-${s.id}"></div>`}</td></tr>`;
+    return `<div class="card" id="demo-stops"><h2>Builds that stopped in a demo <small>${S.open.length} open. Each stopped before a preview, so the demo got nothing for it: its AI spend went back to the demo's credit. Mark it addressed once the cause is fixed or understood.</small></h2>
+      <div style="overflow-x:auto"><table class="list"><tr><th>Company</th><th>Build</th><th>What stopped it</th><th>Handed back</th><th>Addressed</th></tr>${S.open.map(row).join("")}</table></div>
+      ${S.addressed.length ? `<details><summary>Addressed (${S.addressed.length})</summary><table class="list">${S.addressed.map(row).join("")}</table></details>` : ""}</div>`;
+  }
+  async function addressedStop(id) {
+    const note = (document.getElementById("ds-note-" + id) || {}).value || "";
+    const r = await fetch(`/api/admin/demo-stops/${id}/addressed`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = document.getElementById("ds-err-" + id); if (e) e.textContent = j.error || "That did not work."; return; }
+    LIST = await get("/api/admin/demos"); drawList();
+  }
+
   // ---- the list -------------------------------------------------------------------------------------------------
   function drawList() {
     const L = LIST, T = L.totals;
@@ -93,13 +115,14 @@
         ${kpi("Requests", T.requests, `${T.builds_deployed} changes put live`)}
       </div>
       <p style="margin:6px 0 0"><a class="btn" href="/api/admin/demos/export" download>Download everything (JSON)</a> <span class="sub">Every company in full: answers, requests, builds, money and the record, for reading the learnings offline.</span></p></div>
+      ${stopsCard(L.stops)}
       ${(L.idle || []).length ? `<div class="card"><h2>Idle 11 months or more <small>a site back to a demo: its data may go after 12 months with no sign-in (the Terms, 6.3 and 10.7); a plain demo: Anetix may end it any time, refunding unused bought credit (4.1, 4.2). Tell the manager first, then delete from the company's card</small></h2>
         <table class="list"><tr><th>Company</th><th>Last sign-in</th><th>Can go after</th></tr>${L.idle.map((x) => `<tr><td><a href="#demos/${esc(x.slug)}">${esc(x.name)}</a></td><td>${esc(new Date(x.last_sign_in).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }))}</td><td>${esc(new Date(x.delete_after).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }))}</td></tr>`).join("")}</table></div>` : ""}
       <div class="card"><h2>Companies <small>newest first; open one for everything it did</small></h2>
         ${L.demos.length ? `<div style="overflow-x:auto"><table class="list"><tr><th>Company</th><th>Since</th><th>Sign-in</th><th>Credit left</th><th>Paid</th><th>AI spend</th><th>Built</th><th>Requests</th><th>Changes</th></tr>${rows}</table></div>` : '<p class="sub">Nobody has come in from anetix.ai yet. Make a pin on the Pins tab.</p>'}</div>
       <div class="card"><h2>Use cases <small>what each request for a new tool was for, newest first</small></h2>
         ${ucs || '<p class="sub">No new-tool requests yet.</p>'}</div>`;
-    if (window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("demos", { n: L.demos.length });
+    if (window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("demos", { n: L.demos.length, level: L.stops && L.stops.open.length ? "red" : null });
   }
 
   // ---- one company -----------------------------------------------------------------------------------------------
@@ -169,6 +192,6 @@
     } catch (e) { root().innerHTML = `<div class="card"><p class="fail">${esc(e.message)}</p><p><a href="#demos">Back to all demos</a></p></div>`; }
   }
   // the tab's count in the header, without opening it
-  async function badge() { try { LIST = await get("/api/admin/demos"); if (window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("demos", { n: LIST.demos.length }); } catch (e) {} }
-  window.AdminDemos = { show, badge };
+  async function badge() { try { LIST = await get("/api/admin/demos"); if (window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("demos", { n: LIST.demos.length, level: LIST.stops && LIST.stops.open.length ? "red" : null }); } catch (e) {} }
+  window.AdminDemos = { show, badge, addressed: addressedStop };
 })();

@@ -153,6 +153,7 @@ async function noteFailure(message, where) {
   if (!kind || kind === "busy") return kind;
   try { await logEvent("ai_unavailable", null, { kind, where: where || null, message: String(message || "").slice(0, 300) }); } catch (e) { /* best effort */ }
   console.error(`[credit] the AI service refused a call (${kind}) during ${where || "a call"}: ${String(message || "").slice(0, 160)}`);
+  require("./notify").notifyEvery(`ai_unavailable:${kind}`, 30 * 60e3, "The AI service is refusing work", `It refused a call (${kind}) during ${where || "a call"}. Nothing new is proposed or built until it answers again; the Instance tab of /admin shows it.`, { priority: 5, tags: ["rotating_light"] });
   return kind;
 }
 

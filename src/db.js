@@ -282,6 +282,7 @@ const UPGRADES = [
   "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS proposal_ids INTEGER[]",
   "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS company TEXT NOT NULL DEFAULT 'demo'",
   "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS model TEXT",
+  "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS fence BIGINT",   // the boot of the process that took the run over at a restart (src/pipeline.js setRun, the launch audit 1.13)
   "ALTER TABLE platform.schema_snapshots ADD COLUMN IF NOT EXISTS company TEXT NOT NULL DEFAULT 'demo'",
   "ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'feedback'",   // 'feedback' | 'module_request'
   "ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS intake_id INTEGER",

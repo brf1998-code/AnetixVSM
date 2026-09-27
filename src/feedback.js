@@ -89,6 +89,8 @@ router.post("/api/feedback", async (req, res) => {
     } catch (e) { photoNote = e.message; }
   }
   await logEvent("feedback_submitted", fb.id, { company: co.slug, module: mod, screen });
+  // a request to Anetix (about the software itself): the company and the screen, never the words (src/notify.js)
+  if (!mod || mod === "platform") require("./notify").notifyEvery(`to_anetix:${co.slug}`, 10 * 60e3, "Request to Anetix", `From ${co.name || co.slug}${screen ? `, on ${String(screen).slice(0, 60)}` : ""}. It is on the Requests tab of /admin.`, { tags: ["speech_balloon"] });
   await record("feedback_filed", { company: co.slug, module: mod || "platform", actor: actor(req, name), feedback_id: fb.id, after: message.trim(), detail: { screen, page, ...(pointed ? { pointed: arrival.clip(`${pointed.tag || ""} ${pointed.text || pointed.id || ""}`, 120) } : {}), ...(photo && photo.data ? { photo: !photoNote } : {}) } });
   // the proposer reads it now (src/arrival.js): claimed before the answer goes back, worked behind it; never throws
   const reading = await arrival.start(fb.id);
@@ -577,19 +579,52 @@ router.get("/api/c/:slug/diagrams/:module", async (req, res) => {
   if (!row) return res.status(404).json({ error: "unknown module" });
   const v = req.query.version ? Number(req.query.version) : null;
   const d = await diagrams.latest(req.params.slug, req.params.module, v);
-  res.json({ module: row, ...d, conventions: diagrams.conventions(), role: req.sosRole });
+  // which model drew it and what it cost are Anetix's (CLAUDE.md: no model names or costs to a company)
+  if (req.sosRole !== "admin" && d && d.current) { delete d.current.model; delete d.current.cost_usd; }
+  const co = await company(req.params.slug);
+  res.json({ module: row, ...d, conventions: diagrams.conventions(), role: req.sosRole, demo: Boolean(co && co.demo) });
 });
 router.post("/api/c/:slug/diagrams/:module/regenerate", requireManager, async (req, res) => {
   try {
     const row = await registry.getModule(req.params.slug, req.params.module);
     if (!row || !row.live_version) return res.status(404).json({ error: "no such tool on the floor" });
-    const out = await diagrams.generate(req.params.slug, req.params.module, row.live_version, { force: true, model: (req.body || {}).model });
-    res.json({ ok: true, ...out });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const admin = req.sosRole === "admin";
+    if (!admin) {
+      // a manager's drawing (a demo's only way to get them, 1.19): the AI gates every start passes, one at a time, and
+      // not again within ten minutes of the last one for the same tool
+      await require("./agent").assertUnderCap(req.params.slug);
+      const last = (await q("SELECT status, COALESCE(finished_at, created_at) AS at FROM platform.diagrams WHERE company=$1 AND module=$2 ORDER BY id DESC LIMIT 1", [req.params.slug, req.params.module])).rows[0];
+      if (last && last.status === "running") return res.status(409).json({ error: "The diagrams are being drawn now. This page shows them when they are done." });
+      if (last && last.status === "done" && Date.now() - new Date(last.at).getTime() < 10 * 60e3) return res.status(429).json({ error: "They were drawn a few minutes ago. Try again in ten minutes." });
+    }
+    const out = await diagrams.generate(req.params.slug, req.params.module, row.live_version, { force: true, model: admin ? (req.body || {}).model : undefined });
+    // which model drew it and what it cost stay Anetix's (CLAUDE.md)
+    res.json(admin ? { ok: true, ...out } : { ok: true, version: out && out.version });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ---- agent settings: models per role + guidance docs (manager) --------------
-router.get("/api/c/:slug/agents", requireManager, async (req, res) => {
+// What a company's Settings page needs, and nothing else (the launch audit 1.18, 2026-09-27: Settings used to load the
+// agent settings below, which carry model names, prices and the platform's own principles; Brendan: no model names to
+// companies). The manager's own sign-in state rides along for the Your sign-in card (1.10).
+router.get("/api/c/:slug/settings-view", requireManager, async (req, res) => {
+  const co = await company(req.params.slug);
+  if (!co) return res.status(404).json({ error: "unknown company" });
+  const modules = (await q("SELECT name, title FROM platform.modules WHERE company=$1 ORDER BY name", [co.slug])).rows;
+  let me = null;
+  if (req.sosAccount && req.sosAccount.id) {
+    const st = await require("./accounts").sessionState(req.sosAccount.id);
+    me = { login: req.sosAccount.login, role: req.sosAccount.role, app: Boolean(st && st.app), passkeys: st ? st.passkeys : 0 };
+  }
+  res.set("Cache-Control", "no-store").json({
+    company: { slug: co.slug, name: co.name, demo: Boolean(co.demo), auto_propose: co.auto_propose !== false, allow_photos: co.allow_photos !== false, ai_reads_data: co.ai_reads_data !== false },
+    modules, me, role: req.sosRole,
+  });
+});
+
+// Agent settings and docs: Anetix's side of a company (admin only since 2026-09-27, the launch audit 1.18). The page
+// is /c/<slug>/agents, reached from the company card on /admin.
+router.get("/api/c/:slug/agents", requireAdmin, async (req, res) => {
   const co = await company(req.params.slug);
   if (!co) return res.status(404).json({ error: "unknown company" });
   // docs the platform writes itself (ERP-FIELDS.md) are for the agents; only an admin sees them here
@@ -613,7 +648,7 @@ router.get("/api/c/:slug/agents", requireManager, async (req, res) => {
   });
 });
 
-router.post("/api/c/:slug/agents/models", requireManager, async (req, res) => {
+router.post("/api/c/:slug/agents/models", requireAdmin, async (req, res) => {
   const b = req.body || {};
   const ok = (id) => (id === "" || id == null) ? null : (agent.MODELS.some((m) => m.id === id) ? id : undefined);
   const vals = { propose: ok(b.propose), build: ok(b.build), review: ok(b.review) };
@@ -636,7 +671,7 @@ router.post("/api/c/:slug/agents/arrival", requireManager, async (req, res) => {
   res.json({ ok: true, ...now });
 });
 
-router.post("/api/c/:slug/agents/docs", requireManager, async (req, res) => {
+router.post("/api/c/:slug/agents/docs", requireAdmin, async (req, res) => {
   const { module: mod, name, content } = req.body || {};
   if (!name || !/^[A-Za-z0-9_.-]{1,60}$/.test(name)) return res.status(400).json({ error: "name must be a simple filename like NOTES.md" });
   const wasDoc = (await q("SELECT content FROM platform.agent_docs WHERE company=$1 AND module IS NOT DISTINCT FROM $2 AND name=$3 ORDER BY id DESC LIMIT 1", [req.params.slug, mod || null, name])).rows[0];
@@ -646,7 +681,7 @@ router.post("/api/c/:slug/agents/docs", requireManager, async (req, res) => {
   res.json(row);
 });
 
-router.delete("/api/c/:slug/agents/docs/:id(\\d{1,9})", requireManager, async (req, res) => {
+router.delete("/api/c/:slug/agents/docs/:id(\\d{1,9})", requireAdmin, async (req, res) => {
   const gone = (await q("DELETE FROM platform.agent_docs WHERE company=$1 AND id=$2 RETURNING module, name, content", [req.params.slug, req.params.id])).rows[0];
   if (gone) await record("doc_deleted", { company: req.params.slug, module: gone.module, actor: actor(req), before: gone.content, detail: { name: gone.name } });
   res.json({ ok: true });
@@ -1058,6 +1093,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     await testfloor.deleteCompany(co.slug);   // its test tables and its test_floors row (the third role goes with the runner below)
     await selfserve.deleteCompany(co.slug);   // its credit ledger, its self_serve row, its demo request and its pin (unless another company used the pin)
     await q("DELETE FROM platform.sample_fills WHERE company=$1", [co.slug]);   // what its sample fills put in (the rows go with the schemas below)
+    await require("./demostops").deleteCompany(co.slug);   // its stopped builds on the Demos tab (src/demostops.js)
     await require("./sites").deleteCompany(co.slug);   // its row in the pipeline (src/sites.js)
     await require("./notices").deleteCompany(co.slug);   // its managers' notices
     await require("./agreements").forget(co.slug);       // its acceptances of the Terms stay on record (the Terms, 10.7) and stop counting

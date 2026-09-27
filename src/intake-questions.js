@@ -80,8 +80,8 @@ const FIXED = [
     hint: "A spreadsheet of parts, locations, people, equipment, whatever the thing is. It becomes the starting data, after you see it." },
   { id: "peers", kind: "choice", required: false, multi: true, other: false, conditional: "other_modules",
     options: [],  // filled in per company: the live modules plus "no"
-    text: "Does it need to know anything from a module you already have?",
-    hint: "It can read what another module keeps, for example which orders are open, without changing it." },
+    text: "Does it need to know anything from a tool you already have?",
+    hint: "It can read what another tool keeps, for example which orders are open, without changing it." },
 ];
 
 // The fixed questions for one company: the peers question only when the

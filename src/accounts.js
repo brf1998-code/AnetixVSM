@@ -131,14 +131,19 @@ async function event(ev, { account_id = null, login = null, ip = null, detail = 
 
 const publicRow = (a) => ({
   id: a.id, login: a.login, display_name: a.display_name, role: a.role, status: a.status,
-  enrolled: Boolean(a.enrolled), locked: Boolean(a.locked_until && new Date(a.locked_until) > new Date()),
+  enrolled: Boolean(a.enrolled), app: Boolean(a.has_app), locked: Boolean(a.locked_until && new Date(a.locked_until) > new Date()),
   recovery_left: a.recovery_left == null ? null : Number(a.recovery_left), last_sign_in: a.last_sign_in || null, created_at: a.created_at,
   devices: a.devices == null ? 0 : Number(a.devices),
   passkeys: a.passkeys == null ? 0 : Number(a.passkeys),
 });
+// enrolled: a second factor is set up. For an admin that is the authenticator app. For a manager it is the app OR a
+// passkey (the launch audit 1.3, 2026-09-27, Brendan: passkey first on phones, the app and the recovery codes behind
+// it): a passkey is possession and the face or fingerprint at once, so it is a factor on its own.
 const LIST_SQL = `
   SELECT a.*,
-    EXISTS (SELECT 1 FROM platform.account_factors f WHERE f.account_id=a.id AND f.verified_at IS NOT NULL) AS enrolled,
+    EXISTS (SELECT 1 FROM platform.account_factors f WHERE f.account_id=a.id AND f.verified_at IS NOT NULL) AS has_app,
+    (EXISTS (SELECT 1 FROM platform.account_factors f WHERE f.account_id=a.id AND f.verified_at IS NOT NULL)
+      OR (a.role='manager' AND EXISTS (SELECT 1 FROM platform.account_passkeys k WHERE k.account_id=a.id AND k.removed_at IS NULL))) AS enrolled,
     (SELECT count(*) FROM platform.account_recovery_codes r WHERE r.account_id=a.id AND r.used_at IS NULL) AS recovery_left,
     (SELECT max(at) FROM platform.auth_events e WHERE e.account_id=a.id AND e.event IN ('login_ok','recovery_used','break_glass','signin_trusted_device','login_passkey')) AS last_sign_in,
     (SELECT count(*) FROM platform.admin_devices d WHERE d.account_id=a.id AND d.removed_at IS NULL AND d.expires_at > now() AND d.generation = a.generation) AS devices,
@@ -157,7 +162,7 @@ async function sessionState(id) {
   const hit = states.get(id);
   if (hit && Date.now() - hit.at < 10000) return hit.state;
   const a = (await q(`${LIST_SQL} WHERE a.id=$1`, [Number(id)])).rows[0];
-  const state = a ? { id: a.id, login: a.login, name: a.display_name || a.login, role: a.role, company: a.company || null, status: a.status, generation: Number(a.generation), enrolled: Boolean(a.enrolled) } : null;
+  const state = a ? { id: a.id, login: a.login, name: a.display_name || a.login, role: a.role, company: a.company || null, status: a.status, generation: Number(a.generation), enrolled: Boolean(a.enrolled), app: Boolean(a.has_app), passkeys: Number(a.passkeys || 0) } : null;
   states.set(id, { state, at: Date.now() });
   return state;
 }
@@ -186,7 +191,11 @@ async function noteFail(a, ev, ip, detail) {
        updated_at = now()
      WHERE id=$1 RETURNING locked_until, failed_count`, [a.id, MAX_FAILS, String(LOCK_MINUTES)])).rows[0];
   await event(ev, { account_id: a.id, login: a.login, ip, detail });
-  if (r && r.failed_count === 0 && r.locked_until) await event("locked", { account_id: a.id, login: a.login, ip, detail: { minutes: LOCK_MINUTES } });
+  if (r && r.failed_count === 0 && r.locked_until) {
+    await event("locked", { account_id: a.id, login: a.login, ip, detail: { minutes: LOCK_MINUTES } });
+    // who it is stays on the Accounts tab: the phone gets the kind of account and its company, never the email
+    require("./notify").notifyEvery(`locked:${a.id}`, 30 * 60e3, "An account was locked", `${a.role === "admin" ? "An Anetix admin account" : `A manager account${a.company ? ` of ${a.company}` : ""}`} was locked for ${LOCK_MINUTES} minutes after ${MAX_FAILS} wrong tries in a row. The Accounts tab of /admin has the addresses the tries came from.`, { priority: 4, tags: ["lock"] });
+  }
 }
 const lockedFor = (a) => (a.locked_until && new Date(a.locked_until) > new Date() ? Math.ceil((new Date(a.locked_until) - Date.now()) / 1000) : 0);
 // A name nobody has gets the same lock, in memory, so the lock cannot be used to find out which names exist.
@@ -264,8 +273,21 @@ async function signIn({ login, password, code, ip, device, remember, ua }) {
     return { ok: true, account: a, enroll: Boolean(extra && extra.enroll) };
   };
   if (twoFaOff()) return done("break_glass", { at: "sign_in" });
-  if (!(await verifiedFactor(a.id))) return done("login_ok", { enroll: true });   // straight to enrollment, and nothing else (auth.middleware)
   const typed = String(code || "").trim();
+  if (!(await verifiedFactor(a.id))) {
+    // a manager who set up a passkey and no app (1.3): the password alone is never enough, or it would walk around
+    // the passkey. The passkey signs in; on a device without it, a recovery code stands in for the second factor.
+    if (a.role === "manager" && (await livePasskeys(a.id)) > 0) {
+      if (!typed) return { need_code: true, passkey_first: true };
+      if (await useRecoveryCode(a.id, typed)) {
+        const left = (await q("SELECT count(*)::int AS n FROM platform.account_recovery_codes WHERE account_id=$1 AND used_at IS NULL", [a.id])).rows[0].n;
+        return done("recovery_used", { left });
+      }
+      await noteFail(a, "bad_code", ip, { kind: "recovery", passkey_first: true });
+      return { status: 401, need_code: true, passkey_first: true, error: "that recovery code did not match. This account signs in with its passkey: use Sign in with a passkey, or type one of the recovery codes you saved." };
+    }
+    return done("login_ok", { enroll: true });   // straight to enrollment, and nothing else (auth.middleware)
+  }
   // a trusted device (src/devices.js): this browser's cookie names a live row of THIS account, at its current
   // generation, so the code step is skipped. Anything short of that is the code step as always.
   if (!typed && device) {
@@ -316,6 +338,25 @@ async function stepUp(account, { code, password }, ip, what) {
   return { ok: false, error: r === "replayed_code" ? "that code was already used (signing in used it). Wait for the next one, up to 30 seconds." : "that code did not match" };
 }
 
+async function livePasskeys(accountId) {
+  return (await q("SELECT count(*)::int AS n FROM platform.account_passkeys WHERE account_id=$1 AND removed_at IS NULL", [accountId]).catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n;
+}
+// A manager's first passkey as the account's first factor (1.3): the recovery codes are made here, as the app's
+// setup makes them, and shown once. src/passkeys.js calls this after a passkey is added.
+async function passkeyEnrolled(account, ip) {
+  const a = await byId(account.id);
+  // a manager with no app and a passkey, and no unused recovery code: the first passkey, or a first one whose codes
+  // never reached the page (the answer was lost after the passkey was saved), or every code used up
+  if (!a || a.role !== "manager" || (await verifiedFactor(a.id)) || (await livePasskeys(a.id)) < 1) return null;
+  if ((await q("SELECT 1 FROM platform.account_recovery_codes WHERE account_id=$1 AND used_at IS NULL LIMIT 1", [a.id])).rows.length) return null;
+  const codes = makeRecoveryCodes();   // a fresh set, as the app's setup makes (any earlier ones stop working)
+  await q("DELETE FROM platform.account_recovery_codes WHERE account_id=$1", [a.id]);
+  for (const c of codes) await q("INSERT INTO platform.account_recovery_codes (account_id, code_hash) VALUES ($1,$2)", [a.id, recoveryHash(c)]);
+  await event("enrolled", { account_id: a.id, login: a.login, ip, detail: { factor: "passkey" } });
+  forget(a.id);
+  return codes;
+}
+
 // ---- enrollment ------------------------------------------------------------------------------------------
 async function enrollStart(account, ip, origin) {
   if (!keyPinned()) throw new Error("SOS_CONNECTION_KEY is not set on this instance. Set it first (any long random string): without it the authenticator secrets would be encrypted under SESSION_SECRET, and rotating that would lock every admin out.");
@@ -329,7 +370,9 @@ async function enrollStart(account, ip, origin) {
   // the issuer names the instance, so a test instance and the live one are told apart in the app
   const issuer = /localhost|127\.0\.0\.1/.test(origin || "") ? "Anetix (local)" : "Anetix";
   const uri = totp.uri(secret, account.login, issuer);
-  return { secret: b32.match(/.{1,4}/g).join(" "), qr_svg: qrcode.svg(uri, { size: 220 }) };
+  // uri: the same secret as a link, so a phone setting up the app on itself can open the app with it (the launch audit
+  // 1.2: a QR code on the phone that has to scan it)
+  return { secret: b32.match(/.{1,4}/g).join(" "), qr_svg: qrcode.svg(uri, { size: 220 }), uri };
 }
 async function enrollVerify(account, code, ip) {
   const f = (await q("SELECT * FROM platform.account_factors WHERE account_id=$1 AND kind='totp'", [account.id])).rows[0];
@@ -437,6 +480,7 @@ async function needStepUp(req, res, what) {
 
 router.get("/api/admin/accounts/me", (req, res, next) => authLib().requireAdmin(req, res, next), guard(async (req, res) => {
   const me = req.sosAccount && req.sosAccount.id ? { ...req.sosAccount } : null;
+  if (me) { const st = await sessionState(me.id); if (st) { me.app = st.app; me.passkeys = st.passkeys; } }
   res.json({
     me, shared_password: !me && !authLib().OPEN, open: authLib().OPEN,
     enroll_required: Boolean(me && !me.enrolled && !twoFaOff()),
@@ -480,6 +524,7 @@ router.post("/api/admin/accounts/me/devices/:id(\\d{1,9})/remove", (req, res, ne
 
 router.get("/api/c/:slug/me", (req, res, next) => authLib().requireManager(req, res, next), guard(async (req, res) => {
   const me = req.sosAccount && req.sosAccount.id ? { ...req.sosAccount } : null;
+  if (me) { const st = await sessionState(me.id); if (st) { me.app = st.app; me.passkeys = st.passkeys; } }
   res.set("Cache-Control", "no-store").json({ me, role: req.sosRole, company: req.sosCompany, enroll_required: Boolean(me && me.role === "manager" && !me.enrolled && !twoFaOff()), key_pinned: keyPinned(), two_fa_off: twoFaOff() });
 }));
 router.post("/api/c/:slug/me/enroll/start", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
@@ -534,6 +579,6 @@ router.post("/api/admin/accounts/:id(\\d{1,9})/:action", (req, res, next) => aut
 module.exports = {
   managersOf, makePassword,
   init, router, signIn, stepUp, sessionState, legacyOpen, forget, twoFaOff, keyPinned, event, list, create,
-  enrollStart, enrollVerify, useCode, useRecoveryCode, signOutEverywhere, setStatus, resetFactor, setPassword, remove,
+  enrollStart, enrollVerify, passkeyEnrolled, livePasskeys, useCode, useRecoveryCode, signOutEverywhere, setStatus, resetFactor, setPassword, remove,
   cleanLogin, validLogin, passwordProblem, makeRecoveryCodes, recoveryHash, MAX_FAILS, LOCK_MINUTES,
 };

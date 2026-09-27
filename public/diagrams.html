@@ -35,9 +35,9 @@
 <body>
   <header>
     <h1 id="title">Diagrams <small id="sub"></small></h1>
-    <span class="sub"><a id="back" href="#">Improvement board</a> · <a id="live" href="#">Live module</a></span>
+    <span class="sub"><a id="back" href="#">Improvement board</a> · <a id="live" href="#">Live tool</a></span>
   </header>
-  <p class="sub">Two sets, redrawn from the module's source after every deploy: what the module records and where (data flows), and what each person does at their screen (workflows). Drawn to the conventions in <a href="#" onclick="toggleConv();return false">DIAGRAMS.md</a>.</p>
+  <p class="sub" id="intro">Two sets, drawn from the tool's source: what the tool records and where (data flows), and what each person does at their screen (workflows). Drawn to the conventions in <a href="#" onclick="toggleConv();return false">DIAGRAMS.md</a>.</p>
   <pre id="conv" style="display:none"></pre>
   <div class="overview" id="overview"></div>
   <div class="tabs">
@@ -65,8 +65,11 @@ async function load(version) {
   const sel = document.getElementById("ver");
   sel.innerHTML = D.versions.map(v => `<option value="${v}" ${D.current && D.current.version === v ? "selected" : ""}>version ${v}${v === D.module.live_version ? " (live)" : ""}</option>`).join("") || "<option>no diagrams yet</option>";
   const c = D.current;
-  document.getElementById("meta").innerHTML = D.running ? `<span class="pulse"></span>drawing version ${D.running}` : (c ? `drawn ${new Date(c.finished_at || c.created_at).toLocaleString()} · ${esc(c.model || "")} · $${Number(c.cost_usd).toFixed(2)}` : "");
-  if (!c) { document.getElementById("overview").textContent = D.running ? "Diagrams are being drawn for this version. This page refreshes on its own." : "No diagrams yet for this module. They are drawn after the next deploy, or use the redraw button."; document.getElementById("out").innerHTML = ""; if (D.running) setTimeout(() => load(version), 5000); return; }
+  // which model drew it and what it cost: the admin's page only (the server leaves them out for anyone else)
+  document.getElementById("meta").innerHTML = D.running ? `<span class="pulse"></span>drawing version ${D.running}` : (c ? `drawn ${new Date(c.finished_at || c.created_at).toLocaleString()}${D.role === "admin" && c.model ? ` · ${esc(c.model)} · $${Number(c.cost_usd).toFixed(2)}` : ""}` : "");
+  // a demo's diagrams are drawn when asked (the launch audit 1.19); a site's after every deploy
+  document.getElementById("regen").textContent = c ? "Redraw for the live version" : "Draw them now";
+  if (!c) { document.getElementById("overview").textContent = D.running ? "Diagrams are being drawn for this version. This page refreshes on its own." : D.demo ? "No diagrams yet for this tool. They are drawn when you ask: Draw them now, above. It takes a minute or two." : "No diagrams yet for this tool. They are drawn after the next deploy, or use the redraw button."; document.getElementById("out").innerHTML = ""; if (D.running) setTimeout(() => load(version), 5000); return; }
   document.getElementById("overview").textContent = c.content.overview || "";
   render();
   if (D.running) setTimeout(() => load(version), 5000);
@@ -92,9 +95,12 @@ async function render() {
   }
 }
 async function regen() {
-  if (!confirm("Redraw the diagrams for the live version now? Costs a few cents.")) return;
+  if (!confirm(D && D.role === "admin" ? "Redraw the diagrams for the live version now? Costs a few cents." : "Draw the diagrams for the live version now? It takes a minute or two.")) return;
+  document.getElementById("regen").disabled = true;
+  document.getElementById("meta").innerHTML = '<span class="pulse"></span>drawing';
   const r = await fetch(`/api/c/${SLUG}/diagrams/${MOD}/regenerate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   const j = await r.json().catch(() => ({}));
+  document.getElementById("regen").disabled = false;
   if (!r.ok) alert(j.error || "failed");
   load();
 }

@@ -31,7 +31,7 @@
 <body>
   <form class="card" id="f">
     <h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:34px;height:34px;border-radius:8px;vertical-align:middle;margin-right:10px">Anetix</h1>
-    <div class="sub" id="sub">Enter the password you were given. Floor and manager passwords both work here.</div>
+    <div class="sub" id="sub">Enter the password you were given.</div>
     <input id="co" type="text" placeholder="Company code" autocomplete="organization" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
     <input id="nm" type="email" placeholder="Your email" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
     <button type="button" class="pk" id="pk">Sign in with a passkey</button>
@@ -48,6 +48,7 @@
     <div class="hint" id="help" style="margin-top:14px">Stuck, forgot your password or lost your phone? Write to <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</div>
     <a href="#" class="pwlink" id="pwlink">Use my password instead</a>
     <a href="#" class="staff" id="staff">Sign in with an account (managers, Anetix staff)</a>
+    <a href="#" class="staff" id="floorpw" style="display:none">Sign in with the floor's shared password instead</a>
   </form>
 <script>
 // A login belongs to one company. The link or the wall code that brought the
@@ -58,7 +59,7 @@ const fromNext = /^\/c\/([a-z0-9][a-z0-9-]{1,40})(?:\/|$)/.exec(next || "");
 let company = (params.get("c") || (fromNext && fromNext[1]) || "").toLowerCase();
 const co = document.getElementById("co"), err = document.getElementById("err");
 const nm = document.getElementById("nm"), code = document.getElementById("code"), codebox = document.getElementById("codebox"), sub = document.getElementById("sub");
-if (company) sub.textContent = "Signing in to " + company + ". Enter the password you were given. Floor and manager passwords both work here.";
+if (company) sub.textContent = "Signing in to " + company + ". Enter the password you were given.";
 // Anetix's own people sign in by name, with a code from an authenticator app after the password. The floor never
 // needs this, so it stays behind a small link (and opens by itself when the link that brought you here was /admin).
 let staff = false;
@@ -99,7 +100,19 @@ async function passkeyNow(conditional) {
   if (j.error) { err.textContent = j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : "."); err.style.display = "block"; return; }
   after(j);
 }
-document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); };
+document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); document.getElementById("floorpw").style.display = "block"; };
+// Back from the account form to a floor's shared password (the bare address opens the account form; the launch audit 1.12)
+function floorMode() {
+  staff = false; pkOffered = false; if (pkAbort) { pkAbort.abort(); pkAbort = null; }
+  for (const id of ["nm", "pk", "or", "pwlink", "floorpw"]) document.getElementById(id).style.display = "none";
+  document.getElementById("pk").classList.remove("first");
+  document.getElementById("pw").style.display = "block"; document.querySelector("#f button[type=submit]").style.display = "block";
+  document.getElementById("staff").style.display = "block";
+  co.style.display = company ? "none" : "block";
+  sub.textContent = company ? "Signing in to " + company + ". Enter the floor's password." : "The floor's password, and the company code: the word after /c/ in the board's address.";
+  (company ? document.getElementById("pw") : co).focus();
+}
+document.getElementById("floorpw").onclick = (e) => { e.preventDefault(); floorMode(); };
 if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
 else if (params.get("account")) staffMode(params.get("account"));
 else if (params.get("staff")) { staffMode(); sub.textContent = "Your email (or name) and password, then the code from your authenticator app."; }   // signed out of an account: back to the account form
@@ -107,14 +120,20 @@ else if (company) {
   // a personal demo has no company password, only its manager's account: open that form at once instead of the
   // password box (which would only ever answer "did not match")
   fetch("/login/mode?c=" + encodeURIComponent(company)).then((r) => r.json()).then((j) => { if (j.mode === "account" && !staff) { staffMode(); sub.textContent = "Sign in to " + company + " with your email and password, then the code from your authenticator app."; } }).catch(() => {});
+} else {
+  // the bare address (app.anetix.ai, a bookmark, a typed URL): nothing names a company, so this is a manager or Anetix
+  // staff; a floor comes in through its wall sign's link, which names the company. The shared password is one link away.
+  staffMode(); sub.textContent = "Sign in with your email and password.";
+  document.getElementById("floorpw").style.display = "block";
 }
 // recovery is for getting back in, not for minting a trusted device: the box goes when a recovery code is chosen
 let recovery = false;
-document.getElementById("userec").onclick = (e) => {
-  e.preventDefault(); recovery = true; document.getElementById("remember").checked = false; document.getElementById("rememberbox").style.display = "none";
+function recoveryMode(hint) {
+  recovery = true; document.getElementById("remember").checked = false; document.getElementById("rememberbox").style.display = "none";
   code.value = ""; code.inputMode = "text"; code.style.letterSpacing = "normal"; code.placeholder = "recovery code";
-  document.getElementById("codehint").textContent = "Type one of the recovery codes you saved when you set the app up. Each works once."; code.focus();
-};
+  document.getElementById("codehint").textContent = hint || "Type one of the recovery codes you saved when you set the app up. Each works once."; code.focus();
+}
+document.getElementById("userec").onclick = (e) => { e.preventDefault(); recoveryMode(); };
 document.getElementById("f").onsubmit = async (e) => {
   e.preventDefault();
   if (staff && document.getElementById("pw").style.display === "none") { passkeyNow(false); return; }   // the passkey-first form: Enter means the passkey
@@ -128,6 +147,9 @@ document.getElementById("f").onsubmit = async (e) => {
     // the password was right and the account has an authenticator: ask for the code, then send all three together
     if (j.need_code) {
       const first = codebox.style.display === "none"; codebox.style.display = "block"; code.focus(); code.select();
+      // an account whose second factor is a passkey, with no app (the launch audit 1.3): the passkey signs in; on a
+      // device without it, one of the recovery codes stands in
+      if (j.passkey_first && !recovery) { recoveryMode("This account signs in with its passkey: use Sign in with a passkey, or type one of the recovery codes you saved. Each works once."); document.getElementById("userec").style.display = "none"; }
       if (j.remember_days) document.getElementById("rememberlabel").textContent = "Remember this computer for " + j.remember_days + " days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.";
       if (first && res.ok) { err.style.display = "none"; return; }
     }

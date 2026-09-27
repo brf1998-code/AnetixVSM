@@ -214,6 +214,8 @@ async function logRefusal({ pin, row, email, reason, where, ip }) {
                      AND ((pin IS NOT DISTINCT FROM $1::text AND email IS NOT DISTINCT FROM $2::text) OR ($3 = 'unknown' AND $5::text IS NOT NULL AND ip = $5::text))
                    ORDER BY id DESC LIMIT 1) RETURNING id`, [p, e, reason, w, addr]);
     if (!bumped.rows.length) await q("INSERT INTO platform.pin_refusals (pin, pin_id, email, reason, where_from, ip) VALUES ($1,$2,$3,$4,$5,$6)", [p, row ? row.id : null, e, reason, w, addr]);
+    // one alert per half hour at most, with a count: a burst of made-up pins is one buzz (the launch audit 1.15)
+    require("./notify").notifyEvery("pin_refused", 30 * 60e3, "A pin was refused", `Reason: ${reason}. The Pins tab of /admin lists each one, with who it was made for.`, { tags: ["no_entry"] });   // never the pin's label: it can name a person
   } catch (err) { console.error("[pins] a refusal was not logged:", err.message); }
 }
 async function selfServeRow(company) {
@@ -226,7 +228,10 @@ async function spentSince(company, since) {
          + COALESCE((SELECT SUM(p.cost_usd) FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE f.company=$1 AND p.created_at >= $2),0)
          + COALESCE((SELECT SUM(cost_usd) FROM platform.reviews WHERE company=$1 AND created_at >= $2),0)
          + COALESCE((SELECT SUM((brand->>'cost_usd')::numeric) FROM platform.companies WHERE slug=$1 AND brand IS NOT NULL AND (brand->>'built_at')::timestamptz >= $2),0)
-         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE company=$1 AND created_at >= $2),0) AS usd`, [company, since])).rows[0];
+         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE company=$1 AND created_at >= $2 AND kind IS DISTINCT FROM 'assess'),0) AS usd`, [company, since])).rows[0];
+  // 'assess': Anetix's own head-to-head of two models, run again on a company's stored work (src/assess.js). It is
+  // filed under the company it came from so /admin#models can say whose work it was, and never counts against that
+  // company's credit (the launch audit 1.17)
   return Number(r.usd || 0);
 }
 // The top-up page on anetix.ai is behind the wall (2026-09-25): it opens only for a link that carries a token the
@@ -418,6 +423,7 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
   else await auth.accountsOnly(slug);                   // a demo: the manager account is the only way in
   const made = await accounts.create({ login, display_name: clean(contact, 80) || login, role: "manager", company: slug, password: mgrPassword }, "anetix.ai", null);
   await upsertDoc(slug, null, "COMPANY.md", `# ${name}\n\nWhat the agents should know about this company: what it makes, who is on the floor, what matters most (safety, throughput, quality), vocabulary the floor uses, anything to avoid.\n`, "repo", true);
+  if (demo) require("./notify").notify(`New demo: ${name}`, `Made on anetix.ai with ${usd.toFixed(2) === "0.00" ? "no" : `$${usd.toFixed(2)} of`} credit. It is on the Demos tab of /admin.`, { tags: ["tada"] });
   await logEvent("company_created", slug, { name, self_serve: true, demo: Boolean(demo), pin: row.id, ref, credit_usd: usd, paid_usd: money(paid_usd), manager_account: made.account.id, chose_password: chosen });
   return { created: true, company: { slug, name }, passwords: floor ? { floor } : null, manager: chosen ? { login: made.account.login } : { login: made.account.login, password: mgrPassword }, credit: await credit(slug) };
 }
@@ -435,7 +441,7 @@ async function managers(slug) {
   return (await require("./accounts").managersOf(slug)).map((a) => ({ id: a.id, login: a.login, name: a.display_name, enrolled: a.enrolled, status: a.status, last_sign_in: a.last_sign_in }));
 }
 // More credit for a company that exists. Idempotent on ref.
-async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", note, by }) {
+async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", note, by, write_off = true }) {
   slug = String(slug || "").toLowerCase();
   const co = (await q("SELECT slug, name FROM platform.companies WHERE slug=$1", [slug])).rows[0];
   if (!co) throw fail(404, "no such company");
@@ -457,7 +463,7 @@ async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", n
   }
   // a build that finished after the credit ran out left the balance under zero: that overrun is on Anetix, so a
   // refill starts from zero, never from a debt (5% left plus a refill still reads 105%; -8% plus a refill reads 100%)
-  const before = usd > 0 ? await credit(slug) : null;
+  const before = usd > 0 && write_off ? await credit(slug) : null;   // a refund (src/demostops.js) hands back what it says and no more
   const overrun = before && before.balance_usd < 0 ? money(-before.balance_usd) : 0;
   const client = await require("./db").pool.connect();
   try {

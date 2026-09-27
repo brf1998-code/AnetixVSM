@@ -34,7 +34,7 @@ const PAGE = "/c/demo/m/paperline/";
   const card = b.locator(`[data-key="run:${r1.id}"]`);
   const campText = await card.locator(".camp").innerText();
   t("the card shows the campaign: title, 4 cases, one you do, the data choice and a box for your own case", /Test campaign: Fake campaign/.test(campText) && /4 cases, 1 you do yourself, 1 across tools/.test(campText) && /Data on the test floor/.test(campText) && (await card.locator("textarea[id^=camp-add-]").count()) === 1, campText);
-  t("the steps list carries the campaign step", /Test campaign/.test(await card.locator(".steps").innerText()));
+  t("the steps list carries the campaign step, in plain words (the launch audit 1.8)", /Trying it on the test floor/.test(await card.locator(".steps").innerText()));
   await card.locator("details summary", { hasText: "See the 4 cases" }).click();
   t("the cases fold open with an area chip each and a tick box to keep or drop", (await card.locator(".camp .case").count()) === 4 && (await card.locator(".camp .case .a", { hasText: "YOU DO" }).count()) === 1 && (await card.locator(".camp .case .a", { hasText: "ACROSS TOOLS" }).count()) === 1 && (await card.locator(".camp .case input[type=checkbox]").count()) === 4);
   t("the primary button runs it; skip is under more", (await card.locator("button.go", { hasText: "Run the campaign" }).count()) === 1 && (await card.locator("details.more button", { hasText: "Skip this campaign" }).count()) === 1);

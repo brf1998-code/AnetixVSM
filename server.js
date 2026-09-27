@@ -27,6 +27,7 @@ errors.asyncRoutes();
 errors.guards();
 
 const PORT = process.env.PORT || 3000;
+const isDemo = async (slug) => Boolean(((await q("SELECT demo FROM platform.companies WHERE slug=$1", [slug])).rows[0] || {}).demo);
 const page = (name) => path.join(__dirname, "public", name);
 
 async function main() {
@@ -57,10 +58,12 @@ async function main() {
   await require("./src/notices").init();     // notices for a company's managers: a tool Anetix changed, a declined card, an order sent back (src/notices.js)
   await require("./src/activate").init();    // paid sites, stage 3: Activate, the rollover, Stripe's events, the sweep (src/activate.js; after golive and sites)
   await require("./src/billing").init();     // paid sites, stage 4: Manage billing, the standings acted on, back to a demo (src/billing.js; after selfserve and sites)
+  await require("./src/demostops").init();   // a demo's build that stopped before a preview: its spend handed back, listed on /admin until addressed (the launch audit 1.20)
 
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", true);
+  app.use(require("./src/restart").drainingMiddleware);   // while the process is going, every answer closes its connection (src/restart.js)
   // Nothing is answered that did not come through Cloudflare, once SOS_EDGE_SECRET is set (src/edge.js). First in
   // line on purpose: before the static files, before the login route. /health and the platform's own calls pass.
   app.use(edge.gate);
@@ -72,7 +75,13 @@ async function main() {
   });
 
   app.use("/assets", express.static(path.join(__dirname, "public", "assets")));
-  app.get("/health", (_req, res) => res.json({ ok: true, boot: process.env.SOS_BOOT_ID }));
+  // Railway's deploy check (fast, says nothing about what is behind it); ?deep=1 also asks the database, for the
+  // outside watch (anetix.ai's, www/uptime.js; the launch audit 1.15)
+  app.get("/health", async (req, res) => {
+    if (!req.query.deep) return res.json({ ok: true, boot: process.env.SOS_BOOT_ID });
+    try { await q("SELECT 1"); res.set("Cache-Control", "no-store").json({ ok: true, db: true, boot: process.env.SOS_BOOT_ID, draining: require("./src/restart").state.draining }); }
+    catch (e) { res.status(503).json({ ok: false, db: false }); }
+  });
   app.get("/login", (_req, res) => res.sendFile(page("login.html")));
   // which form the login page opens for the company it was sent to: "account" for a personal demo (no company password)
   app.get("/login/mode", async (req, res) => { try { res.set("Cache-Control", "no-store").json({ mode: await auth.loginMode(req.query.c) }); } catch (e) { res.json({ mode: "password" }); } });
@@ -125,7 +134,7 @@ async function main() {
     res.type("html").send(fs.readFileSync(page("index.html"), "utf8").split("/api/c/__company__/icon").join(`/api/c/${slug}/icon`));
   });
   app.get("/c/:slug", (req, res) => res.redirect(`/c/${req.params.slug}/`));
-  app.get("/c/:slug/agents", (_req, res) => res.sendFile(page("agents.html")));
+  app.get("/c/:slug/agents", auth.requireAdmin, (_req, res) => res.sendFile(page("agents.html")));   // Anetix's side of a company (the launch audit 1.18)
   app.get("/c/:slug/diagrams/:module", (_req, res) => res.sendFile(page("diagrams.html")));
   app.get("/c/:slug/checks", auth.requireManager, (_req, res) => res.sendFile(page("checks.html")));
   app.get("/c/:slug/connections", auth.requireManager, (_req, res) => res.sendFile(page("connections.html")));
@@ -140,6 +149,7 @@ async function main() {
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
+  app.use(require("./src/demostops").router);    // /api/admin/demo-stops*: a demo's builds that stopped before a preview (the launch audit 1.20)
   app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
   app.use(require("./src/sites").router);        // /api/admin/sites*: the Sites tab of /admin (the price book, the pipeline from a demo to a paying site)
   app.use(require("./src/golive").router);       // /api/admin/golive, /api/admin/sites/:slug/golive-link|orders, /api/c/:slug/golive: Go live (stage 2)
@@ -163,6 +173,9 @@ async function main() {
   registry.hooks.deployed = async (company, mod, version) => {
     await require("./src/testfloor").afterDeploy(company, mod, version).catch((e) => console.error(`[testfloor] ${company}/${mod}:`, e.message));
     await require("./src/sample").afterDeploy(company, mod).catch((e) => console.error(`[sample] ${company}/${mod}:`, e.message));   // sample rows that were only in the preview go live with the build
+    // a demo's diagrams are drawn when its manager asks (the Diagrams page), not after every deploy: they were most of
+    // what a demo spent on its own ($19.85 in six days, 2026-09-26) and few demos open them (the launch audit 1.19)
+    if (await isDemo(company)) return { skipped: true, reason: "a demo draws its diagrams when asked" };
     return diagrams.generate(company, mod, version);
   };
   // can this instance run module code in a process of its own, with a database login of its own? find out before anything is mounted
@@ -175,20 +188,27 @@ async function main() {
   // status (retry/cancel on the board) instead of a spinner forever
   const orphaned = await pipeline.sweepOrphans();
   if (orphaned) console.log(`[pipeline] ${orphaned} orphaned run(s) marked failed`);
+  // the old process can still start a build in the moment between this sweep and its own stop (Railway stops it once
+  // this one answers, then gives it RAILWAY_DEPLOYMENT_DRAINING_SECONDS): a second look once it is surely gone
+  setTimeout(() => pipeline.sweepOrphans().then((n) => { if (n) console.log(`[pipeline] ${n} run(s) the previous process left running marked failed`); }).catch((e) => console.error("[pipeline] late sweep:", e.message)),
+    Number(process.env.SOS_LATE_SWEEP_MS || 180000)).unref();
   const swept = await require("./src/campaign").sweep();   // a campaign that was running at the restart has no process behind it
   if (swept) console.log(`[campaign] ${swept} campaign(s) that were running at the restart marked failed`);
+  await require("./src/restart").sweep().catch((e) => console.error("[restart] sweep:", e.message));   // new-tool requests, reviews, diagrams, brand guides the old process was in the middle of (the launch audit 1.13)
   require("./src/campaign").startWatching();
   require("./src/spendwatch").start();       // phone alerts when AI spend climbs fast; never refuses anything (src/spendwatch.js, the launch audit 0.5)
+  require("./src/uptime").start();           // anetix.ai not answering: an alert (src/uptime.js; anetix.ai watches this product the same way)
   require("./src/dataexport").startSweeps();   // demo requests past 12 months go (the privacy notice)   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
   // (only ones never attempted: a failed drawing is not paid for again on every restart; Diagrams on the board redraws on demand)
-  for (const m of (await q("SELECT company, name, live_version FROM platform.modules m WHERE live_version IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform.diagrams d WHERE d.company=m.company AND d.module=m.name AND d.version=m.live_version)")).rows) {
+  for (const m of (await q("SELECT company, name, live_version FROM platform.modules m WHERE live_version IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform.diagrams d WHERE d.company=m.company AND d.module=m.name AND d.version=m.live_version) AND NOT EXISTS (SELECT 1 FROM platform.companies c WHERE c.slug=m.company AND c.demo)")).rows) {
     diagrams.generate(m.company, m.name, m.live_version).catch((e) => console.error(`diagrams ${m.company}/${m.name}:`, e.message));
   }
 
   const server = app.listen(PORT, () => console.log(`Anetix instance on :${PORT} (auth ${auth.OPEN ? "OPEN: no passwords set" : "on"})`));
   // a process that cannot listen must end (Railway restarts it): the guards in src/errors.js would otherwise keep it alive serving nothing
   server.on("error", (e) => { console.error(`[boot] could not listen on :${PORT}: ${e.message}`); process.exit(1); });
+  require("./src/restart").graceful(server);   // SIGTERM: finish what is in flight, then go (src/restart.js)
   // does this instance have a browser for the page load every build gets (src/pageload.js)? say so in the deploy log
   require("./src/pageload").selfTest().catch((e) => console.error("[pageload] self test:", e.message));
 }

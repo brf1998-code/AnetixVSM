@@ -418,6 +418,8 @@ async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, 
     // fake builds take a moment so an abort can be exercised without a key
     await new Promise((r) => setTimeout(r, Number(process.env.SOS_FAKE_DELAY_MS || 1500)));
     if (signal && signal.aborted) { const e = new Error("build aborted by the manager"); e.aborted = true; throw e; }
+    // FAILBUILD in the request: the agent stops partway with some spend on it (a build that never reaches a preview)
+    if (/FAILBUILD/.test(prompt || "")) { const e = new Error("fake mode: the build agent stopped partway (FAILBUILD)"); e.costUsd = 0.42; throw e; }
     return { ...fakeRunAgent({ dir, prompt }), modelsSeen: [model] };
   }
   if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured on this instance");
@@ -610,9 +612,15 @@ function costOf(model, u = {}) {
   const p = priceOf(model);
   return (u.input_tokens || 0) * p.inTok + (u.output_tokens || 0) * p.outTok + (u.cache_read_input_tokens || 0) * p.inTok * 0.1 + (u.cache_creation_input_tokens || 0) * p.inTok * 1.25;
 }
+// Work done inside withMeterTag(tag, fn) is filed on the meter as "<tag>:<kind>": Anetix's own model trials (src/assess.js)
+// run on a company's stored work under that company's name, and a site's fair-use line leaves "assess:" out (the launch
+// audit 1.17).
+const meterTag = new (require("async_hooks").AsyncLocalStorage)();
+const withMeterTag = (tag, fn) => meterTag.run(tag, fn);
 async function meter({ company, kind, model, usage, costUsd, sdkCostUsd, ok = true }) {
   if (fakeMode()) return;
   const u = usage || {};
+  const tag = meterTag.getStore(); if (tag) kind = `${tag}:${kind}`;
   await q(`INSERT INTO platform.ai_calls (company, kind, model, input_tokens, output_tokens, cache_read, cache_write, cost_usd, sdk_cost_usd, ok) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [company || null, kind, model || null, u.input_tokens || null, u.output_tokens || null, u.cache_read_input_tokens || null, u.cache_creation_input_tokens || null, Number(costUsd || 0), sdkCostUsd == null ? null : Number(sdkCostUsd), ok])
     .catch((e) => console.error("[meter]", e.message));
@@ -632,7 +640,7 @@ async function monthlySpend(company) {
                       WHERE p.created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR f.company=$1)),0)
          + COALESCE((SELECT SUM(cost_usd) FROM platform.reviews WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0)
          + COALESCE((SELECT SUM((brand->>'cost_usd')::numeric) FROM platform.companies WHERE brand IS NOT NULL AND (brand->>'built_at')::timestamptz >= date_trunc('month', now()) AND ($1::text IS NULL OR slug=$1)),0)
-         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0)
+         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR (company=$1 AND kind IS DISTINCT FROM 'assess'))),0)
          + COALESCE((SELECT SUM(cost_usd) FROM platform.diagrams WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0) AS usd`, [company || null])).rows[0];
   const usd = Number(r.usd || 0);
   // For one company the cap that counts is its own (set on the admin page);
@@ -694,6 +702,7 @@ function capReached(which, usd, cap) {
 }
 
 module.exports = {
+  withMeterTag,
   atWall,   // the data wall's choke point and the prompt log (src/datawall.js)
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,

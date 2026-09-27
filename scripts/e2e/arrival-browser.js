@@ -152,7 +152,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFklEQVR
   t("then the tablet offers no photo button, and still offers pointing", (await tab.locator("#fbw-photo").count()) === 0 && (await tab.locator("#fbw-point").count()) === 1);
   await ag.check("#a-photos"); await ag.waitForFunction(() => document.getElementById("a-ok").textContent === "saved");
   await ag.uncheck("#a-auto"); await sleep(800);
-  t("unticking read-at-once saves", (await mgr.get("/api/c/demo/agents")).json.company.auto_propose === false);
+  t("unticking read-at-once saves", (await mgr.get("/api/c/demo/settings-view")).json.company.auto_propose === false);
   await ag.check("#a-auto"); await sleep(800);
 
   // ---- the platform board itself offers no pointing (nothing there goes to the proposer)

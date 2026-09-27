@@ -100,11 +100,16 @@ async function view(intake) {
 
 // ---- lifecycle ------------------------------------------------------------------
 async function create(company, role) {
-  // starting a module needs credit; once started, its rounds, design and build go through to the end (the
-  // generateRound / generateDesign gates pass started: true)
+  // one unfinished new-tool request at a time (the launch audit 1.5, 2026-09-27: each tap on "New tool" started another
+  // request): while one is still being answered, thought about or waiting at its design, New tool opens that one again
+  const open = (await q(`SELECT i.* FROM platform.module_intakes i JOIN platform.feedback f ON f.id=i.feedback_id
+    WHERE i.company=$1 AND i.status IN ('answering','failed','thinking','design') AND f.status NOT IN ('declined','done') ORDER BY i.id DESC LIMIT 1`, [company])).rows[0];
+  // starting a module needs credit (asked on a reopen too, so New tool says so the same way); once started, its rounds,
+  // design and build go through to the end (the generateRound / generateDesign gates pass started: true)
   await require("./selfserve").assertCredit(company);
+  if (open) return Object.assign(open, { reopened: true });
   const fb = (await q(
-    `INSERT INTO platform.feedback (company, module, page, screen, message, name, status, kind) VALUES ($1,NULL,$2,'Module request','New module',$3,'new','module_request') RETURNING id`,
+    `INSERT INTO platform.feedback (company, module, page, screen, message, name, status, kind) VALUES ($1,NULL,$2,'New tool request','New tool',$3,'new','module_request') RETURNING id`,
     [company, `/c/${company}/`, role || "manager"])).rows[0];
   const pick = await agent.pickModel(company, "design", null);
   const it = (await q(
@@ -130,10 +135,10 @@ async function answer(id, qid, value) {
   if (qid === "name") {
     const name = String(value || "").trim().slice(0, 80);
     const slug = slugify(name) || (name ? `module-${it.id}` : "");
-    if (slug && (await slugTaken(it.company, slug, it.id, name))) throw new Error(`"${name}" is already the name of a module here. Pick another.`);
+    if (slug && (await slugTaken(it.company, slug, it.id, name))) throw new Error(`"${name}" is already the name of a tool here. Pick another.`);
     fields.name = name || null; fields.slug = slug || null;
     answers.name = name;
-    await setFeedback(it, { message: name ? `New module: ${name}` : "New module", module: slug || null });
+    await setFeedback(it, { message: name ? `New tool: ${name}` : "New tool", module: slug || null });
   } else {
     answers[qid] = value;
   }
@@ -153,7 +158,7 @@ async function next(id) {
   const questions = await questionsFor(it);
   const state = roundState(questions, it.answers || {});
   if (!state.done) { const e = new Error("a few answers are still missing"); e.missing = state.missing.map((m) => ({ id: m.id, text: m.text })); throw e; }
-  if (!it.name) throw new Error("the module needs a name first");
+  if (!it.name) throw new Error("the tool needs a name first");
   await setIntake(id, { status: "thinking", error: null });
   await setFeedback(it, { status: "reviewing" });
   think(id).catch(async (e) => {
@@ -214,7 +219,7 @@ async function adjust(id, text) {
 async function confirm(id) {
   const it = await getIntake(id);
   if (!it || it.status !== "design" || !it.design) throw new Error("there is no design to confirm");
-  if (await slugTaken(it.company, it.slug, it.id, it.name)) throw new Error(`a module named "${it.name}" now exists; rename this one first`);
+  if (await slugTaken(it.company, it.slug, it.id, it.name)) throw new Error(`a tool named "${it.name}" now exists; rename this one first`);
   let out = await setIntake(id, { status: "confirmed" });
   await setFeedback(it, { status: "reviewing" });
   await logEvent("intake_confirmed", id, { company: it.company, slug: it.slug, estimate: it.design.estimate_usd });
@@ -246,9 +251,9 @@ async function restart(id) {
 async function abandon(id) {
   const it = await getIntake(id);
   if (!it) throw new Error("intake not found");
-  if (["building", "done"].includes(it.status)) throw new Error("this module is already being built");
+  if (["building", "done"].includes(it.status)) throw new Error("this tool is already being built");
   const out = await setIntake(id, { status: "abandoned" });
-  await setFeedback(it, { status: "declined", outcome: "Module request withdrawn." });
+  await setFeedback(it, { status: "declined", outcome: "Tool request withdrawn." });
   await logEvent("intake_abandoned", id, {});
   await record("intake_abandoned", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, detail: { status_before: it.status } });
   return out;
@@ -475,7 +480,7 @@ router.post("/api/c/:slug/intakes", requireManager, json, async (req, res) => {
     const co = (await q("SELECT slug FROM platform.companies WHERE slug=$1", [req.params.slug])).rows[0];
     if (!co) return res.status(404).json({ error: "unknown company" });
     const it = await create(co.slug, req.sosRole);
-    res.json(await view(it));
+    res.json({ ...(await view(it)), reopened: Boolean(it.reopened) });
   } catch (e) { fail(res, e, 500); }
 });
 router.get("/api/intakes/:id(\\d{1,9})", requireManager, async (req, res) => {
@@ -506,7 +511,7 @@ router.post("/api/intakes/:id(\\d{1,9})/build", requireManager, freshPin, json, 
     const it = await getIntake(Number(req.params.id));
     if (!it) return res.status(404).json({ error: "not found" });
     if (it.status !== "confirmed" || !it.design) return res.status(400).json({ error: `nothing to build while the intake is ${it.status}` });
-    if (await slugTaken(it.company, it.slug, it.id, it.name)) return res.status(409).json({ error: `a module named "${it.name}" now exists; rename this one first` });
+    if (await slugTaken(it.company, it.slug, it.id, it.name)) return res.status(409).json({ error: `a tool named "${it.name}" now exists; rename this one first` });
     await require("./selfserve").assertCredit(it.company);   // a build that never started is a new start
     await require("./modulebuild").startBuild(it);
     res.json(await view(await getIntake(it.id)));

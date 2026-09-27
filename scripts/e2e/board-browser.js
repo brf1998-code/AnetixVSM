@@ -75,7 +75,10 @@ const R = runner(), t = R.t;
   await b.waitForFunction((id) => /Deploy v\d+ to floor/.test((document.querySelector(`[data-key="run:${id}"]`) || {}).innerText || ""), runId, { timeout: 15000 });
   const gate = await tile.innerText();
   t("at the gate: the preview, one Deploy button, Discard under more", /Open preview of v\d+/.test(gate) && (await tile.locator("button.go", { hasText: /Deploy v\d+ to floor/ }).count()) === 1 && (await tile.locator("details.more button", { hasText: "Discard" }).count()) === 1 && !(await tile.locator("details.more button", { hasText: "Discard" }).isVisible()));
-  t("the gate says what was checked, not which model reviewed it", /checks passed:/.test(gate) && !/cross-check \(/.test(gate) && noMoneyNoModel(gate), gate);
+  // the plain line shows; the counts and the second review's words are folded under "What was checked" (the launch audit 1.8)
+  const gateAll = await tile.evaluate((el) => el.textContent);
+  t("the gate says what was checked in plain words, the counts folded, and no model", /Checked before it reached you/.test(gate) && /What was checked/.test(gate) && !/checks passed:/.test(gate) && /checks passed:/.test(gateAll) && !/cross-check \(/.test(gateAll) && noMoneyNoModel(gateAll), gate);
+  t("the steps are in plain words", /Waiting for your OK to go live/.test(gate) && !/Manager deploy gate|Agent build/.test(gate), gate);
   await tile.locator("button.go", { hasText: /Deploy v\d+ to floor/ }).click();
   await waitFor("the change live", async () => { const f = await fbRow(mgr, S1); return f && f.status === "done" && f.shipped_version; }, 30000);
   await b.locator("#col-done button", { hasText: "Show the other" }).click().catch(() => {});

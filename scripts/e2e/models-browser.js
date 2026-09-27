@@ -91,7 +91,7 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   if (SHOTS) await pp.screenshot({ path: `${SHOTS}/models-phone.png`, fullPage: true });
 
   // the company's Agent settings: follow the platform, or pin
-  const cm = await browser.newContext({ viewport: { width: 1100, height: 900 } }); await cm.addCookies(mgr.cookies());
+  const cm = await browser.newContext({ viewport: { width: 1100, height: 900 } }); await cm.addCookies(admin.cookies());   // Anetix's page since the launch audit 1.18
   const ap = await cm.newPage(); watch(ap, "agents");
   ap.on("dialog", (d) => d.accept());
   await ap.goto(BASE + "/c/demo/agents"); await ap.waitForSelector("#m-build option", { state: "attached" });
@@ -100,10 +100,10 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   t("nothing on the page names Sonnet or Haiku", !/Sonnet|Haiku/.test(await ap.locator("body").innerText()));
   await ap.click('button:has-text("Save models")');
   await ap.waitForTimeout(600);
-  t("saving without touching anything pins nothing (the old page pinned what was in force)", Object.values((await mgr.get("/api/c/demo/agents")).json.models.pins).every((x) => x === null));
+  t("saving without touching anything pins nothing (the old page pinned what was in force)", Object.values((await admin.get("/api/c/demo/agents")).json.models.pins).every((x) => x === null));
   await ap.selectOption("#m-review", O); await ap.click('button:has-text("Save models")');
-  await waitFor("the pin", async () => (await mgr.get("/api/c/demo/agents")).json.models.pins.review === O);
-  t("picking a pin pins that job only", (await mgr.get("/api/c/demo/agents")).json.models.pins.build === null);
+  await waitFor("the pin", async () => (await admin.get("/api/c/demo/agents")).json.models.pins.review === O);
+  t("picking a pin pins that job only", (await admin.get("/api/c/demo/agents")).json.models.pins.build === null);
   await admin.post("/api/admin/models/unpin", { slug: "demo" });
 
   t("no page errors", errors.length === 0, errors);

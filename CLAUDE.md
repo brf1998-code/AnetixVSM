@@ -1727,6 +1727,80 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   so a restart never repeats it. The Instance tab's Phone alerts card shows the rules, the spend now and the last
   alert; `POST /api/admin/notify/spend-check` (admin) runs the check at once. Tests: `scripts/test-spendwatch.js`
   (15), `scripts/e2e/spendwatch.js` (11, started with `SOS_ALERT_MONTH_STEP_USD=25`).
+- **The launch audit's Phase 1** (2026-09-27, what a first-time demo manager meets; Brendan's calls: passkey first on
+  phones (1.3), keep all 12 intake questions (1.7 not built: "I want them to be impressed at how good it is for their
+  use case"), a demo build stopped before a preview gets its credit back "but these absolutely need to be addressed"
+  (1.20)). (1) **Passkey first on phones** (1.3, `src/accounts.js`, `src/passkeys.js`, `public/enroll.html`). A
+  manager on a phone (coarse pointer, screen under 820) is offered "Use Face ID" (or the fingerprint or screen lock)
+  first and the authenticator app as the other way; on a computer the app comes first with the passkey as a link.
+  `enrolled` is the app OR (manager AND a live passkey). The first passkey of a manager with no app makes the ten
+  recovery codes (`accounts.passkeyEnrolled`, also whenever such an account has no unused code left) and logs
+  `enrolled` with `factor: passkey`. `auth.managerEnrollPath` lets the enrolment session reach
+  `/api/me/passkeys/options` and `/api/me/passkeys`. For such an account a password sign-in answers
+  `{ need_code, passkey_first }` (passed through by `auth.loginHandler`): the password alone is never enough, a
+  recovery code stands in (no "remember this computer"), and login.html and the anetix.ai wall say "This account
+  signs in with its passkey". The last passkey of a manager with no app cannot be removed (409; checked and removed
+  in one transaction on the account row, and the session cache forgotten). Settings' "Your sign-in" card: the
+  passkeys, the app (with "Add the app", `/c/<slug>/enroll?app=1`), and Change my password (signs out everywhere).
+  (2) **The board's first ten minutes** (1.4 to 1.9, `public/index.html`). A manager's board with no tools shows
+  "Build your first tool" (`renderFirstTool`); a new-tool request (feedback `kind='module_request'`, module NULL
+  until named) is a card in its status column whatever the filter, never under Requests to Anetix;
+  `POST /api/c/:slug/intakes` reopens the company's unfinished request (answering, failed, thinking, design) instead
+  of making another (`reopened: true`; the credit is still asked). Customer text says tool, not module (board, intake
+  popout and its errors and questions, Settings, the diagrams page; the server writes "New tool: <name>" and screen
+  "New tool request"; the board reads "New module: " on old rows too). Plain step labels (`STEP_LABEL`); the gate's
+  checks line is one plain sentence with the counts and the second review's words folded under "What was checked";
+  a demo company's gate button is "Make it live". On a phone the board opens the column that waits on the manager
+  (`attentionCol`: a build waiting or stopped, a request at answering, design, confirmed or failed; else Reviewing;
+  else the first column with cards) until they tap a tab, and a new thing waiting moves the view once more; the
+  Feedback button docks in the band (`feedback-widget.js` `data-dock="#fbdock"`, phones only) instead of floating over
+  the cards. (3) **The bare sign-in** (1.12): `/login` with no company in the link opens the account form, with "Sign
+  in with the floor's shared password instead"; "Floor and manager passwords both work here" is gone. (4) **What a
+  restart leaves** (1.13, `src/restart.js`). At boot, after the build and campaign sweeps: a new-tool request the AI
+  was reading goes to failed ("Open it and try again" sends the answers again), one redoing its design goes back to
+  that design with a line that the edit was not applied, and a running review, diagram drawing or brand guide goes
+  to failed. SIGTERM: the listener closes, answers carry `Connection: close`, the build agents talking are stopped
+  and marked as cut off by the restart, nothing new starts from the queue, then the tool processes and the pool go
+  (at most `SOS_DRAIN_MS`, 25 s). railway.json sets `drainingSeconds: 30` (Railway's default is 0: SIGKILL at once).
+  **The fence**: Railway starts the new process while the old one still runs. `sweepOrphans` stamps every running
+  build with its own boot (`build_runs.fence`, the boot's start time) and from then `pipeline.setRun` and `log`
+  refuse (a `fenced` error, which `failRun` lets go and the error handler answers 503 "Anetix is restarting") a
+  write from an older process. A run a process sets running (or inserts) carries its stamp, and the sweep runs again
+  three minutes after boot (`SOS_LATE_SWEEP_MS`) for what an older process started after the boot sweep. A fixed
+  numeric `SOS_BOOT_ID` in the variables would turn the fence off: do not set one. `/health?deep=1` also asks the
+  database. (5) **The board through a restart** (1.14): a 5xx or no answer shows "Anetix is restarting or the
+  connection dropped" and keeps the board (it used to become "Unknown company."); anetix.ai says "Anetix is
+  restarting. Try again in a minute." (`www/server.js sos()`, code `restarting`) and the wall's sign-in says so
+  before sending anyone to the product's own sign-in. (6) **Phone alerts** (1.15, `notify.notifyEvery` throttles
+  per key with a count): a demo request (company and size), a new demo, refused pins (the reason only, never the pin's
+  label), a locked account (the kind and company, never the email), a demo build stopped before a preview, the AI
+  service refusing, a request to Anetix (company and screen, never the words), a tool process restarted; anetix.ai
+  sends its own (`www/notify.js`, same `NTFY_TOPIC`) for a Stripe event it could not apply. Each service watches the
+  other (`src/uptime.js` asks anetix.ai's `/health`, `www/uptime.js` asks `/health?deep=1` here, every minute; three
+  misses send one alert, the first answer after sends "answers again"); both on Railway, so an outside checker on
+  `https://app.anetix.ai/health?deep=1` is still worth having. (7) **A hung tool process** (1.16, `runner.timedOut`):
+  each request that runs out of time is logged and an event (`tool_timeout`, the route's shape); `HANG_LIMIT` (3,
+  `SOS_MODULE_HANG_LIMIT`) in five minutes on two or more routes, or five on one, restarts the company's process for
+  that lane (`tool_restarted`, an alert). (8) **Trials are Anetix's** (1.17): `ai_usage` kind `assess` stays under the
+  company whose work it was (so /admin#models can say whose) but no longer counts against its credit, its own
+  budget, its fair-use line or the Demos tab's spend; trial calls are metered as `assess:<kind>`
+  (`agent.withMeterTag`) and fair use leaves those out; a trial checks the instance cap only. (9) **Settings is the
+  company's, agent settings are Anetix's** (1.18): Settings reads `GET /api/c/:slug/settings-view` (company switches,
+  tools, the manager's sign-in, no models); `/c/:slug/agents` and its API are admin only. (10) **A demo's diagrams
+  when asked** (1.19): no drawing after a demo's deploy or at boot; the Diagrams page offers "Draw them now" (the AI
+  gates a start passes, one at a time, not again within ten minutes); the diagrams API names no model and no cost to
+  anyone but an admin. (11) **A demo build that stops before a preview** (1.20, `src/demostops.js`,
+  `platform.demo_stops`): a stop with no preview to open (`hadPreview`: failed while building or writing the
+  requirement, or by the platform's own gate) in a demo company hands its spend back as credit (an `adjust` ledger
+  row; a later stop of the same run only what it spent since, the rows here being the record; never an overrun
+  write-off), is listed on /admin Demos ("Builds that stopped in a demo", the tab dot red while any is open) until an
+  admin marks it addressed with a few words, and sends an alert. The stopped card tells the manager the credit came
+  back (never the amount). Fake agent marker `FAILBUILD` stops a build partway with $0.42 on it. Tests:
+  `scripts/test-phase1.js` (18), `scripts/e2e/phase1.js`, `scripts/e2e/phase1-browser.js` (19, a phone at 390x844),
+  `scripts/e2e/passkeys-browser.js` (44, the phone that turns on its screen lock and never sets up the app); board,
+  checks and campaign browser suites read the new words; www `test-www.js`, `e2e.js` (the restart wording). Still
+  open from the review: the intake and board APIs carry model and cost fields a manager's page never shows (the
+  JSON has them), and checks.html names models to managers.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2868,7 +2942,15 @@ tool list, 401 from the API) proves the CLI itself starts.
   (60), `SOS_ALERT_PACE_X` (3), `SOS_ALERT_PACE_MIN_USD` (15),
   `SOS_ALERT_MONTH_STEP_USD` (250): the spend alerts (`src/spendwatch.js`), 0 = off;
   alerts only, never a limit. `SOS_ERROR_ALERT_GAP_MS` (15 minutes): the gap
-  between two "Product error" alerts (`src/errors.js`).
+  between two "Product error" alerts (`src/errors.js`). `SOS_UPTIME_WATCH` (0 turns
+  off watching anetix.ai, `src/uptime.js`), `SOS_UPTIME_MS` (60 s). The same
+  `NTFY_TOPIC` on anetix-www sends its alerts (`www/notify.js`) and its watch of
+  this product (`UPTIME_WATCH`, `UPTIME_MS` there).
+- `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
+  (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
+  second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts
+  that restart a tool process (`src/runner.js`). Never set `SOS_BOOT_ID`: the
+  build fence (`src/pipeline.js`) needs it to be the boot's start time.
   `SOS_EXPORT_ATTACH_MAX` / `SOS_EXPORT_ATTACH_TOTAL`: the export's file limits.
 - `SOS_WWW_KEY`: the shared key the anetix.ai service (`www/`) sends in
   `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on

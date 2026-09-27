@@ -196,7 +196,7 @@ window.Intake = (() => {
 
   // ---- rendering -----------------------------------------------------------------
   const roundLabel = () => (MODE === "design" || MODE === "edit" ? "The design" : MODE === "confirmed" ? "Confirmed" : V.round > 1 ? `The agent's questions, round ${V.round}` : "Your answers");
-  const titleText = () => (V.name ? `New module: ${V.name}` : "New module");
+  const titleText = () => (V.name ? `New tool: ${V.name}` : "New tool");
   const progressText = () => (MODE === "q" ? `${V.round_answered} of ${V.round_total} answered` : MODE === "think" ? "The agent is working" : "");
   const progressPct = () => (MODE === "q" ? Math.round(100 * (V.round_answered / Math.max(1, V.round_total))) : MODE === "think" ? 100 : 100);
   function render() {
@@ -208,7 +208,7 @@ window.Intake = (() => {
     else if (MODE === "design") { body = designHtml(); foot = designFoot(); }
     else if (MODE === "edit") { body = editHtml(); foot = `<button class="quiet" onclick="Intake.cancelEdit()">Cancel</button><span class="ik-sp"></span><button class="go" onclick="Intake.reissue()">Re-issue the design with my edits</button>`; }
     else if (MODE === "confirmed") {
-      const msg = V.status === "done" ? `<b>${esc(V.name)} is on the floor.</b><div class="ik-hint">Open it from the module strip. From here it improves through feedback like any other module. What you confirmed is kept as its reference.</div>`
+      const msg = V.status === "done" ? `<b>${esc(V.name)} is on the floor.</b><div class="ik-hint">Open it from the Tools line at the top of the board. From here it improves through feedback like any other tool. What you confirmed is kept as its reference.</div>`
         : V.status === "building" ? `<b>The agent is building ${esc(V.name)}.</b><div class="ik-hint">Watch the card on the board: it shows each step, then a preview and the button that puts it on the floor. Building takes several minutes.</div>`
         : V.error ? `<b>Design confirmed, but the build did not start.</b><div class="ik-hint">${esc(V.error)}. Use "Build it now" on the card to try again.</div>`
         : `<b>Design confirmed.</b><div class="ik-hint">The build starts from the card on the board ("Build it now").</div>`;

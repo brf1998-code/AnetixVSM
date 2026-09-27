@@ -91,6 +91,8 @@ async function create(b, ip) {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
   [r.name, r.email, r.company, r.role, r.phone, r.size, r.makes, r.wants, r.call_times, r.goal, r.heard, r.heard_more, clean(ip, 80) || null])).rows[0];
   await logEvent("demo_requested", String(row.id), { wants: r.wants, heard: r.heard });
+  // the company's name and its size, never the person's name, email or words (src/notify.js)
+  require("./notify").notifyEvery("demo_request", 2 * 60e3, "Demo request", `${r.company || "Someone"}${r.size ? ` (${r.size})` : ""} asked for a demo. It is on the Pins tab of /admin.`, { tags: ["wave"] });
   return { id: row.id, again: false };
 }
 

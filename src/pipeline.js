@@ -47,15 +47,40 @@ const CROSS_CHECK_SCHEMA = {
   required: ["verdict", "summary", "findings"],
 };
 
+// A push starts the new process while the old one is still running (Railway switches over once the new one answers,
+// then stops the old one). The new one's boot sweep takes over every build that was running (sweepOrphans: marked
+// failed, or started again) and stamps it with its own boot (fence). From then on the older process may not write to
+// that run: its agent can still be talking for a few seconds, and until 2026-09-27 whatever it wrote last (a step, a
+// status) landed over the new process's. Boots are start times, so any newer process may write, an older one not.
+// A refused write throws { fenced: true }, which ends the older process's chain (failRun lets it go quietly).
+const FENCE = /^\d{1,15}$/.test(String(process.env.SOS_BOOT_ID || "")) ? Number(process.env.SOS_BOOT_ID) : Date.now();
+async function fenced(runId) {
+  const r = (await q("SELECT fence FROM platform.build_runs WHERE id=$1", [runId])).rows[0];
+  if (r && r.fence != null && Number(r.fence) > FENCE) throw Object.assign(new Error(`run #${runId} was taken over by a newer process`), { fenced: true });
+}
 async function log(runId, entry) {
-  await q(`UPDATE platform.build_runs SET log = log || $2::jsonb, updated_at=now() WHERE id=$1`,
-    [runId, JSON.stringify([{ t: new Date().toISOString(), ...entry }])]);
+  const r = await q(`UPDATE platform.build_runs SET log = log || $2::jsonb, updated_at=now() WHERE id=$1 AND (fence IS NULL OR fence <= $3) RETURNING id`,
+    [runId, JSON.stringify([{ t: new Date().toISOString(), ...entry }]), FENCE]);
+  if (!r.rowCount) await fenced(runId);
 }
 async function setRun(runId, fields) {
+  // a run this process sets running is this process's to drive: stamped, so a newer process's late sweep can tell a
+  // run an older process left behind (sweepOrphans) from one of its own
+  if (fields.status === "running" && fields.fence === undefined) fields = { ...fields, fence: FENCE };
   const keys = Object.keys(fields);
   const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");
-  await q(`UPDATE platform.build_runs SET ${sets}, updated_at=now() WHERE id=$1`,
-    [runId, ...keys.map((k) => (fields[k] !== null && typeof fields[k] === "object" ? JSON.stringify(fields[k]) : fields[k]))]);
+  const r = await q(`UPDATE platform.build_runs SET ${sets}, updated_at=now() WHERE id=$1 AND (fence IS NULL OR fence <= $${keys.length + 2}) RETURNING id`,
+    [runId, ...keys.map((k) => (fields[k] !== null && typeof fields[k] === "object" ? JSON.stringify(fields[k]) : fields[k])), FENCE]);
+  if (!r.rowCount) await fenced(runId);
+}
+// SIGTERM (src/restart.js): the process is going. Builds whose agent is talking are stopped and marked as cut off by the
+// restart (unless a newer process took them over already); nothing new starts from the queue here.
+let SHUTDOWN = false;
+function shutdown() {
+  SHUTDOWN = true;
+  const ids = [...ACTIVE.keys()];
+  for (const [id, ctl] of ACTIVE) { try { ctl.abort(); } catch (e) { /* already */ } console.log(`[pipeline] run #${id}: the agent is stopped, the platform is restarting`); }
+  return ids;
 }
 async function addCost(runId, usd) {
   await q("UPDATE platform.build_runs SET cost_usd = cost_usd + $2 WHERE id=$1", [runId, usd || 0]);
@@ -104,9 +129,9 @@ async function startRun(proposalIds, opts = {}) {
   else { const pick = await pickModel(company, "build", null); model = pick.model; if (pick.arm) ab = { arm: model, since: pick.since }; }
   const busy = await activeRun(company, mod);
   const r = await q(
-    `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, lane, step, status, model, evidence)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [ids[0], ids, company, mod, modRow.live_version, lane, step, busy ? "queued" : "running", model, JSON.stringify(ab ? { ab } : {})]);
+    `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, lane, step, status, model, evidence, fence)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    [ids[0], ids, company, mod, modRow.live_version, lane, step, busy ? "queued" : "running", model, JSON.stringify(ab ? { ab } : {}), FENCE]);
   const run = r.rows[0];
   if (ab) await keepArm("build", company, `run:${run.id}`, model);
   await q("UPDATE platform.feedback SET status='in_progress', updated_at=now() WHERE id = ANY($1::int[])", [ps.map((p) => p.feedback_id)]);
@@ -121,6 +146,7 @@ async function startRun(proposalIds, opts = {}) {
 
 // Start the oldest queued run for a module once the active one has ended.
 async function kickQueue(company, mod) {
+  if (SHUTDOWN) return;   // the process is going: the next one's boot starts the queue (sweepOrphans)
   if (await activeRun(company, mod)) return;
   const next = (await q(
     "SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status='queued' ORDER BY id LIMIT 1", [company, mod])).rows[0];
@@ -165,7 +191,14 @@ async function plainSummary(batch, agentText, isBatch, company) {
 const ACTIVE = new Map();
 
 async function failRun(runId, err) {
+  try { return await failRunInner(runId, err); }
+  catch (e) { if (e && e.fenced) { console.log(`[pipeline] run #${runId}: ${e.message}; this process lets it go`); return; } throw e; }
+}
+async function failRunInner(runId, err) {
   if (err && typeof err.costUsd === "number") await addCost(runId, err.costUsd);
+  // a newer process took this run over at a restart: what this one had to say about it no longer counts
+  if (err && err.fenced) { console.log(`[pipeline] run #${runId}: ${err.message}; this process lets it go`); return; }
+  if (SHUTDOWN) err = new Error("the platform restarted while this build was running; nothing was deployed. Retry or cancel.");
   const before = await getRun(runId);
   if (before && before.status === "cancelled") {
     // the manager aborted it; cancel() already recorded that
@@ -177,14 +210,16 @@ async function failRun(runId, err) {
   await log(runId, { step: "error", note: String(err.message || err) });
   // the AI service itself refusing (no credit, a bad key, too busy) is not the build's fault and not the manager's
   // problem: the card says so in plain words (src/credit.js) and /admin shows it red
-  const aiDown = await require("./credit").noteFailure(String(err.message || err), `build run #${runId}`);
+  const aiDown = SHUTDOWN ? null : await require("./credit").noteFailure(String(err.message || err), `build run #${runId}`);
   if (aiDown) await setRun(runId, { evidence: { ...((before && before.evidence) || {}), ai_unavailable: aiDown } });
   await setRun(runId, { status: "failed" });
   const run = await getRun(runId);
   if (!run) return;
   // a failed check goes back to the agent on its own, up to SOS_AUTO_FIX_ROUNDS times, before the manager sees a stop
-  if (!aiDown && await autoFix(run).catch((e) => { console.error(`auto fix of run ${runId} failed:`, e); return false; })) return;
-  kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
+  if (!aiDown && !SHUTDOWN && await autoFix(run).catch((e) => { console.error(`auto fix of run ${runId} failed:`, e); return false; })) return;
+  // a demo's build that stopped with no preview: its spend handed back, and on /admin until addressed (src/demostops.js)
+  await require("./demostops").onStop(run, { aiDown }).catch((e) => console.error(`[demostops] run ${runId}:`, e.message));
+  if (!SHUTDOWN) kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
 }
 
 // Most stops clear on the second or third attempt (checks campaign, 2026-09-25: the
@@ -795,7 +830,10 @@ async function cancel(runId) {
 // spending. SOS_RESTART_ORPHANS=0 goes back to marking them failed.
 const RESTART_ORPHANS = process.env.SOS_RESTART_ORPHANS !== "0";
 async function sweepOrphans() {
-  const rows = (await q("SELECT id, company, module, step, evidence FROM platform.build_runs WHERE status='running'")).rows;
+  // take them over first (see FENCE above): from here the older process, if it is still up, cannot write to them. At
+  // boot that is every running run; run again a few minutes later (server.js), it is only what an older process
+  // started after the boot sweep and left running when it stopped (the launch audit 1.13)
+  const rows = (await q("UPDATE platform.build_runs SET fence=$1 WHERE status='running' AND (fence IS NULL OR fence < $1) RETURNING id, company, module, step, evidence", [FENCE])).rows;
   const again = [];
   for (const r of rows) {
     const restarted = Number(((r.evidence || {}).restarted) || 0);
@@ -804,6 +842,7 @@ async function sweepOrphans() {
     await setRun(r.id, { status: "failed", evidence: { ...(r.evidence || {}), restarted: restarted + 1 } });
     console.log(`[pipeline] run #${r.id} (${r.company}/${r.module}) was running at restart; ${canRestart ? "starting again" : "marked failed"}`);
     if (canRestart) again.push(r.id);
+    else await require("./demostops").onStop(await getRun(r.id)).catch((e) => console.error(`[demostops] run ${r.id}:`, e.message));
   }
   for (const id of again) await retry(id, { auto: true }).catch((e) => console.error(`[pipeline] restart of run #${id} failed:`, e.message));
   const mods = (await q("SELECT DISTINCT company, module FROM platform.build_runs WHERE status='queued'")).rows;
@@ -814,7 +853,7 @@ async function sweepOrphans() {
 module.exports = {
   startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, AUTO_FIX_ROUNDS, autoFix, toGate,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
-  setRun, log, addCost, failRun, activeRun, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
+  setRun, log, addCost, failRun, activeRun, shutdown, FENCE, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
   // the cross-check brief, for the replay harness
   crossCheckCall, crossCheckPrompt, crossCheckSystem, buildPrompt, proposalsText, loadProposals, modelForRun, CROSS_CHECK_SCHEMA, CROSS_CHECK_DIFF_CHARS, demote,
 };

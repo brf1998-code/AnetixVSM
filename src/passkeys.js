@@ -7,9 +7,12 @@
 // site's name, so a look-alike page cannot collect it the way it can a password and a code.
 //
 // What stays: the password with the authenticator app is the fallback on a device without a passkey, and the
-// recovery codes are the way back from a lost phone. A passkey is added only by an account that already has its
-// authenticator set up (auth.middleware keeps an account without one on its setup page), so the app is always there
-// behind it. Reset authenticator on /admin takes an account's passkeys too: a reset is for a lost or taken device.
+// recovery codes are the way back from a lost phone. An admin adds a passkey only once the app is set up. A MANAGER may
+// make a passkey the first factor instead (the launch audit 1.3, 2026-09-27, Brendan: passkey first on phones): the
+// setup page offers Face ID first on a phone, the recovery codes are made with that first passkey, the app can be
+// added later from Settings, the password alone never signs such an account in (a recovery code stands in for the
+// passkey), and its last passkey cannot be removed while there is no app. Reset authenticator on /admin takes an
+// account's passkeys too: a reset is for a lost or taken device.
 //
 // Discoverable credentials (residentKey required): at sign-in the browser offers the passkeys it holds for this site,
 // the server finds the account by the credential's id. Nothing at sign-in says whether an email has a passkey (the
@@ -166,9 +169,27 @@ async function register(req, account, { response, label } = {}) {
   await accounts.event("passkey_added", { account_id: account.id, login: account.login, ip: edge.clientIp(req), detail: { passkey: row.id, label: row.label, synced: row.backed_up } });
   return row;
 }
+// -> the removed row, null when there is no such passkey, or { last: true } when it is the only way in of a manager
+// with no app (1.3). The check and the removal are one transaction on the account's row, so two removals at once
+// cannot both pass it.
 async function remove(req, account, id) {
-  const r = (await q("UPDATE platform.account_passkeys SET removed_at=now() WHERE id=$1 AND account_id=$2 AND removed_at IS NULL RETURNING id, label", [Number(id), account.id])).rows[0];
+  const client = await require("./db").pool.connect();
+  let r = null;
+  try {
+    await client.query("BEGIN");
+    const a = (await client.query("SELECT role FROM platform.accounts WHERE id=$1 FOR UPDATE", [account.id])).rows[0];
+    if (a && a.role === "manager") {
+      const app = (await client.query("SELECT 1 FROM platform.account_factors WHERE account_id=$1 AND kind='totp' AND verified_at IS NOT NULL", [account.id])).rows.length > 0;
+      const live = (await client.query("SELECT count(*)::int AS n FROM platform.account_passkeys WHERE account_id=$1 AND removed_at IS NULL", [account.id])).rows[0].n;
+      const mine = (await client.query("SELECT 1 FROM platform.account_passkeys WHERE id=$1 AND account_id=$2 AND removed_at IS NULL", [Number(id), account.id])).rows.length > 0;
+      if (mine && !app && live <= 1) { await client.query("ROLLBACK"); return { last: true }; }
+    }
+    r = (await client.query("UPDATE platform.account_passkeys SET removed_at=now() WHERE id=$1 AND account_id=$2 AND removed_at IS NULL RETURNING id, label", [Number(id), account.id])).rows[0] || null;
+    await client.query("COMMIT");
+  } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
+  finally { client.release(); }
   if (!r) return null;
+  accounts.forget(account.id);
   await accounts.event("passkey_removed", { account_id: account.id, login: account.login, ip: edge.clientIp(req), detail: { passkey: r.id, label: r.label } });
   return r;
 }
@@ -237,12 +258,16 @@ router.post("/api/me/passkeys/options", json, guard(async (req, res) => {
 router.post("/api/me/passkeys", json, guard(async (req, res) => {
   if (!named(req, res)) return;
   const row = await register(req, req.sosAccount, req.body || {});
+  // a manager's first passkey with no app behind it is the account's first factor (1.3): the recovery codes, once
+  const codes = await accounts.passkeyEnrolled(req.sosAccount, edge.clientIp(req));
   res.set("Set-Cookie", hintCookie(req, rpId(req)));
-  res.json({ ok: true, passkey: row });
+  res.set("Cache-Control", "no-store").json({ ok: true, passkey: row, ...(codes ? { first_factor: true, recovery_codes: codes } : {}) });
 }));
 router.post("/api/me/passkeys/:id(\\d{1,9})/remove", json, guard(async (req, res) => {
   if (!named(req, res)) return;
+  // the only way in for a manager with no app: keep it until there is another (an app, or a second passkey)
   const gone = await remove(req, req.sosAccount, req.params.id);
+  if (gone && gone.last) return res.status(409).json({ error: "This passkey is how this account signs in. Set up the authenticator app or add another passkey first, then remove it." });
   if (!gone) return res.status(404).json({ error: "no such passkey on your account" });
   res.json({ ok: true });
 }));

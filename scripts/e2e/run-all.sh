@@ -13,11 +13,14 @@ export SOS_FLOOR_PASSWORD=floorpw SOS_MANAGER_PASSWORD=mgrpw SOS_ADMIN_PASSWORD=
 export SOS_FAKE_AGENT=1 SOS_FAKE_DELAY_MS=300 PORT=3999 SOS_AUTO_PROPOSE_PER_HOUR=500
 # the suites below press Fix themselves and count the rounds; the automatic loop (pipeline.autoFix) has its own suite
 export SOS_AUTO_FIX_ROUNDS=0
+# each service watches the other where alerts can go (src/uptime.js); the suites that stub ntfy are not about that
+export SOS_UPTIME_WATCH=0
 LOG=${SOS_E2E_LOG:-/tmp/sos-e2e}; mkdir -p "$LOG"
 QUICK=${1:-}
 
 fresh() { stop; su postgres -c "psql -qc 'DROP DATABASE IF EXISTS sos_e2e;' -c 'CREATE DATABASE sos_e2e OWNER sos;'" >/dev/null 2>&1; }
-stop() { for p in $(pgrep -f "node server.js"); do kill "$p" 2>/dev/null; done; sleep 1; }
+# a server lets its requests finish before it exits (src/restart.js), so wait until it has gone, not a fixed second
+stop() { for p in $(pgrep -f "node server.js"); do kill "$p" 2>/dev/null; done; for _ in $(seq 60); do pgrep -f "node server.js" >/dev/null || break; sleep 0.5; done; sleep 0.3; }
 start() {   # start "<extra env>"
   stop
   ( env $1 nohup node server.js > "$LOG/server.log" 2>&1 & )
@@ -122,6 +125,12 @@ run caps                   node scripts/e2e/caps.js
 # the launch audit 0.5, Brendan's call: alerts when spend climbs fast, never a limit
 fresh; start "SOS_BROWSER=off SOS_ALERT_MONTH_STEP_USD=25"
 run spendwatch             node scripts/e2e/spendwatch.js
+
+# the launch audit, Phase 1 on the server side: one new-tool request at a time, what a restart leaves, the fence, the
+# phone alerts, a hung tool process, trials off a demo's credit, a demo's diagrams when asked, a demo's stopped builds
+fresh; start "SOS_BROWSER=off"
+run phase1                 node scripts/e2e/phase1.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run phase1-browser node scripts/e2e/phase1-browser.js; }
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

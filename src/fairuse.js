@@ -52,10 +52,10 @@ async function spendIn(company, from, to) {
         UNION ALL SELECT created_at, cost_usd FROM platform.reviews WHERE company=$1 AND created_at >= $2 AND created_at < $3
         UNION ALL SELECT (brand->>'built_at')::timestamptz, (brand->>'cost_usd')::numeric FROM platform.companies
                    WHERE slug=$1 AND brand IS NOT NULL AND brand->>'built_at' IS NOT NULL AND (brand->>'built_at')::timestamptz >= $2 AND (brand->>'built_at')::timestamptz < $3
-        UNION ALL SELECT created_at, cost_usd FROM platform.ai_usage WHERE company=$1 AND created_at >= $2 AND created_at < $3
+        UNION ALL SELECT created_at, cost_usd FROM platform.ai_usage WHERE company=$1 AND created_at >= $2 AND created_at < $3 AND kind IS DISTINCT FROM 'assess'
         UNION ALL SELECT created_at, cost_usd FROM platform.diagrams WHERE company=$1 AND created_at >= $2 AND created_at < $3
       ) x GROUP BY 1),
-    meter AS (SELECT date_trunc('day', at) AS d, SUM(cost_usd) AS usd FROM platform.ai_calls WHERE company=$1 AND at >= $2 AND at < $3 GROUP BY 1)
+    meter AS (SELECT date_trunc('day', at) AS d, SUM(cost_usd) AS usd FROM platform.ai_calls WHERE company=$1 AND at >= $2 AND at < $3 AND kind NOT LIKE 'assess:%' GROUP BY 1)
     SELECT COALESCE(SUM(GREATEST(COALESCE(f.usd, 0), COALESCE(m.usd, 0))), 0) AS usd FROM feat f FULL OUTER JOIN meter m ON m.d = f.d`,
   [company, from, to])).rows[0];
   return Number(r.usd || 0);

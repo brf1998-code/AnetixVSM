@@ -346,8 +346,11 @@ function middleware(req, res, next) {
 }
 // All a manager account may reach before its authenticator is set up: its company's enrollment page, who-am-I, the
 // two setup calls, and the way out.
+// The two passkey calls are here since 2026-09-27 (the launch audit 1.3): a manager may set up a passkey as the first
+// factor, and src/passkeys.js hands back the recovery codes when it is the account's first.
 function managerEnrollPath(p, company) {
-  return p === "/logout" || p === `/c/${company}/enroll` || p === `/api/c/${company}/me` || p === `/api/c/${company}/me/enroll/start` || p === `/api/c/${company}/me/enroll/verify`;
+  return p === "/logout" || p === `/c/${company}/enroll` || p === `/api/c/${company}/me` || p === `/api/c/${company}/me/enroll/start` || p === `/api/c/${company}/me/enroll/verify`
+    || p === "/api/me/passkeys/options" || p === "/api/me/passkeys";
 }
 // All an admin account may reach before its authenticator is set up: the admin page (which shows the setup and
 // nothing else), who-am-I, and the two setup calls.
@@ -463,12 +466,15 @@ async function loginHandler(req, res) {
       const r = await accounts.signIn({ login: name, password, code, ip, device: parseCookies(req)[devices.COOKIE], remember: Boolean(remember), ua: req.headers["user-agent"] });
       if (r.need_code && !r.error) {
         if (r.clear_device) res.set("Set-Cookie", devices.clearHeader(req));   // an expired row or a moved generation: the cookie is dead weight
+        // passkey_first (the launch audit 1.3): a manager whose second step is a passkey, not an app; the page asks for a
+        // recovery code instead of the app's, and offers no "remember this computer" for it
+        if (r.passkey_first) return res.json({ need_code: true, passkey_first: true });
         return res.json({ need_code: true, remember_days: devices.DAYS });   // the page's "remember this computer" box names the days
       }
       if (!r.ok) {
         noteLoginFail(ip);
         if (r.retry_after) res.set("Retry-After", String(r.retry_after));
-        return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code) });
+        return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code), ...(r.passkey_first ? { passkey_first: true } : {}) });
       }
       loginFails.delete(ip);
       const extra = r.device ? [devices.cookieHeader(req, `${r.device.id}.${r.device.token}`, devices.DAYS * 86400)] : [];

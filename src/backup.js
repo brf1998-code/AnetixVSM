@@ -24,6 +24,7 @@ const PLATFORM_TABLES = [
   "test_floors",   // the test floor's switch state and data set (src/testfloor.js); its tst_ tables are a copy and are rebuilt at boot, never dumped
   "access_pins", "self_serve", "credit_ledger",   // self-serve companies from anetix.ai: the pins, who came in, every dollar of credit (src/selfserve.js)
   "demo_requests",  // who asked for a demo on anetix.ai, and the pin made for them (src/demorequests.js)
+  "demo_stops",     // a demo's builds that stopped before a preview, and what was done about each (src/demostops.js)
   "sample_fills",   // a demo's sample data: what each fill put in, so Clear still takes out exactly those rows after a restore (src/sample.js)
   "price_books", "sites", "orders", "terms_versions",   // paid sites: the price book's versions, the pipeline (src/sites.js), the orders and the terms as signed (src/golive.js)
   "acceptances", "notices", "billing_events",   // stage 3: every acceptance of the Terms (src/agreements.js), the managers' notices (src/notices.js), Stripe's events as applied (src/activate.js)

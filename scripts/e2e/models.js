@@ -27,22 +27,25 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   t("a variable that no longer picks a model is named", m.retired_env.includes("SOS_MODEL_PROPOSE"), m.retired_env);
   t("a manager cannot read or set the instance's models", (await mgr.get("/api/admin/models")).status === 403 && (await mgr.post("/api/admin/models", { baseline: O })).status === 403);
   t("the baseline must be one of the two", (await admin.post("/api/admin/models", { baseline: "claude-sonnet-5" })).status === 400);
-  const ag = (await mgr.get("/api/c/demo/agents")).json.models;
+  t("the agent settings are Anetix's: a manager gets 403 on the page's routes (the launch audit 1.18)", (await mgr.get("/api/c/demo/agents")).status === 403 && (await mgr.post("/api/c/demo/agents/models", { build: O })).status === 403 && (await mgr.post("/api/c/demo/agents/docs", { name: "X.md", content: "x" })).status === 403);
+  const sv = (await mgr.get("/api/c/demo/settings-view")).json;
+  t("the manager's Settings route has the company's switches and tools and names no model", sv.company && sv.company.slug === "demo" && Array.isArray(sv.modules) && !/claude|fable|opus|sonnet|haiku|principles/i.test(JSON.stringify(sv)), sv);
+  const ag = (await admin.get("/api/c/demo/agents")).json.models;
   t("the company's agent settings offer the two, pin nothing, and follow Fable", ag.list.length === 2 && Object.values(ag.pins).every((x) => x === null) && ag.propose === F && ag.defaults.build === F, ag);
   t("the checks page replays on the review model by default", (await mgr.get("/api/c/demo/checks")).json.review_model === F);
   t("the short text jobs run on Sonnet 5, and the page offers Sonnet 5, Haiku 4.5 and the two", m.settings.summary === "claude-sonnet-5" && m.summary_choices.map((x) => x.id).join() === `claude-sonnet-5,claude-haiku-4-5-20251001,${F},${O}`, m.summary_choices);
   t("but not a retired model", (await admin.post("/api/admin/models", { summary: "claude-opus-5" })).status === 400);
 
   // ---- a company pin, and the admin unpinning it
-  t("a company may pin a job to one of the two", (await mgr.post("/api/c/demo/agents/models", { propose: "", build: O, review: "" })).status === 200);
-  t("but not to a retired model", (await mgr.post("/api/c/demo/agents/models", { propose: "claude-sonnet-5" })).status === 400);
-  const ag2 = (await mgr.get("/api/c/demo/agents")).json.models;
+  t("the admin may pin a company's job to one of the two", (await admin.post("/api/c/demo/agents/models", { propose: "", build: O, review: "" })).status === 200);
+  t("but not to a retired model", (await admin.post("/api/c/demo/agents/models", { propose: "claude-sonnet-5" })).status === 400);
+  const ag2 = (await admin.get("/api/c/demo/agents")).json.models;
   t("the pin shows as the company's own, the rest still follow", ag2.pins.build === O && ag2.pins.propose === null && ag2.build === O && ag2.propose === F, ag2);
   m = await models();
   t("the admin sees which company pins what", m.pins.length === 1 && m.pins[0].slug === "demo" && m.pins[0].pins.build === O, m.pins);
   const ov = (await admin.get("/api/admin/overview")).json;
   t("the company card says what is pinned", ov.companies.find((c) => c.slug === "demo").models.pinned.join() === "build" && ov.modelSettings.baseline === F && ov.defaults.design === F);
-  t("the admin puts the company back on the platform's models", (await admin.post("/api/admin/models/unpin", { slug: "demo" })).status === 200 && (await mgr.get("/api/c/demo/agents")).json.models.pins.build === null);
+  t("the admin puts the company back on the platform's models", (await admin.post("/api/admin/models/unpin", { slug: "demo" })).status === 200 && (await admin.get("/api/c/demo/agents")).json.models.pins.build === null);
 
   // ---- the baseline moves every job; a job of its own moves one
   t("the baseline can be moved to Opus 5.5", (await admin.post("/api/admin/models", { baseline: O })).json.defaults.propose === O);
@@ -91,7 +94,7 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   await mgr.post(`/api/runs/${rxId}/deploy`);
   await waitFor("the functionality change live", async () => (await runOf(rxId)).status === "deployed");
   // a pinned job stays out of the A/B
-  await mgr.post("/api/c/demo/agents/models", { build: F });
+  await admin.post("/api/c/demo/agents/models", { build: F });
   const pinnedRun = await ship(mgr, [ids[2]]);
   const rp = await runOf(pinnedRun.runId);
   t("a company that pins the build model keeps it, off the A/B", rp.model === F && !(rp.evidence && rp.evidence.ab), rp.evidence);

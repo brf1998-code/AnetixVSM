@@ -225,8 +225,8 @@ async function startBuild(intake) {
     `INSERT INTO platform.proposals (feedback_id, body, class, target_file, rationale, status, model) VALUES ($1,$2,'functionality',NULL,'Module creation from a confirmed design','approved',$3) RETURNING id`,
     [intake.feedback_id, String(design.bluf || `Build ${title}`).slice(0, 2000), model])).rows[0];
   const run = (await q(
-    `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, to_version, lane, step, status, model, requirement, evidence)
-     VALUES ($1,$2,$3,$4,NULL,1,'module','build','running',$5,$6,$7) RETURNING *`,
+    `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, to_version, lane, step, status, model, requirement, evidence, fence)
+     VALUES ($1,$2,$3,$4,NULL,1,'module','build','running',$5,$6,$7,${Number(require("./pipeline").FENCE)}) RETURNING *`,
     [p.id, [p.id], company, slug, model, design.reference_md || design.bluf || "", JSON.stringify({ intake_id: intake.id, module_title: title, design_bluf: design.bluf, title: `First version of ${title}`, estimate_usd: design.estimate_usd, seed_rows: startingRows.length, ...(walled ? { walled: true, sheet_id: sheet ? sheet.id : null } : {}) })])).rows[0];
   await q("UPDATE platform.feedback SET status='in_progress', updated_at=now() WHERE id=$1", [intake.feedback_id]);
   await q("UPDATE platform.module_intakes SET status='building', run_ids=array_append(COALESCE(run_ids, '{}'), $2), updated_at=now() WHERE id=$1", [intake.id, run.id]);

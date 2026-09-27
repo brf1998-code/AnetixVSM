@@ -67,6 +67,8 @@ function classify(err) {
   if (err && err.type === "entity.parse.failed") return { status: 400, error: "That request's body is not valid JSON." };
   if (err instanceof URIError) return { status: 400, error: "That address has a broken % code in it." };
   if (err && err.type === "entity.too.large") return { status: 413, error: "That is too large to send in one go." };
+  // a build a newer process took over at a push (src/pipeline.js FENCE): this older process is on its way out
+  if (err && err.fenced) return { status: 503, error: "Anetix is restarting. Try that again in a moment." };
   if (status >= 400 && status < 500) return { status, error: err.expose !== false && err.message ? String(err.message).slice(0, 300) : "That request was not right." };
   if (err && BAD_VALUE.has(err.code)) return { status: 400, error: "Something in that request is not a valid value (an id that is not a number, say)." };
   return { status: 500, error: `Something went wrong on our side. Try again, and if it keeps happening write to ${CONTACT}.` };
@@ -75,7 +77,7 @@ function classify(err) {
 function handler(err, req, res, next) {
   const c = classify(err);
   const where = `${req.method} ${shape(req)}`;
-  if (c.status >= 500) {
+  if (c.status >= 500 && !(err && err.fenced)) {
     console.error(`[error] ${where} -> 500: ${err && err.stack ? err.stack.split("\n").slice(0, 4).join(" | ") : String(err)}`);
     alert(`${where} answered 500 (${kind(err)}).`);
   } else {

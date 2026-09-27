@@ -1,4 +1,11 @@
-// Alerts to Anetix's own phones (the launch audit, C11, 2026-09-27; the 1.15 alerts will reuse it). Brendan chose push
+// Alerts to Anetix's own phones (the launch audit, C11, 2026-09-27). What sends one (1.15 and before):
+//   a product error or a stray exception (src/errors.js), AI spend climbing fast (src/spendwatch.js), a cap reached
+//   (src/agent.js), a signed order and a card declined at Activate (src/golive.js, src/activate.js), billing
+//   (src/billing.js), a demo request and a new demo (src/demorequests.js, src/selfserve.js), refused pins
+//   (src/selfserve.js), an account locked (src/accounts.js), a demo's build stopped before a preview
+//   (src/demostops.js), the AI service refusing (src/credit.js), a request to Anetix (src/feedback.js), a tool process
+//   restarted after it kept timing out (src/runner.js), anetix.ai not answering (src/uptime.js). anetix.ai sends its
+//   own for a Stripe event it could not apply and for this product not answering (www/notify.js, www/uptime.js). Brendan chose push
 // through ntfy: the free ntfy app on his and Taylor's phones, both subscribed to one private topic. Nothing here reaches a
 // customer.
 //
@@ -45,6 +52,18 @@ function notify(title, message, opts = {}) {
   return send(body).then(() => true, (e) => { console.error(`[notify] "${body.title}" was not sent: ${e.message}`); return false; });
 }
 const configured = () => Boolean(TOPIC());
+// One kind of alert at most once per gap (per key, in this process); the ones held back are counted into the next.
+// For the alerts that can come in bursts (the launch audit 1.15): refused pins, locked accounts, requests to Anetix,
+// the AI service refusing.
+const lastBy = new Map();
+function notifyEvery(key, gapMs, title, message, opts = {}) {
+  const now = Date.now(), was = lastBy.get(key);
+  if (was && now - was.at < gapMs) { was.held++; return Promise.resolve(false); }
+  const held = was ? was.held : 0;
+  lastBy.set(key, { at: now, held: 0 });
+  if (lastBy.size > 2000) for (const [k, v] of lastBy) if (now - v.at > 24 * 3600e3) lastBy.delete(k);
+  return notify(title, held ? `${message} (${held} more like it since the last alert.)` : message, opts);
+}
 
 const router = express.Router();
 router.post("/api/admin/notify/test", (req, res, next) => require("./auth").requireAdmin(req, res, next), async (req, res) => {
@@ -56,4 +75,4 @@ router.get("/api/admin/notify", (req, res, next) => require("./auth").requireAdm
 // the spend watch now, not in ten minutes (src/spendwatch.js): what it sent
 router.post("/api/admin/notify/spend-check", (req, res, next) => require("./auth").requireAdmin(req, res, next), async (_req, res) => res.json({ ok: true, sent: await require("./spendwatch").check() }));
 
-module.exports = { notify, payload, configured, router, _sent: sent };
+module.exports = { notify, notifyEvery, payload, configured, router, _sent: sent, _reset: () => lastBy.clear() };

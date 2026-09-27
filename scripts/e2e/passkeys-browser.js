@@ -45,7 +45,7 @@ const code = async (secret) => {
   const li = await page.request.post(SOS + "/login", { data: { name: EMAIL, password: PASSWORD } });
   t("the manager signs in with the password (no app yet: straight to setup)", li.ok() && (await li.json()).enroll === true);
   const noKeyYet = await page.request.post(SOS + "/api/me/passkeys/options", { data: {} });
-  t("before the app is set up, no passkey can be added", noKeyYet.status() === 403);
+  t("before the app is set up, a passkey may be the first factor (the launch audit 1.3)", noKeyYet.ok(), await noKeyYet.text());
   const es = await (await page.request.post(`${SOS}/api/c/${SLUG}/me/enroll/start`, { data: {} })).json();
   const ev = await page.request.post(`${SOS}/api/c/${SLUG}/me/enroll/verify`, { data: { code: await code(es.secret) } });
   t("the app is set up", ev.ok());
@@ -125,6 +125,76 @@ const code = async (secret) => {
   const floor = await browser.newContext();
   await floor.request.post(SOS + "/login", { data: { password: process.env.SOS_FLOOR_PASSWORD || "floorpw", company: "demo" } });
   t("a shared-password session has no passkeys to add", (await floor.request.post(SOS + "/api/me/passkeys/options", { data: {} })).status() === 400);
+
+  // ---- passkey first on a phone (the launch audit 1.3, Brendan 2026-09-27: "Passkey first on phones"): the manager turns
+  // on the phone's screen lock for Anetix, gets the recovery codes, and never sets up an authenticator app
+  const EMAIL2 = "jo@harbor.test", PASSWORD2 = "harbor-pine-3302-lathe";
+  const pin2 = (await (await admin.request.post(SOS + "/api/admin/pins", { data: { label: "Jo", email: EMAIL2, max_uses: 1, days: 30 } })).json()).pin.shown;
+  const made2 = await (await fetch(SOS + "/api/www/companies", { method: "POST", headers: { "Content-Type": "application/json", "X-SOS-WWW-Key": KEY }, body: JSON.stringify({ pin: pin2, email: EMAIL2, name: "Harbor Lathe", contact: "Jo", ref: "demo:" + pin2, paid_usd: 0, credit_usd: 10, password: PASSWORD2, demo: true }) })).json();
+  const SLUG2 = made2.company && made2.company.slug;
+  t("a second demo for the phone", Boolean(SLUG2), made2);
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, userAgent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36" });
+  const pp = await phone.newPage(); pp.on("pageerror", (e) => errors.push("phone: " + e.message));
+  const cdp2 = await phone.newCDPSession(pp); await cdp2.send("WebAuthn.enable");
+  const auth2 = (await cdp2.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } })).authenticatorId;
+  const li2 = await pp.request.post(SOS + "/login", { data: { name: EMAIL2, password: PASSWORD2 } });
+  t("the phone's first sign-in goes to setup", li2.ok() && (await li2.json()).enroll === true);
+  await pp.goto(`${SOS}/c/${SLUG2}/enroll`); await pp.waitForSelector("#pkfirst", { timeout: 8000 }).catch(() => {});
+  const setup = await pp.locator("#card").innerText();
+  t("on a phone, setup offers the screen lock first and the app as the other way", await pp.isVisible("#pkfirst") && /Use an authenticator app instead/.test(setup), setup);
+  await pp.click("#pkfirst");
+  await pp.waitForSelector(".codes div", { timeout: 10000 }).catch(() => {});
+  const shown = await pp.locator(".codes div").allInnerTexts();
+  t("one tap makes the passkey and shows ten recovery codes", shown.length === 10 && shown.every((c) => /^[a-z2-9]{4}(-[a-z2-9]{4}){3}$/.test(c)), shown);
+  t("the device holds the passkey", (await cdp2.send("WebAuthn.getCredentials", { authenticatorId: auth2 })).credentials.length === 1);
+  await Promise.all([pp.waitForURL(new RegExp(`^${SOS}/c/${SLUG2}/$`), { timeout: 10000 }), pp.click("#saved")]);
+  const me2 = await (await pp.request.get(`${SOS}/api/c/${SLUG2}/me`)).json();
+  t("the account is set up with the passkey and no app", me2.enroll_required === false && me2.me.app === false && me2.me.passkeys === 1, me2.me);
+  const ev2 = (await q("SELECT event, detail FROM platform.auth_events WHERE login=$1 AND event='enrolled' ORDER BY id DESC LIMIT 1", [EMAIL2])).rows[0];
+  t("the sign-in log says it was set up with a passkey", ev2 && ev2.detail && ev2.detail.factor === "passkey", ev2);
+  const only = (await (await pp.request.get(SOS + "/api/me/passkeys")).json()).passkeys;
+  const rmOnly = await pp.request.post(`${SOS}/api/me/passkeys/${only[0].id}/remove`, { data: {} });
+  t("the only passkey of an account with no app cannot be removed", rmOnly.status() === 409, await rmOnly.text());
+  await pp.goto(`${SOS}/c/${SLUG2}/settings`); await pp.waitForSelector("#app-line", { timeout: 8000 }).catch(() => {});
+  t("Settings offers to add the app as a second way in", /Add the app/.test(await pp.locator("#app-line").innerText().catch(() => "")));
+  // the password alone is not enough: a recovery code stands in for the passkey
+  await pp.goto(`${SOS}/logout`);
+  const pwOnly = await (await pp.request.post(SOS + "/login", { data: { name: EMAIL2, password: PASSWORD2 } })).json();
+  t("password right, no passkey: the sign-in asks for a recovery code", pwOnly.need_code === true && pwOnly.passkey_first === true && !pwOnly.enroll, pwOnly);
+  const wrong = await pp.request.post(SOS + "/login", { data: { name: EMAIL2, password: PASSWORD2, code: "aaaa-bbbb-cccc-dddd" } });
+  t("a wrong recovery code is refused, in words that point at the passkey", wrong.status() === 401 && /signs in with its passkey/.test(await wrong.text()));
+  await phone.addInitScript(() => { if (window.PublicKeyCredential) PublicKeyCredential.isConditionalMediationAvailable = async () => false; });   // no autofill: the passkey would sign in by itself
+  await pp.goto(`${SOS}/login?account=${encodeURIComponent(EMAIL2)}`); await pp.waitForTimeout(500);
+  if (await pp.isVisible("#pwlink")) await pp.click("#pwlink");
+  await pp.fill("#pw", PASSWORD2); await pp.click("#f button[type=submit]"); await pp.waitForTimeout(800);
+  t("the sign-in page shows the recovery box with the passkey hint, not the app's", await pp.isVisible("#codebox") && /signs in with its passkey/.test(await pp.textContent("#codehint")) && !(await pp.isVisible("#userec")));
+  await pp.fill("#code", shown[3]);
+  await Promise.all([pp.waitForURL(new RegExp(`^${SOS}/c/${SLUG2}/`), { timeout: 10000 }), pp.click("#f button[type=submit]")]);
+  t("and a saved recovery code signs in", pp.url().startsWith(`${SOS}/c/${SLUG2}/`));
+  const reuse = await (await browser.newContext()).request.post(SOS + "/login", { data: { name: EMAIL2, password: PASSWORD2, code: shown[3] } });
+  t("each recovery code works once", reuse.status() === 401);
+  await pp.goto(`${SOS}/logout`);
+  await pp.goto(`${SOS}/login?account=${encodeURIComponent(EMAIL2)}`); await pp.waitForTimeout(500);
+  await Promise.all([pp.waitForURL(new RegExp(`^${SOS}/c/${SLUG2}/`), { timeout: 10000 }), pp.click("#pk")]);
+  t("and the passkey alone signs in on the phone", pp.url().startsWith(`${SOS}/c/${SLUG2}/`));
+  // the wall at anetix.ai, the same way
+  await pp.goto(`${SOS}/logout`);
+  await pp.goto(`${WWW}/#signin`); await pp.waitForTimeout(600);
+  if (await pp.isVisible("#pwlink")) await pp.click("#pwlink");
+  await pp.fill("#nm", EMAIL2); await pp.fill("#pw", PASSWORD2); await pp.click("#go"); await pp.waitForTimeout(1000);
+  t("the wall asks a passkey-first account for a recovery code, with the passkey hint", await pp.isVisible("#codebox") && /signs in with its passkey/.test(await pp.textContent("#codehint")) && !(await pp.isVisible("#userec")), await pp.textContent("#codehint").catch(() => ""));
+  await pp.fill("#code", shown[5]);
+  await Promise.all([pp.waitForURL(new RegExp(`^${SOS}/c/${SLUG2}/`), { timeout: 10000 }), pp.click("#go")]);
+  t("and a recovery code signs in from the wall", pp.url().startsWith(`${SOS}/c/${SLUG2}/`));
+  // Settings, Your sign-in (the launch audit 1.10): the manager changes their own password
+  await pp.goto(`${SOS}/c/${SLUG2}/settings`); await pp.waitForSelector("#pw-form", { timeout: 8000 });
+  const NEWPW = "harbor-pine-4410-mill";
+  await pp.fill("#pw-cur", PASSWORD2); await pp.fill("#pw-new", NEWPW); await pp.fill("#pw-new2", NEWPW);
+  await Promise.all([pp.waitForURL(/\/login\?account=/, { timeout: 10000 }), pp.click("#pw-form button[type=submit]")]);
+  const oldPw = await (await browser.newContext()).request.post(SOS + "/login", { data: { name: EMAIL2, password: PASSWORD2 } });
+  const newPw = await (await (await browser.newContext()).request.post(SOS + "/login", { data: { name: EMAIL2, password: NEWPW } })).json();
+  t("Settings changes the manager's own password and signs them out to the sign-in", oldPw.status() === 401 && newPw.need_code === true && newPw.passkey_first === true, newPw);
+
   t("no script errors on any page", errors.length === 0, errors);
   await browser.close();
   R.done();

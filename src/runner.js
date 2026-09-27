@@ -57,7 +57,7 @@ const path = require("path");
 const http = require("http");
 const crypto = require("crypto");
 const { fork, spawnSync } = require("child_process");
-const { q } = require("./db");
+const { q, logEvent } = require("./db");
 const dbroles = require("./dbroles");
 
 const MODE = ["auto", "process", "inline"].includes(String(process.env.SOS_MODULE_RUNNER || "auto").toLowerCase()) ? String(process.env.SOS_MODULE_RUNNER || "auto").toLowerCase() : "auto";
@@ -321,7 +321,34 @@ function call(rec, { method = "GET", url, headers = {}, body, timeoutMs }) {
 // A request answered 'too slow': is the process still there at all? If not, it is stuck in a loop; end it (it comes back by itself).
 async function checkAlive(rec) {
   try { await call(rec, { url: "/__ping", timeoutMs: 2000 }); }
-  catch (e) { console.error(`[runner] the ${rec.lane} process of ${rec.company} does not answer; ending it`); kill(rec); }
+  catch (e) { console.error(`[runner] the ${rec.lane} process of ${rec.company} does not answer; ending it`); restartHung(rec, "it stopped answering at all"); }
+}
+// A process that still answers its ping while its requests keep running out of time (a promise that never settles, a
+// database connection it never gave back) was left alone until 2026-09-27: every request to that company's tools
+// timed out until the next push (the launch audit 1.16). Each timeout is logged and an event. The process is restarted
+// (it comes back by itself, onExit) and Anetix's phones hear about it when, inside HANG_WINDOW_MS, HANG_LIMIT requests
+// on two or more different routes ran out of time (the process is stuck, not one slow report), or HANG_LIMIT + 2 on
+// the same one (whatever that route waits on is not coming back).
+const HANG_LIMIT = Math.max(2, Number(process.env.SOS_MODULE_HANG_LIMIT || 3));
+const HANG_WINDOW_MS = 5 * 60 * 1000;
+function timedOut(rec, mod, req) {
+  const now = Date.now();
+  const where = `${req.method} /${mod}${String(req.url || "").split("?")[0].replace(/\/\d+(?=\/|$)/g, "/:n").slice(0, 100)}`;
+  rec.timeouts = (rec.timeouts || []).filter((x) => now - x.at < HANG_WINDOW_MS).concat({ at: now, where });
+  console.error(`[runner] ${rec.company} ${rec.lane}: ${where} took longer than ${Math.round(REQUEST_TIMEOUT_MS / 1000)} s (${rec.timeouts.length} in ${HANG_WINDOW_MS / 60000} min)`);
+  logEvent("tool_timeout", `${rec.company}/${mod}`, { lane: rec.lane, where, count: rec.timeouts.length }).catch(() => {});
+  const routes = new Set(rec.timeouts.map((x) => x.where)).size;
+  if (rec.timeouts.length >= HANG_LIMIT && (routes >= 2 || rec.timeouts.length >= HANG_LIMIT + 2)) restartHung(rec, `${rec.timeouts.length} requests on ${routes} route${routes === 1 ? "" : "s"} ran out of time in ${HANG_WINDOW_MS / 60000} minutes`);
+  else checkAlive(rec);
+}
+function restartHung(rec, why) {
+  if (rec.dead || rec.stopping) return;
+  rec.timeouts = [];
+  console.error(`[runner] restarting the ${rec.lane} process of ${rec.company}: ${why}`);
+  logEvent("tool_restarted", `${rec.company}/${rec.lane}`, { why, tools: [...rec.loaded.keys()] }).catch(() => {});
+  if (rec.lane !== "staged") require("./notify").notifyEvery(`tool_restart:${rec.company}/${rec.lane}`, 30 * 60e3, "A tool process was restarted",
+    `The ${rec.lane === "live" ? "live" : rec.lane} tools of ${rec.company} (${[...rec.loaded.keys()].join(", ") || "none loaded"}) were restarted: ${why}. Worth a look at the Railway log for which request hangs.`, { priority: 4, tags: ["hourglass"] });
+  kill(rec);
 }
 // The request has already passed sign-in, the company guard and the page policy (registry.attach).
 function proxy(req, res, { company, lane, mod }) {
@@ -340,7 +367,7 @@ function proxy(req, res, { company, lane, mod }) {
   });
   out.on("timeout", () => { out.destroy(Object.assign(new Error("timeout"), { timeout: true })); });
   out.on("error", (e) => {
-    if (e.timeout) { plain(res, 504, "This tool took too long to answer."); checkAlive(rec); }
+    if (e.timeout) { plain(res, 504, "This tool took too long to answer."); timedOut(rec, mod, req); }
     else plain(res, 503, "This tool is starting up again. Try again in a moment.", { "Retry-After": "2" });
   });
   res.on("close", () => { if (!res.writableEnded) out.destroy(); });
@@ -407,4 +434,4 @@ async function deleteCompany(company) {
   await dbroles.dropCompany(company);
 }
 
-module.exports = { init, selfTest, enabled, state, MODE, userFor, load, unload, stop, stopAll, proxy, call, probe, status, deleteCompany, identityHeaders, forwardHeaders, answerHeaders, permissionFlags, children, REQUEST_TIMEOUT_MS, LOAD_TIMEOUT_MS };
+module.exports = { init, selfTest, enabled, state, MODE, userFor, load, unload, stop, stopAll, proxy, call, probe, status, deleteCompany, timedOut, HANG_LIMIT, identityHeaders, forwardHeaders, answerHeaders, permissionFlags, children, REQUEST_TIMEOUT_MS, LOAD_TIMEOUT_MS };

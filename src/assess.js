@@ -20,8 +20,10 @@
 //    (changes that shipped, built again from the same version in a scratch
 //    folder: the costly kind). Trials run one at a time in the background and
 //    the two models take turns going first. Spend is ai_usage kind "assess",
-//    so the company budgets, the instance cap and the credit slope all see it,
-//    and an assessment stops at its own budget.
+//    filed under the company whose work it was: the instance cap and the credit
+//    slope see it, a company's credit, its own budget and its fair-use line do
+//    not (the launch audit 1.17, 2026-09-27: a demo was paying for Anetix's
+//    trials), and an assessment stops at its own budget.
 //
 // 2. The live A/B (the switch in src/agent.js settings, the arms in
 //    platform.model_arms): new proposals, builds and module intakes split
@@ -249,8 +251,9 @@ async function runTrial(t) {
   await q("UPDATE platform.assessment_trials SET status='running' WHERE id=$1", [t.id]);
   const t0 = Date.now();
   try {
-    await agent.assertUnderCap(t.company);
-    const out = await TRIALS[t.kind](t);
+    // the instance cap only: a trial is Anetix's spend, never the company's credit or its own budget (the launch audit 1.17)
+    await agent.assertUnderCap(null);
+    const out = await agent.withMeterTag("assess", () => TRIALS[t.kind](t));   // the meter files it as the trial it is (1.17)
     await q("UPDATE platform.assessment_trials SET status='done', output=$2, score=$3, cost_usd=$4, ms=$5, finished_at=now() WHERE id=$1",
       [t.id, JSON.stringify(out.output || {}), JSON.stringify(out.score || {}), Number(out.costUsd || 0), Date.now() - t0]);
     await spend(t, out.costUsd);

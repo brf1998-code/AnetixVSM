@@ -97,6 +97,13 @@
   .paid .pw { font:700 20px ui-monospace,Menlo,monospace; letter-spacing:.04em; background:var(--fog, #f4f6f8); border-radius:8px; padding:8px 12px; margin:8px 0 4px; display:inline-block; }
   .paid .err { color:var(--red); margin:6px 0 0; }
   .approvenote { font-size:12px; color:var(--steel); margin:6px 0 0; }
+  /* a board with no tools yet: what to do first (the launch audit 1.4) */
+  .firsttool { background:#fff; border:2px solid var(--teal); border-radius:12px; padding:16px 18px; margin:0 0 14px; display:flex; gap:12px 18px; align-items:center; flex-wrap:wrap; }
+  .firsttool b { font-size:17px; } .firsttool p { margin:4px 0 0; color:var(--steel); font-size:14px; line-height:1.5; max-width:640px; } .firsttool .grow { flex:1; min-width:240px; }
+  .firsttool button.big { font-size:15px; padding:12px 20px; margin:0; min-height:46px; }
+  /* the phone: the Feedback button sits in the band instead of floating over the cards (the launch audit 1.9) */
+  #fbdock:empty { display:none; }
+  @media (max-width: 640px) { #fbdock { margin-left:auto; } }
   .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; align-items:start; }
   @media (max-width: 1100px) { .cols { grid-template-columns:repeat(2,1fr); } }
   @media (max-width: 640px) { .cols { grid-template-columns:1fr; } .band, .wrap { padding-left:14px; padding-right:14px; } }
@@ -244,15 +251,18 @@
       <h1><img class="mark" id="comark" alt="">Improvement Board <small id="coname"></small></h1>
       <span id="global-busy"><span class="spin"></span><span id="global-busy-text">working</span></span>
       <span class="right" id="who"></span>
+      <span id="fbdock"></span>
     </div>
     <div class="inner modstrip" id="modules"></div>
   </div>
   <div class="wrap">
+    <div class="warn" id="reconnect" style="display:none" role="status">Anetix is restarting or the connection dropped. This board reconnects by itself in a moment.</div>
     <div class="warn" id="aiwarn" style="display:none"></div>
     <div class="pknudge" id="pknudge" style="display:none"></div>
     <div class="creditline" id="creditline" style="display:none"></div>
     <div class="goliveline" id="goliveline" style="display:none"></div>
     <div id="paidbox"></div>
+    <div id="firsttool"></div>
     <div id="vpanel"></div>
     <div id="reviews"></div>
     <div class="coltabs" id="coltabs" aria-label="Which column to show"></div>
@@ -264,7 +274,7 @@
     </div>
     <details class="platform" id="platform-wrap">
       <summary>Requests to Anetix <span class="n" id="n-platform">0</span></summary>
-      <div class="hint">Feedback about this board, the settings pages or the software itself (not a module). These do not go through the AI: they go to Brendan at Anetix, who makes the software, and each one says where it is. The person who sent it sees the same under My requests on the feedback button.</div>
+      <div class="hint">Feedback about this board, the settings pages or the software itself (not one of your tools). These do not go through the AI: they go to Brendan at Anetix, who makes the software, and each one says where it is. The person who sent it sees the same under My requests on the feedback button.</div>
       <div class="grid" id="col-platform"></div>
     </details>
   </div>
@@ -277,9 +287,11 @@ const LANES = {
 };
 const TILES_PER_COLUMN = 3;   // a column shows this many tiles, then "Show the other N"
 const EXPANDED = new Set();   // columns the person opened up (kept across the 4s reload)
+// plain words for the steps a build goes through (the launch audit 1.8: a first-time demo manager read "Cross-check
+// review" and "Manager deploy gate" as jargon)
 const STEP_LABEL = {
-  confirm_requirement: "Confirm requirement", build: "Agent build", cross_check: "Cross-check review",
-  visual_check: "Visual check", test_run: "Internal tests", campaign: "Test campaign", await_deploy: "Manager deploy gate",
+  confirm_requirement: "You confirm what it should do", build: "Building it", cross_check: "A second review of the work",
+  visual_check: "Checking the screens", test_run: "Testing it", campaign: "Trying it on the test floor", await_deploy: "Waiting for your OK to go live",
 };
 // the test campaign step (src/campaign.js) shows only on a build that has one: the company's test floor was on
 const hasCampaign = (run) => run.step === "campaign" || (run.evidence && (run.evidence.campaign_id || run.evidence.campaign));
@@ -297,9 +309,31 @@ const OPEN_MORE = new Set();    // cards whose "more" is open; kept across the 4
 const OPEN_FOLDS = new Set();   // every other fold on a card (the full requirement, what a check saw); kept across the 4 s redraw
 let MODOPEN = false;           // phone: the Modules list in the band is unfolded (kept across the 4 s redraw)
 let COLTAB = "new";            // phone: the one column showing
+let COLPICKED = false;         // phone: the person tapped a tab (until then the board opens the column that needs them)
 const COL_TITLE = { new: "Feedback", reviewing: "Reviewing", in_progress: "In progress", done: "Done" };
 function toggleModStrip() { MODOPEN = !MODOPEN; document.getElementById("modules").classList.toggle("open", MODOPEN); }
-function showCol(k) { COLTAB = k; applyColTab(); }
+function showCol(k) { COLTAB = k; COLPICKED = true; applyColTab(); }
+// The phone shows one column. Which one opens first (the launch audit 1.9: a demo manager's build waited at the gate in
+// In progress while the phone showed an empty Feedback column): the column holding what waits on this person, else the
+// first column with anything in it. That holds until they tap a tab; after a tap, only something new waiting on them
+// moves the view (once). Answers { col, key }: key names what waits on them, "" when nothing does.
+let LASTWAIT = null;
+function attentionCol(buckets, tiles) {
+  const has = (k) => (buckets[k] || []).length + ((tiles[k] || []).length);
+  if (MGR()) {
+    const waitsOnMe = (fb) => {
+      if (fb.kind === "module_request") { const it = (DATA.intakes || {})[fb.intake_id] || {}; if (["answering", "design", "confirmed", "failed"].includes(it.status)) return `i${fb.intake_id}:${it.status}`; }
+      const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
+      return run && (run.status === "waiting" || run.status === "failed") ? `r${run.id}:${run.step}:${run.status}` : "";
+    };
+    for (const k of ["in_progress", "reviewing", "new"]) {
+      const keys = (buckets[k] || []).map(waitsOnMe).concat((tiles[k] || []).map(t => ["waiting", "failed"].includes(t.run.status) ? `r${t.run.id}:${t.run.step}:${t.run.status}` : "")).filter(Boolean);
+      if (keys.length) return { col: k, key: keys.join(",") };
+    }
+    if (has("reviewing")) return { col: "reviewing", key: "" };
+  }
+  return { col: ["new", "in_progress", "reviewing", "done"].find(has) || "new", key: "" };
+}
 function applyColTab() {
   for (const k of ["new", "reviewing", "in_progress", "done"]) {
     document.querySelector(".col.c-" + k).classList.toggle("show", k === COLTAB);
@@ -492,6 +526,14 @@ async function act(url, body) {
 function readyTogether(mod) {
   return DATA.feedback.filter(f => f.module === mod && f.status === "reviewing" && f.proposal_id && !["waiting", "unavailable"].includes((f.proposal_data || {}).status));
 }
+// A manager's board with no tools yet: one card that says what to do first (the launch audit 1.4: a new demo opened on
+// four empty columns, and the way to start was a small "+ New module" in the band).
+function renderFirstTool() {
+  const el = document.getElementById("firsttool"); if (!el) return;
+  const open = (DATA.feedback || []).some(f => f.kind === "module_request" && !["declined", "done"].includes(f.status));
+  if (!MGR() || DATA.modules.length || open) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="firsttool" id="firsttool-card"><div class="grow"><b>Build your first tool</b><p>Say in plain words what your floor needs. You answer 12 questions about how the work runs, the AI designs the tool, and you check the design. Then it is built and tested, and you try it in a preview before it goes live.</p></div><button class="go big" onclick="Intake.start()">Build your first tool</button></div>`;
+}
 function renderTogether() {
   const box = document.getElementById("together");
   if (!MGR()) { box.innerHTML = ""; return; }
@@ -598,6 +640,8 @@ function failedHtml(run, cancelNote) {
   else if (ev.ai_unavailable) html += `<div class="fail-note" data-ai-down="${esc(ev.ai_unavailable)}">${ev.ai_unavailable === "busy" ? "The AI service was too busy to finish this. Nothing is wrong with your request and nothing reached the floor. Try again in a few minutes." : "The AI service was not available, so this stopped partway. Nothing is wrong with your request and nothing reached the floor. This is on Anetix's side to fix, not yours; try again later."}</div>`;
   else if (ev.checks && ev.checks.ok === false) html += checksStopHtml(run, ev.checks);
   else html += `<div class="fail-note">Stopped: ${esc(last ? last.note : "see log")}</div>`;
+  // a demo's build that stopped with nothing to show handed its spend back (src/demostops.js, the launch audit 1.20)
+  if (ev.refunded_usd > 0) html += `<div class="meta" data-refunded="1">What this build used was handed back to your AI credit, and Anetix has been told it stopped.</div>`;
   if (failedCheck && !platformStop) html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;
   if (ev.fix_round) html += `<div class="meta">The platform already sent the findings back to the agent ${ev.fix_round} time${ev.fix_round === 1 ? "" : "s"}; this is what it still could not get past.</div>`;
   if (!MGR()) return html;
@@ -757,12 +801,23 @@ function notRight(runId, caseId, n) {
   act(`/api/runs/${runId}/campaign/steps/${caseId}/${n}`, { answer: "not_right", what });
 }
 
-// One quiet line at the deploy gate: what the platform checked on this build.
-function checksLineHtml(ev) {
-  const ck = ev.checks;
-  if (!ck || !ck.smoke) { const t = ev.test_run || ev.visual_check; return t ? `<div class="meta">tests: ${t.ok ? "passed" : "failed"} (${(t.checked || []).length} checks)</div>` : ""; }
-  const a = ck.acceptance || { total: 0, added: [], retired: 0 }, p = ck.pages || { screens: 0, mode: "static" };
-  return `<div class="meta" title="${esc((p.notes || []).join(" | "))}">checks passed: ${ck.smoke.checked.length} endpoints answer · ${a.total} promise${a.total === 1 ? "" : "s"} kept${a.added.length ? ` (${a.added.length} new)` : ""} · ${p.screens} screen${p.screens === 1 ? "" : "s"} opened${p.mode === "browser" ? "" : " (no browser on this instance)"}</div>`;
+// One quiet line at the deploy gate: what the platform checked on this build, in plain words, with the counts and the
+// second review's own words folded under "What was checked" (the launch audit 1.8).
+function checksLineHtml(ev, runId) {
+  const ck = ev.checks, detail = [];
+  let plain = "";
+  if (!ck || !ck.smoke) {
+    const t = ev.test_run || ev.visual_check;
+    if (t) { plain = t.ok ? "It passed its tests before it reached you." : "It did not pass all its tests."; detail.push(`tests: ${t.ok ? "passed" : "failed"} (${(t.checked || []).length} checks)`); }
+  } else {
+    const a = ck.acceptance || { total: 0, added: [], retired: 0 }, p = ck.pages || { screens: 0, mode: "static" };
+    plain = "Checked before it reached you: it runs, it does what it should, and its screens open.";
+    detail.push(`checks passed: ${ck.smoke.checked.length} endpoints answer · ${a.total} promise${a.total === 1 ? "" : "s"} kept${a.added.length ? ` (${a.added.length} new)` : ""} · ${p.screens} screen${p.screens === 1 ? "" : "s"} opened${p.mode === "browser" ? "" : " (no browser on this instance)"}`);
+  }
+  if (ev.cross_check) detail.push(`second review: ${ev.cross_check.verdict}${ev.cross_check.overridden ? " (overridden by the manager)" : ""} · ${(ev.cross_check.summary || "").slice(0, 400)}`);
+  if (ev.fix_round) plain += ` It failed a check at first and was fixed (${ev.fix_round} round${ev.fix_round === 1 ? "" : "s"}).`;
+  if (!plain && !detail.length) return "";
+  return `<div class="meta checksline">${esc(plain)}</div>` + (detail.length ? fold("checks:" + (runId || ""), "What was checked", detail.map(d => `<div class="meta">${esc(d)}</div>`).join(""), "font-size:12px;margin-top:2px") : "");
 }
 
 // One tile for a batch run (several proposals built as one change). Feedback
@@ -791,11 +846,9 @@ function batchCard(run) {
   else if (run.status === "running" && MGR()) html += actions(pk, "", [abortBtn(run)]);
   if (run.step === "await_deploy" && run.status === "waiting") {
     if (ev.what_changed || ev.build_summary) html += `<div class="prop">${esc(ev.what_changed || ev.build_summary)}</div>`;
-    html += checksLineHtml(ev) + campaignLineHtml(run);
-    if (ev.cross_check) html += `<div class="meta">cross-check: ${esc(ev.cross_check.verdict)}${ev.cross_check.overridden ? " (overridden by the manager)" : ""} · ${esc((ev.cross_check.summary || "").slice(0, 400))}</div>`;
-    if (ev.fix_round) html += `<div class="meta">fixed by the agent in ${ev.fix_round} round(s) after a failed check</div>`;
+    html += checksLineHtml(ev, run.id) + campaignLineHtml(run);
     html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;
-    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">Deploy v${run.to_version} to floor</button><div class="approvenote">This goes live for your floor. Check it in the preview first.</div>`, [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(false, run)}</button><div class="approvenote">${goLiveNote()}</div>`, [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, `The ${items.length} proposals go back to Reviewing.`);
   const open = run.status === "deployed" ? items.filter(canCloseOut) : [];
@@ -803,6 +856,11 @@ function batchCard(run) {
   html += actions(pk, doneAll, [run.status === "deployed" && MGR() && mod.live_version === run.to_version ? rollbackBtn(run) : ""]);
   return html + "</div>";
 }
+// The one button at the gate. A demo has no floor, so it says "Make it live" (the launch audit 1.8); a site keeps its words.
+function goLiveLabel(isModule, run) { return DEMO() ? "Make it live" : isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`; }
+function goLiveNote() { return DEMO() ? "It goes live in your demo and you can open it from the Tools line at the top. Try it in the preview first." : "This goes live for your floor. Check it in the preview first."; }
+// a tool request's name, whichever words the server used ("New tool: ..." now, "New module: ..." on older rows)
+const toolName = (fb) => String(fb.message || "").replace(/^New (module|tool): /, "");
 // Abort a build in flight: the agent process is stopped and the draft dropped.
 function abortBtn(run) {
   return `<button class="no" onclick="if(confirm('Abort this build now? The agent is stopped, nothing it wrote is kept, and the proposals go back to Reviewing. Use this when a build is stuck or clearly wrong.'))act('/api/runs/${run.id}/cancel')">Abort build</button>`;
@@ -820,16 +878,16 @@ function requestCard(fb) {
   const pk = "fb:" + fb.id;
   let html = `<div class="card request ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
-  html += `<div class="meta">#${fb.id} · <span class="chip screen">Module request</span> · started by ${esc(fb.name || "a manager")}</div>`;
+  html += `<div class="meta">#${fb.id} · <span class="chip screen">New tool request</span> · started by ${esc(fb.name || "a manager")}</div>`;
   const openBtn = (label, cls) => (MGR() ? `<button class="${cls || "primary"}" onclick="Intake.open(${fb.intake_id})">${label}</button>` : "");
-  const withdraw = MGR() && !["building", "done"].includes(it.status) ? `<button class="no" onclick="if(confirm('Withdraw this module request? The answers are kept on the record but nothing is built.'))act('/api/intakes/${fb.intake_id}/abandon')">Withdraw</button>` : "";
+  const withdraw = MGR() && !["building", "done"].includes(it.status) ? `<button class="no" onclick="if(confirm('Withdraw this tool request? The answers are kept on the record but nothing is built.'))act('/api/intakes/${fb.intake_id}/abandon')">Withdraw</button>` : "";
   if (fb.status === "declined") { html += `<div class="fail-note">${esc(fb.outcome || "Withdrawn.")}</div>`; return html + "</div>"; }
   const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
   if (["building", "done"].includes(it.status) || (fb.status === "in_progress" && run)) {
     if (it.status === "done" || fb.status === "done") {
       html += `<div class="outcome">${esc(fb.outcome || "Built and live.")}</div>`;
       const modRow = DATA.modules.find(m => m.name === fb.module);
-      if (modRow && modRow.live_version) html += `<a class="demo" href="/c/${SLUG}/m/${esc(fb.module)}/" target="_blank">Open ${esc(fb.message.replace(/^New module: /, ""))}</a>`;
+      if (modRow && modRow.live_version) html += `<a class="demo" href="/c/${SLUG}/m/${esc(fb.module)}/" target="_blank">Open ${esc(toolName(fb))}</a>`;
       html += actions(pk, "", [openBtn("The design", "quiet")]);
       return html + "</div>";
     }
@@ -869,7 +927,7 @@ function runBlock(fb, run) {
   const isModule = run.lane === "module";
   const others = (run.feedback_ids || []).filter(i => i !== fb.id);
   const pk = "run:" + run.id;
-  html += `<div class="meta" style="margin-top:6px"><span class="chip ${run.lane === "module" ? "functionality" : run.lane}">${run.lane === "ui" ? "UI LANE" : run.lane === "module" ? "NEW MODULE" : "FUNCTIONALITY LANE"}</span> run #${run.id} · ${run.from_version ? "v" + run.from_version : "nothing yet"}${run.to_version ? " → v" + run.to_version : ""}${others.length ? ` · <span class="chip rec">built with #${others.join(", #")}</span>` : ""}</div>`;
+  html += `<div class="meta" style="margin-top:6px"><span class="chip ${run.lane === "module" ? "functionality" : run.lane}">${run.lane === "ui" ? "UI LANE" : run.lane === "module" ? "NEW TOOL" : "FUNCTIONALITY LANE"}</span> run #${run.id} · ${run.from_version ? "v" + run.from_version : "nothing yet"}${run.to_version ? " → v" + run.to_version : ""}${others.length ? ` · <span class="chip rec">built with #${others.join(", #")}</span>` : ""}</div>`;
   if (run.status === "queued") {
     html += `<div class="meta"><span class="pulse"></span>Queued: waiting for the current build on ${esc(run.module)} to finish.</div>`;
     if (MGR()) html += actions(pk, "", [`<button class="quiet" onclick="act('/api/runs/${run.id}/cancel')">Cancel</button>`]);
@@ -882,12 +940,10 @@ function runBlock(fb, run) {
   if (run.step === "await_deploy" && run.status === "waiting") {
     const ev = run.evidence || {};
     if (ev.what_changed || ev.build_summary) html += `<div class="prop">${esc(ev.what_changed || ev.build_summary)}</div>`;
-    html += checksLineHtml(ev) + campaignLineHtml(run);
-    if (ev.cross_check) html += `<div class="meta">cross-check: ${esc(ev.cross_check.verdict)}${ev.cross_check.overridden ? " (overridden by the manager)" : ""} · ${esc((ev.cross_check.summary || "").slice(0, 400))}</div>`;
-    if (ev.fix_round) html += `<div class="meta">fixed by the agent in ${ev.fix_round} round(s) after a failed check</div>`;
-    html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${isModule ? `Open the preview of ${esc(fb.message.replace(/^New module: /, ""))} (not live)` : `Open preview of v${run.to_version} (not live)`}</a><br>`;
+    html += checksLineHtml(ev, run.id) + campaignLineHtml(run);
+    html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${isModule ? `Open the preview of ${esc(toolName(fb))} (not live)` : `Open preview of v${run.to_version} (not live)`}</a><br>`;
     if (MGR() && DEMO()) html += `<a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a><br>`;
-    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">${isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`}</button><div class="approvenote">This goes live for your floor. Check it in the preview first.</div>`, [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The module is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(isModule, run)}</button><div class="approvenote">${goLiveNote()}</div>`, [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The tool is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, isModule ? "The design goes back to Reviewing." : "The proposal goes back to Reviewing.");
   return html;
@@ -1027,7 +1083,7 @@ function card(fb) {
   const flagged = fb.status === "new" && FLAG_WORDS[fb.triage];
   if (reading) html += `<div class="working"><span class="spin"></span>The proposer is reading this…</div>`;
   else if (asking) html += questionHtml(fb);
-  else if (flagged) html += `<div class="flagbox"><span class="chip flag">${FLAG_WORDS[fb.triage]}</span> ${esc(fb.triage_note || "")}${fb.triage === "new_tool" && MGR() ? ` <small>"+ New module" on the line above starts one.</small>` : ""}</div>`;
+  else if (flagged) html += `<div class="flagbox"><span class="chip flag">${FLAG_WORDS[fb.triage]}</span> ${esc(fb.triage_note || "")}${fb.triage === "new_tool" && MGR() ? ` <small>"+ New tool" on the line above starts one.</small>` : ""}</div>`;
   else if (fb.status === "new" && fb.arrival === "failed" && MGR()) html += `<div class="pointed">The proposer could not read this one when it arrived. The button below still works.</div>`;
   if (fb.status === "new" && fb.question && fb.question.answer) html += `<div class="pointed">Asked: "${esc(fb.question.text)}" Answer${fb.question.answered_by ? ` from ${esc(fb.question.answered_by)}` : ""}: "${esc(fb.question.answer)}"</div>`;
 
@@ -1268,11 +1324,23 @@ function adminWhy(what) {
 function deployRun(id) { const w = adminWhy("Putting a change live"); if (w !== null) act(`/api/runs/${id}/deploy`, w); }
 function rollbackRun(id) { const w = adminWhy("Rolling back"); if (w !== null) act(`/api/runs/${id}/rollback`, w); }
 
+// The platform restarting (a push restarts it; Railway answers 502 for the half minute it takes) or the connection
+// dropping keeps the board on screen with one line saying so; the next refresh picks up where it was (the launch
+// audit 1.14: the board turned into "Unknown company." mid-push).
+function reconnecting(on) {
+  const el = document.getElementById("reconnect"); if (!el) return;
+  el.style.display = on ? "block" : "none";
+}
 async function load() {
-  const res = await fetch(`/api/c/${SLUG}/board`);
+  let res;
+  try { res = await fetch(`/api/c/${SLUG}/board`, { cache: "no-store" }); } catch (e) { reconnecting(true); return; }
   if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
+  if (res.status >= 500 || res.status === 429) { reconnecting(true); return; }
   if (!res.ok) { document.body.innerHTML = "<p style='padding:20px'>Unknown company.</p>"; return; }
-  DATA = await res.json();
+  let fresh;
+  try { fresh = await res.json(); } catch (e) { reconnecting(true); return; }
+  reconnecting(false);
+  DATA = fresh;
   if (window.BOOT && DATA.boot && DATA.boot !== window.BOOT) { location.reload(); return; } // the platform redeployed; pick up the new board
   window.BOOT = DATA.boot;
   document.title = `${DATA.company.name} · Improvement Board`;
@@ -1335,21 +1403,21 @@ function render() {
   ].filter(Boolean).join('<span class="sep">·</span>');
   // the phone's one-line summary of the strip: which modules the board is showing
   const summary = !many ? (DATA.modules[0] ? DATA.modules[0].title : "none yet")
-    : !SEL ? `All ${DATA.modules.length} modules`
-    : SEL.size === 1 ? (DATA.modules.find(m => SEL.has(m.name)) || { title: "one module" }).title
-    : `${SEL.size} of ${DATA.modules.length} modules`;
+    : !SEL ? `All ${DATA.modules.length} tools`
+    : SEL.size === 1 ? (DATA.modules.find(m => SEL.has(m.name)) || { title: "one tool" }).title
+    : `${SEL.size} of ${DATA.modules.length} tools`;
   const strip = document.getElementById("modules");
   strip.classList.toggle("open", MODOPEN);
   strip.innerHTML =
-    `<button class="modtoggle" onclick="toggleModStrip()" aria-expanded="${MODOPEN}">Modules <span class="sum">${esc(summary)}</span><span class="caret">&#9660;</span></button>` +
-    (many ? `<button class="modall ${SEL ? "" : "on"}" onclick="selectAll()" title="Show every module's feedback">All</button>` : "") +
+    `<button class="modtoggle" onclick="toggleModStrip()" aria-expanded="${MODOPEN}">Tools <span class="sum">${esc(summary)}</span><span class="caret">&#9660;</span></button>` +
+    (many ? `<button class="modall ${SEL ? "" : "on"}" onclick="selectAll()" title="Show every tool's feedback">All</button>` : "") +
     DATA.modules.map(m => {
       const on = visible(m.name);
       return `<span class="modcard ${many ? (on ? "on" : "off") : ""}">
-      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this module's feedback" : "Show only this module's feedback") : "Show this module's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span><span class="links">${links(m)}</span></span>`;
+      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this tool's feedback" : "Show only this tool's feedback") : "Show this tool's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span><span class="links">${links(m)}</span></span>`;
     }).join("") +
-    (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new module in plain words; the agent designs it, you confirm, then it is built">+ New module</button>` : "") +
-    (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one module" : SEL.size + " modules"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "");
+    (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new tool in plain words; the AI designs it, you confirm, then it is built">+ New tool</button>` : "") +
+    (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one tool" : SEL.size + " tools"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "");
   const runs = DATA.runs.filter(r => visible(r.module));
   // the counts on the column headers are the board's only numbers; spend and the loop's health are on the admin page
   const buckets = { new: [], reviewing: [], in_progress: [], done: [], platform: [] };
@@ -1369,13 +1437,17 @@ function render() {
     tiles[col].push({ run: r, ids: live.map(f => f.id) });
   }
   for (const fb of DATA.feedback) {
+    // a new tool request is the company's own, named or not, and shows whatever the filter (the launch audit 1.5: an
+    // unnamed one landed in Requests to Anetix, so a demo manager who closed the popout lost it and started another)
+    if (fb.kind === "module_request") { if (!folded.has(fb.id)) (buckets[fb.status === "declined" ? "done" : fb.status] || buckets.new).push(fb); continue; }
     if (!fb.module || fb.module === "platform") { buckets.platform.push(fb); continue; }
     if (!visible(fb.module) || folded.has(fb.id)) continue;
     (buckets[fb.status === "declined" ? "done" : fb.status] || buckets.new).push(fb);
   }
   renderReviews();
   renderTogether();
-  const empty = SEL ? '<div class="empty">Nothing here for the modules shown.</div>' : '<div class="empty">Nothing here.</div>';
+  renderFirstTool();
+  const empty = SEL ? '<div class="empty">Nothing here for the tools shown.</div>' : '<div class="empty">Nothing here.</div>';
   const counts = {};
   for (const k of ["new", "reviewing", "in_progress", "done", "platform"]) {
     const all = (tiles[k] || []).map(t => batchCard({ ...t.run, feedback_ids: t.ids })).concat(buckets[k].map(card));
@@ -1389,6 +1461,10 @@ function render() {
     document.getElementById("n-" + k).textContent = all.length;
     if (k !== "platform") counts[k] = all.length;
   }
+  const att = attentionCol(buckets, tiles);
+  if (!COLPICKED) COLTAB = att.col;
+  else if (att.key && att.key !== LASTWAIT) { COLTAB = att.col; COLPICKED = false; }
+  LASTWAIT = att.key;
   document.getElementById("coltabs").innerHTML = ["new", "reviewing", "in_progress", "done"].map(k =>
     `<button class="t-${k} ${k === COLTAB ? "on" : ""}" id="tab-${k}" onclick="showCol('${k}')">${COL_TITLE[k]} <span class="n">${counts[k]}</span></button>`).join("");
   applyColTab();
@@ -1419,7 +1495,7 @@ async function passkeyNudge() {
 </script>
 <script src="/assets/dictate.js"></script>
 <script src="/assets/intake.js"></script>
-<script src="/assets/feedback-widget.js" data-module="platform"></script>
+<script src="/assets/feedback-widget.js" data-module="platform" data-dock="#fbdock"></script>
 <script>if (window.sosPerson) window.sosPerson.onChange(() => { if (EDITING === null) load(); });</script>
 </body>
 </html>

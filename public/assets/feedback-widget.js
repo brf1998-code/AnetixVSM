@@ -22,6 +22,25 @@
   // !important so a page's own button rules (width:100%, min-height) cannot resize it
   btn.style.cssText = "position:fixed!important;right:12px!important;bottom:12px!important;left:auto!important;top:auto!important;z-index:9999;width:auto!important;min-height:0!important;height:auto!important;margin:0!important;background:#1f3a5f!important;color:#fff!important;border:none!important;border-radius:18px!important;padding:8px 12px!important;font-size:12.5px!important;font-weight:700!important;line-height:1!important;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:system-ui,sans-serif!important;opacity:.92;";
 
+  // data-dock="<selector>": on a phone the button sits in that spot on the page instead of floating over it (the board
+  // docks it in its band, so it no longer covers the bottom card's buttons; the launch audit 1.9)
+  const dockSel = script ? script.getAttribute("data-dock") : null;
+  const FLOAT_CSS = btn.style.cssText;
+  const DOCK_CSS = "position:static!important;z-index:auto;width:auto!important;min-height:36px!important;height:auto!important;margin:0!important;background:rgba(255,255,255,.14)!important;color:#fff!important;border:1px solid rgba(255,255,255,.4)!important;border-radius:18px!important;padding:8px 12px!important;font-size:13px!important;font-weight:700!important;line-height:1!important;cursor:pointer;font-family:system-ui,sans-serif!important;display:inline-flex!important;align-items:center;";
+  function dock() {
+    const spot = dockSel && document.querySelector(dockSel);
+    const narrow = Boolean(window.matchMedia && window.matchMedia("(max-width: 640px)").matches);
+    if (spot && narrow) {
+      if (btn.parentNode !== spot) spot.appendChild(btn);
+      btn.style.cssText = DOCK_CSS;
+      panel.style.top = "56px"; panel.style.bottom = "auto";
+    } else {
+      if (btn.parentNode !== document.body) document.body.appendChild(btn);
+      btn.style.cssText = FLOAT_CSS;
+      panel.style.top = ""; panel.style.bottom = "52px";
+    }
+  }
+
   const panel = document.createElement("div");
   panel.style.cssText = "position:fixed;right:12px;bottom:52px;z-index:9999;background:#fff;border:1px solid #d5dbe3;border-radius:10px;padding:14px;width:300px;max-width:calc(100vw - 24px);display:none;box-shadow:0 6px 20px rgba(0,0,0,.2);font-family:system-ui,sans-serif;";
   // On the platform's own pages (the board, settings, the admin page) the feedback is about the software itself,
@@ -747,6 +766,10 @@
     if (document.getElementById("fbw-send")) return;
     document.body.appendChild(btn);
     document.body.appendChild(panel);
+    if (dockSel) {
+      dock();
+      try { window.matchMedia("(max-width: 640px)").addEventListener("change", dock); } catch (e) { /* an old browser: the first choice stays */ }
+    }
     talkInto(panel.querySelector("#fbw-msg"));
     watchVersion();
     drawExtras();
