@@ -1714,9 +1714,19 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `scripts/e2e/badids.js` (33: the repro, every route with a parameter found by walking the routers and called with
   nine bad values as manager, floor and admin with the server's boot id checked throughout, and another company by
   every spelling), `scripts/e2e/caps.js` (7, started with `SOS_MONTHLY_CAP_USD=5`), `scripts/e2e/selfserve.js` (111),
-  `test-selfserve.js` (51); www `test-www.js` (100), `e2e.js` (60). Left from Phase 0 for Brendan: 0.4 rotate the
-  two shared passwords (never delete them), 0.5 pick `SOS_MONTHLY_CAP_USD` and an Anthropic console limit, 0.8 delete
-  `SOS_FAKE_AGENT` and (after checking it reads 0.5) `TOPUP_RATE`, 0.9 no product pushes in customers' hours.
+  `test-selfserve.js` (51); www `test-www.js` (100), `e2e.js` (60). Brendan did 0.4 and 0.8 the same day; 0.9 waits
+  for real customer sites (until then he pushes whenever). (6) **Spend alerts, not a spend limit** (0.5, Brendan:
+  "if we expand quickly we could fall behind and then have everyone fail ... I just want notifications if we are
+  rapidly blowing past limits"; `src/spendwatch.js`). `SOS_MONTHLY_CAP_USD` stays unset and nothing is refused. Every
+  ten minutes (and 30 s after boot) the meter (`platform.ai_calls`) is read and ntfy alerts go out for: over
+  `SOS_ALERT_HOUR_USD` (15) in the last hour; one company over `SOS_ALERT_COMPANY_HOUR_USD` (8) in the last hour; over
+  `SOS_ALERT_DAY_USD` (60) in 24 hours; the last 24 hours at `SOS_ALERT_PACE_X` (3) times the average day of the week
+  before, once they reach `SOS_ALERT_PACE_MIN_USD` (15) and the meter has two days of history; each
+  `SOS_ALERT_MONTH_STEP_USD` (250) of the month. 0 turns a rule off. An hour rule keeps quiet 3 hours (per company),
+  the day and pace rules 24, a month step for good; what was sent is an event (`spend_alert`, ref = the rule's key)
+  so a restart never repeats it. The Instance tab's Phone alerts card shows the rules, the spend now and the last
+  alert; `POST /api/admin/notify/spend-check` (admin) runs the check at once. Tests: `scripts/test-spendwatch.js`
+  (15), `scripts/e2e/spendwatch.js` (11, started with `SOS_ALERT_MONTH_STEP_USD=25`).
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2854,6 +2864,11 @@ tool list, 401 from the API) proves the CLI itself starts.
 - `NTFY_TOPIC` (the private ntfy topic both founders' phones subscribe to; set
   2026-09-27), `NTFY_URL` (default https://ntfy.sh), `NTFY_TOKEN` (optional):
   phone alerts (`src/notify.js`). Unset topic: nothing is sent.
+  `SOS_ALERT_HOUR_USD` (15), `SOS_ALERT_COMPANY_HOUR_USD` (8), `SOS_ALERT_DAY_USD`
+  (60), `SOS_ALERT_PACE_X` (3), `SOS_ALERT_PACE_MIN_USD` (15),
+  `SOS_ALERT_MONTH_STEP_USD` (250): the spend alerts (`src/spendwatch.js`), 0 = off;
+  alerts only, never a limit. `SOS_ERROR_ALERT_GAP_MS` (15 minutes): the gap
+  between two "Product error" alerts (`src/errors.js`).
   `SOS_EXPORT_ATTACH_MAX` / `SOS_EXPORT_ATTACH_TOTAL`: the export's file limits.
 - `SOS_WWW_KEY`: the shared key the anetix.ai service (`www/`) sends in
   `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on

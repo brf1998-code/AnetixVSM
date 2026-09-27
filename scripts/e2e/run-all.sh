@@ -119,6 +119,9 @@ run badids                 node scripts/e2e/badids.js
 # the launch audit 0.5: what a company reads at an AI cap
 fresh; start "SOS_BROWSER=off SOS_MONTHLY_CAP_USD=5"
 run caps                   node scripts/e2e/caps.js
+# the launch audit 0.5, Brendan's call: alerts when spend climbs fast, never a limit
+fresh; start "SOS_BROWSER=off SOS_ALERT_MONTH_STEP_USD=25"
+run spendwatch             node scripts/e2e/spendwatch.js
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

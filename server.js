@@ -178,6 +178,7 @@ async function main() {
   const swept = await require("./src/campaign").sweep();   // a campaign that was running at the restart has no process behind it
   if (swept) console.log(`[campaign] ${swept} campaign(s) that were running at the restart marked failed`);
   require("./src/campaign").startWatching();
+  require("./src/spendwatch").start();       // phone alerts when AI spend climbs fast; never refuses anything (src/spendwatch.js, the launch audit 0.5)
   require("./src/dataexport").startSweeps();   // demo requests past 12 months go (the privacy notice)   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
   // (only ones never attempted: a failed drawing is not paid for again on every restart; Diagrams on the board redraws on demand)

@@ -14,7 +14,8 @@
 // notify() never throws and never holds up the work that called it: it answers at once and sends behind, with a 5 s
 // limit. Each alert is also an event (kind "notified"), so the admin page can show what went out.
 //
-// Route (admin): POST /api/admin/notify/test   one test alert, to prove both phones get it
+// Routes (admin): POST /api/admin/notify/test   one test alert, to prove both phones get it
+//                 GET  /api/admin/notify        whether it is set up, the last few sent, and the spend watch (src/spendwatch.js)
 const express = require("express");
 const { logEvent } = require("./db");
 
@@ -51,6 +52,8 @@ router.post("/api/admin/notify/test", (req, res, next) => require("./auth").requ
   const ok = await notify("Anetix test alert", `Sent from the admin page${req.sosAccount && req.sosAccount.name ? ` by ${req.sosAccount.name}` : ""}. If both phones buzzed, alerts work.`, { tags: ["white_check_mark"] });
   res.status(ok ? 200 : 502).json(ok ? { ok: true } : { error: "ntfy did not take the alert; the deploy log says why" });
 });
-router.get("/api/admin/notify", (req, res, next) => require("./auth").requireAdmin(req, res, next), (_req, res) => res.set("Cache-Control", "no-store").json({ configured: configured(), server: SERVER(), recent: sent.slice(0, 10) }));
+router.get("/api/admin/notify", (req, res, next) => require("./auth").requireAdmin(req, res, next), async (_req, res) => res.set("Cache-Control", "no-store").json({ configured: configured(), server: SERVER(), recent: sent.slice(0, 10), spend: await require("./spendwatch").view() }));
+// the spend watch now, not in ten minutes (src/spendwatch.js): what it sent
+router.post("/api/admin/notify/spend-check", (req, res, next) => require("./auth").requireAdmin(req, res, next), async (_req, res) => res.json({ ok: true, sent: await require("./spendwatch").check() }));
 
 module.exports = { notify, payload, configured, router, _sent: sent };

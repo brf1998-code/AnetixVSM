@@ -227,7 +227,7 @@
       <div class="card"><h2>Spend and default models</h2><div id="top" style="margin-top:8px;line-height:1.7"></div></div>
       <div class="card"><h2>Module isolation <small>where agent-written module code runs</small></h2><div id="isolation" class="note"></div></div>
       <div class="card"><h2>Edge check <small>requests must come through Cloudflare</small></h2><div class="note" id="edge-line"></div></div>
-      <div class="card"><h2>Phone alerts <small>signed orders, declined cards, billing trouble (ntfy)</small></h2><div class="note" id="notify-line">Loading…</div>
+      <div class="card"><h2>Phone alerts <small>signed orders, declined cards, billing trouble, product errors, fast AI spend (ntfy)</small></h2><div class="note" id="notify-line">Loading…</div><div class="note" id="spend-line"></div>
         <button class="quiet" id="notify-test" onclick="testAlert()">Send a test alert</button> <span class="sub" id="notify-msg"></span></div>
     </div>
     <div class="card">
@@ -357,6 +357,14 @@ async function loadNotify() {
   const j = await r.json(), el = document.getElementById("notify-line");
   el.innerHTML = j.configured ? `On: alerts go to the ntfy topic on ${esc(j.server)}.${(j.recent || []).length ? ` Last: ${esc(j.recent[0].title)} (${esc(new Date(j.recent[0].at).toLocaleString())}).` : ""}`
     : `<b style="color:#b26a00">Off.</b> Set NTFY_TOPIC on the SymbioticOS service (the private topic both phones subscribe to in the ntfy app), and signed orders, declined cards and billing trouble reach your phones.`;
+  // the spend watch (src/spendwatch.js): alerts only, never a limit
+  const sp = j.spend, sl = document.getElementById("spend-line");
+  if (sp && sl) {
+    const s = sp.settings, d = (x) => "$" + Number(x).toFixed(0), rules = [];
+    if (s.hour_usd) rules.push(`over ${d(s.hour_usd)} in an hour`); if (s.company_hour_usd) rules.push(`one company over ${d(s.company_hour_usd)} in an hour`);
+    if (s.day_usd) rules.push(`over ${d(s.day_usd)} in a day`); if (s.pace_x) rules.push(`a day at ${s.pace_x} times the usual`); if (s.month_step_usd) rules.push(`every ${d(s.month_step_usd)} of the month`);
+    sl.innerHTML = `Spend alerts (no limit, nothing is ever stopped): ${rules.length ? esc(rules.join(", ")) : "all off"}.${sp.now ? ` Now: $${sp.now.hour_usd.toFixed(2)} in the last hour, $${sp.now.day_usd.toFixed(2)} in 24 hours, $${sp.now.month_usd.toFixed(2)} this month.` : ""}${(sp.recent || []).length ? ` Last alert: ${esc(sp.recent[0].title)} (${esc(new Date(sp.recent[0].at).toLocaleString())}).` : ""} <span class="sub">Change them with the SOS_ALERT_* variables.</span>`;
+  }
 }
 async function testAlert() {
   const m = document.getElementById("notify-msg"); m.textContent = "Sending…";
