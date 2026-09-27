@@ -319,7 +319,7 @@ async function generateRound(it) {
     await agent.atWall("structured:intake_round", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText, blocks: ctx.blocks });
     return fakeRound(roundNo, it);
   }
-  await agent.assertUnderCap(it.company, { started: true });   // the credit was checked when the intake began
+  await agent.assertUnderCap(it.company, { started: true, fairUse: true });   // the credit was checked when the intake began; a paying site's fair-use line is checked at each round (src/selfserve.js)
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({
@@ -379,7 +379,7 @@ async function generateDesign(it, adjustedText, opts = {}) {
     await agent.atWall("structured:module_design", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText + (adjustedText ? `\n\n${adjustedText}` : ""), blocks: ctx.blocks });
     return fakeDesign(it, adjustedText);
   }
-  await agent.assertUnderCap(it.company, { started: true });   // the credit was checked when the intake began
+  await agent.assertUnderCap(it.company, { started: true, fairUse: true });   // the credit was checked when the intake began; a paying site's fair-use line is checked at each round (src/selfserve.js)
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
   const { data, costUsd } = await agent.runStructured({

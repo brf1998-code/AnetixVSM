@@ -93,7 +93,7 @@ const FACTS = {
   t("the band is worked out by the product from the headcount", s1.json.order.band && s1.json.order.band.key === "core" && s1.json.order.price_usd === 2500 && !("flags" in s1.json.order.band), s1.json.order.band);
   const s2 = await www("/api/www/golive/save", { access: M, fields: FACTS });
   t("all the answers: version 2, complete, the order form's text and its hash", s2.status === 200 && s2.json.order.version === 2 && s2.json.order.complete === true && /Customer: Acme Wire & Cable, Inc\./.test(s2.json.order.text) && /^[0-9a-f]{64}$/.test(s2.json.order.sha), s2.json.order);
-  t("the text names the terms at anetix.ai and the credit back", s2.json.order.text.includes(`Anetix Terms of Service, version ${T.TERMS_VERSION}, at ${WWW}/terms.`) && /Unused demo credit/.test(s2.json.order.text));
+  t("the text names the terms at anetix.ai and the credit back", s2.json.order.text.includes(`Anetix Terms of Service, version ${T.TERMS_VERSION}, at ${WWW}/terms, as updated under section 19.`) && /Unused demo credit/.test(s2.json.order.text));
   t("the text carries the billing email and the learning choice (the terms lean on both)", /Billing email: ap@acmewire\.test\./.test(s2.json.order.text) && /Learning: Customer opts in\./.test(s2.json.order.text));
   t("That's me: the plant manager's name and title are copied as the person going live", s2.json.order.facts.contact.is_pm === true && s2.json.order.facts.contact.name === "Sam Ortiz" && s2.json.order.facts.contact.title === "Plant manager");
   const s3 = await www("/api/www/golive/save", { access: M, fields: FACTS });
@@ -145,7 +145,7 @@ const FACTS = {
   t("the signed order keeps the text shown, its hash, the terms and their hash, the signer, the address and browser", so.state === "signed" && so.text === v3.text && so.text_sha256 === v3.sha && so.terms_version === T.TERMS_VERSION && so.terms_sha256 === T.termsHash() && so.signer.via === won.who && so.signed_ip === won.ip && so.signed_ua === won.ua && so.signed_at && Number(so.price_usd) === 2500 && so.band.key === "core", so);
   t("the learning choice is the one in the signed words, and the evidence for the address is kept", so.learning_opt_in === true && so.signed_net && (won.who === "manager" ? so.signed_net.xff === "6.6.6.6, 203.0.113.9" : so.signed_net.real === "198.51.100.4"), so.signed_net);
   const tv = (await q("SELECT sha256, doc FROM platform.terms_versions WHERE version=$1", [T.TERMS_VERSION])).rows[0];
-  t("the first signature keeps the words of its terms version", tv && tv.sha256 === T.termsHash() && tv.doc.version === T.TERMS_VERSION && tv.doc.sections.length === 3, tv && tv.sha256);
+  t("the first signature keeps the words of its terms version", tv && tv.sha256 === T.termsHash() && tv.doc.version === T.TERMS_VERSION && tv.doc.sections.length === 21, tv && tv.sha256);
   // the price book it was signed under is frozen now: the boot's seed no longer rewrites version 1
   await q("UPDATE platform.price_books SET note='tampered by the test' WHERE version=1");
   await require("../../src/sites").init();
@@ -174,7 +174,7 @@ const FACTS = {
   t("the approver's link still shows the order, now in", (await www("/api/www/golive/view", { access: P })).json.site.stage === "signed");
   t("an order with its card cannot be started over here", (await www("/api/www/golive/start-over", { access: M })).json.code === "in");
   const b2 = (await A.mgr.get(`/api/c/${A.slug}/board`)).json.golive;
-  t("the board says the order is in, within 24 hours", b2 && b2.stage === "signed" && b2.action === "See your order" && /Your order is in\. Anetix switches this site on within 24 hours/.test(b2.line), b2);
+  t("the board says the order is in, and that Anetix aims to switch it on within 24 hours (the Terms, 5.4)", b2 && b2.stage === "signed" && b2.action === "See your order" && /Your order is in\. Anetix aims to switch this site on within 24 hours/.test(b2.line), b2);
   const L = (await admin.get("/api/admin/sites")).json;
   const lr = L.rows.find((r) => r.slug === A.slug);
   t("the Sites tab counts it as Signed, waiting on Brendan, with the signer and the card", L.stages.signed === 1 && lr.stage === "signed" && lr.order.state === "signed" && lr.order.card_saved && lr.order.card.last4 === "4242" && lr.order.signer.name && lr.order_open === true && L.golive.open === true, lr.order);
@@ -272,7 +272,7 @@ const FACTS = {
 
   // ---- the terms, and the backup
   const tr = await www("/api/www/golive/terms");
-  t("anetix.ai reads the terms from here, with the hash signatures keep", tr.status === 200 && tr.json.version === T.TERMS_VERSION && tr.json.sha256 === T.termsHash() && tr.json.sections.length === 3, tr.json.version);
+  t("anetix.ai reads the terms from here, with the hash signatures keep", tr.status === 200 && tr.json.version === T.TERMS_VERSION && tr.json.sha256 === T.termsHash() && tr.json.sections.length === 21, tr.json.version);
   const bk = await admin.get("/api/admin/backup");
   const bo = bk.json && bk.json.platform && bk.json.platform.orders;
   t("orders are in the backup", Boolean(bo) && (Array.isArray(bo) ? bo : bo.rows || []).length >= 3, bo && Object.keys(bo));

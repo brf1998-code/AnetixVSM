@@ -906,10 +906,18 @@ function closeModal() { document.getElementById("modal").classList.remove("on");
 function openDelete(slug, name) {
   openModal(`<h2>Delete ${esc(name)}?</h2>
     <p class="sub">Everything this company owns goes: its modules and their data, every version, all feedback, builds, docs, reviews and diagrams. There is no undo apart from a backup file. Refused while a build is open.</p>
+    <p class="sub" id="del-refund"></p>
     <input id="del-slug" placeholder="type the slug: ${esc(slug)}" autocomplete="off">
     ${stepField("del")}
     <div><button class="danger" onclick="doDelete('${slug}')">Delete this company</button><button class="quiet" onclick="closeModal()">Keep it</button></div>`);
   setTimeout(() => { const el = document.getElementById("del-slug"); if (el) el.focus(); }, 50);
+  // the Terms, 4.2: ending a demo (not for a breach) refunds the unused part of the credit they bought, in Stripe
+  fetch(`/api/admin/companies/${encodeURIComponent(slug)}/refund-due`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+    const el = document.getElementById("del-refund"); if (!el || !d || !d.purchases || !d.purchases.length) return;
+    el.innerHTML = d.refund_usd > 0
+      ? `<b>Refund due: $${d.refund_usd.toFixed(2)}.</b> They bought credit (${d.purchases.map((p) => `$${p.paid_usd.toFixed(2)} on ${esc(String(p.at).slice(0, 10))}, ${esc(p.ref || "")}`).join("; ")}) and part of it is unused. Under the Terms (4.2) ending a demo for any reason but a breach refunds that part: refund it in Stripe (Payments, the payment, Refund), newest payment first.`
+      : "They bought credit, and all of it has been used: nothing to refund.";
+  }).catch(() => {});
 }
 async function doDelete(slug) {
   const confirm_slug = document.getElementById("del-slug").value.trim();
@@ -925,6 +933,9 @@ function openRestore() {
   openModal(`<h2>Restore from a backup</h2>
     <p class="sub">Replaces every company, module, version and feedback item on this instance with the file, then restarts the platform (about a minute). Take a fresh backup first if anything here matters.</p>
     <input id="rs-file" type="file" accept="application/json,.json">
+    <p class="sub" style="margin:10px 0 4px">When a site is paying, its manager is told on the board why Anetix restored (the Terms, 9.1). Asked for only then.</p>
+    <select id="rs-why"><option value="">Why Anetix is restoring</option><option value="broken">to fix an error that stopped the tools working</option><option value="security">to fix a security problem</option><option value="asked">the customer's manager asked</option></select>
+    <input id="rs-why-note" maxlength="300" placeholder="A few words for the managers: what happened">
     ${stepField("rs")}
     <div><button class="danger" onclick="doRestore()">Restore and restart</button><button class="quiet" onclick="closeModal()">Cancel</button></div>
     <div class="sub" id="rs-note"></div>`);
@@ -936,8 +947,14 @@ async function doRestore() {
   try { doc = JSON.parse(await f.text()); } catch (e) { return alert("that file is not valid JSON"); }
   if (!confirm(`Restore the backup taken ${doc.taken_at || "(unknown time)"}? Everything on the instance is replaced.`)) return;
   document.getElementById("rs-note").textContent = "Restoring…";
-  const r = await fetch("/api/admin/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...stepValue("rs"), backup: doc }) });
-  const j = await r.json().catch(() => ({}));
+  const body = { ...stepValue("rs"), backup: doc, admin_reason: document.getElementById("rs-why").value, admin_note: document.getElementById("rs-why-note").value };
+  let r = await fetch("/api/admin/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  let j = await r.json().catch(() => ({}));
+  // a file older than a paying site's subscription: said plainly, restored only on a second yes
+  if (r.status === 409 && j.code === "sites_behind" && confirm(j.error + "\n\nRestore anyway?")) {
+    r = await fetch("/api/admin/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, sites_ok: true }) });
+    j = await r.json().catch(() => ({}));
+  }
   if (!r.ok) { document.getElementById("rs-note").textContent = ""; return alert(j.error || "failed"); }
   document.getElementById("rs-note").textContent = "Restored. The platform is restarting; this page reloads in a minute.";
   setTimeout(() => location.reload(), 60000);

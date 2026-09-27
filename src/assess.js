@@ -133,13 +133,17 @@ async function init() {
 }
 
 // ---- which cases exist ----------------------------------------------------------------
+// Never a paying site's work (stage 3, 2026-09-26): its data is used for other customers only with the learning opt-in
+// (the Terms, 10.2), and a trial's cost is metered under the company, so it would count against the site's fair-use
+// line. PAYING: the SQL that keeps a company whose site is switching on or subscribed out.
+const PAYING = (col) => `NOT EXISTS (SELECT 1 FROM platform.sites st WHERE st.company = ${col} AND st.stage IN ('activating','subscribed'))`;
 async function sources(kind, company, limit) {
   const co = company || null, n = Math.max(1, Math.min(MAX_CASES, Number(limit) || MAX_CASES));
   if (kind === "crosscheck") return (await q(`
     SELECT r.id AS source_id, r.company, r.module FROM platform.build_runs r JOIN platform.check_labels l ON l.run_id = r.id
      WHERE l.label IN ('right','wrong') AND r.to_version IS NOT NULL AND r.lane IN ('ui','functionality')
        AND r.evidence->'cross_check'->>'verdict' IN ('pass','fail') AND COALESCE(r.evidence->'cross_check'->>'model','') <> 'platform checks'
-       AND ($1::text IS NULL OR r.company=$1)
+       AND ($1::text IS NULL OR r.company=$1) AND ${PAYING("r.company")}
      ORDER BY r.id DESC LIMIT $2`, [co, n])).rows;
   if (kind === "proposal") return (await q(`
     SELECT * FROM (
@@ -147,17 +151,17 @@ async function sources(kind, company, limit) {
         JOIN platform.proposals p ON p.feedback_id = f.id AND p.status = 'approved'
         JOIN platform.build_runs r ON p.id = ANY(COALESCE(r.proposal_ids, ARRAY[r.proposal_id])) AND r.from_version IS NOT NULL AND r.lane IN ('ui','functionality')
        WHERE COALESCE(f.kind, 'feedback') = 'feedback' AND f.module IS NOT NULL AND f.module <> 'platform' AND f.review_id IS NULL
-         AND f.duplicate_of IS NULL AND f.name IS DISTINCT FROM 'Brand' AND ($1::text IS NULL OR f.company=$1)
+         AND f.duplicate_of IS NULL AND f.name IS DISTINCT FROM 'Brand' AND ($1::text IS NULL OR f.company=$1) AND ${PAYING("f.company")}
        ORDER BY f.id, r.id) x
      ORDER BY source_id DESC LIMIT $2`, [co, n])).rows;
   if (kind === "design") return (await q(`
     SELECT id AS source_id, company, slug AS module FROM platform.module_intakes
-     WHERE design IS NOT NULL AND status IN ('design','confirmed','building','done') AND ($1::text IS NULL OR company=$1)
+     WHERE design IS NOT NULL AND status IN ('design','confirmed','building','done') AND ($1::text IS NULL OR company=$1) AND ${PAYING("module_intakes.company")}
      ORDER BY id DESC LIMIT $2`, [co, n])).rows;
   if (kind === "build") return (await q(`
     SELECT id AS source_id, company, module FROM platform.build_runs
      WHERE status = 'deployed' AND lane IN ('ui','functionality') AND from_version IS NOT NULL AND to_version IS NOT NULL
-       AND ($1::text IS NULL OR company=$1)
+       AND ($1::text IS NULL OR company=$1) AND ${PAYING("build_runs.company")}
      ORDER BY id DESC LIMIT $2`, [co, n])).rows;
   throw new Error(`unknown kind ${kind}`);
 }

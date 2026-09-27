@@ -125,6 +125,9 @@ async function kickQueue(company, mod) {
   const next = (await q(
     "SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status='queued' ORDER BY id LIMIT 1", [company, mod])).rows[0];
   if (!next) return;
+  // a queued run is a new start when it actually starts: a paying site past its fair-use line does not start it
+  try { await require("./selfserve").assertCredit(company, { started: true, fairUse: true }); }
+  catch (e) { await setRun(next.id, { status: "failed" }); await log(next.id, { step: next.step, note: String(e.message || e) }); return kickQueue(company, mod); }
   const modRow = await registry.getModule(company, mod);
   await setRun(next.id, { status: "running", from_version: modRow.live_version });
   await log(next.id, { step: next.step, note: "started from the queue" });
@@ -643,6 +646,7 @@ async function recordAdded(run, c) {
 async function confirmRequirement(runId, edited) {
   const run = await getRun(runId);
   if (run.step !== "confirm_requirement" || run.status !== "waiting") throw new Error("run is not waiting on requirement confirmation");
+  await require("./selfserve").assertCredit(run.company, { started: true, fairUse: true });   // a build confirmed later is a new start for a paying site's fair-use line
   if (edited) await setRun(runId, { requirement: edited });
   await setRun(runId, { step: "build", status: "running" });
   await log(runId, { step: "confirm_requirement", note: "manager confirmed requirement" });

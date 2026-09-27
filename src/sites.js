@@ -159,7 +159,9 @@ function fairUse({ spend_usd = 0, fee_usd, share = BOOK_V1.fair_use_share, alert
 const STAGES = ["demo", "ordering", "signed", "activating", "subscribed", "back_to_demo"];
 const STANDINGS = ["good", "past_due", "unpaid"];
 const STAGE_LABEL = { demo: "Demo", ordering: "Ordering", signed: "Signed, waiting on you", activating: "Switching on", subscribed: "Subscribed", back_to_demo: "Back to demo" };
-const STANDING_LABEL = { good: "paid up", past_due: "payment failed, Stripe retrying", unpaid: "unpaid, AI paused" };
+// stage 3 records the standing (src/activate.js billingEvent); what each does to the site (the AI paused while unpaid,
+// back to a demo) is stage 4, so the words say what Stripe says and no more
+const STANDING_LABEL = { good: "paid up", past_due: "payment failed, Stripe retrying", unpaid: "unpaid, Stripe's retries ran out", canceled_at_stripe: "cancelled at Stripe: see to it" };
 function next(state, event) {
   const s = { stage: "demo", standing: null, cancel_at: null, attention: null, ...(state || {}) };
   const e = event || {};
@@ -182,9 +184,9 @@ function next(state, event) {
     case "activate":
       if (s.stage !== "signed") return no(s.stage === "activating" ? "it is switching on already" : "only a signed order can be activated");
       return to({ stage: "activating" }, ["subscribe"]);
-    case "card_declined":
+    case "card_declined":   // the first charge was declined: the card is removed, so the order waits for another (stage 3)
       if (s.stage !== "activating") return no("the site is not switching on");
-      return to({ stage: "signed" }, ["reverse_balance_credit", "tell_manager"]);
+      return to({ stage: "ordering" }, ["reverse_balance_credit", "detach_card", "tell_manager"]);
     case "activated":   // the rollover: runs on the Activate answer or the first invoice.paid, whichever comes first
       if (s.stage === "subscribed") return to({});   // the second of the two: nothing more to do
       if (s.stage !== "activating") return no("the site is not switching on");
@@ -246,9 +248,11 @@ function orderText({ facts = {}, book = BOOK_V1, terms_version = TERMS_VERSION, 
     `Band: ${band.name}${band.moved_up ? " (moved up one band for floor space)" : ""}.`,
     "",
     `Fee: ${usd(band.monthly_usd)} a month, billed monthly in advance to the card on file, plus sales tax where it applies. The first month is billed on the day Anetix switches the Site on.`,
-    "Term: month to month. Customer may cancel at any time. A cancellation takes effect at the end of the month already paid, and partial months are not refunded.",
+    // Brendan's notes for counsel (2026-09-26): the order form controls billing (Terms 1.5), so without "except as the
+    // Terms provide" this line would cancel the refunds in sections 6.4 and 13.2
+    "Term: month to month. Customer may cancel at any time. A cancellation takes effect at the end of the month already paid, and partial months are not refunded, except as the Terms provide.",
     "Included: use of Anetix at the Site by any number of Customer's people, with no limit on tools, requests or changes.",
-    `Fair use: if Anetix's own AI cost for the Site in a billing month passes ${Math.round(book.fair_use_share * 100)}% of that month's fee, new AI work pauses until the next billing month. The Site's tools keep working.`,
+    `Fair use: if Anetix's own AI cost for the Site in a billing month passes ${Math.round(book.fair_use_share * 100)}% of that month's fee, new AI work pauses until the next billing month. A fair-use pause does not stop the Site's tools.`,   // not "the tools keep working", which reads as an uptime promise
     "Price: Anetix will not raise the Site's price while this subscription continues, except to move the Site up a band when its stated size grows. Customer confirms the Site's size once a year, and the band can only move up.",
     "Data: Customer owns the data its people put into Anetix, and Anetix uses it to run the service for Customer. Customer's data is never shown to another customer.",
     facts.learning === true
@@ -257,7 +261,7 @@ function orderText({ facts = {}, book = BOOK_V1, terms_version = TERMS_VERSION, 
     "After a cancellation: the Site becomes a demo account for Customer's manager. Customer's data is kept until Customer asks for its deletion, or until 12 months pass with no sign-in.",
     "Add-ons: integrations and hardware are optional and quoted separately.",
     "Unused demo credit: credit Customer bought for its demo and has not used by the day the Site is switched on comes off the first bill, at the price Customer paid for it.",
-    `Terms: this order form is an Order Form under the Anetix Terms of Service, version ${terms_version}${terms_url ? `, at ${terms_url}` : ""}.`,
+    `Terms: this order form is an Order Form under the Anetix Terms of Service, version ${terms_version}${terms_url ? `, at ${terms_url}` : ""}, as updated under section 19.`,
     "",
     "Signed for Customer by the person named below, who confirms they may sign for Customer.",
   ].join("\n");
@@ -427,7 +431,7 @@ async function deleteRefusal(slug) {
 async function deleteCompany(slug) {
   const s = await siteRow(slug);
   if (s) await q(`UPDATE platform.orders SET state='void', note='the company was deleted', voided_by='admin', voided_at=now(), updated_at=now(),
-                     stripe = CASE WHEN payment_method IS NULL THEN stripe ELSE stripe || jsonb_build_object('detach_pending', payment_method) END
+                     stripe = CASE WHEN payment_method IS NULL THEN stripe ELSE ${require("./golive").addDetach("payment_method")} END
                    WHERE site_id=$1 AND state IN ('draft','signed')`, [s.id]).catch((e) => console.error("[sites] voiding the orders of", slug, e.message));
   await q("DELETE FROM platform.sites WHERE company=$1", [slug]);
 }
@@ -454,12 +458,17 @@ function orderOut(r) {
     card: r.order_card || null, card_saved: Boolean(r.order_card_saved),
     approver: approver ? { name: approver.name, email: approver.email } : null,
     note: r.order_note || null, created_at: r.order_created_at || null, updated_at: r.order_updated_at || null,
+    // stage 3: where Activate stands (the last error, a declined card, the subscription made)
+    activate: r.order_stripe ? { subscription: r.order_stripe.subscription || null, last_error: r.order_stripe.last_error || null, declined: r.order_stripe.declined || null, attempts: r.order_stripe.attempts || 0 } : null,
   };
 }
-function rowOut(r, { book, tools, credit, last }) {
+function rowOut(r, { book, tools, credit, last, fair }) {
   const facts = { headcount: r.headcount, sqft: r.sqft };
-  const band = r.headcount ? bandOf(facts, book) : null;
   const stage = r.stage || "demo";
+  // a subscribed site shows the band and price it signed (stage 3), never one worked out again from the facts
+  const signedFee = Number(r.site_price_usd);
+  const band = stage === "subscribed" && r.site_band ? { ...r.site_band, monthly_usd: signedFee, annual_usd: signedFee * 12, flags: [], signed: true,
+    fair_use_usd: round2(signedFee * book.fair_use_share), alert_usd: round2(signedFee * book.alert_share), why: r.site_band.why || "the band and price signed on the order form" } : r.headcount ? bandOf(facts, book) : null;
   const order = orderOut(r);
   return {
     slug: r.slug, name: r.name, demo: Boolean(r.demo), site_id: r.site_id || null,
@@ -475,6 +484,11 @@ function rowOut(r, { book, tools, credit, last }) {
     tools: tools || [], tools_live: (tools || []).filter((t) => t.live_version).length,
     ai_spent_usd: credit ? credit.spent_usd : null, credit_percent: credit ? credit.percent : null, credit_level: credit ? credit.level : null,
     last_activity: last || null, updated_at: r.updated_at || null, updated_by: r.updated_by || null,
+    // stage 3: a paying site's subscription and where it stands against the fair-use line this period
+    subscription: stage === "subscribed" ? { id: r.stripe_subscription || null, activated_at: r.activated_at || null, period_start: r.period_start || null, period_end: r.period_end || null,
+      learning_opt_in: Boolean(r.learning_opt_in), tenancy_note: r.tenancy_note || null } : null,
+    fair_use: fair || null,
+    attention: r.site_attention || null,   // what Stripe did that Brendan decides on (a subscription it cancelled, say)
   };
 }
 // The Sites tab: every self-serve company and every company with a site row, the most recently touched first.
@@ -484,6 +498,8 @@ async function pipeline() {
     SELECT c.slug, c.name, c.demo, s.email, s.contact, s.created_at AS demo_since, p.label AS pin_label,
            st.id AS site_id, st.stage, st.standing, st.cancel_at, st.price_book, st.site_name, st.legal_name, st.site_address,
            st.plant_manager, st.headcount, st.sqft, st.deal, st.note, st.updated_at, st.updated_by, st.billing, st.stripe_customer,
+           st.stripe_subscription, st.activated_at, st.period_start, st.period_end, st.band AS site_band, st.price_usd AS site_price_usd,
+           st.learning_opt_in, st.tenancy_note, st.attention AS site_attention,
            lo.*
       FROM platform.companies c
       LEFT JOIN platform.self_serve s ON s.company=c.slug
@@ -493,7 +509,7 @@ async function pipeline() {
         SELECT o.id AS order_id, o.state AS order_state, o.version AS order_version, o.kind AS order_kind, o.band AS order_band,
                o.price_usd AS order_price_usd, o.signed_at AS order_signed_at, o.signer AS order_signer, o.card AS order_card,
                o.payment_method IS NOT NULL AS order_card_saved, o.approver AS order_approver, o.note AS order_note,
-               o.created_at AS order_created_at, o.updated_at AS order_updated_at
+               o.created_at AS order_created_at, o.updated_at AS order_updated_at, o.stripe AS order_stripe
           FROM platform.orders o WHERE o.site_id = st.id ORDER BY o.created_at DESC LIMIT 1) lo ON true
      WHERE s.company IS NOT NULL OR st.company IS NOT NULL
      ORDER BY GREATEST(COALESCE(st.updated_at, 'epoch'), COALESCE(s.created_at, 'epoch'), COALESCE(lo.order_updated_at, 'epoch')) DESC, c.slug`)).rows;
@@ -506,14 +522,21 @@ async function pipeline() {
   const out = [];
   for (const r of rows) {
     const b = r.price_book && !books[r.price_book] ? (books[r.price_book] = await bookFor(r.price_book)) : books[r.price_book || book.version];
-    out.push(rowOut(r, { book: b, tools: tools[r.slug], credit: await selfserve.credit(r.slug).catch(() => null), last: last[r.slug] }));
+    const fair = r.stage === "subscribed" ? await require("./fairuse").stateOf(r.slug).catch(() => null) : null;
+    out.push(rowOut(r, { book: b, tools: tools[r.slug], credit: r.stage === "subscribed" ? null : await selfserve.credit(r.slug).catch(() => null), last: last[r.slug], fair }));
   }
   const stages = Object.fromEntries(STAGES.map((s) => [s, 0]));
   for (const r of out) stages[r.stage] = (stages[r.stage] || 0) + 1;
-  const attention = out.filter((r) => r.stage === "subscribed" && (r.standing && r.standing !== "good")).length;
+  // Needs attention: a payment standing that is not good (stage 4), or the fair-use line reached and not lifted.
+  // The alert at half the fee is a flag on the row and in the tab's count; the customer never sees a meter.
+  const attention = out.filter((r) => r.stage === "subscribed" && ((r.standing && r.standing !== "good") || (r.fair_use && r.fair_use.over))).length;
+  const alerts = out.filter((r) => r.fair_use && r.fair_use.alert && !r.fair_use.over).length;
   const cancelling = out.filter((r) => r.stage === "subscribed" && r.cancel_at).length;
   const golive = await require("./golive").status().catch(() => null);   // the switch for Go live on anetix.ai (stage 2)
-  return { book: bookView(book), stages, attention, cancelling, rows: out, stage_labels: STAGE_LABEL, golive };
+  const activate = require("./activate");
+  const activation = { channel: await activate.channel().catch((e) => ({ ok: false, why: e.message })), ai_key: await q("SELECT autofill, noted_at FROM platform.ai_credit ORDER BY id DESC LIMIT 1").then((x) => x.rows[0] || null).catch(() => null) };
+  const terms = await require("./agreements").status().catch(() => null);   // the Terms' switch (src/agreements.js)
+  return { book: bookView(book), stages, attention, alerts, cancelling, rows: out, stage_labels: STAGE_LABEL, golive, activation, terms };
 }
 async function saveFields(slug, body, by) {
   slug = String(slug || "").toLowerCase();

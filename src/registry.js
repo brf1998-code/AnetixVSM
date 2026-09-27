@@ -225,7 +225,7 @@ function moduleServices(company, mod, manifest, version, lane = "live") {
       async chat({ model, system, messages, maxTokens, kind, detail }) {
         // walled off from the data (src/datawall.js): a persona reads the company's rows by design, so it does not run
         if (await require("./datawall").isWalled(company)) throw Object.assign(new Error("AI reading of the company's data is switched off for this company, so this helper cannot answer. Anetix can switch it on."), { status: 409 });
-        await agent.assertUnderCap(company);
+        await agent.assertUnderCap(company, { runtime: true });   // a live tool's own AI: never stopped at a paying site's fair-use line (src/selfserve.js)
         const m = model && agent.MODELS.some((x) => x.id === model) ? model : await agent.modelFor(company, "propose");
         const out = await agent.runChat({ model: m, company, system, messages, maxTokens });
         await agent.recordUsage(company, mod, kind || "chat", m, out.costUsd, onTest ? { ...(detail || {}), lane: "test" } : detail);
@@ -342,7 +342,8 @@ async function seedModuleDocs(company, mod) {
 }
 
 // Import the repo's seed source for a module into a company. New pairing -> v1
-// live. Changed source -> new version, snapshot, deploy.
+// live. Changed source -> new version, snapshot, deploy on the library's own company; held for the manager's Switch
+// everywhere else (the Terms, 9.1).
 async function importFromRepo(company, mod) {
   const srcDir = path.join(REPO_MODULES_DIR, mod);
   if (!fs.existsSync(path.join(srcDir, "module.json"))) throw new Error(`no library module named ${mod}`);
@@ -377,6 +378,14 @@ async function importFromRepo(company, mod) {
   if (row.live_version && live && live.source !== "repo") {
     console.log(`[registry] ${company}/${mod}: repo change imported as v${version} but NOT deployed (v${row.live_version} on the floor was built in-app)`);
     await logEvent("module_import_held", `${company}/${mod}`, { version, hash, live_version: row.live_version });
+    return { version, changed: true, held: true };
+  }
+  // A customer's floor changes only when the customer approves it (the Terms, 9.1, 2026-09-26): a library tool on any
+  // company but the library's own (demo, unless module.json names another) waits in the Versions panel for the manager
+  // to Switch to it, the way a held import above does. Anetix's own demo company still takes the repo's version at boot.
+  if (row.live_version && company !== (manifest.company || "demo")) {
+    console.log(`[registry] ${company}/${mod}: repo change imported as v${version}, waiting for the manager (a customer's floor changes only on their approval)`);
+    await logEvent("module_import_held", `${company}/${mod}`, { version, hash, live_version: row.live_version, why: "customer" });
     return { version, changed: true, held: true };
   }
   if (row.live_version) {

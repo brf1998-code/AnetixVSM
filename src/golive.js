@@ -40,8 +40,10 @@
 //                               is refused, so a version always means one text
 // A signed order is kept exactly as signed and never edited: a correction is a new order.
 //
-// Cards Stripe still holds for a withdrawn order (the admin's Void, a deleted company) are listed for removal
-// (orders.stripe.detach_pending): the product cannot reach Stripe, and stage 3's channel to anetix.ai removes them.
+// Cards Stripe still holds for an order that will not be activated (the admin's Void, the customer's Withdraw, a
+// decline, a deleted company) are listed for removal on the order: orders.stripe.detach_list, every such card, and
+// detached_list, the ones removed (stage 2 kept one card in detach_pending with detached_at; still read). The product
+// cannot reach Stripe; stage 3's sweep (src/activate.js tidy) removes them over the channel to anetix.ai.
 //
 // Tables (in the backup): platform.orders, platform.terms_versions; platform.sites gains billing (the billing email
 // and address) and stripe_customer (the site's own Customer at Stripe, made at its first signing, one per site so a
@@ -55,6 +57,7 @@
 //     POST /api/www/golive/sign        { access, version, sha, signer, authority, ip, net, ua }
 //     POST /api/www/golive/checkout    { access, stripe_customer, setup_session, replaces? }
 //     POST /api/www/golive/start-over  { access }                          void a signed order with no card, redraft
+//     POST /api/www/golive/withdraw    { access }                          withdraw a signed order before Activate (5.4)
 //     POST /api/www/golive/card        { order, setup_session, stripe_customer, payment_method, card }
 //                                                                          a card saved at Stripe (the webhook or the
 //                                                                          way back); answers detach when the order
@@ -220,7 +223,7 @@ CREATE TABLE IF NOT EXISTS platform.orders (
   payment_method  TEXT,
   card            JSONB,                            -- { brand, last4, exp_month, exp_year }, for the admin's eye
   card_saved_at   TIMESTAMPTZ,
-  stripe          JSONB NOT NULL DEFAULT '{}'::jsonb,   -- the Stripe ids made for it so far; detach_pending
+  stripe          JSONB NOT NULL DEFAULT '{}'::jsonb,   -- the Stripe ids made for it so far; the cards to remove (detach_list)
   kind            TEXT NOT NULL DEFAULT 'customer', -- customer, or preview (started on an admin's link)
   from_stage      TEXT,                             -- the site's stage when a customer's order started
   note            TEXT,                             -- why it was voided, declined or sent back
@@ -233,6 +236,7 @@ CREATE TABLE IF NOT EXISTS platform.orders (
 ALTER TABLE platform.orders ADD COLUMN IF NOT EXISTS signed_net JSONB;
 ALTER TABLE platform.orders ADD COLUMN IF NOT EXISTS from_stage TEXT;
 ALTER TABLE platform.orders ADD COLUMN IF NOT EXISTS voided_by TEXT;
+ALTER TABLE platform.orders ADD COLUMN IF NOT EXISTS assent JSONB;   -- the words beside the signature, as shown: { notice, tick } (stage 3)
 CREATE UNIQUE INDEX IF NOT EXISTS orders_one_open ON platform.orders (site_id) WHERE state IN ('draft','signed','activating');
 CREATE INDEX IF NOT EXISTS orders_site ON platform.orders (site_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS platform.terms_versions (
@@ -245,12 +249,21 @@ CREATE TABLE IF NOT EXISTS platform.terms_versions (
 async function init() { await q(SCHEMA); }
 
 async function isOpen() { return (await getSetting("golive_open", "0")) === "1"; }
+// The cards to remove: SQL that adds one to an order's list, and the ones still to remove from an order's stripe JSON.
+const addDetach = (pmSql) => `stripe || jsonb_build_object('detach_list', COALESCE(stripe->'detach_list', '[]'::jsonb) || jsonb_build_array(${pmSql}))`;
+function cardsToRemove(stripe) {
+  const x = stripe || {}, done = new Set(x.detached_list || []);
+  const all = [...(x.detach_pending && !x.detached_at ? [x.detach_pending] : []), ...(x.detach_list || [])];
+  return [...new Set(all)].filter((pm) => pm && !done.has(pm) && !(pm === x.detach_pending && x.detached_at));
+}
+// an order whose every listed card is removed drops out, so old orders never crowd the sweep's 50 a round
+const TO_REMOVE_SQL = "((stripe ? 'detach_list' AND NOT (COALESCE(stripe->'detached_list', '[]'::jsonb) @> (stripe->'detach_list'))) OR (stripe ? 'detach_pending' AND NOT (stripe ? 'detached_at') AND NOT (COALESCE(stripe->'detached_list', '[]'::jsonb) @> jsonb_build_array(stripe->>'detach_pending'))))";
 // The switch and what waits on Brendan: cards Stripe still holds for withdrawn orders.
 async function status() {
-  const cards = (await q(`SELECT o.id, o.company, o.stripe->>'detach_pending' AS pm, o.card, o.voided_at FROM platform.orders o
-                           WHERE o.stripe ? 'detach_pending' AND NOT (o.stripe ? 'detached_at') ORDER BY o.voided_at DESC NULLS LAST LIMIT 50`).catch(() => ({ rows: [] }))).rows;
-  return { open: await isOpen(), terms_version: terms.TERMS_VERSION, terms_draft: /^draft/.test(terms.TERMS_VERSION), key_set: KEY().length >= 16, www_url: WWW(),
-    cards_to_remove: cards.map((c) => ({ order: c.id, company: c.company, payment_method: c.pm, card: c.card, since: c.voided_at })) };
+  const rows = (await q(`SELECT o.id, o.company, o.stripe, o.card, o.voided_at FROM platform.orders o WHERE ${TO_REMOVE_SQL.replace(/stripe/g, "o.stripe")}
+                          ORDER BY o.voided_at DESC NULLS LAST LIMIT 100`).catch(() => ({ rows: [] }))).rows;
+  const cards = rows.flatMap((c) => cardsToRemove(c.stripe).map((pm) => ({ order: c.id, company: c.company, payment_method: pm, card: c.card, since: c.voided_at })));
+  return { open: await isOpen(), terms_version: terms.TERMS_VERSION, terms_draft: terms.DRAFT, key_set: KEY().length >= 16, www_url: WWW(), cards_to_remove: cards.slice(0, 50) };
 }
 async function setOpen(open, by) {
   await setSetting("golive_open", open ? "1" : "0");
@@ -388,12 +401,14 @@ async function view(access, acc0) {
     ok: true, who: acc.who, preview: acc.kind === "a", open: await isOpen(),
     company: { slug: acc.co.slug, name: acc.co.name, demo: Boolean(acc.co.demo) },
     site: { id: site.id, stage, stage_label: sites.STAGE_LABEL[stage] },
-    terms: { version: terms.TERMS_VERSION, url: termsUrl(), draft: /^draft/.test(terms.TERMS_VERSION) },
+    terms: { version: terms.TERMS_VERSION, url: termsUrl(), draft: terms.DRAFT, ...assentFor(order && order.facts, acc.co) },
     order: order ? orderView(order, { acc, book, site, co: acc.co }) : null,
     prefill: !order && acc.who === "manager" ? await prefill({ query: q }, site, acc.co) : null,
     withdrawn: last && last.note && /^Anetix withdrew/.test(last.note) ? { note: last.note, at: last.voided_at } : null,
     me: acc.who === "manager" ? { email: (mgr && mgr.login) || (ss && ss.email) || null, name: (mgr && mgr.display_name) || (ss && ss.contact) || null } : null,
     credit_back: Boolean((await q("SELECT 1 FROM platform.credit_ledger WHERE company=$1 AND kind='purchase' LIMIT 1", [acc.co.slug])).rows[0]),
+    // the Terms, 5.4: until the site is on, the customer may withdraw the order (the manager, on "Your order is in")
+    can_withdraw: Boolean(acc.who === "manager" && order && mine(acc, order) && order.state === "signed" && (preview || site.stage === "signed" || site.stage === "ordering")),
     fair_use_share: book.fair_use_share,
   };
 }
@@ -476,18 +491,12 @@ async function setApprover(access, body = {}) {
   return view(access, acc);
 }
 
-// The words of the terms version being signed: kept the first time anyone signs under it, and after that a signature
-// under the same version must be over the same words.
-async function termsGuard(c) {
-  const doc = terms.termsDoc(), sha = terms.termsHash();
-  await c.query("INSERT INTO platform.terms_versions (version, sha256, doc) VALUES ($1,$2,$3) ON CONFLICT (version) DO NOTHING", [doc.version, sha, JSON.stringify(doc)]);
-  const kept = (await c.query("SELECT sha256 FROM platform.terms_versions WHERE version=$1", [doc.version])).rows[0];
-  if (!kept || kept.sha256 !== sha) {
-    console.error(`[golive] the terms' words changed under version ${doc.version} without a new version: signing refused until TERMS_VERSION moves on`);
-    throw fail(503, "Signing is paused for a moment while Anetix updates its terms. Try again later.", { code: "terms" });
-  }
-  return sha;
-}
+// The words of the terms version being signed: kept the first time anyone accepts under it, and after that an
+// acceptance under the same version must be over the same words (src/agreements.js, which every acceptance uses).
+const termsGuard = (c) => require("./agreements").keepVersion(c);
+// The words beside the signature (Brendan's screen text): the box above it and the tick. The tick names the company
+// the way the order form does.
+function assentFor(facts, co) { return { notice: terms.WORDS.notice, tick: terms.WORDS.order((facts && facts.legal_name) || (co && co.name) || "the company") }; }
 
 // Screen 4: the signature. Applied only while the version and the hash of the text the signer saw still match.
 async function sign(access, body = {}) {
@@ -500,7 +509,7 @@ async function sign(access, body = {}) {
   if (signer.title.length < 2) bad.push(["signer_title", "your title"]);
   if (!EMAIL.test(signer.email)) bad.push(["signer_email", "your email"]);
   if (bad.length) throw fail(400, `To sign, give ${joinAnd(bad.map((x) => x[1]))}.`, { code: "invalid", fields: bad.map((x) => x[0]) });
-  if (body.authority !== true) throw fail(400, "Tick the box to say you have read the order form and the terms and can sign for the company.", { code: "invalid", fields: ["authority"] });
+  if (body.authority !== true) throw fail(400, "Tick the box to agree to the order form and the Terms of Service, and to say you can sign for the company.", { code: "invalid", fields: ["authority"] });
   const version = Number(body.version), sha = String(body.sha || "");
   const r = await withSite(acc, async (c, site, open) => {
     if (open && !mine(acc, open)) { if (acc.kind === "a") throw readOnly(); throw noOrder(); }
@@ -515,10 +524,14 @@ async function sign(access, body = {}) {
     const { text, sha: hash } = draftText(open.facts, book);
     if (!same(hash, sha)) throw fail(409, "The order form changed since this page was opened. Look it over again before you sign.", { code: "changed" });
     const termsSha = await termsGuard(c);
+    const assent = assentFor(open.facts, acc.co);
     await c.query(`UPDATE platform.orders SET state='signed', text=$2, text_sha256=$3, band=$4, price_usd=$5, price_book=$6, terms_version=$7, terms_sha256=$8,
-                     signer=$9, learning_opt_in=$10, signed_at=now(), signed_ip=$11, signed_net=$12, signed_ua=$13, updated_at=now() WHERE id=$1`,
+                     signer=$9, learning_opt_in=$10, signed_at=now(), signed_ip=$11, signed_net=$12, signed_ua=$13, assent=$14, updated_at=now() WHERE id=$1`,
     [open.id, text, hash, JSON.stringify(bandSnap(band)), band.monthly_usd, book.version, terms.TERMS_VERSION, termsSha,
-      JSON.stringify(signer), open.facts.learning === true, clean(body.ip, 64) || null, cleanNet(body.net) ? JSON.stringify(cleanNet(body.net)) : null, clean(body.ua, 300) || null]);
+      JSON.stringify(signer), open.facts.learning === true, clean(body.ip, 64) || null, cleanNet(body.net) ? JSON.stringify(cleanNet(body.net)) : null, clean(body.ua, 300) || null, JSON.stringify(assent)]);
+    // the signature is the customer's acceptance of the Terms (their section 1.2); a preview is Brendan's own walk-through
+    if (open.kind === "customer") await require("./agreements").record(c, { company: site.company, site_id: site.id, kind: "order", words: assent.tick,
+      who: { name: signer.name, title: signer.title, email: signer.email, role: via }, ip: body.ip, net: cleanNet(body.net), ua: body.ua, ref: open.id });
     return { order: open.id, band, preview: open.kind === "preview" };
   });
   await logEvent("order_signed", acc.co.slug, { order: r.order, site: acc.site.id, by: via, band: r.band.key, price_usd: r.band.monthly_usd, preview: r.preview });
@@ -617,6 +630,27 @@ async function startOver(access) {
   return { ...(await view(access, acc)), expire_session: r.expire || null };
 }
 
+// Until the site is switched on, the customer may withdraw a signed order at no charge (the Terms, 5.4): Withdraw on
+// "Your order is in", the manager's only. The order is voided (kept, as every order is), the site goes back to the stage
+// it had before the order, and its card is listed for removal and answered as detach_cards, so anetix.ai removes it on
+// the spot and the sweep (src/activate.js) makes sure. Not while Activate is running: that is Anetix's to finish or undo.
+async function withdraw(access) {
+  const acc = await resolve(access);
+  if (acc.who !== "manager") throw fail(403, "Only the manager going live can withdraw the order.");
+  const r = await withSite(acc, async (c, site, open) => {
+    if (open && !mine(acc, open)) { if (acc.kind === "a") throw readOnly(); throw noOrder(); }
+    if (!open) throw fail(409, "There is no order to withdraw.", { code: "none" });
+    if (open.state === "activating") throw fail(409, "Anetix is switching the site on right now, so the order cannot be withdrawn here. Write to Anetix and they will cancel it.", { code: "activating" });
+    if (open.state !== "signed") throw fail(409, "This order is not signed, so there is nothing to withdraw. Leave it as it is, and nothing happens.", { code: "draft" });
+    await c.query(`UPDATE platform.orders SET state='void', note='withdrawn by the customer before the site was switched on', voided_by=$2, voided_at=now(), updated_at=now(),
+                     stripe = CASE WHEN payment_method IS NULL THEN stripe ELSE ${addDetach("payment_method")} END WHERE id=$1`, [open.id, acc.kind === "a" ? "admin" : "manager"]);
+    if (open.kind === "customer") await c.query("UPDATE platform.sites SET stage=$2, updated_at=now(), updated_by='anetix.ai' WHERE id=$1", [site.id, open.from_stage || "demo"]);
+    return { order: open.id, kind: open.kind, detach: open.payment_method ? [open.payment_method] : [], expire: !open.payment_method && open.setup_session ? open.setup_session : null };
+  });
+  await logEvent("order_withdrawn", acc.co.slug, { order: r.order, by: acc.kind === "a" ? "admin" : "manager", preview: r.kind === "preview" });
+  return { ...(await view(access, acc)), detach_cards: r.detach, expire_session: r.expire };
+}
+
 // Brendan withdraws a site's open order (a preview he is done with, or a customer's he will not activate). A
 // customer's site goes back to the stage it had before the order, and the manager sees the note the next time they
 // open Go live. A card Stripe holds for it is listed for removal (stage 3 removes it; the Stripe dashboard can too).
@@ -632,7 +666,7 @@ async function adminVoid(slug, { note } = {}, by) {
     if (customer && words.length < 3) throw fail(400, "say why, in a few words: the manager is shown it");
     const noteOut = customer ? `Anetix withdrew this order: ${words}` : `preview voided${words ? `: ${words}` : ""}`;
     await c.query(`UPDATE platform.orders SET state='void', note=$2, voided_by='admin', voided_at=now(), updated_at=now(),
-                     stripe = CASE WHEN payment_method IS NULL THEN stripe ELSE stripe || jsonb_build_object('detach_pending', payment_method) END WHERE id=$1`, [open.id, noteOut]);
+                     stripe = CASE WHEN payment_method IS NULL THEN stripe ELSE ${addDetach("payment_method")} END WHERE id=$1`, [open.id, noteOut]);
     if (customer && ["ordering", "signed"].includes(s.stage)) await c.query("UPDATE platform.sites SET stage=$2, updated_at=now(), updated_by=$3 WHERE id=$1", [s.id, open.from_stage || "demo", by || "admin"]);
     return { order: open.id, kind: open.kind, card: Boolean(open.payment_method) };
   });
@@ -655,12 +689,16 @@ async function forBoard(co, role) {
   const o0 = await openOrder(site.id), o = o0 && o0.kind === "customer" ? o0 : null;
   const url = `${WWW()}/c/${co.slug}/go-live?t=${t}`;
   const inAlready = ["signed", "activating"].includes(stage);
+  const declined = Boolean(o && o.state === "signed" && !o.payment_method && (o.stripe || {}).declined);   // Activate's charge was declined (stage 3)
   return {
     stage, url, preview: role === "admin",
-    action: inAlready ? "See your order" : stage === "ordering" ? "Continue going live" : "Go live",
-    line: inAlready ? "Your order is in. Anetix switches this site on within 24 hours. Until then your demo works as it does now." : null,
+    action: inAlready ? "See your order" : declined ? "Add another card" : stage === "ordering" ? "Continue going live" : "Go live",
+    // the Terms, 5.4: Anetix AIMS to switch a site on within 24 hours (Brendan, 2026-09-26)
+    line: inAlready ? "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now."
+      : declined ? "Your card was declined, so the site is not switched on yet. Use another card to finish going live." : null,
     waiting_on: o && o.state === "draft" && o.approver ? o.approver.name : null,
     signed_no_card: Boolean(o && o.state === "signed" && !o.payment_method),
+    declined,
   };
 }
 async function adminLink(slug) {
@@ -708,6 +746,7 @@ wwwRouter.post("/api/www/golive/approver", json, guard((b) => setApprover(b.acce
 wwwRouter.post("/api/www/golive/sign", json, guard((b) => sign(b.access, b)));
 wwwRouter.post("/api/www/golive/checkout", json, guard((b) => checkout(b.access, b)));
 wwwRouter.post("/api/www/golive/start-over", json, guard((b) => startOver(b.access)));
+wwwRouter.post("/api/www/golive/withdraw", json, guard((b) => withdraw(b.access)));
 wwwRouter.post("/api/www/golive/card", json, guard((b) => cardSaved(b)));
 wwwRouter.get("/api/www/golive/terms", guard((_b, req) => termsFor(req.query.version)));
 
@@ -728,8 +767,8 @@ router.get("/api/c/:slug/golive", requireManager, guard(async (_b, req) => {
 }));
 
 module.exports = {
-  init, SCHEMA, status, isOpen, setOpen, openOrder, ensureSite, forBoard, adminLink, ordersOf, adminVoid, termsFor,
-  view, save, setApprover, sign, checkout, cardSaved, startOver, resolve,
+  init, SCHEMA, status, isOpen, setOpen, openOrder, addDetach, cardsToRemove, TO_REMOVE_SQL, ensureSite, forBoard, adminLink, ordersOf, adminVoid, termsFor,
+  view, save, setApprover, sign, checkout, cardSaved, startOver, withdraw, resolve, withSite, assentFor,
   goliveToken, readGoliveToken, approverToken, readApproverToken, cleanFacts, missingFacts, customerFor, bandSnap, cleanCard, cleanNet, previewStage,
   wwwRouter, router,
 };

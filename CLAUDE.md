@@ -1564,6 +1564,82 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   /api/c/:slug/golive` (requireManager). Tests: `scripts/test-golive.js` (52),
   `scripts/e2e/golive.js` (99, in `run-all.sh`); with the www service up:
   `www/scripts/e2e-golive.js` (55) and `e2e-golive-browser.js` (26).
+- **Paid sites, stage 3: Activate, the rollover, the Terms** (2026-09-26,
+  `src/activate.js`, `src/agreements.js`, `src/fairuse.js`, `src/notices.js`, a
+  new `src/terms.js`; www's `internal.js`; `docs/PAID-SITES.md` "Stage 3 as
+  built"). Go live STAYS OFF until stage 4 (Cancelling, the portal, Back to demo).
+  **The channel**: the product never holds the Stripe key; Activate calls
+  anetix.ai's second listener over Railway's private network
+  (`WWW_INTERNAL_URL`, e.g. http://anetix-www.railway.internal:4001, header
+  `X-WWW-Internal-Key` = `WWW_INTERNAL_KEY`, the same on both services; no key,
+  no listener). `activate.channel()` pings it (Stripe test/live/fake, Tax on or
+  off; cached 30 s for the Sites tab, fresh for Activate). **Activate** (Sites
+  tab, `POST /api/admin/sites/:slug/activate { code, tenancy_note, clear_sample,
+  test_mode_ok }`): checks (`GET .../checks`: channel, the AI key's auto reload
+  noted on, a tenancy reason from the second paying site, size flags, the plan,
+  the refund due, `test_mode`, `tax_off`); a customer's order while Stripe is not
+  live needs `test_mode_ok`; a preview runs in test mode only. Under
+  `golive.withSite`'s lock the order and site go to activating, the unused bought
+  credit is frozen per card, then www: resume by `metadata.order`, default card,
+  the balance credit (`metadata anetix=demo_credit`), the Price by lookup key
+  `anetix_site_<band>_v<book>_<cents>`, the subscription (`off_session`,
+  `error_if_incomplete`, key `anetix-sub-<order>-<pm>[-t<n>]`). A card error
+  answers 402 `{ declined, balance_reversed, balance_txn, detached }`: order back
+  to signed without a card, site to ordering, a `card_declined` notice.
+  Anything else leaves it activating with the error; Activate again carries on.
+  `POST .../stop-activating { code }` asks www `/internal/abandon`: a
+  subscription found finishes the rollover, else reverse, detach, ask for a card.
+  **Rollover**: `finish()` (order activated, site subscribed with period, band,
+  price, learning, `converted_at`), then `rolloverSteps` under a pg advisory
+  lock, each step marked on `sites.rollover` (sample data out, the floor's own
+  password into `welcome_enc` for the manager's once-only board panel, `demo`
+  false and the site's name); `finishPending` at boot and every 15 minutes; the
+  first `invoice.paid` finishes an order whose answer was lost. `collectWelcome`
+  refuses (410 `stale`) a password that no longer opens the floor, and a new
+  floor password on the company card clears the welcome. **A paying site**: no
+  credit, no company or instance cap (`agent.subscribedSite`), the fair-use line
+  instead (`fairuse.assertUnder`, 429 `fair_use`, the spec's words, logged
+  `fair_use_reached` once a period; `opts.fairUse` on new starts: a proposal on
+  arrival, confirmRequirement, a queued build, intake rounds and design;
+  `opts.started` lets started work finish; `ctx.ai` is `runtime` and never
+  paused); `POST .../lift { note }` until the period ends. Settings has the
+  subscription card and the learning switch (`POST /api/c/:slug/learning`,
+  manager only, the Terms 10.2). The Demos tab stops at `converted_at` without
+  the opt-in (rows changed after it are redacted). The head-to-head and the
+  checks replays leave paying sites out. **The Terms, 9.1**: `importFromRepo`
+  holds a repo change for any company but the manifest's own (`demo`);
+  an admin deploy, rollback or goto on a customer needs `admin_reason`
+  (security | broken | asked) and `admin_note`, and the manager gets a
+  `tool_changed` notice (`feedback.adminChange` / `tellManager`, which never
+  fails the change); a restore with paying sites asks the same, notices every
+  paying site in the restored data, and refuses a file older than a site's
+  subscription unless `sites_ok`. **Stripe's events**: www re-reads the
+  subscription for invoice and subscription events and posts
+  `/api/www/billing-events`; the period moves the fair-use window, the standing
+  is kept, a subscription Stripe cancelled sets `sites.attention`; what a
+  standing does is stage 4. A refill for an activating or subscribed site is
+  answered 409 `subscribed` and www refunds it (`anetix-refund-<session>`); a ref
+  credited before is always `added:false` first. **Cards**: every card that will
+  not be charged goes on `orders.stripe.detach_list` (the stage 2
+  `detach_pending` still read); `activate.tidy()` detaches them and reverses a
+  left balance credit at boot, every 15 minutes and on `POST
+  /api/admin/stripe-sweep`. Decline (`{ reason }`) and Send back (`{ note }`) for
+  a signed order; the customer's Withdraw at `POST /api/www/golive/withdraw`.
+  **The Terms**: Brendan's text as `termsDoc()` format 2 (summary plus 21
+  sections), `TERMS_VERSION` `draft-2`, `WORDS` for every box; the switch
+  `terms_live` (`GET|POST /api/admin/terms`, off); `platform.acceptances` (order,
+  demo_setup, topup, board; version, SHA-256, words, who, ip and its evidence,
+  ref; `gone_at` on delete, never removed); with the switch on a demo without an
+  identified acceptance (demo_setup, board, order) waits for its manager's tick
+  on the board (`POST /api/c/:slug/terms/accept`); `/terms` stays behind the wall
+  and the product's links carry `?k=` (HMAC over `terms:<exp>` under
+  `SOS_WWW_KEY`, 31 days). `backup.restore` merges `acceptances`,
+  `billing_events` and `terms_versions` instead of replacing them. The delete
+  confirm shows the refund due under 4.2 (`GET
+  /api/admin/companies/:slug/refund-due`). Tables: `acceptances`, `notices`,
+  `billing_events` (in the backup), columns on `sites`. Tests:
+  `scripts/test-activate.js` (26), `scripts/e2e/stage3.js` (116, a stub channel in
+  the test; in `run-all.sh`); www `test-www.js` (87), `e2e-activate.js` (42).
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2694,6 +2770,10 @@ tool list, 401 from the API) proves the CLI itself starts.
 
 ## Live instance env vars (Railway service `SymbioticOS`)
 
+- `WWW_INTERNAL_URL` (http://anetix-www.railway.internal:4001) and
+  `WWW_INTERNAL_KEY` (the same long random string as on anetix-www): the private
+  channel Activate uses (stage 3). Unset, Activate says the channel is not set up
+  and charges nothing.
 - `SOS_WWW_KEY`: the shared key the anetix.ai service (`www/`) sends in
   `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on
   both services; unset = those routes answer 401). `SOS_WWW_URL`: the front

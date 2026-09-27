@@ -214,8 +214,25 @@ async function credit(company) {
 // the gate when it began (a build run, a module creation), so it goes through: "a build already started always
 // finishes even if credit runs out" (Brendan, 2026-09-26). The balance can then go below zero; the next refill
 // writes that off (addCredit), so the person never pays for it.
+// Stage 3 (docs/PAID-SITES.md "The rollover"): a SUBSCRIBED site has no credit gate at all. Its limit is the fair-use
+// line instead (src/fairuse.js), checked here because this is the one gate every start passes: four starts call it
+// directly and never pass agent.assertUnderCap. While the Terms are switched on (src/agreements.js), a demo whose
+// manager has not agreed to them starts nothing new until they tick the box on the board.
+// For a subscribed site the options mean (docs/PAID-SITES.md "What already started covers"):
+//   started   the same run carrying on: it finishes, one run per tool at most
+//   fairUse   a start that is new to the manager although the platform calls it started (a build confirmed later, a
+//             queued run when it actually starts, an intake round or design asked for later): checked
+//   runtime   the floor's own tools asking the AI (ctx.ai.chat): never stopped at the line (the order form: "A fair-use
+//             pause does not stop the Site's tools")
+async function siteStage(company) { return ((await q("SELECT stage FROM platform.sites WHERE company=$1", [company])).rows[0] || {}).stage || null; }
 async function assertCredit(company, opts = {}) {
-  if (!company || opts.started) return;
+  if (!company) return;
+  if ((await siteStage(company)) === "subscribed") {
+    if (opts.runtime || (opts.started && !opts.fairUse)) return;
+    return require("./fairuse").assertUnder(company);
+  }
+  if (opts.started) return;
+  if (await require("./agreements").needsAcceptance(company)) throw new Error("Anetix's Terms of Service need the manager's agreement first: tick the box at the top of the board to keep building.");
   const c = await credit(company); if (!c) return;
   if (c.balance_usd <= 0) throw new Error(`this company's AI credit is used up. Add credit at ${c.topup_url} to keep going.`);
 }
@@ -265,7 +282,7 @@ async function freeSlug(name) {
 // password: the one the person chose on anetix.ai (the demo workflow): their account gets it and the handout carries
 // only the floor password. Without one the platform makes one up and hands it out once, as before. demo: the board
 // shows the rolling DEMO banner. paid_usd 0: the first credit is a grant from us, not a purchase.
-async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_usd, password, demo = false }) {
+async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_usd, password, demo = false, terms: agreed = null, ip = null, net = null, ua = null }) {
   ref = clean(ref, 200); if (!ref) throw fail(400, "ref (the payment) is required");
   const existing = async (c) => {
     const had = (await c.query("SELECT company FROM platform.credit_ledger WHERE ref=$1", [ref])).rows[0];
@@ -282,6 +299,14 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
   const why = pinProblem(row) || pinEmailProblem(row, email); if (why) throw fail(403, why);
   if (password != null && password !== "") { const pw = require("./accounts").passwordProblem(String(password)); if (pw) throw fail(400, pw.charAt(0).toUpperCase() + pw.slice(1) + "."); }
   const chosen = password != null && password !== "";
+  // the Terms (src/agreements.js): while switched on, a demo is set up only with the box above "Make my demo" ticked,
+  // over the version and words the page showed; the acceptance is written with the company, in one transaction
+  const agreements = require("./agreements");
+  const termsOn = await agreements.isLive();
+  if (termsOn) {
+    if (!agreed || agreed.agreed !== true) throw Object.assign(fail(400, "Tick the box to agree to the Terms of Service."), { code: "terms_needed" });
+    if (!agreements.sameTerms(agreed.version, agreed.sha)) throw Object.assign(fail(409, "The Terms of Service changed while this page was open. Look at them again and tick the box."), { code: "terms_changed" });
+  }
   let slug = await freeSlug(name);
   const floor = demo ? null : auth.generatePassword();   // a personal demo is one person on one manager account: no floor
   const mgrPassword = chosen ? String(password) : require("./accounts").makePassword();
@@ -311,6 +336,7 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
     const paid = money(paid_usd);
     await client.query("INSERT INTO platform.credit_ledger (company, delta_usd, kind, ref, paid_usd, note, made_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
       [slug, usd, paid > 0 ? "purchase" : "grant", ref, paid || null, paid > 0 ? "first purchase from anetix.ai" : "demo credit from anetix.ai", paid > 0 ? null : "anetix.ai"]);
+    if (termsOn) await agreements.record(client, { company: slug, kind: "demo_setup", words: require("./terms").WORDS.demo(), who: { email: clean(email, 200), name: clean(contact, 120) }, ip, net, ua, ref });
     await client.query("COMMIT");
   } catch (e) { await client.query("ROLLBACK").catch(() => {}); throw e; }
   finally { client.release(); }
@@ -342,6 +368,14 @@ async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", n
   const usd = money(credit_usd);
   if (kind === "purchase") {
     ref = clean(ref, 200); if (!ref) throw fail(400, "ref (the payment) is required");
+    // a payment credited before is only ever answered "already done", whatever the site is now: the refund below is
+    // for a payment that was never credited (found by the review of 2026-09-26: a demo's old top-up, its success page
+    // reopened after going live, was refunded although its credit had been used and had come off the first bill)
+    if ((await q("SELECT 1 FROM platform.credit_ledger WHERE ref=$1", [ref])).rows[0]) return { added: false, company: co, credit: await credit(slug) };
+    // a site switching on or subscribed has no credit to buy (stage 3): the unused credit was worked out when Activate
+    // started, so a refill now would be neither on the first bill nor usable. Answered "subscribed", and anetix.ai
+    // refunds the payment on the spot (www/server.js fulfil).
+    if (["activating", "subscribed"].includes(await siteStage(slug))) throw Object.assign(fail(409, `${co.name} is a subscribed site, so it has no AI credit to add.`), { code: "subscribed" });
     if (!(usd > 0)) throw fail(400, "credit_usd must be more than zero");
   } else {
     ref = null;
@@ -392,7 +426,7 @@ async function deleteCompany(slug) {
 
 // ---- routes for the www service: before the session middleware, opened by the shared key ---------------------------
 const json = express.json({ limit: "50kb" });
-const guard = (fn) => async (req, res) => { try { await fn(req, res); } catch (e) { res.status(e.status || 400).json({ error: e.message }); } };
+const guard = (fn) => async (req, res) => { try { await fn(req, res); } catch (e) { res.status(e.status || 400).json({ error: e.message, code: e.code }); } };
 function keyOk(req) {
   const want = process.env.SOS_WWW_KEY || "";
   const got = String(req.headers["x-sos-www-key"] || "");
@@ -444,7 +478,9 @@ wwwRouter.get("/api/www/companies/:slug", guard(async (req, res) => {
   const slug = String(req.params.slug || "").toLowerCase();
   const co = SLUG.test(slug) ? (await q("SELECT slug, name FROM platform.companies WHERE slug=$1", [slug])).rows[0] : null;
   if (!co) return res.status(404).json({ error: "no such company" });
-  res.json({ ok: true, company: co, credit: await credit(slug), managers: await managers(slug) });
+  const stage = await siteStage(slug);
+  const paying = ["activating", "subscribed"].includes(stage);   // no credit to buy from the moment Activate starts
+  res.json({ ok: true, company: co, credit: paying ? null : await credit(slug), managers: await managers(slug), stage: stage || "demo", subscribed: paying });
 }));
 
 // ---- admin routes: with the platform router, an admin session ------------------------------------------------------
@@ -477,6 +513,6 @@ module.exports = {
   init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL, keyOk,
   creditToken, previewToken, topupUrl, wwwOrigins, loginCors,
   pinEmailProblem,
-  pinRow, selfServeRow, spentSince, credit, assertCredit, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
+  pinRow, selfServeRow, spentSince, credit, assertCredit, siteStage, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
   wwwRouter, adminRouter, keyOk,
 };

@@ -80,7 +80,8 @@ const R = runner(), t = R.t;
 
   // a phone: the pair fits the tile
   const ph = await browser.newContext({ viewport: { width: 390, height: 800 } }); await ph.addCookies(mgr.cookies());
-  const p = await ph.newPage(); watch(p, "phone"); await p.goto(BASE + "/c/demo/"); await p.waitForSelector("#col-done .card");
+  // a phone shows one column at a time behind the tab row (2026-09-26): open Done first
+  const p = await ph.newPage(); watch(p, "phone"); await p.goto(BASE + "/c/demo/"); await p.waitForSelector("#tab-done"); await p.click("#tab-done"); await p.waitForSelector("#col-done .card");
   await p.locator("#col-done button", { hasText: "Show the other" }).click().catch(() => {});
   const over = await p.evaluate((id) => { const c = document.querySelector(`[data-key="fb:${id}"]`), btn = c && c.querySelector("[data-closeout]"), a = c && c.querySelector("[data-left]"); if (!btn || !a) return "missing"; const cr = c.getBoundingClientRect(); return [btn, a].some((e) => e.getBoundingClientRect().right > cr.right + 1) || document.documentElement.scrollWidth > window.innerWidth + 1; }, B5);
   t("on a phone the button and the link stay inside the tile and nothing scrolls sideways", over === false, over);

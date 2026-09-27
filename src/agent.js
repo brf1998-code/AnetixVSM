@@ -642,9 +642,15 @@ async function monthlySpend(company) {
   return { usd, cap, capKind: own ? "company" : MONTHLY_CAP_USD ? "instance" : null, capped: own ? usd >= own : (!company && MONTHLY_CAP_USD > 0 && usd >= MONTHLY_CAP_USD) };
 }
 
+// "Subscribed is the test" wherever the code asks whether a site pays (docs/PAID-SITES.md).
+async function subscribedSite(company) {
+  if (!company) return false;
+  return ((await q("SELECT stage FROM platform.sites WHERE company=$1", [company]).catch(() => ({ rows: [] }))).rows[0] || {}).stage === "subscribed";
+}
 // A company's own monthly AI budget (platform.companies.monthly_cap_usd); 0 = none.
 async function companyCap(company) {
   if (!company) return 0;
+  if (await subscribedSite(company)) return 0;   // a paying site's limit is its fair-use line (src/fairuse.js), not a cap (stage 3)
   const row = (await q("SELECT monthly_cap_usd FROM platform.companies WHERE slug=$1", [company])).rows[0];
   const v = row ? Number(row.monthly_cap_usd) : 0;
   return Number.isFinite(v) && v > 0 ? v : 0;
@@ -665,7 +671,8 @@ async function assertUnderCap(company, opts = {}) {
     const mine = await monthlySpend(company);
     if (mine.usd >= own) throw new Error(`this company's AI budget for the month is used up ($${mine.usd.toFixed(2)} of $${own.toFixed(2)}). The platform's admin can raise it on the admin page.`);
   }
-  if (MONTHLY_CAP_USD > 0) {
+  // the instance cap still counts everything, but it refuses demos only: a paying site's limit is its fair-use line
+  if (MONTHLY_CAP_USD > 0 && !(await subscribedSite(company))) {
     const all = await monthlySpend(null);
     if (all.usd >= MONTHLY_CAP_USD) throw new Error(`monthly AI cap for the whole instance reached ($${all.usd.toFixed(2)} of $${MONTHLY_CAP_USD.toFixed(2)}). Raise SOS_MONTHLY_CAP_USD to continue.`);
   }

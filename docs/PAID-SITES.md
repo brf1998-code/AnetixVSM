@@ -805,11 +805,13 @@ Each stage ships and is tested on its own, like the earlier pushes.
    `fulfil()` taught setup mode, and `STRIPE_FAKE` taught setup mode, customers
    and subscriptions. Plus the switch, previews, Withdraw and the Terms of
    Service on Common Paper's standard terms (Stage 2 as built, below).
-3. **Activate and the rollover.** The second listener and its key, the three
-   Stripe steps with their ids kept on the order, the rollover as one function
-   that is safe to run twice, the unused-credit refund, every row of the
-   rollover table, the fair-use gate inside `selfserve.assertCredit`, the
-   manager's welcome panel, and `requireManager` on every new manager route.
+3. **Activate and the rollover. Built 2026-09-26.** The second listener and its
+   key, the three Stripe steps with their ids kept on the order, the rollover as
+   one function that is safe to run twice, the unused-credit refund, every row of
+   the rollover table, the fair-use gate inside `selfserve.assertCredit`, the
+   manager's welcome panel, and `requireManager` on every new manager route. Plus
+   Brendan's own Terms of Service and a record of every acceptance (Stage 3 as
+   built, below).
 4. **Month to month.** The re-read of every event, the standings, Cancelling,
    the cancel on an unpaid month, Back to demo with the credit epoch, disputes
    and refunds, the portal link, the new Settings sections, the yearly size
@@ -892,6 +894,156 @@ removing `detach_pending` cards, the internal channel, Activate.
 `scripts/e2e-golive.js` (55) and `scripts/e2e-golive-browser.js` (26) against
 both services in fake Stripe mode.
 
+## Stage 3 as built (2026-09-26)
+
+`src/activate.js`, `src/agreements.js`, `src/fairuse.js`, `src/notices.js` and a
+new `src/terms.js` here; `internal.js` and the Terms' pages in the www repo.
+**Go live stays switched off.** Stage 3 makes Activate work end to end, but
+Cancelling, the billing portal and Back to demo are stage 4: until then a paying
+customer could only cancel by writing to Brendan. The Go live switch's confirm
+says so.
+
+**The channel.** The product never holds the Stripe key, so Activate asks
+anetix.ai over Railway's private network: a second listener in the www service
+(`internal.js`, `INTERNAL_PORT` 4001, no public domain), opened only by
+`WWW_INTERNAL_KEY` (a key of its own in this direction, the same value on both
+services), reached at `WWW_INTERNAL_URL` (http://anetix-www.railway.internal:4001).
+Without the key the listener does not start, and the public port has no
+`/internal` routes. It binds with no host (both IPv4 and IPv6 where there is
+IPv6, which Railway's private network uses), and an error on it is logged and
+never takes the site down. Routes: `ping` (which Stripe is behind it: test, live
+or fake, and whether Stripe Tax is on), `activate`, `abandon`, `reverse-balance`,
+`detach`, `cancel`.
+
+**Activate** (the Sites tab, a signed order with its card):
+
+- The checks first, on the site's panel: the channel, the Anthropic key's auto
+  reload noted as on (a paying site's loop stops if the key runs dry), a tenancy
+  reason from the second paying site on (the rule is a runtime per customer
+  before a second customer's production data), the size flags, the plan in plain
+  words (what the rollover will do), and the refund due.
+- A customer's order while Stripe is not live is refused unless the admin ticks
+  "Stripe is in test mode" (your own test company, say): it would switch a real
+  company on with no real charge and test ids. A preview is the reverse: test
+  mode only. Live with Stripe Tax off, the panel and the Go live switch warn.
+- A fresh authenticator code, then under the site's lock the order goes to
+  activating and so does the site. The amount of unused bought credit is worked
+  out once per card and frozen on the order (`sites.refundableCredit`: free
+  credit counts as spent first, purchases oldest first, back at the price paid).
+- anetix.ai then runs: step 0, a subscription this order made already (its id in
+  `metadata.order`) is the answer; step 1, the card becomes the Customer's
+  default; step 2, the unused credit becomes a customer balance credit
+  (`metadata anetix=demo_credit`), found again rather than made twice; step 3,
+  the band's monthly Price by lookup key (`anetix_site_<band>_v<book>_<cents>`,
+  made the first time) and the subscription on it, `off_session`,
+  `error_if_incomplete`, idempotency key `anetix-sub-<order>-<card>[-t<n>]`.
+- A card error is the only decline: the credit is reversed, the card removed,
+  402 `{ declined, balance_reversed, balance_txn, detached }`. The order goes
+  back to waiting for a card, the site to Ordering, and the manager is told on
+  the board and in Go live's line ("Add another card"). Anything else (Stripe
+  down, a timeout) leaves the order activating with the error, and Activate again
+  carries on without charging twice.
+- **Stop switching on** (a code): for an order stuck at activating (the answer
+  lost, either service redeployed mid-call). anetix.ai is asked what Stripe
+  holds: a subscription made for the order finishes the rollover; none, and the
+  credit is reversed, the card removed and the manager asked for a card again.
+
+**The rollover** (`finish`, under the site's lock, then `rolloverSteps` under an
+advisory lock, each step marked on `sites.rollover` so a restart picks up where
+it stopped: `finishPending` at boot and every 15 minutes): the order activated,
+the site subscribed with its subscription, period, band, price, learning choice
+and `converted_at`; the sample data out of the tools (a box on the panel); the
+floor's own password, handed to the manager once on the board ("Show the floor's
+password", then "Done, I wrote it down"; a password changed since then, by the
+company card or a restore, is never shown as if it opened the floor); the DEMO
+strip off and the company named for the site. The first `invoice.paid` for an
+order still activating finishes it the same way (the answer lost on the way).
+
+**Living as a paying site.**
+
+- No credit and no credit line. The company's monthly cap and the instance cap
+  do not apply; the fair-use line does.
+- **Fair use** (`src/fairuse.js`): the billing period from Stripe, rolled forward
+  a month from the anchor when no event has moved it; spend per day is the larger
+  of the meter (`ai_calls`) and the features' own rows; the line is 80% of the
+  month's fee and the alert 50%. Past the line, new AI work (a request's
+  proposal, a confirmed requirement, a queued build, a new module's rounds and
+  design) is refused with the spec's words and Anetix is told once a period.
+  Work already started finishes, and AI inside the tools (`ctx.ai`) never pauses.
+  Brendan can lift the line for the rest of the period, with a reason.
+- **Settings:** the subscription card (band, price, since) and the learning
+  choice (the Terms, 10.2), the manager's to change, on the record.
+- **The Demos tab** shows a paying site's demo period only, unless it opted in:
+  rows made before `converted_at` and changed after it keep the words said in
+  the demo and lose what happened since.
+- **The Terms, 9.1:** a repo change to a customer's library tool is held in the
+  Versions panel until the manager switches to it (Anetix's own demo company
+  still takes them at boot). An admin who deploys, rolls back or switches a
+  customer's tool says why (a security fix, a fix for an error that stops the
+  tool, or the manager asked) with a note, and the manager gets a notice on the
+  board. A restore with paying sites asks the same, and every paying site in the
+  restored data gets the notice.
+- A paying site is left out of the head-to-head's cases and the checks replays.
+- Stripe's events (`invoice.paid`, `invoice.payment_failed`,
+  `invoice.finalization_failed`, `customer.subscription.created`, `.updated`,
+  `.deleted`) are re-read by anetix.ai and handed to the product: the period
+  moves the fair-use window, the standing is kept (good, past due, unpaid), and
+  a subscription Stripe cancelled is flagged on the Sites tab. What a standing
+  does to the site is stage 4; nothing changes on its own yet.
+- A refill paid for a site that is activating or subscribed is refunded at once
+  (`anetix-refund-<session>`). A payment credited during the demo is always
+  answered "already done", so reopening its success page never refunds it.
+
+**Orders that do not go ahead.** Decline (a reason) and Send back (a note; a new
+draft keeps the answers) for a signed order, and the customer's own Withdraw on
+anetix.ai until Activate (the Terms, 5.4). Every card that will not be charged
+goes on the order's list to remove (`stripe.detach_list`; the stage 2
+`detach_pending` is still read); the sweep removes them over the channel at boot,
+every 15 minutes and on "Sweep Stripe", and reverses any balance credit a decline
+left standing.
+
+**The Terms of Service** are Brendan's own (`src/terms.js`, version `draft-2`: the
+summary and 21 sections, with `[PRIVACY NOTICE URL]`, `[TERMS URL]`,
+`[LEGAL EMAIL]` and `[MAILING ADDRESS]` for counsel to fill). A switch on the
+Sites tab (`terms_live`, off) decides whether anyone is asked:
+
+- On, demo set-up and refills on anetix.ai carry the tick box, and the sign step
+  carries Before you sign and the tick naming the company. Every acceptance goes
+  in `platform.acceptances` (kind order, demo_setup, topup or board; the version,
+  the SHA-256 of the words, the words beside the box, who, the address and its
+  evidence, the order or payment), and the words of each version are kept at its
+  first acceptance.
+- A demo made before the switch sees the box on its board; its new AI work waits
+  until its manager ticks it (an admin cannot tick for them).
+- `/terms` stays behind the wall (Brendan's call). The product's links carry a
+  31-day key (`?k=`, an HMAC under `SOS_WWW_KEY`) that opens it without a pin, so
+  a manager, a signer or their counsel can read it from the board, Settings or an
+  order.
+- The refill's tick is on anetix.ai's own page, recorded before Stripe opens,
+  instead of Stripe Checkout's consent box: Stripe shows its box only with a
+  public Terms URL in the account's public details, and `/terms` is not public.
+- A deleted company's acceptances stay (marked `gone_at`), and a restore adds
+  the file's acceptances, Stripe's events and the terms versions to what the
+  instance holds and never takes any away (the Terms, 10.7).
+
+**Found by the adversarial review and fixed before shipping:** a demo's old
+refill refunded after going live; an order stuck activating with no way out; two
+rollovers racing; the reversal id lost on a decline; fair use checked only at
+arrival; a refill while activating; the ledger read newest first for the refund;
+paying sites in the head-to-head; the Demos tab showing rows changed after going
+live; standings ignored; newer invoice events' subscription id; the idempotency
+key after a Stripe error; the card list; the refill tick not counted; runtime AI
+paused; test mode on a customer order; a dead floor password shown once; a
+restore erasing acceptances; a notice failure turning a change into an error.
+
+**Tests.** Here: `scripts/test-activate.js` (26) and `scripts/e2e/stage3.js`
+(116; anetix.ai's channel is a stub inside the test, so every answer Stripe could
+give is the test's to choose; in `run-all.sh`); `test-sites.js`, `test-golive.js` and
+the go-live e2e updated. In the www repo: `scripts/test-www.js` (87) and
+`scripts/e2e-activate.js` (42, both services, fake Stripe end to end: the
+subscription, the balance credit on the first invoice, the webhook forwarded
+once, a refill refunded, a declined card, Withdraw, a preview).
+
 ## Before the first real activation (Brendan, outside the code)
 
 1. **Stripe live:** the Atlas account, live keys on anetix-www, the webhook
@@ -912,20 +1064,23 @@ both services in fake Stripe mode.
    annual report); Atlas set up Delaware only. Brendan has no accountant yet: an
    hour with a CPA before the first bill settles the nexus call and whether the
    product qualifies for the manufacturing exemption. This is not tax advice.
-3. **Counsel:** the Terms of Service the order form points to, the order form
-   itself, the learning opt-in wording, and keeping orders after a delete. The
-   IP counsel from the patent work is a natural first call. Proposed: build the
-   Terms of Service on Common Paper's Cloud Service Agreement (free under CC BY
-   4.0, standard terms written by a committee of dozens of attorneys from
-   vendors, procurement teams and law firms, laid out as a cover page plus
-   standard terms). Our order form becomes its cover page, so counsel reads one
-   page and a few choices (the liability cap, the governing law). Stage 2 writes
-   the cover page on it.
-4. **Anthropic auto reload** on, and the admin credit note saying so (Activate
+3. **Counsel:** Brendan's Terms of Service (`draft-2`, with his notes for
+   counsel), the order form, the learning opt-in wording, and keeping orders and
+   acceptances after a delete. The IP counsel from the patent work is a natural
+   first call. The Terms switch on the Sites tab stays off until counsel has read
+   them; a customer who signs before then signs the draft.
+4. **The Stripe account's public details:** Stripe's activation rules want the
+   website reachable without a password, with a contact and the refund and
+   cancellation policies on it. The wall shows none of that, which could hold up
+   the live keys; a line on the wall saying what Anetix sells, a contact email and
+   a public `/terms` would cover it (sections 5.9 and 6.2).
+5. **Anthropic auto reload** on, and the admin credit note saying so (Activate
    checks it).
-5. **`WWW_SECRET`** set on anetix-www, and a new `WWW_INTERNAL_KEY` on both
-   services.
-6. **The tenancy call** at the second paid site: build the runtime per customer
+6. **`WWW_SECRET`** set on anetix-www; `WWW_INTERNAL_KEY` (the same new value)
+   on both services; `WWW_INTERNAL_URL=http://anetix-www.railway.internal:4001`
+   on the product; `STRIPE_TAX=1` on anetix-www once Stripe Tax is on. The
+   webhook endpoint takes the six subscription and invoice events above.
+7. **The tenancy call** at the second paid site: build the runtime per customer
    first, or record why not.
 
 ## Open items
@@ -936,14 +1091,23 @@ both services in fake Stripe mode.
 4. The deck's $30,000 per plant and "3,333 plants" against the new mix.
 5. When someone other than the demo's manager signs, whether they also become a
    manager (proposed: no; Add a manager covers it).
-6. The terms page is behind the wall like the rest of anetix.ai: the signer, the
-   approver and a pin holder can read it, the customer's counsel cannot. Decide
-   before switching Go live on whether /terms is public (noindex).
+6. Decided 2026-09-26: `/terms` stays behind the wall, opened by the product's
+   31-day `?k=` links (see Stage 3 as built). Revisit with the Stripe account's
+   public details (item 4 above).
 7. The manager's 31-day link is not tied to the account that loaded the board,
    so removing a manager does not kill a link they already have (the credit
    link is the same). Tie it to the account if that matters before launch.
-8. Counsel's brackets in `src/terms.js`: governing law, chosen courts, the
-   liability caps and covered claims, the notice email, technical support.
+8. The brackets in `src/terms.js`: `[PRIVACY NOTICE URL]` (no privacy notice
+   exists yet), `[TERMS URL]`, `[LEGAL EMAIL]`, `[MAILING ADDRESS]`. The Sites
+   tab's Terms box lists whatever is still in brackets.
+9. Section 16(a) of the Terms lets Anetix suspend the whole Service for late
+   fees, which goes further than 5.8 (AI pauses at 14 days, the tools keep
+   running) and the spec's decision that nothing stops for late payment.
+   Suggested: "pause AI Features as section 5.8 describes". Brendan's text, so
+   unchanged until he says.
+10. Stage 4 decides what a standing does (the banner, AI paused when unpaid,
+   Back to demo), Cancelling and the portal. Until then the standings are kept
+   and shown, and Go live stays off.
 
 ## Sources
 

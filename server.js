@@ -48,6 +48,9 @@ async function main() {
   await require("./src/sample").init();      // sample data for a demo's tools: the AI fills a tool with a made-up week, and clears exactly those rows (src/sample.js)
   await require("./src/sites").init();       // paid sites: the price book and the pipeline on the Sites tab of /admin (src/sites.js, docs/PAID-SITES.md)
   await require("./src/golive").init();      // paid sites, stage 2: the orders a demo signs on anetix.ai (src/golive.js)
+  await require("./src/agreements").init();  // the Terms of Service: every acceptance (order, demo set-up, top-up, board) and the switch (src/agreements.js)
+  await require("./src/notices").init();     // notices for a company's managers: a tool Anetix changed, a declined card, an order sent back (src/notices.js)
+  await require("./src/activate").init();    // paid sites, stage 3: Activate, the rollover, Stripe's events, the sweep (src/activate.js; after golive and sites)
 
   const app = express();
   app.disable("x-powered-by");
@@ -88,6 +91,8 @@ async function main() {
   app.use(require("./src/selfserve").wwwRouter);
   app.use(require("./src/demorequests").wwwRouter);   // POST /api/www/demo-requests: anetix.ai's request form, the shared key
   app.use(require("./src/golive").wwwRouter);         // /api/www/golive/*: the go-live screens on anetix.ai, the shared key (src/golive.js)
+  app.use(require("./src/agreements").wwwRouter);     // /api/www/terms/*: the Terms' switch and a top-up's tick box, the shared key (src/agreements.js)
+  app.use(require("./src/activate").wwwRouter);       // POST /api/www/billing-events: a Stripe event anetix.ai re-read, the shared key (src/activate.js)
 
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
@@ -131,6 +136,9 @@ async function main() {
   app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
   app.use(require("./src/sites").router);        // /api/admin/sites*: the Sites tab of /admin (the price book, the pipeline from a demo to a paying site)
   app.use(require("./src/golive").router);       // /api/admin/golive, /api/admin/sites/:slug/golive-link|orders, /api/c/:slug/golive: Go live (stage 2)
+  app.use(require("./src/activate").router);     // /api/admin/sites/:slug/checks|activate|decline|send-back|lift, /api/admin/stripe-sweep, /api/c/:slug/welcome (stage 3)
+  app.use(require("./src/agreements").router);   // /api/admin/terms (the switch), /api/c/:slug/terms/accept (the board's box)
+  app.use(require("./src/notices").router);      // /api/c/:slug/notices/:id/seen
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset

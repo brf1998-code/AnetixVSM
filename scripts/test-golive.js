@@ -75,20 +75,27 @@ t("a preview's Customer is never the site's: none to reuse, marked a preview, na
 t("an empty second address line goes as empty, so an update clears an old one", cu.address.line2 === "" && cu.shipping.address.line2 === "");
 t("a card's summary keeps only the brand, the last four and the date", JSON.stringify(G.cleanCard({ brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030, number: "4242424242424242" })) === JSON.stringify({ brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 }) && G.cleanCard({ last4: "42x2" }).last4 === null && G.cleanCard(null) === null);
 
-// ---- the terms
+// ---- the terms (Brendan's own, 2026-09-26: draft-2)
 const doc = T.termsDoc(), words = T.termsText();
-t("the terms are a cover page on Common Paper's Standard Terms 2.1, and say they are a draft", /Common Paper Cloud Service Agreement Standard Terms, Version 2\.1/.test(words) && words.includes(T.STANDARD_TERMS_URL) && doc.draft === true && /draft for counsel/.test(words));
-t("they fill the Key Terms Common Paper asks for, counsel's in brackets", ["Governing Law", "Chosen Courts", "General Cap Amount", "Notice Address", "Effective Date"].every((k) => doc.sections[0].items.some(([x]) => x === k)) && /\[GOVERNING LAW\]/.test(words) && /\[GENERAL CAP AMOUNT\]/.test(words));
-t("month to month: a one-month Subscription Period and notice any time before it ends", /Subscription Period: one month/.test(words) && /Non-Renewal Notice Date: any time before the current Subscription Period ends/.test(words));
-t("and what Anetix does differently: fair use, no suspension for a late payment, a demo after, the price, learning, the credit back", ["Fair use.", "Late payment.", "After the subscription ends.", "Price.", "Learning.", "Unused demo credit."].every((k) => words.includes(k)));
-t("they credit Common Paper under CC BY 4.0", /CC BY 4\.0/.test(words) && words.includes(T.LICENSE_URL));
+t("the terms are Brendan's own: the short version and sections 1 to 21, a draft for counsel", doc.format === 2 && doc.sections.length === 21 && doc.summary.items.length === 7 && doc.draft === true && /draft for counsel, not in effect yet/.test(words) && doc.sections.map((x) => x.n).join() === Array.from({ length: 21 }, (_, i) => String(i + 1)).join());
+t("counsel's brackets: the privacy notice, the Terms URL, the legal email, the mailing address", JSON.stringify(T.placeholders().sort()) === JSON.stringify(["[LEGAL EMAIL]", "[MAILING ADDRESS]", "[PRIVACY NOTICE URL]", "[TERMS URL]"]));
+const clause = (n) => { for (const sec of doc.sections) for (const c of sec.clauses || []) if (c.n === n) return c; return null; };
+t("what the product leans on is in them: 5.4 aims to within 24 hours and withdraw until on, 5.6 fair use at 80%, 6.2 cancel any time", /aims to switch a Site on within 24 hours/.test(clause("5.4").text) && /withdraw the order at no charge/.test(clause("5.4").text) && /passes 80% of that month's Fee/.test(clause("5.6").text) && /cancel a Subscription at any time/.test(clause("6.2").text));
+t("and 9.1 (a change goes live only when the customer approves it), 10.2 (learning is the customer's choice), 4.2 (bought credit back)", /goes live only when a User with approval rights at Customer approves it/.test(clause("9.1").text) && /only if Customer opts in, on the Order Form or later in the Service's settings/.test(clause("10.2").text) && /comes off Customer's first bill/.test(clause("4.2").text));
+t("the lists stay lists: Restricted Data has five, acceptable use eight, the excluded damages six, the defense four", clause("7.4").list.length === 5 && clause("7.5").list.length === 8 && clause("14.1").list.length === 6 && clause("15.1").list.length === 4 && /^Customer is responsible for identifying/.test(clause("7.4").after));
+t("no markdown left in the words (no asterisks, no escaped brackets)", !/\*\*|\\\[/.test(words));
+t("the words beside the boxes: the order's tick names the version and the company, Before you sign points to sections 8, 13 and 14",
+  T.WORDS.order("Acme Wire & Cable, Inc.") === `I agree to this order form and the Anetix Terms of Service (version ${T.TERMS_VERSION}), and I can sign for Acme Wire & Cable, Inc.` && /^Before you sign\./.test(T.WORDS.notice) && /Sections 8, 13 and 14 of the Terms have the details\.$/.test(T.WORDS.notice)
+  && /Demos come as is/.test(T.WORDS.demo()) && /refundable only as section 4\.2 says/.test(T.WORDS.topup()) && /for Acme Wire, and I can agree for it/.test(T.WORDS.board("Acme Wire")));
 t("the hash is of these exact words, 64 hex characters, the same every time", /^[0-9a-f]{64}$/.test(T.termsHash()) && T.termsHash() === T.termsHash());
-t("no em or en dashes in the terms", !/[–—]/.test(words));
+t("a version kept from before (stage 2's Common Paper cover page) still reads as it did", T.termsText({ format: 1, title: "X", version: "draft-1", status: "s", intro: ["i"], sections: [{ heading: "H", items: [["k", "v"]] }], footer: "f" }) === "X\nVersion draft-1.\ns\n\ni\n\nH\nk: v\n\nf");
+t("no em or en dashes in the terms or the words beside the boxes", !/[\u2013\u2014]/.test(words + JSON.stringify(T.WORDS) + T.WORDS.order("A") + T.WORDS.demo() + T.WORDS.topup() + T.WORDS.board("A")));
 t("the order form names the same version the terms carry", S.TERMS_VERSION === T.TERMS_VERSION);
+t("a preview and a customer see the same words beside the signature, the company named from the order", G.assentFor({ legal_name: "Keystone Fab LLC" }, { name: "kf" }).tick === T.WORDS.order("Keystone Fab LLC") && G.assentFor({}, { name: "Demo Co" }).tick === T.WORDS.order("Demo Co"));
 
 // ---- the order form's new lines
 const text = S.orderText({ facts: cf.facts, terms_url: "https://anetix.ai/terms" });
-t("the order form points at the terms by version and address", /Terms: this order form is an Order Form under the Anetix Terms of Service, version draft-1, at https:\/\/anetix\.ai\/terms\./.test(text), text);
+t("the order form points at the terms by version and address, as updated under section 19", new RegExp(`Terms: this order form is an Order Form under the Anetix Terms of Service, version ${T.TERMS_VERSION}, at https://anetix\\.ai/terms, as updated under section 19\\.`).test(text), text);
 t("and says unused demo credit comes off the first bill", /Unused demo credit: credit Customer bought for its demo and has not used by the day the Site is switched on comes off the first bill/.test(text));
 t("the terms address is part of what is signed", S.textHash(text) !== S.textHash(S.orderText({ facts: cf.facts, terms_url: "https://other.test/terms" })));
 t("140 people on 120,000 square feet is Core at $2,500", /Band: Core\./.test(text) && /\$2,500 a month/.test(text));

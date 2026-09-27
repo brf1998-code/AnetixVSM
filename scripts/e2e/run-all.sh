@@ -99,6 +99,11 @@ run sites                  env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scr
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
 run golive                 env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/golive.js
 
+# stage 3: anetix.ai's private channel is a stub inside the test (every answer Stripe could give is the test's to choose)
+S3="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW_INTERNAL_URL=http://127.0.0.1:4011 WWW_INTERNAL_KEY=e2e-internal-key-0123456789abcdef"
+fresh; start "SOS_BROWSER=off $S3"
+run stage3                 env $S3 node scripts/e2e/stage3.js
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop

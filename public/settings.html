@@ -46,6 +46,12 @@
       <div class="sub" id="gl-sub"></div>
       <div id="gl-body"></div>
     </div>
+    <div class="card" id="sub-card" style="display:none">
+      <h2>Your subscription</h2>
+      <div class="sub" id="sub-sub"></div>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:14px"><input type="checkbox" id="sub-learn" style="margin-top:3px"><span>Anetix may learn from how the site uses the system, to improve Anetix for all customers. <span class="sub" style="display:block;margin-top:2px">Opting in also lets Anetix offer versions of the tools built here to other customers, never with your data in them. Either way your data is yours and never shown to another customer. <a id="sub-terms" href="#" target="_blank" rel="noopener">The Terms</a>, section 10.2.</span></span></label>
+      <div id="sub-msg" class="sub" style="margin-top:6px"></div>
+    </div>
     <div class="card" id="pk-card" style="display:none">
       <h2>Your sign-in</h2>
       <div class="sub">Passkeys on your account. Sign in with your email and Face ID, a fingerprint or the device's PIN.</div>
@@ -113,6 +119,29 @@ async function load() {
   loadTestFloor();
   loadReview(D.modules || []);
   loadGoLive();
+  loadSubscription();
+}
+// A paying site (stage 3, src/activate.js): its band and price, and the learning choice from its order form, which the
+// manager can change here (the Terms, 10.2).
+async function loadSubscription() {
+  const r = await fetch(`/api/c/${SLUG}/site`, { cache: "no-store" });
+  const card = document.getElementById("sub-card");
+  if (!r.ok) { card.style.display = "none"; return; }
+  const s = await r.json();
+  if (!s.subscribed) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  document.getElementById("sub-sub").textContent = `${s.band || "Your"} site, $${Number(s.price_usd || 0).toLocaleString("en-US")} a month, billed monthly. The price is locked while the subscription runs.`;
+  const box = document.getElementById("sub-learn"), msg = document.getElementById("sub-msg");
+  document.getElementById("sub-terms").href = s.terms_link || "#";
+  box.checked = s.learning_opt_in;
+  box.onchange = async () => {
+    box.disabled = true;
+    const x = await fetch(`/api/c/${SLUG}/learning`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: box.checked }) });
+    const j = await x.json().catch(() => ({}));
+    box.disabled = false;
+    if (!x.ok) { msg.textContent = j.error || "That did not save."; box.checked = !box.checked; return; }
+    box.checked = j.learning_opt_in; msg.textContent = j.learning_opt_in ? "Saved: learning is on." : "Saved: learning is off, for data from now on.";
+  };
 }
 // Go live (src/golive.js): a demo becomes a paid site on anetix.ai. Shown to a demo's manager once Anetix has switched
 // it on; the order's progress when one is started.

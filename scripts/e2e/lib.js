@@ -61,7 +61,8 @@ async function ship(mgr, ids, company = "demo") {
     if (x && x.step === "campaign" && x.status === "waiting") { await mgr.post(`/api/runs/${runId}/campaign/skip`, { reason: "e2e: ship() skips the campaign" }); return false; }
     return x && x.step === "await_deploy" && x.status === "waiting";
   });
-  await mgr.post(`/api/runs/${runId}/deploy`);
+  // an admin shipping on a customer's company says why (the Terms, 9.1; src/feedback.js adminChange); a manager's call ignores it
+  await mgr.post(`/api/runs/${runId}/deploy`, { admin_reason: "asked", admin_note: "e2e: shipped by the test" });
   await waitFor(`run ${runId} live`, async () => { const f = await fbRow(mgr, ids[0], company); return f && f.status === "done" && f.shipped_version; });
   return { runId, props };
 }

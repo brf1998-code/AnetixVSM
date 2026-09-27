@@ -88,10 +88,13 @@ async function offerPasskey() {
 async function passkeyNow(conditional) {
   if (pkAbort) { pkAbort.abort(); pkAbort = null; }
   const ctl = new AbortController(); pkAbort = ctl;
-  err.style.display = "none";
+  if (!conditional) err.style.display = "none";
   const j = await Passkey.signIn({ email: nm.value.trim(), conditional, signal: ctl.signal });
   if (pkAbort === ctl) pkAbort = null;
   if (j.cancelled) { if (!conditional) { err.textContent = "No passkey was used. Try again, or sign in with your password."; err.style.display = "block"; } return; }
+  // the autofill is the browser's quiet offer: nobody asked for a passkey, so its failure (a browser that refuses this
+  // address, say) is never shown where the password's answer goes (the wall does the same)
+  if (j.error && conditional) { console.warn("[passkey] autofill:", j.error); return; }
   if (j.error) { err.textContent = j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : "."); err.style.display = "block"; return; }
   after(j);
 }

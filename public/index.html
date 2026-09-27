@@ -87,6 +87,15 @@
   .creditout .acts { display:flex; gap:8px; flex-wrap:wrap; } .creditout a.go.alt { background:#fff; color:var(--navy); border:2px solid var(--navy); padding:8px 14px; }
   /* going live (src/golive.js): the order is in, one quiet line under the credit line */
   .goliveline { font-size:12.5px; margin:-4px 0 10px; color:var(--green); font-weight:600; } .goliveline a { margin-left:6px; }
+  .goliveline.warn { color:#b26a00; }   /* a declined card: not good news, so not green */
+  /* stage 3 (src/activate.js): the Terms' box, a new site's welcome, the fair-use line, notices from Anetix */
+  .paid { background:#fff; border:1px solid var(--line); border-left:4px solid var(--navy); border-radius:10px; padding:10px 14px; margin:0 0 12px; display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; font-size:13.5px; }
+  .paid .grow { flex:1; min-width:220px; } .paid button, .paid a.btn { margin:0; } .paid small { color:var(--steel); }
+  .paid.ok { border-left-color:var(--green); } .paid.amber { border-left-color:var(--amber); } .paid.note { border-left-color:var(--steel); }
+  .paid .tick { display:flex; gap:8px; align-items:flex-start; margin:8px 0 0; font-size:13.5px; } .paid .tick input { margin-top:3px; }
+  .paid .pw { font:700 20px ui-monospace,Menlo,monospace; letter-spacing:.04em; background:var(--fog, #f4f6f8); border-radius:8px; padding:8px 12px; margin:8px 0 4px; display:inline-block; }
+  .paid .err { color:var(--red); margin:6px 0 0; }
+  .approvenote { font-size:12px; color:var(--steel); margin:6px 0 0; }
   .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; align-items:start; }
   @media (max-width: 1100px) { .cols { grid-template-columns:repeat(2,1fr); } }
   @media (max-width: 640px) { .cols { grid-template-columns:1fr; } .band, .wrap { padding-left:14px; padding-right:14px; } }
@@ -242,6 +251,7 @@
     <div class="pknudge" id="pknudge" style="display:none"></div>
     <div class="creditline" id="creditline" style="display:none"></div>
     <div class="goliveline" id="goliveline" style="display:none"></div>
+    <div id="paidbox"></div>
     <div id="vpanel"></div>
     <div id="reviews"></div>
     <div class="coltabs" id="coltabs" aria-label="Which column to show"></div>
@@ -784,7 +794,7 @@ function batchCard(run) {
     if (ev.cross_check) html += `<div class="meta">cross-check: ${esc(ev.cross_check.verdict)}${ev.cross_check.overridden ? " (overridden by the manager)" : ""} · ${esc((ev.cross_check.summary || "").slice(0, 400))}</div>`;
     if (ev.fix_round) html += `<div class="meta">fixed by the agent in ${ev.fix_round} round(s) after a failed check</div>`;
     html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;
-    if (MGR()) html += actions(pk, `<button class="go" onclick="act('/api/runs/${run.id}/deploy')">Deploy v${run.to_version} to floor</button>`, [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">Deploy v${run.to_version} to floor</button><div class="approvenote">This goes live for your floor. Check it in the preview first.</div>`, [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, `The ${items.length} proposals go back to Reviewing.`);
   const open = run.status === "deployed" ? items.filter(canCloseOut) : [];
@@ -798,7 +808,7 @@ function abortBtn(run) {
 }
 // Rolling back moves the floor; it asks first.
 function rollbackBtn(run) {
-  return `<button class="no" onclick="if(confirm('Roll the floor back from v${run.to_version} to the previous version, with the data as it was then? Every open page reloads. This can be undone from the Versions panel.'))act('/api/runs/${run.id}/rollback')">Roll back</button>`;
+  return `<button class="no" onclick="if(confirm('Roll the floor back from v${run.to_version} to the previous version, with the data as it was then? Every open page reloads. This can be undone from the Versions panel.'))rollbackRun(${run.id})">Roll back</button>`;
 }
 
 // A module request: the tile is the status and the way in; the intake popout
@@ -876,7 +886,7 @@ function runBlock(fb, run) {
     if (ev.fix_round) html += `<div class="meta">fixed by the agent in ${ev.fix_round} round(s) after a failed check</div>`;
     html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${isModule ? `Open the preview of ${esc(fb.message.replace(/^New module: /, ""))} (not live)` : `Open preview of v${run.to_version} (not live)`}</a><br>`;
     if (MGR() && DEMO()) html += `<a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a><br>`;
-    if (MGR()) html += actions(pk, `<button class="go" onclick="act('/api/runs/${run.id}/deploy')">${isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`}</button>`, [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The module is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (MGR()) html += actions(pk, `<button class="go" onclick="deployRun(${run.id})">${isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`}</button><div class="approvenote">This goes live for your floor. Check it in the preview first.</div>`, [`<button class="no" onclick="if(confirm('${isModule ? "Discard this build? The module is removed again and the design goes back to Reviewing, where you can approve it again." : "Discard this build? The proposals go back to Reviewing."}'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
   if (run.status === "failed") html += failedHtml(run, isModule ? "The design goes back to Reviewing." : "The proposal goes back to Reviewing.");
   return html;
@@ -1167,7 +1177,8 @@ async function gotoVersion(version, restore) {
     ? `Put version ${version} on the floor AND replace the line's data with what it was when v${version} was last live? Everything recorded since then is set aside (the current state is saved first).`
     : `Put version ${version} on the floor, keeping today's data? Every open page reloads within a few seconds.`;
   if (!confirm(msg)) return;
-  const r = await fetch(`/api/c/${SLUG}/modules/${VMOD}/goto`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version, restore_data: restore }) });
+  const w = adminWhy(`Switching to version ${version}`); if (w === null) return;
+  const r = await fetch(`/api/c/${SLUG}/modules/${VMOD}/goto`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version, restore_data: restore, ...w }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { alert(j.error || "failed"); return; }
   await load();
@@ -1193,6 +1204,67 @@ function applyBrand(b, iconV) {
   const mark = document.getElementById("comark");
   if (b && b.has_icon) { mark.src = icon; mark.style.display = "inline-block"; } else mark.style.display = "none";
 }
+// ---- stage 3 (src/activate.js, src/agreements.js, src/notices.js) -----------------------------------------------------
+// The Terms' box while a demo's manager has not agreed (new AI work waits for it), a new site's welcome with the floor's
+// password (shown once: the board stops refreshing while it is on screen), the fair-use line when it is reached, and
+// notices from Anetix (a tool changed, a card declined, an order sent back), each closed by the manager.
+let TERMS_TICK = false;
+const linkTerms = (html, url) => html.replace("Anetix Terms of Service", `<a href="${esc(url)}" target="_blank" rel="noopener">Anetix Terms of Service</a>`);
+function renderPaid() {
+  const box = document.getElementById("paidbox"); if (!box || EDITING === "welcome") return;
+  const out = [], tm = DATA.terms;
+  if (tm && tm.needed) {
+    if (tm.admin) out.push(`<div class="paid amber"><div class="grow"><b>This demo's manager has not agreed to the Terms of Service yet.</b> New AI work waits until they tick the box on their board.</div></div>`);
+    else out.push(`<div class="paid amber" id="termsbox"><div class="grow"><b>Anetix's Terms of Service apply to your demo.</b> New AI work starts again once you agree.
+      <label class="tick"><input type="checkbox" id="terms-agree" ${TERMS_TICK ? "checked" : ""} onchange="TERMS_TICK=this.checked"><span>${linkTerms(esc(tm.words), tm.url)}</span></label><p class="err" id="terms-err" hidden></p></div>
+      <button class="go" id="terms-go" onclick="acceptTerms()">Continue</button></div>`);
+  }
+  if (DATA.welcome && DATA.welcome.ready) {
+    if (DATA.welcome.admin) out.push(`<div class="paid ok"><div class="grow"><b>${esc(DATA.company.name)} is live.</b> Its manager has not collected the floor's password yet.</div></div>`);
+    else out.push(`<div class="paid ok" id="welcomebox"><div class="grow"><b>${esc(DATA.company.name)} is live.</b> Your floor has its own password now. It is shown once, so have somewhere to write it down.<div id="welcome-pw"></div></div>
+      <button class="go" id="welcome-go" onclick="collectWelcome()">Show the floor's password</button></div>`);
+  }
+  if (DATA.fair_use && DATA.fair_use.over) out.push(`<div class="paid amber"><div class="grow">${esc(DATA.fair_use.message)}</div></div>`);
+  for (const n of DATA.notices || []) out.push(`<div class="paid note" data-notice="${n.id}"><div class="grow">${esc(n.text)} <small>${esc(new Date(n.created_at).toLocaleDateString([], { month: "short", day: "numeric" }))}</small></div>${DATA.role === "manager" ? `<button class="quiet" onclick="seenNotice(${n.id})">Close</button>` : ""}</div>`);
+  box.innerHTML = out.join("");
+}
+async function acceptTerms() {
+  const tm = DATA.terms, err = document.getElementById("terms-err");
+  if (!document.getElementById("terms-agree").checked) { err.hidden = false; err.textContent = "Tick the box to agree."; return; }
+  const r = await fetch(`/api/c/${SLUG}/terms/accept`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ agreed: true, version: tm.version, sha: tm.sha }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { err.hidden = false; err.textContent = j.error || "That did not go through. Try again."; if (j.code === "terms_changed") load(); return; }
+  TERMS_TICK = false; load();
+}
+async function collectWelcome() {
+  const btn = document.getElementById("welcome-go"); btn.disabled = true;
+  const r = await fetch(`/api/c/${SLUG}/welcome`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  const into = document.getElementById("welcome-pw");
+  if (!r.ok) { into.innerHTML = `<p class="err">${esc(j.error || "It could not be shown.")}</p>`; btn.remove(); return; }
+  EDITING = "welcome";   // no refresh while it is on screen
+  into.innerHTML = `<div class="pw">${esc(j.floor)}</div><div>The floor signs in at <b>${esc(location.origin + j.board)}</b> with this password. <a href="/c/${SLUG}/settings">Print the wall sign</a> for them.</div>`;
+  btn.textContent = "Done, I wrote it down"; btn.disabled = false; btn.onclick = () => { EDITING = null; load(); };
+}
+async function seenNotice(id) {
+  await fetch(`/api/c/${SLUG}/notices/${id}/seen`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  load();
+}
+// The Terms, 9.1: an admin putting a change live, rolling back or switching a version on a CUSTOMER's live tool says
+// why, and the manager is told (src/feedback.js adminChange). Anetix's own demo company asks nothing. null: cancelled.
+function adminWhy(what) {
+  if (!(DATA && DATA.role === "admin" && SLUG !== "demo")) return {};
+  const pick = prompt(`${what} on ${DATA.company.name}'s live tool, without their approval. Their manager is told. Why?\n1  a security fix\n2  a fix for an error that stops the tool working\n3  their manager asked me to\nType 1, 2 or 3:`, "");
+  if (pick === null) return null;
+  const why = { 1: "security", 2: "broken", 3: "asked" }[String(pick).trim()];
+  if (!why) { alert("Type 1, 2 or 3."); return null; }
+  const note = prompt("A few words on what changed. The manager reads them.", "");
+  if (note === null) return null;
+  return { admin_reason: why, admin_note: note };
+}
+function deployRun(id) { const w = adminWhy("Putting a change live"); if (w !== null) act(`/api/runs/${id}/deploy`, w); }
+function rollbackRun(id) { const w = adminWhy("Rolling back"); if (w !== null) act(`/api/runs/${id}/rollback`, w); }
+
 async function load() {
   const res = await fetch(`/api/c/${SLUG}/board`);
   if (res.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
@@ -1220,7 +1292,7 @@ async function load() {
   } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}${goOffer ? `<span style="margin-left:6px">·</span><a id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
   else cl.style.display = "none";
   const gline = document.getElementById("goliveline");
-  if (gl && gl.line) { gline.style.display = "block"; gline.innerHTML = `${esc(gl.line)}${gl.url ? `<a href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
+  if (gl && gl.line) { gline.style.display = "block"; gline.classList.toggle("warn", Boolean(gl.declined)); gline.innerHTML = `${esc(gl.line)}${gl.url ? `<a href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
   else gline.style.display = "none";
   const demo = Boolean(DATA.company && DATA.company.demo), bar = document.getElementById("demobar");
   if (demo && bar.hidden) {   // twice the same run of words, so the roll at -50% lands where it started
@@ -1228,6 +1300,7 @@ async function load() {
     document.getElementById("demotrack").innerHTML = one + one;
   }
   bar.hidden = !demo;
+  renderPaid();
   const me = window.sosPerson && window.sosPerson.me(), anyPeople = window.sosPerson && window.sosPerson.people().length;
   const meHtml = me ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Who is at this screen. Approvals and requests carry this name.">${esc(me.name)}</a>` : anyPeople ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Tap your name and type your PIN so approvals and requests carry your name">who is this?</a>` : "";
   // top right: who is here, one Settings link, sign out. The rest (agent settings, checks log, the record) is on the admin page (Brendan, 2026-09-20).
@@ -1235,7 +1308,8 @@ async function load() {
   normalizeSel();
   writeSel();   // the URL always shows the pick in force (cleans a stale ?m=, remembers a linked one)
   render();
-  if (!window.PKN) { window.PKN = true; passkeyNudge(); }   // once per page, not on every refresh
+  // once per page, not on every refresh; the function is in a later script tag, which a fast first answer can beat
+  if (!window.PKN && typeof passkeyNudge === "function") { window.PKN = true; passkeyNudge(); }
   // ?intake=<id> (from the admin page) opens that request's popout once
   const want = new URLSearchParams(location.search).get("intake");
   if (want && !window.INTAKE_OPENED && MGR()) { window.INTAKE_OPENED = true; Intake.open(Number(want)); }

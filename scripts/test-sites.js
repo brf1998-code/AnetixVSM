@@ -71,7 +71,9 @@ t("the whole way: demo, ordering, signed, activating, subscribed and paid up", !
 t("a card without a signed order is refused", S.next({ stage: "ordering" }, { type: "card_saved" }).ok === false);
 t("Activate needs a signed order, and cannot be pressed twice", S.next({ stage: "ordering" }, { type: "activate" }).ok === false && /already/.test(S.next({ stage: "activating" }, { type: "activate" }).why));
 const declined = S.next({ stage: "activating" }, { type: "card_declined" });
-t("a declined card goes back to Signed and the balance credit is reversed", declined.ok && declined.state.stage === "signed" && declined.effects.includes("reverse_balance_credit"));
+t("a declined card goes back to Ordering (the card is removed, so the order waits for another) and the balance credit is reversed", declined.ok && declined.state.stage === "ordering" && declined.effects.includes("reverse_balance_credit") && declined.effects.includes("detach_card"));
+const again = S.next(declined.state, { type: "card_saved", order_signed: true });
+t("after a decline, another card moves the site back to Signed, ready for Activate", again.ok && again.state.stage === "signed");
 const twice = S.next({ stage: "subscribed", standing: "good" }, { type: "activated" });
 t("the rollover's second trigger (the other of Activate and the first invoice.paid) does nothing", twice.ok && twice.effects.length === 0 && twice.state.stage === "subscribed");
 t("the rollover from anywhere but switching on is refused", S.next({ stage: "signed" }, { type: "activated" }).ok === false);
@@ -105,7 +107,8 @@ const facts = { legal_name: "Keystone Fab LLC", site_name: "Keystone Fab, Allent
 const text = S.orderText({ facts });
 t("the order form carries every figure: who, where, size, band, fee", /Customer: Keystone Fab LLC\./.test(text) && /Site: Keystone Fab, Allentown, 12 Mill Road, Allentown, PA 18101\./.test(text) && /Plant manager: Omar Reyes\./.test(text) && /150 people across all shifts; 90,000 square feet/.test(text) && /Band: Core\./.test(text) && /\$2,500 a month/.test(text), text);
 t("and the terms: month to month, the 80% line, the price lock, the data, after a cancellation", /month to month/.test(text) && /passes 80% of that month's fee/.test(text) && /will not raise the Site's price/.test(text) && /owns the data/.test(text) && /becomes a demo account/.test(text));
-t("it says it is a draft for counsel, and which price book", /Terms version: draft-1\. Price book: version 1\./.test(text));
+t("it names the terms version and the price book", new RegExp(`Terms version: ${require("../src/terms").TERMS_VERSION}\\. Price book: version 1\\.`).test(text));
+t("Brendan's order-form changes (his notes for counsel): the refunds the Terms provide, the fair-use pause wording", /partial months are not refunded, except as the Terms provide\./.test(text) && /A fair-use pause does not stop the Site's tools\./.test(text) && !/The Site's tools keep working/.test(text));
 t("no em or en dashes on the page a customer signs", !/[–—]/.test(text));
 t("floor space moving the band says so on the form", /moved up one band for floor space/.test(S.orderText({ facts: { ...facts, headcount: 40, sqft: 110000 } })));
 t("no headcount, no order form", (() => { try { S.orderText({ facts: { legal_name: "x" } }); return false; } catch (e) { return /people at the site/.test(e.message); } })());

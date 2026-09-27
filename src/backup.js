@@ -26,6 +26,7 @@ const PLATFORM_TABLES = [
   "demo_requests",  // who asked for a demo on anetix.ai, and the pin made for them (src/demorequests.js)
   "sample_fills",   // a demo's sample data: what each fill put in, so Clear still takes out exactly those rows after a restore (src/sample.js)
   "price_books", "sites", "orders", "terms_versions",   // paid sites: the price book's versions, the pipeline (src/sites.js), the orders and the terms as signed (src/golive.js)
+  "acceptances", "notices", "billing_events",   // stage 3: every acceptance of the Terms (src/agreements.js), the managers' notices (src/notices.js), Stripe's events as applied (src/activate.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under
@@ -104,8 +105,32 @@ async function resetSequences(client, schema) {
   }
 }
 
-async function restore(doc) {
+// Evidence the Terms say is kept (10.7: every acceptance; Stripe's events as applied; the words of each terms version as
+// first signed): a restore adds the file's rows to what this instance holds and never takes one away. The key says when a
+// file's row is one the instance already has; an acceptance the instance lacks gets a new id (its old one may be taken).
+const MERGED = { acceptances: { key: ["company", "kind", "at", "terms_sha256"], newId: true }, billing_events: { key: ["stripe_event"] }, terms_versions: { key: ["version"] } };
+async function mergeRows(client, table, rows, cols, { key, newId }) {
+  const types = Object.fromEntries(cols.map((c) => [c.column_name, c.data_type]));
+  if (!rows.length || key.some((k) => !types[k])) return 0;
+  const jb = jsonbColumns(cols);
+  let added = 0;
+  for (const r of rows) {
+    if (key.some((k) => r[k] == null)) continue;
+    // a time comes back from the file to the millisecond (JavaScript's Date) while the database kept microseconds
+    const same = (k, i) => (/^timestamp/.test(types[k]) ? `abs(extract(epoch FROM (${k} - $${i + 1}::${types[k]}))) < 0.001` : `${k} = $${i + 1}::${types[k]}`);
+    const seen = await client.query(`SELECT 1 FROM platform.${table} WHERE ${key.map(same).join(" AND ")} LIMIT 1`, key.map((k) => r[k]));
+    if (seen.rows.length) continue;
+    const names = Object.keys(r).filter((n) => types[n] && !(newId && n === "id"));
+    await client.query(`INSERT INTO platform.${table} (${names.join(",")}) VALUES (${names.map((n, i) => (jb.has(n) ? `$${i + 1}::jsonb` : `$${i + 1}`)).join(",")})`,
+      names.map((n) => (jb.has(n) && r[n] != null ? JSON.stringify(r[n]) : r[n])));
+    added++;
+  }
+  return added;
+}
+
+async function restore(doc, { notice = null, paying = ["subscribed", "activating"] } = {}) {
   if (!doc || doc.format !== "sos-backup-1" || !doc.platform) throw new Error("not an Anetix backup file");
+  let told = [];
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -135,7 +160,7 @@ async function restore(doc) {
     // generation ends up above both what the file says and what this instance had, so a session that was signed out
     // everywhere after the backup was taken does not come back to life, and every admin signs in again after a restore.
     const withAccounts = Array.isArray(doc.platform.accounts);
-    const restored = withAccounts ? PLATFORM_TABLES.concat(ACCOUNT_TABLES) : PLATFORM_TABLES;
+    const restored = (withAccounts ? PLATFORM_TABLES.concat(ACCOUNT_TABLES) : PLATFORM_TABLES).filter((t) => !MERGED[t]);
     const generations = (await client.query("SELECT login, generation FROM platform.accounts")).rows;
     // trusted devices (src/devices.js) never travel and none survive a restore: the table goes with the accounts
     // (it references them) and is wiped even when the file has no accounts, since every generation moves anyway
@@ -148,17 +173,29 @@ async function restore(doc) {
         "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='platform' AND table_name=$1 ORDER BY ordinal_position", [t])).rows;
       await insertRows(client, "platform", t, rows, cols);
     }
+    for (const [t, how] of Object.entries(MERGED)) {
+      const cols = (await client.query(
+        "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema='platform' AND table_name=$1 ORDER BY ordinal_position", [t])).rows;
+      if (cols.length) await mergeRows(client, t, doc.platform[t] || [], cols, how);
+    }
     // snapshots referenced schemas we just dropped
     for (const g of generations) await client.query("UPDATE platform.accounts SET generation=GREATEST(generation, $2) WHERE login=$1", [g.login, g.generation]);
     await client.query("UPDATE platform.accounts SET generation=generation+1");
     await client.query("TRUNCATE platform.schema_snapshots");
     await client.query("UPDATE platform.modules SET staged_version=NULL");
     await resetSequences(client, "platform");
+    // the customers' managers are told (the Terms, 9.1): a notice on every paying site's board in the restored data
+    // (after the sequences are reset, or the new notice's id could be one the file's notices already use)
+    if (notice && notice.text) {
+      told = (await client.query("SELECT company FROM platform.sites WHERE stage = ANY($1)", [paying])).rows.map((r) => r.company);
+      for (const co of told) await client.query("INSERT INTO platform.notices (company, kind, text, detail) VALUES ($1, 'tool_changed', $2, $3)", [co, String(notice.text).slice(0, 1000), JSON.stringify({ why: notice.why || null, restore: true, taken_at: doc.taken_at || null })]);
+    }
     await client.query("COMMIT");
+    return { told };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
   } finally { client.release(); }
 }
 
-module.exports = { dump, restore };
+module.exports = { dump, restore, MERGED };
