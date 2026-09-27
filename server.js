@@ -51,6 +51,7 @@ async function main() {
   await require("./src/agreements").init();  // the Terms of Service: every acceptance (order, demo set-up, top-up, board) and the switch (src/agreements.js)
   await require("./src/notices").init();     // notices for a company's managers: a tool Anetix changed, a declined card, an order sent back (src/notices.js)
   await require("./src/activate").init();    // paid sites, stage 3: Activate, the rollover, Stripe's events, the sweep (src/activate.js; after golive and sites)
+  await require("./src/billing").init();     // paid sites, stage 4: Manage billing, the standings acted on, back to a demo (src/billing.js; after selfserve and sites)
 
   const app = express();
   app.disable("x-powered-by");
@@ -93,6 +94,7 @@ async function main() {
   app.use(require("./src/golive").wwwRouter);         // /api/www/golive/*: the go-live screens on anetix.ai, the shared key (src/golive.js)
   app.use(require("./src/agreements").wwwRouter);     // /api/www/terms/*: the Terms' switch and a top-up's tick box, the shared key (src/agreements.js)
   app.use(require("./src/activate").wwwRouter);       // POST /api/www/billing-events: a Stripe event anetix.ai re-read, the shared key (src/activate.js)
+  app.use(require("./src/billing").wwwRouter);        // POST /api/www/billing/portal: whose Stripe Customer a Manage billing link is for, the shared key (src/billing.js)
 
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
@@ -139,6 +141,9 @@ async function main() {
   app.use(require("./src/activate").router);     // /api/admin/sites/:slug/checks|activate|decline|send-back|lift, /api/admin/stripe-sweep, /api/c/:slug/welcome (stage 3)
   app.use(require("./src/agreements").router);   // /api/admin/terms (the switch), /api/c/:slug/terms/accept (the board's box)
   app.use(require("./src/notices").router);      // /api/c/:slug/notices/:id/seen
+  app.use(require("./src/dataexport").router);   // /api/c/:slug/export: the company's own data as one JSON file (the Terms, 10.6)
+  app.use(require("./src/billing").router);      // /api/c/:slug/billing (the portal link), /api/admin/sites/:slug/end (src/billing.js)
+  app.use(require("./src/notify").router);       // /api/admin/notify*: alerts to Anetix's phones through ntfy (src/notify.js)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
@@ -165,7 +170,8 @@ async function main() {
   if (orphaned) console.log(`[pipeline] ${orphaned} orphaned run(s) marked failed`);
   const swept = await require("./src/campaign").sweep();   // a campaign that was running at the restart has no process behind it
   if (swept) console.log(`[campaign] ${swept} campaign(s) that were running at the restart marked failed`);
-  require("./src/campaign").startWatching();   // the guided steps' watches, every few seconds while any campaign is walking
+  require("./src/campaign").startWatching();
+  require("./src/dataexport").startSweeps();   // demo requests past 12 months go (the privacy notice)   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
   // (only ones never attempted: a failed drawing is not paid for again on every restart; Diagrams on the board redraws on demand)
   for (const m of (await q("SELECT company, name, live_version FROM platform.modules m WHERE live_version IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform.diagrams d WHERE d.company=m.company AND d.module=m.name AND d.version=m.live_version)")).rows) {

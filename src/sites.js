@@ -219,7 +219,7 @@ function next(state, event) {
 const subscribed = (s) => Boolean(s && s.stage === "subscribed");   // "Subscribed is the test", whatever the standing
 
 // ---- the order form --------------------------------------------------------------------------------------------------
-// The one page a customer signs, with every figure in it. DRAFT for counsel: `terms_version` says so, and stage 2
+// The one page a customer signs, with every figure in it. `terms_version` names the Terms it points at, and stage 2
 // shows it only behind that. The signer's typed name is kept beside the text, never in it: the hash is of the page
 // they read. Pure.
 const TERMS_VERSION = require("./terms").TERMS_VERSION;   // the Terms of Service the order form points at (src/terms.js)
@@ -398,6 +398,14 @@ async function init() {
              AND NOT EXISTS (SELECT 1 FROM platform.orders WHERE price_book=1 AND state NOT IN ('draft','void'))`,
   [JSON.stringify(BOOK_V1), BOOK_V1.note]);
 }
+// The price floor in words, from a book's first band (the launch audit, C7: a demo sees what a site costs before the
+// go-live form asks for anything). Pure. { line: "Sites start at $1,000 a month, for under 50 people.", short: "from $1,000 a month" }
+function fromLine(book = BOOK_V1) {
+  const b = ((book && book.bands) || [])[0];
+  if (!b || !(Number(b.monthly_usd) > 0)) return null;
+  const price = `$${Number(b.monthly_usd).toLocaleString("en-US")}`;
+  return { line: `Sites start at ${price} a month${b.max != null ? `, for under ${Number(b.max) + 1} people` : ""}.`, short: `from ${price} a month` };
+}
 async function currentBook() {
   const r = (await q("SELECT book FROM platform.price_books WHERE effective_at <= now() ORDER BY version DESC LIMIT 1").catch(() => ({ rows: [] }))).rows[0];
   return r && bookProblems(r.book).length === 0 ? r.book : BOOK_V1;
@@ -486,7 +494,7 @@ function rowOut(r, { book, tools, credit, last, fair }) {
     last_activity: last || null, updated_at: r.updated_at || null, updated_by: r.updated_by || null,
     // stage 3: a paying site's subscription and where it stands against the fair-use line this period
     subscription: stage === "subscribed" ? { id: r.stripe_subscription || null, activated_at: r.activated_at || null, period_start: r.period_start || null, period_end: r.period_end || null,
-      learning_opt_in: Boolean(r.learning_opt_in), tenancy_note: r.tenancy_note || null } : null,
+      learning_opt_in: Boolean(r.learning_opt_in), tenancy_note: r.tenancy_note || null, standing: r.standing || "good", cancel_at: r.cancel_at || null } : null,
     fair_use: fair || null,
     attention: r.site_attention || null,   // what Stripe did that Brendan decides on (a subscription it cancelled, say)
   };
@@ -591,5 +599,5 @@ router.post("/api/admin/sites/:slug", requireAdmin, json, guard(async (req, res)
 
 module.exports = {
   init, router, pipeline, saveFields, deleteRefusal, deleteCompany, currentBook, bookFor, siteRow, FACT_COLS, stable, STAGE_LABEL,
-  BOOK_V1, TERMS_VERSION, STAGES, STANDINGS, bookProblems, bookView, bandOf, flagsOf, fairUse, next, subscribed, orderText, textHash, addressLine, refundableCredit, cleanFields,
+  BOOK_V1, TERMS_VERSION, STAGES, STANDINGS, fromLine, bookProblems, bookView, bandOf, flagsOf, fairUse, next, subscribed, orderText, textHash, addressLine, refundableCredit, cleanFields,
 };

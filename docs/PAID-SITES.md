@@ -2,7 +2,8 @@
 
 Concept, 2026-09-26. Stage 1 (the price book and the Sites tab of /admin) and stage 2
 (Go live on anetix.ai, as far as Signed, shipped dark behind a switch) were built the
-same day; stages 3 to 5 are not. What stage 2 changed from this plan, and why, is
+same day; stage 3 on 2026-09-26 and stage 4, as far as the first paying site
+needs, on 2026-09-27 (see "Stage 4 as built"); stage 5 is not built. What stage 2 changed from this plan, and why, is
 "Stage 2 as built" below the build order. Brendan's decisions are marked
 **decided**; everything else is a proposal and says so. The pricing strategy
 Brendan wrote the same day is folded in, with the data it asked for.
@@ -812,7 +813,7 @@ Each stage ships and is tested on its own, like the earlier pushes.
    manager's welcome panel, and `requireManager` on every new manager route. Plus
    Brendan's own Terms of Service and a record of every acceptance (Stage 3 as
    built, below).
-4. **Month to month.** The re-read of every event, the standings, Cancelling,
+4. **Month to month. Built 2026-09-27 as far as the first paying site needs (Stage 4 as built).** The re-read of every event, the standings, Cancelling,
    the cancel on an unpaid month, Back to demo with the credit epoch, disputes
    and refunds, the portal link, the new Settings sections, the yearly size
    check, and the check against Stripe after a restore.
@@ -1080,8 +1081,75 @@ once, a refill refunded, a declined card, Withdraw, a preview).
    on both services; `WWW_INTERNAL_URL=http://anetix-www.railway.internal:4001`
    on the product; `STRIPE_TAX=1` on anetix-www once Stripe Tax is on. The
    webhook endpoint takes the six subscription and invoice events above.
-7. **The tenancy call** at the second paid site: build the runtime per customer
-   first, or record why not.
+7. **The tenancy call** (revised 2026-09-27): no runtime per customer before the
+   second site. Brendan's 2026-09-18 decision stands: option C (a process and a
+   database login per company) before a second company's production data, which
+   is built; option D (a runtime per customer) at the first security
+   questionnaire or enterprise production data that asks for it. Activate no
+   longer asks for a reason; it refuses a second paying site only while this
+   instance is not actually isolating tools (`activate.isolation()`).
+8. **Stage 4 settings in Stripe** (2026-09-27): revenue recovery set to mark the
+   subscription **unpaid** when retries run out (a cancel works too: the site is
+   flagged and its AI paused, and End finishes it). The customer portal is made
+   by anetix.ai through the API (`portal_v1`); if the first Manage billing says
+   the portal is not set up, press Save once on the dashboard's Customer portal
+   page.
+
+## Stage 4 as built (2026-09-27, the launch audit's C6 and C11)
+
+`src/billing.js` and `src/notify.js` here; `internal.js`, `stripe.js` and the
+`/c/<slug>/billing` route in the www repo. Built as far as the first paying site
+needs: Manage billing, the standings acted on, Cancelling, Back to demo with the
+credit epoch, End. Not built: disputes and refunds as Needs attention, the yearly
+size check, the check against Stripe after a restore, Add a manager, the floor
+password in Settings.
+
+- **Manage billing.** Settings, managers only. `POST /api/c/:slug/billing` signs a
+  ten-minute link over `billing:<slug>:<site id>:<exp>` under `SOS_WWW_KEY`;
+  anetix.ai's `GET /c/<slug>/billing?t=` asks `POST /api/www/billing/portal`
+  whose Customer it is and opens a portal session on the `portal_v1`
+  configuration it made through the API: card, invoices, customer email and
+  address, cancel at period end with a reason; no plan switching. The return is
+  the product's Settings. A site back to a demo keeps the link for old invoices.
+- **The standings** (`billing.onSubscription`, from `activate.billingEvent` for
+  the site's current subscription): past due is an amber line on the board and in
+  Settings; unpaid is a red line and new AI work paused (`selfserve.assertCredit`,
+  402 `unpaid`); a cancel date is a line with the date and how to keep it; a cancel
+  set while past due or unpaid ends it now (`/internal/end`: cancel and void the
+  open invoices, then back to a demo), with no "ends on" announced first.
+- **The end of a subscription.** `customer.subscription.deleted` with
+  `cancellation_reason` `cancellation_requested` (the portal, or our own End)
+  returns the site to a demo. Stripe ending it for a payment is flagged
+  `canceled_at_stripe`: AI paused like unpaid, the tools and the floor run,
+  Brendan decides with End. `sites.ending` marks an End in flight and is cleared
+  if the channel call fails, so a stale flag never turns a payment cancel into a
+  return.
+- **Back to a demo** (`backToDemo`, one transaction, safe twice): stage
+  `back_to_demo`, `returned_at`, the subscription id cleared (so its late events
+  are recorded and ignored), `demo` true, the floor's password removed (the same
+  statement as `auth.accountsOnly`, inside the transaction), `self_serve.credit_since`
+  set (a row made for a site that never had one), a notice with the reason. The
+  credit, the refund due and the refundable-credit ledger count from
+  `credit_since`. Go live works again; the learning choice stays in Settings.
+- **End** (`POST /api/admin/sites/:slug/end { code, note }`): unpaid for 30 days
+  (the Terms, 5.8; counted from the first failed payment after the last good one,
+  from `site_standing` events) or `canceled_at_stripe`; a reason the manager
+  reads; `/internal/end` cancels and voids, and checks the subscription is the
+  site's (its metadata).
+- **Alerts** (`src/notify.js`, ntfy, `NTFY_TOPIC` on the product): a signed order
+  (priority 5), a card declined at Activate, past due, unpaid, paid again, a
+  cancel date set or taken back, Stripe cancelling, an invoice not finalized, a
+  return to a demo. A company name and what happened; never an email or a
+  customer's words. `/admin#instance` has the switch's state and a test button.
+- **Module redirects.** Found by the review: a module's server route could answer
+  307 to `/api/c/<company>/billing` or `/export` and its page's fetch would follow
+  it with the manager's cookie (a browser checks only the host after a redirect).
+  `registry.lockDown` now drops any `Location` out of the module's own mount, and
+  every `Refresh` header (`scripts/test-lockdown.js`).
+- **Tests:** `scripts/test-billing.js` (19), `scripts/test-lockdown.js` (11),
+  `scripts/e2e/billing.js` (50, one stub plays the channel and ntfy; in
+  `run-all.sh`); www `e2e-activate.js` (50: the portal, cancel, renew, the period
+  ending, back to a demo, against the fake Stripe).
 
 ## Open items
 
@@ -1091,23 +1159,19 @@ once, a refill refunded, a declined card, Withdraw, a preview).
 4. The deck's $30,000 per plant and "3,333 plants" against the new mix.
 5. When someone other than the demo's manager signs, whether they also become a
    manager (proposed: no; Add a manager covers it).
-6. Decided 2026-09-26: `/terms` stays behind the wall, opened by the product's
-   31-day `?k=` links (see Stage 3 as built). Revisit with the Stripe account's
-   public details (item 4 above).
+6. Reversed 2026-09-27 (the launch audit, C5): `/terms` and `/privacy` are
+   public on anetix.ai; the `?k=` links still work and are no longer needed.
 7. The manager's 31-day link is not tied to the account that loaded the board,
    so removing a manager does not kill a link they already have (the credit
    link is the same). Tie it to the account if that matters before launch.
-8. The brackets in `src/terms.js`: `[PRIVACY NOTICE URL]` (no privacy notice
-   exists yet), `[TERMS URL]`, `[LEGAL EMAIL]`, `[MAILING ADDRESS]`. The Sites
-   tab's Terms box lists whatever is still in brackets.
-9. Section 16(a) of the Terms lets Anetix suspend the whole Service for late
-   fees, which goes further than 5.8 (AI pauses at 14 days, the tools keep
-   running) and the spec's decision that nothing stops for late payment.
-   Suggested: "pause AI Features as section 5.8 describes". Brendan's text, so
-   unchanged until he says.
-10. Stage 4 decides what a standing does (the banner, AI paused when unpaid,
-   Back to demo), Cancelling and the portal. Until then the standings are kept
-   and shown, and Go live stays off.
+8. Done 2026-09-27: the brackets are filled (Brendan's best guess without
+   counsel: brf1998@gmail.com, 34 Lee St, Cambridge, MA 02139,
+   https://anetix.ai/terms, https://anetix.ai/privacy), as version `2026-09-27`,
+   and `/terms` and `/privacy` are public.
+9. Done 2026-09-27: 16 now says overdue Fees pause AI Features only as 5.8
+   describes; 10.6 says an export holds Customer Data, not the Tools' code.
+10. Done 2026-09-27 as far as the first paying site needs (Stage 4 as built).
+   Open: disputes and refunds, the yearly size check, the restore check.
 
 ## Sources
 

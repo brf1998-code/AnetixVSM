@@ -98,7 +98,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
 
   // ---- the Terms: off, then on ---------------------------------------------------------------------------------------
   const ts0 = (await admin.get("/api/admin/terms")).json;
-  t("the Terms start switched off, Brendan's draft, with counsel's brackets listed", ts0.live === false && ts0.version === T.TERMS_VERSION && ts0.draft === true && ts0.placeholders.includes("[LEGAL EMAIL]") && ts0.demos_waiting >= 1, ts0);
+  t("the Terms start switched off, Brendan's version in effect, nothing left in brackets", ts0.live === false && ts0.version === T.TERMS_VERSION && ts0.draft === false && ts0.placeholders.length === 0 && ts0.demos_waiting >= 1, ts0);
   t("off: a demo's board asks nothing", (await A.mgr.get(`/api/c/${A.slug}/board`)).json.terms === null);
   const st0 = await www("/api/www/terms/state");
   t("anetix.ai reads the switch, the version and hash to send back, and the words for each box", st0.status === 200 && st0.json.live === false && st0.json.sha === T.termsHash() && st0.json.words.demo === T.WORDS.demo() && st0.json.words.topup === T.WORDS.topup(), st0.json);
@@ -238,7 +238,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   stub.next.push({ status: 402, body: { error: "the card was declined: Your card was declined.", declined: true, message: "Your card was declined.", code: "card_declined", balance_reversed: true, detached: true } });
   const dec = await admin.post(`/api/admin/sites/${C.slug}/activate`, { password: PW.admin, test_mode_ok: true, tenancy_note: "one runtime while there are two small sites; per customer at the third" });
   const oC = await order(SC.order), sC = await site(C.slug);
-  t("the second paying site needed the tenancy reason, and it is kept", sC.tenancy_note && /per customer at the third/.test(sC.tenancy_note));
+  t("a note sent with Activate is still kept on the site (no longer required)", sC.tenancy_note && /per customer at the third/.test(sC.tenancy_note));
   t("a declined card: nothing charged, the order back to waiting for a card, the site back to Ordering", dec.status === 200 && dec.json.declined === true && oC.state === "signed" && oC.payment_method === null && oC.stripe.declined.length === 1 && oC.stripe.declined[0].message === "Your card was declined." && sC.stage === "ordering", { dec: dec.json, stage: sC.stage });
   const bC = (await C.mgr.get(`/api/c/${C.slug}/board`)).json;
   t("the manager is told to use another card, on the board and in Go live's line", bC.notices.some((n) => n.kind === "card_declined" && /Use another card/.test(n.text)) && bC.golive.declined === true && bC.golive.action === "Add another card" && /card was declined/.test(bC.golive.line), bC.golive);
@@ -325,7 +325,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const S = await makeDemo(admin, "Stuck Press Co", { terms: { agreed: true, version: T.TERMS_VERSION, sha: T.termsHash() } });
   const SS = await toSigned(S);
   stub.next.push({ status: 504, body: { error: "anetix.ai did not answer in time" } });
-  await admin.post(`/api/admin/sites/${S.slug}/activate`, { password: PW.admin, test_mode_ok: true, tenancy_note: "e2e: stuck" });
+  await admin.post(`/api/admin/sites/${S.slug}/activate`, { password: PW.admin, test_mode_ok: true });   // no tenancy note: not asked for since 2026-09-27
   t("an answer lost on the way leaves the order switching on", (await order(SS.order)).state === "activating" && (await site(S.slug)).stage === "activating");
   t("Stop switching on needs the step-up", (await admin.post(`/api/admin/sites/${S.slug}/stop-activating`, {})).status === 403);
   const ckS = (await admin.get(`/api/admin/sites/${S.slug}/checks`)).json;

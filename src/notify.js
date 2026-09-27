@@ -1,0 +1,56 @@
+// Alerts to Anetix's own phones (the launch audit, C11, 2026-09-27; the 1.15 alerts will reuse it). Brendan chose push
+// through ntfy: the free ntfy app on his and Taylor's phones, both subscribed to one private topic. Nothing here reaches a
+// customer.
+//
+//   NTFY_TOPIC   the topic both phones subscribe to. A long random name is the only secret: anyone who knows it can read
+//                the alerts, so it lives in Railway only. Unset: nothing is sent (the event log still has every event).
+//   NTFY_URL     the server, https://ntfy.sh unless set (a self-hosted ntfy works the same way)
+//   NTFY_TOKEN   optional: an access token, for a server that wants one
+//
+// What an alert may carry: a company's name, a site's name, a band and its price, and what happened. Never an email, a
+// password, a card, a person's words or anything else from a company's data: the message passes through ntfy's servers
+// (the privacy notice lists ntfy for exactly this).
+//
+// notify() never throws and never holds up the work that called it: it answers at once and sends behind, with a 5 s
+// limit. Each alert is also an event (kind "notified"), so the admin page can show what went out.
+//
+// Route (admin): POST /api/admin/notify/test   one test alert, to prove both phones get it
+const express = require("express");
+const { logEvent } = require("./db");
+
+const TOPIC = () => String(process.env.NTFY_TOPIC || "").trim();
+const SERVER = () => String(process.env.NTFY_URL || "https://ntfy.sh").replace(/\/+$/, "");
+const clip = (s, n) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().slice(0, n);
+
+// The alert as ntfy's JSON publish takes it. Pure.
+function payload(title, message, { priority = 3, tags = [], click } = {}) {
+  return { topic: TOPIC(), title: clip(title, 120), message: clip(message, 1000), priority: Math.max(1, Math.min(5, Number(priority) || 3)), tags: [].concat(tags || []).map((t) => clip(t, 30)).filter(Boolean).slice(0, 5), ...(click ? { click: String(click) } : {}) };
+}
+const sent = [];   // the last few, for the admin page and the tests (in memory)
+async function send(body) {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 5000);
+  try {
+    const res = await fetch(SERVER() + "/", { method: "POST", signal: ctl.signal, headers: { "Content-Type": "application/json", ...(process.env.NTFY_TOKEN ? { Authorization: `Bearer ${process.env.NTFY_TOKEN}` } : {}) }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(`ntfy answered ${res.status}`);
+    return true;
+  } finally { clearTimeout(timer); }
+}
+function notify(title, message, opts = {}) {
+  const body = payload(title, message, opts);
+  const on = Boolean(body.topic);
+  sent.unshift({ at: new Date().toISOString(), title: body.title, message: body.message, sent: on }); sent.length = Math.min(sent.length, 20);
+  logEvent("notified", opts.ref || null, { title: body.title, message: body.message, sent: on }).catch(() => {});
+  if (!on) return Promise.resolve(false);
+  return send(body).then(() => true, (e) => { console.error(`[notify] "${body.title}" was not sent: ${e.message}`); return false; });
+}
+const configured = () => Boolean(TOPIC());
+
+const router = express.Router();
+router.post("/api/admin/notify/test", (req, res, next) => require("./auth").requireAdmin(req, res, next), async (req, res) => {
+  if (!configured()) return res.status(409).json({ error: "NTFY_TOPIC is not set on this instance, so there is nowhere to send an alert." });
+  const ok = await notify("Anetix test alert", `Sent from the admin page${req.sosAccount && req.sosAccount.name ? ` by ${req.sosAccount.name}` : ""}. If both phones buzzed, alerts work.`, { tags: ["white_check_mark"] });
+  res.status(ok ? 200 : 502).json(ok ? { ok: true } : { error: "ntfy did not take the alert; the deploy log says why" });
+});
+router.get("/api/admin/notify", (req, res, next) => require("./auth").requireAdmin(req, res, next), (_req, res) => res.set("Cache-Control", "no-store").json({ configured: configured(), server: SERVER(), recent: sent.slice(0, 10) }));
+
+module.exports = { notify, payload, configured, router, _sent: sent };

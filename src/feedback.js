@@ -1055,7 +1055,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
   try {
     const mods = (await q("SELECT name FROM platform.modules WHERE company=$1", [co.slug])).rows.map((m) => m.name);
     await testfloor.deleteCompany(co.slug);   // its test tables and its test_floors row (the third role goes with the runner below)
-    await selfserve.deleteCompany(co.slug);   // its credit ledger and its self_serve row (the pin it used keeps its count)
+    await selfserve.deleteCompany(co.slug);   // its credit ledger, its self_serve row, its demo request and its pin (unless another company used the pin)
     await q("DELETE FROM platform.sample_fills WHERE company=$1", [co.slug]);   // what its sample fills put in (the rows go with the schemas below)
     await require("./sites").deleteCompany(co.slug);   // its row in the pipeline (src/sites.js)
     await require("./notices").deleteCompany(co.slug);   // its managers' notices

@@ -99,10 +99,18 @@ run sites                  env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scr
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
 run golive                 env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/golive.js
 
+fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
+run dataexport             env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/dataexport.js
+
 # stage 3: anetix.ai's private channel is a stub inside the test (every answer Stripe could give is the test's to choose)
 S3="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW_INTERNAL_URL=http://127.0.0.1:4011 WWW_INTERNAL_KEY=e2e-internal-key-0123456789abcdef"
 fresh; start "SOS_BROWSER=off $S3"
 run stage3                 env $S3 node scripts/e2e/stage3.js
+
+# stage 4 (src/billing.js) and the phone alerts (src/notify.js): one stub plays anetix.ai's private channel and ntfy
+S4="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW_INTERNAL_URL=http://127.0.0.1:4012 WWW_INTERNAL_KEY=e2e-internal-key-0123456789abcdef NTFY_URL=http://127.0.0.1:4012 NTFY_TOPIC=e2e-topic"
+fresh; start "SOS_BROWSER=off $S4"
+run billing                env $S4 node scripts/e2e/billing.js
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

@@ -437,6 +437,18 @@ async function save(access, body = {}) {
     if (open && open.state !== "draft") throw fail(409, acc.who === "manager" ? "Your order form is signed, so its answers cannot change. To change something, start the order over." : "This order form is signed, so its answers cannot change.", { code: "signed" });
     const book = await sites.currentBook();
     const facts = { ...(open ? open.facts : await prefill(c, site, acc.co)), ...fields };
+    // "That's me" (the launch audit, C8): a name or email left empty is filled from the account going live, the
+    // manager's own sign-in, so ticking the box is enough. A name or email typed in the boxes wins.
+    if (acc.who === "manager" && facts.contact && facts.contact.is_pm) {
+      const mgr = (await require("./accounts").managersOf(acc.co.slug))[0] || null;
+      const ss = (await c.query("SELECT email, contact FROM platform.self_serve WHERE company=$1", [acc.co.slug])).rows[0] || {};
+      const pm = { ...(facts.plant_manager || {}) };
+      // the email the demo was made for first (a manager's login can be a +slug alias), then the first manager's
+      const myEmail = clean(ss.email || (mgr && mgr.login), 200).toLowerCase(), myName = clean(ss.contact || (mgr && mgr.display_name), 80);
+      if (!pm.name && myName) pm.name = myName;
+      if (!pm.email && EMAIL.test(myEmail)) pm.email = myEmail;
+      facts.plant_manager = pm;
+    }
     // "That's me": the plant manager's name and title are the person going live's, copied now, so a later change to
     // the plant manager (the approver's, say) does not change who that is
     if (acc.who === "manager" && facts.contact && facts.contact.is_pm) facts.contact = { is_pm: true, name: (facts.plant_manager || {}).name || "", title: (facts.plant_manager || {}).title || "" };
@@ -605,6 +617,8 @@ async function cardSaved(body = {}) {
     return { ...base, applied: true, stage: step.state.stage, card };
   });
   if (r.applied) await logEvent("order_card_saved", r.company, { order: orderId, card: r.card ? `${r.card.brand || "card"} ${r.card.last4 || ""}`.trim() : null, preview: r.preview });
+  // the launch audit, C11: a signed order with its card is waiting on Brendan, who aims to switch it on within 24 hours
+  if (r.applied && !r.preview) require("./notify").notify("Signed order: activate within 24 hours", `${r.company_name}${r.site_name && r.site_name !== r.company_name ? `, ${r.site_name}` : ""}: ${(r.band && r.band.name) || "a"} site at $${Number(r.price_usd || 0).toLocaleString("en-US")} a month. The card is saved. Activate is on the Sites tab.`, { priority: 5, tags: ["moneybag"], ref: r.company });
   else if (r.detach) await logEvent("order_card_refused", r.company, { order: orderId, why: r.why });
   return { ok: true, ...r };
 }
@@ -692,6 +706,7 @@ async function forBoard(co, role) {
   const declined = Boolean(o && o.state === "signed" && !o.payment_method && (o.stripe || {}).declined);   // Activate's charge was declined (stage 3)
   return {
     stage, url, preview: role === "admin",
+    from: ["demo", "ordering", "back_to_demo"].includes(stage) ? sites.fromLine(await sites.currentBook()) : null,   // the price before the form (the launch audit, C7)
     action: inAlready ? "See your order" : declined ? "Add another card" : stage === "ordering" ? "Continue going live" : "Go live",
     // the Terms, 5.4: Anetix AIMS to switch a site on within 24 hours (Brendan, 2026-09-26)
     line: inAlready ? "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now."

@@ -93,6 +93,8 @@
         ${kpi("Requests", T.requests, `${T.builds_deployed} changes put live`)}
       </div>
       <p style="margin:6px 0 0"><a class="btn" href="/api/admin/demos/export" download>Download everything (JSON)</a> <span class="sub">Every company in full: answers, requests, builds, money and the record, for reading the learnings offline.</span></p></div>
+      ${(L.idle || []).length ? `<div class="card"><h2>Idle 11 months or more <small>a site back to a demo: its data may go after 12 months with no sign-in (the Terms, 6.3 and 10.7); a plain demo: Anetix may end it any time, refunding unused bought credit (4.1, 4.2). Tell the manager first, then delete from the company's card</small></h2>
+        <table class="list"><tr><th>Company</th><th>Last sign-in</th><th>Can go after</th></tr>${L.idle.map((x) => `<tr><td><a href="#demos/${esc(x.slug)}">${esc(x.name)}</a></td><td>${esc(new Date(x.last_sign_in).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }))}</td><td>${esc(new Date(x.delete_after).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }))}</td></tr>`).join("")}</table></div>` : ""}
       <div class="card"><h2>Companies <small>newest first; open one for everything it did</small></h2>
         ${L.demos.length ? `<div style="overflow-x:auto"><table class="list"><tr><th>Company</th><th>Since</th><th>Sign-in</th><th>Credit left</th><th>Paid</th><th>AI spend</th><th>Built</th><th>Requests</th><th>Changes</th></tr>${rows}</table></div>` : '<p class="sub">Nobody has come in from anetix.ai yet. Make a pin on the Pins tab.</p>'}</div>
       <div class="card"><h2>Use cases <small>what each request for a new tool was for, newest first</small></h2>

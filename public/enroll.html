@@ -28,6 +28,7 @@
 </head>
 <body>
   <div class="card" id="card"><p class="sub">One moment.</p></div>
+  <p class="sub" id="help" style="max-width:520px;margin:14px auto 0;font-size:12.5px;text-align:center">Stuck, forgot your password or lost your phone? Write to <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</p>
 <script>
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 const SLUG = (/^\/c\/([a-z0-9][a-z0-9-]{1,40})\//.exec(location.pathname) || [])[1];

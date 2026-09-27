@@ -181,7 +181,9 @@ async function list() {
     requests: demos.reduce((n, d) => n + d.counts.requests, 0), builds_deployed: demos.reduce((n, d) => n + d.counts.deployed, 0),
     use_cases: use_cases.length,
   };
-  return { totals, demos, use_cases };
+  // the Terms, 6.3 and 10.7: a company's data may go after 12 months with no sign-in; these are a month from it (src/dataexport.js)
+  const idle = await require("./dataexport").idle();
+  return { totals, demos, use_cases, idle };
 }
 
 async function detail(slug) {

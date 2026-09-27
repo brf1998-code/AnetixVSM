@@ -47,8 +47,10 @@
       <div id="gl-body"></div>
     </div>
     <div class="card" id="sub-card" style="display:none">
-      <h2>Your subscription</h2>
+      <h2 id="billing">Your subscription</h2>
       <div class="sub" id="sub-sub"></div>
+      <div class="sub" id="sub-line" style="display:none;margin-top:8px;font-weight:600"></div>
+      <div id="sub-billing" style="display:none"><button class="primary" id="sub-manage" onclick="openBilling()">Manage billing</button> <span class="sub">Change the card, see and download invoices, or cancel. Opens Stripe, which Anetix uses for payments.</span> <span class="ok" id="sub-billing-msg"></span></div>
       <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:14px"><input type="checkbox" id="sub-learn" style="margin-top:3px"><span>Anetix may learn from how the site uses the system, to improve Anetix for all customers. <span class="sub" style="display:block;margin-top:2px">Opting in also lets Anetix offer versions of the tools built here to other customers, never with your data in them. Either way your data is yours and never shown to another customer. <a id="sub-terms" href="#" target="_blank" rel="noopener">The Terms</a>, section 10.2.</span></span></label>
       <div id="sub-msg" class="sub" style="margin-top:6px"></div>
     </div>
@@ -94,12 +96,23 @@
       <div class="sub" id="tf-data" style="margin-top:8px"></div>
       <button class="quiet" id="tf-reset" onclick="resetTestFloor()">Put the test floor's data back</button> <span class="ok" id="tf-ok"></span>
     </div>
+    <div class="card" id="data-card">
+      <h2>Your data</h2>
+      <div class="sub">Everything your company put into Anetix, as one file: each tool's records, your requests and their answers, the answers to new-tool questions, attached photos and files, uploads, labels printed and your people. The tools' code is part of Anetix and is not in it.</div>
+      <a class="btn primary" id="export-go" download>Download your data (JSON)</a>
+    </div>
+    <div class="card" id="help-card">
+      <h2>Help</h2>
+      <div class="sub">Stuck, or something looks wrong? Write to <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>. Inside the product, a request under Requests to Anetix reaches us too, and the answer shows under My requests.</div>
+      <div class="sub" style="margin-top:8px"><a href="https://anetix.ai/terms" target="_blank" rel="noopener">Terms of Service</a> · <a href="https://anetix.ai/privacy" target="_blank" rel="noopener">Privacy notice</a></div>
+    </div>
   </div>
   <div id="print-sign"><h2 id="print-co"></h2><p>Scan to open the improvement board</p><img id="print-qr" alt=""><p id="print-url"></p></div>
 <script>
 const SLUG = location.pathname.split("/")[2];
 const link = location.origin + "/c/" + SLUG + "/";
 document.getElementById("back").href = `/c/${SLUG}/`;
+document.getElementById("export-go").href = `/api/c/${SLUG}/export`;   // the company's own data (src/dataexport.js; the Terms, 10.6)
 document.getElementById("people").href = `/c/${SLUG}/people`;
 document.getElementById("connections").href = `/c/${SLUG}/connections`;
 document.getElementById("qr").src = `/api/c/${SLUG}/qr.svg?px=320`;
@@ -122,15 +135,38 @@ async function load() {
   loadSubscription();
 }
 // A paying site (stage 3, src/activate.js): its band and price, and the learning choice from its order form, which the
-// manager can change here (the Terms, 10.2).
+// manager can change here (the Terms, 10.2). Stage 4 (src/billing.js): the next bill or the end date, a line when a
+// payment failed, and Manage billing, which opens Stripe's portal for this site through a ten-minute link from anetix.ai.
+async function openBilling() {
+  const b = document.getElementById("sub-manage"), msg = document.getElementById("sub-billing-msg");
+  b.disabled = true; msg.textContent = "Opening";
+  const r = await fetch(`/api/c/${SLUG}/billing`, { method: "POST" });
+  const j = await r.json().catch(() => ({}));
+  b.disabled = false;
+  if (!r.ok || !j.url) { msg.textContent = j.error || "Billing did not open. Try again in a minute."; return; }
+  msg.textContent = ""; location.href = j.url;
+}
 async function loadSubscription() {
   const r = await fetch(`/api/c/${SLUG}/site`, { cache: "no-store" });
   const card = document.getElementById("sub-card");
   if (!r.ok) { card.style.display = "none"; return; }
   const s = await r.json();
-  if (!s.subscribed) { card.style.display = "none"; return; }
-  card.style.display = "block";
-  document.getElementById("sub-sub").textContent = `${s.band || "Your"} site, $${Number(s.price_usd || 0).toLocaleString("en-US")} a month, billed monthly. The price is locked while the subscription runs.`;
+  const bill = document.getElementById("sub-billing"), line = document.getElementById("sub-line");
+  if (!s.subscribed) {
+    // a site back to a demo keeps its way to its past invoices (stage 4)
+    if (!s.billing) { card.style.display = "none"; return; }
+    card.style.display = "block";
+    document.getElementById("sub-sub").textContent = `The subscription ended${s.returned_at ? ` on ${new Date(s.returned_at).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" })}` : ""}, so this is a demo again with everything you built. Past invoices are under Manage billing.`;
+    bill.style.display = "block"; line.style.display = "none";
+    // the learning choice still covers the data from the paid months (the Terms, 4.4 and 10.2), so it stays here
+  } else {
+    card.style.display = "block";
+    const day = (d) => new Date(d).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
+    document.getElementById("sub-sub").textContent = `${s.band || "Your"} site, $${Number(s.price_usd || 0).toLocaleString("en-US")} a month, billed monthly. The price is locked while the subscription runs.${s.next_bill ? ` Next bill ${day(s.next_bill)}.` : ""}${s.ends_on ? ` Ends ${day(s.ends_on)}.` : ""}`;
+    line.style.display = s.line ? "block" : "none"; line.textContent = s.line ? s.line.text : "";
+    line.style.color = s.line && s.line.level === "red" ? "var(--red, #b3261e)" : "#8a5a00";
+    bill.style.display = s.billing ? "block" : "none";
+  }
   const box = document.getElementById("sub-learn"), msg = document.getElementById("sub-msg");
   document.getElementById("sub-terms").href = s.terms_link || "#";
   box.checked = s.learning_opt_in;
@@ -156,7 +192,7 @@ async function loadGoLive() {
     || (g.stage === "ordering"
       ? (g.signed_no_card ? "Your order form is signed. Add a card to finish; nothing is charged until Anetix switches the site on."
         : g.waiting_on ? `Your order is started on anetix.ai and waits for ${g.waiting_on} to sign.` : "Your order is started on anetix.ai. Pick up where you left off.")
-      : "Make this demo your site: one price for the site, set by its size, with no credit to run out of and a way in for the floor. Everything you built stays.");
+      : `Make this demo your site: one price for the site, set by its size, with no credit to run out of and a way in for the floor. Everything you built stays.${g.from ? ` ${g.from.line}` : ""}`);
   document.getElementById("gl-body").innerHTML = g.url ? `<a class="btn primary" id="gl-go" href="${esc(g.url)}">${esc(g.action)}${g.preview ? " (admin preview)" : ""}</a>` : "";
 }
 // The system review (moved here from the board, 2026-09-26): one select, one button, and a line while one runs.

@@ -1576,7 +1576,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   off; cached 30 s for the Sites tab, fresh for Activate). **Activate** (Sites
   tab, `POST /api/admin/sites/:slug/activate { code, tenancy_note, clear_sample,
   test_mode_ok }`): checks (`GET .../checks`: channel, the AI key's auto reload
-  noted on, a tenancy reason from the second paying site, size flags, the plan,
+  noted on, tool isolation from the second paying site (the tenancy note went on
+  2026-09-27, see "The launch audit's C items"), size flags, the plan,
   the refund due, `test_mode`, `tax_off`); a customer's order while Stripe is not
   live needs `test_mode_ok`; a preview runs in test mode only. Under
   `golive.withSite`'s lock the order and site go to activating, the unused bought
@@ -1631,15 +1632,50 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   demo_setup, topup, board; version, SHA-256, words, who, ip and its evidence,
   ref; `gone_at` on delete, never removed); with the switch on a demo without an
   identified acceptance (demo_setup, board, order) waits for its manager's tick
-  on the board (`POST /api/c/:slug/terms/accept`); `/terms` stays behind the wall
-  and the product's links carry `?k=` (HMAC over `terms:<exp>` under
-  `SOS_WWW_KEY`, 31 days). `backup.restore` merges `acceptances`,
+  on the board (`POST /api/c/:slug/terms/accept`); `/terms` was behind the wall
+  (public since 2026-09-27) and the product's links carry `?k=` (HMAC over
+  `terms:<exp>` under `SOS_WWW_KEY`, 31 days). `backup.restore` merges `acceptances`,
   `billing_events` and `terms_versions` instead of replacing them. The delete
   confirm shows the refund due under 4.2 (`GET
   /api/admin/companies/:slug/refund-due`). Tables: `acceptances`, `notices`,
   `billing_events` (in the backup), columns on `sites`. Tests:
   `scripts/test-activate.js` (26), `scripts/e2e/stage3.js` (116, a stub channel in
   the test; in `run-all.sh`); www `test-www.js` (87), `e2e-activate.js` (42).
+- **The launch audit's C items** (2026-09-27; the audit is a Claude Doc, the
+  project doc `claude/launch-readiness-audit-2026-09-26.md` links it). (1) **The
+  Terms are in effect**: `TERMS_VERSION` `2026-09-27`, not a draft; the brackets
+  filled with Brendan's best guess (legal email brf1998@gmail.com, 34 Lee St,
+  Cambridge, MA 02139, https://anetix.ai/terms, https://anetix.ai/privacy); 16
+  pauses AI only for overdue Fees; 10.6 says an export is data, not Tool code.
+  `/terms` and a new `/privacy` (www `privacy.js`) are PUBLIC on anetix.ai. (2)
+  **Who to write to**: brendan@anetix.ai or taylor@anetix.ai on the wall, the
+  request pages, /welcome, both sign-ins and the code step (`login.html`), the
+  authenticator setup, Settings (a Help card), the out-of-credit panel; www's
+  `WWW_CONTACT` defaults to both. (3) **The price before the form**:
+  `sites.fromLine(book)` ("Sites start at $1,000 a month, for under 50 people.")
+  on the pin holder's front page, beside the board's Go live link
+  (`golive.forBoard().from`) and in Settings. (4) **"That's me"** fills an empty
+  plant manager name and email from the demo's own email and name, server side
+  and in the form. (5) **The company's data** (`src/dataexport.js`): `GET
+  /api/c/:slug/export` (manager, an admin too; "Your data" in Settings) is one
+  JSON file: each tool's tables (bytea as base64, `_` tables left out), requests,
+  intake answers, attachments (base64 up to 15 MB each and 60 MB in all, the rest
+  listed), uploads, print jobs, people, managers, the human rows of the record,
+  the site's facts; never code, versions, proposals, the agent's or platform's
+  record rows, hashes or tokens; one export per company at a time. A daily sweep
+  deletes demo requests and never-used pins over 12 months old unless they led
+  to a demo; `idle()` lists companies 11+ months without a sign-in on the Demos
+  tab; company delete takes the demo request and the pin. (6) **Tenancy**: no
+  note at Activate; `activate.isolation()` refuses a second paying site only
+  while module code is not isolated on this instance. (7) **Stage 4 and the
+  alerts**: `src/billing.js` and `src/notify.js`, see `docs/PAID-SITES.md`
+  "Stage 4 as built" (Manage billing, past due, unpaid and `canceled_at_stripe`
+  pausing AI, cancel dates, back to a demo with `self_serve.credit_since`, End
+  after 30 days unpaid, ntfy alerts). (8) **Module redirects**: `registry.lockDown`
+  drops a `Location` that leaves the module's own mount, and any `Refresh`, so a
+  module route cannot bounce its page's fetch onto the manager's own routes.
+  Tests: `test-billing.js`, `test-lockdown.js`, `e2e/billing.js`,
+  `e2e/dataexport.js`; www `test-www.js`, `e2e-activate.js`.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2774,6 +2810,10 @@ tool list, 401 from the API) proves the CLI itself starts.
   `WWW_INTERNAL_KEY` (the same long random string as on anetix-www): the private
   channel Activate uses (stage 3). Unset, Activate says the channel is not set up
   and charges nothing.
+- `NTFY_TOPIC` (the private ntfy topic both founders' phones subscribe to; set
+  2026-09-27), `NTFY_URL` (default https://ntfy.sh), `NTFY_TOKEN` (optional):
+  phone alerts (`src/notify.js`). Unset topic: nothing is sent.
+  `SOS_EXPORT_ATTACH_MAX` / `SOS_EXPORT_ATTACH_TOTAL`: the export's file limits.
 - `SOS_WWW_KEY`: the shared key the anetix.ai service (`www/`) sends in
   `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on
   both services; unset = those routes answer 401). `SOS_WWW_URL`: the front

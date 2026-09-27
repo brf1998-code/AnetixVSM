@@ -56,7 +56,7 @@ const FACTS = {
 
   // ---- dark until switched on
   const st0 = await admin.get("/api/admin/golive");
-  t("Go live starts switched off, with the terms still a draft and the key set", st0.status === 200 && st0.json.open === false && st0.json.terms_version === T.TERMS_VERSION && st0.json.terms_draft === true && st0.json.key_set === true, st0.json);
+  t("Go live starts switched off, with the terms in effect and the key set", st0.status === 200 && st0.json.open === false && st0.json.terms_version === T.TERMS_VERSION && st0.json.terms_draft === false && st0.json.key_set === true, st0.json);
   const b0 = (await A.mgr.get(`/api/c/${A.slug}/board`)).json;
   t("while it is off the manager's board has no Go live link, and Settings' card has none", b0.golive === null && (await A.mgr.get(`/api/c/${A.slug}/golive`)).json.golive === null, b0.golive);
   const ab = (await admin.get(`/api/c/${A.slug}/board`)).json.golive;
@@ -67,7 +67,7 @@ const FACTS = {
   const aAdmin = { slug: A.slug, t: tokenOf(link.url) };
   const v0 = await www("/api/www/golive/view", { access: aAdmin });
   t("the admin's link opens the go-live view while it is off: the demo, the stage, what the form starts from", v0.status === 200 && v0.json.who === "manager" && v0.json.preview === true && v0.json.site.stage === "demo" && v0.json.order === null && v0.json.prefill && v0.json.prefill.site_name === v0.json.company.name && v0.json.prefill.billing.email === A.email && v0.json.prefill.contact.name === "Sam Ortiz", v0.json);
-  t("and says which terms, where", v0.json.terms.version === T.TERMS_VERSION && v0.json.terms.url === `${WWW}/terms` && v0.json.terms.draft === true);
+  t("and says which terms, where", v0.json.terms.version === T.TERMS_VERSION && v0.json.terms.url === `${WWW}/terms` && v0.json.terms.draft === false);
   const custTok = G.goliveToken(A.slug, siteId, { kind: "m" });
   t("a customer's link is refused while Go live is off", (await www("/api/www/golive/view", { access: { slug: A.slug, t: custTok } })).status === 404);
   t("nothing opens without the shared key", (await www("/api/www/golive/view", { access: aAdmin }, "wrong-key-0123456789abcdef")).status === 401 && (await www("/api/www/golive/view", { access: aAdmin }, "")).status === 401);
@@ -77,6 +77,7 @@ const FACTS = {
   const on = await admin.post("/api/admin/golive", { open: true });
   t("the admin switches it on", on.status === 200 && on.json.open === true, on.json);
   const b1 = (await A.mgr.get(`/api/c/${A.slug}/board`)).json.golive;
+  t("beside it, what a site costs, from the price book, before any form (C7)", b1 && b1.from && b1.from.line === "Sites start at $1,000 a month, for under 50 people." && b1.from.short === "from $1,000 a month", b1 && b1.from);
   t("the manager's board now carries a customer's Go live link", b1 && b1.preview === false && b1.action === "Go live" && b1.stage === "demo" && /\.m\.[A-Za-z0-9_-]{32}$/.test(tokenOf(b1.url)) && tokenOf(b1.url).startsWith(siteId), b1);
   t("Settings' card carries the same", (await A.mgr.get(`/api/c/${A.slug}/golive`)).json.golive.url === b1.url);
   const showroom = (await (await login(PW.manager, "demo")).get("/api/c/demo/board")).json;
@@ -97,6 +98,11 @@ const FACTS = {
   t("the text carries the billing email and the learning choice (the terms lean on both)", /Billing email: ap@acmewire\.test\./.test(s2.json.order.text) && /Learning: Customer opts in\./.test(s2.json.order.text));
   t("That's me: the plant manager's name and title are copied as the person going live", s2.json.order.facts.contact.is_pm === true && s2.json.order.facts.contact.name === "Sam Ortiz" && s2.json.order.facts.contact.title === "Plant manager");
   const s3 = await www("/api/www/golive/save", { access: M, fields: FACTS });
+  // "That's me" ticked with the plant manager's boxes left empty (the launch audit, C8): filled from the account
+  const BW = await makeDemo(admin, `Bolt Works ${Date.now().toString(36).slice(-4)}`, `pat${Date.now().toString(36).slice(-5)}@boltworks.test`);
+  const bwl = (await BW.mgr.get(`/api/c/${BW.slug}/board`)).json.golive;
+  const bws = await www("/api/www/golive/save", { access: { slug: BW.slug, t: tokenOf(bwl.url) }, fields: { ...FACTS, legal_name: "Bolt Works LLC", plant_manager: { name: "", title: "", email: "" }, contact: { is_pm: true } } });
+  t("That's me with the boxes empty: the plant manager is the account going live, and nothing is left missing", bws.status === 200 && bws.json.order.facts.plant_manager.email === BW.email && bws.json.order.facts.plant_manager.name === "Sam Ortiz" && bws.json.order.complete === true && !bws.json.order.missing.some((m) => /plant manager/.test(m.text)), bws.json.order && { pm: bws.json.order.facts.plant_manager, missing: bws.json.order.missing });
   t("the same answers again keep the version (nobody is asked to look again for nothing)", s3.json.order.version === 2 && s3.json.order.sha === s2.json.order.sha);
   const row = (await admin.get("/api/admin/sites")).json.rows.find((r) => r.slug === A.slug);
   t("the Sites tab shows what the customer typed, and the open draft", row.stage === "ordering" && row.headcount === 140 && row.site_name === FACTS.site_name && row.plant_manager.email === FACTS.plant_manager.email && row.deal.integrations === "Epicor Kinetic" && row.billing.email === "ap@acmewire.test" && row.order && row.order.state === "draft" && row.order.version === 2 && row.order_open === true, row);

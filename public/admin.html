@@ -226,6 +226,8 @@
       <div class="card"><h2>Spend and default models</h2><div id="top" style="margin-top:8px;line-height:1.7"></div></div>
       <div class="card"><h2>Module isolation <small>where agent-written module code runs</small></h2><div id="isolation" class="note"></div></div>
       <div class="card"><h2>Edge check <small>requests must come through Cloudflare</small></h2><div class="note" id="edge-line"></div></div>
+      <div class="card"><h2>Phone alerts <small>signed orders, declined cards, billing trouble (ntfy)</small></h2><div class="note" id="notify-line">Loading…</div>
+        <button class="quiet" id="notify-test" onclick="testAlert()">Send a test alert</button> <span class="sub" id="notify-msg"></span></div>
     </div>
     <div class="card">
       <h2>Backup and restore</h2>
@@ -348,6 +350,18 @@ function healthRow(c) {
 // The AI credit glide slope (src/credit.js): the balance the admin entered minus what the platform has spent
 // since, the trailing seven day burn, and the day it runs out. Red when the AI service last refused a call for
 // credit or key reasons and nothing has worked since.
+// Phone alerts (src/notify.js): whether NTFY_TOPIC is set, and the last few that went out
+async function loadNotify() {
+  const r = await fetch("/api/admin/notify", { cache: "no-store" }); if (!r.ok) return;
+  const j = await r.json(), el = document.getElementById("notify-line");
+  el.innerHTML = j.configured ? `On: alerts go to the ntfy topic on ${esc(j.server)}.${(j.recent || []).length ? ` Last: ${esc(j.recent[0].title)} (${esc(new Date(j.recent[0].at).toLocaleString())}).` : ""}`
+    : `<b style="color:#b26a00">Off.</b> Set NTFY_TOPIC on the SymbioticOS service (the private topic both phones subscribe to in the ntfy app), and signed orders, declined cards and billing trouble reach your phones.`;
+}
+async function testAlert() {
+  const m = document.getElementById("notify-msg"); m.textContent = "Sending…";
+  const r = await fetch("/api/admin/notify/test", { method: "POST" }); const j = await r.json().catch(() => ({}));
+  m.textContent = r.ok ? "Sent. Check both phones." : (j.error || "It did not send."); loadNotify();
+}
 async function loadCredit() {
   const r = await fetch("/api/admin/credit"); if (!r.ok) return;
   const c = await r.json(), el = document.getElementById("credit");
@@ -418,6 +432,7 @@ function drawIsolation(rn) {
 }
 async function loadHealth() {
   loadCredit().catch((e) => console.error("credit:", e));
+  loadNotify().catch((e) => console.error("notify:", e));
   const days = document.getElementById("h-days").value;
   const r = await fetch(`/api/admin/health?days=${days}`);
   if (!r.ok) { document.getElementById("h-fleet").innerHTML = `<div class="sub fail">could not load loop health (${r.status})</div>`; return; }

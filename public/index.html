@@ -87,11 +87,12 @@
   .creditout .acts { display:flex; gap:8px; flex-wrap:wrap; } .creditout a.go.alt { background:#fff; color:var(--navy); border:2px solid var(--navy); padding:8px 14px; }
   /* going live (src/golive.js): the order is in, one quiet line under the credit line */
   .goliveline { font-size:12.5px; margin:-4px 0 10px; color:var(--green); font-weight:600; } .goliveline a { margin-left:6px; }
-  .goliveline.warn { color:#b26a00; }   /* a declined card: not good news, so not green */
+  .goliveline.warn { color:#b26a00; }
+  .creditline .glfrom { margin-left:6px; color:var(--steel); font-weight:400; }   /* a declined card: not good news, so not green */
   /* stage 3 (src/activate.js): the Terms' box, a new site's welcome, the fair-use line, notices from Anetix */
   .paid { background:#fff; border:1px solid var(--line); border-left:4px solid var(--navy); border-radius:10px; padding:10px 14px; margin:0 0 12px; display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; font-size:13.5px; }
   .paid .grow { flex:1; min-width:220px; } .paid button, .paid a.btn { margin:0; } .paid small { color:var(--steel); }
-  .paid.ok { border-left-color:var(--green); } .paid.amber { border-left-color:var(--amber); } .paid.note { border-left-color:var(--steel); }
+  .paid.ok { border-left-color:var(--green); } .paid.amber { border-left-color:var(--amber); } .paid.note { border-left-color:var(--steel); } .paid.red { border-left-color:var(--red, #b3261e); }
   .paid .tick { display:flex; gap:8px; align-items:flex-start; margin:8px 0 0; font-size:13.5px; } .paid .tick input { margin-top:3px; }
   .paid .pw { font:700 20px ui-monospace,Menlo,monospace; letter-spacing:.04em; background:var(--fog, #f4f6f8); border-radius:8px; padding:8px 12px; margin:8px 0 4px; display:inline-block; }
   .paid .err { color:var(--red); margin:6px 0 0; }
@@ -1225,6 +1226,8 @@ function renderPaid() {
       <button class="go" id="welcome-go" onclick="collectWelcome()">Show the floor's password</button></div>`);
   }
   if (DATA.fair_use && DATA.fair_use.over) out.push(`<div class="paid amber"><div class="grow">${esc(DATA.fair_use.message)}</div></div>`);
+  // stage 4 (src/billing.js): a payment that failed, a site that is unpaid, a cancel date. Managers and admins only.
+  if (DATA.billing && DATA.billing.text) out.push(`<div class="paid ${DATA.billing.level === "red" ? "red" : "amber"}" id="billingline"><div class="grow">${esc(DATA.billing.text)}</div>${DATA.role === "manager" ? `<a class="btn quiet" href="/c/${SLUG}/settings#billing">Manage billing</a>` : ""}</div>`);
   for (const n of DATA.notices || []) out.push(`<div class="paid note" data-notice="${n.id}"><div class="grow">${esc(n.text)} <small>${esc(new Date(n.created_at).toLocaleDateString([], { month: "short", day: "numeric" }))}</small></div>${DATA.role === "manager" ? `<button class="quiet" onclick="seenNotice(${n.id})">Close</button>` : ""}</div>`);
   box.innerHTML = out.join("");
 }
@@ -1288,8 +1291,8 @@ async function load() {
   const goOffer = gl && gl.url && !gl.line;
   if (DATA.credit && DATA.credit.balance_usd <= 0) {   // nothing runs any more: say so plainly, with the one way on
     cl.style.display = "flex"; cl.className = "creditout";
-    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? "" : " Ask your manager to add credit."}${goOffer ? " Or go live: one price for the site, set by its size, with no credit to run out of." : ""}</p></div>${MGR() ? `<div class="acts"><a class="go" href="${esc(DATA.credit.topup_url)}">Add credit on anetix.ai</a>${goOffer ? `<a class="go alt" id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}</div>` : ""}`;
-  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}${goOffer ? `<span style="margin-left:6px">·</span><a id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
+    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? "" : " Ask your manager to add credit."}${goOffer ? ` Or go live: one price for the site, set by its size, with no credit to run out of.${gl.from ? ` ${esc(gl.from.line)}` : ""}` : ""} Questions: <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</p></div>${MGR() ? `<div class="acts"><a class="go" href="${esc(DATA.credit.topup_url)}">Add credit on anetix.ai</a>${goOffer ? `<a class="go alt" id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}</div>` : ""}`;
+  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}">Add credit</a>` : ""}${goOffer ? `<span style="margin-left:6px">·</span><a id="golive-go" href="${esc(gl.url)}" title="${esc(gl.from ? gl.from.line : "")}">${esc(goText)}</a>${gl.from ? `<span class="glfrom">${esc(gl.from.short)}</span>` : ""}` : ""}`; }
   else cl.style.display = "none";
   const gline = document.getElementById("goliveline");
   if (gl && gl.line) { gline.style.display = "block"; gline.classList.toggle("warn", Boolean(gl.declined)); gline.innerHTML = `${esc(gl.line)}${gl.url ? `<a href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }

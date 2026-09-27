@@ -138,6 +138,17 @@ async function aiKey() {
   const r = (await q("SELECT autofill, noted_at FROM platform.ai_credit ORDER BY id DESC LIMIT 1").catch(() => ({ rows: [] }))).rows[0];
   return { autofill: Boolean(r && r.autofill), noted_at: r ? r.noted_at : null };
 }
+// Tenancy option C in force (Brendan's decision of 2026-09-18, kept 2026-09-27): each company's tools in a process of
+// their own with a database login that reaches only that company's tables, and no tool kept inside the platform by the
+// deploy-day safety net. The review of 2026-09-27: with the tenancy note gone, this is what stands before a second
+// customer's production data, so Activate checks it rather than assumes it.
+function isolation() {
+  const st = require("./runner").state || {};
+  const kept = (st.inline_modules || []).map((k) => `${k.company}/${k.module}`);
+  const inline = st.effective !== "process";
+  return { ok: !inline && kept.length === 0, effective: st.effective || null, kept,
+    why: inline ? `module code runs inside the platform's own process (${(st.roles && st.roles.reason) || "the runner could not isolate it"})` : kept.length ? `these tools were kept inside the platform at boot: ${kept.join(", ")}` : null };
+}
 async function subscribedCount(except) {
   return (await q("SELECT count(*)::int AS n FROM platform.sites WHERE stage='subscribed' AND company <> $1", [except || ""])).rows[0].n;
 }
@@ -147,9 +158,11 @@ async function refundableCents(slug) {
   const selfserve = require("./selfserve");
   const ss = await selfserve.selfServeRow(slug); if (!ss) return 0;
   // oldest first: refundableCredit counts the oldest purchases as spent first, and ledger() reads newest first (found by
-  // the review of 2026-09-26: $30 for $30 then $20 for $10 with $15 spent is $35 back, not $25)
-  const ledger = (await selfserve.ledger(slug)).slice().sort((a, b) => a.id - b.id);
-  const r = sites.refundableCredit(ledger, await selfserve.spentSince(slug, ss.created_at));
+  // the review of 2026-09-26: $30 for $30 then $20 for $10 with $15 spent is $35 back, not $25). A site back to a demo
+  // counts from its return (self_serve.credit_since, stage 4): credit bought for the first demo went on its first bill.
+  const since = ss.credit_since || ss.created_at;
+  const ledger = (await selfserve.ledger(slug)).filter((r) => !ss.credit_since || new Date(r.created_at) >= new Date(ss.credit_since)).slice().sort((a, b) => a.id - b.id);
+  const r = sites.refundableCredit(ledger, await selfserve.spentSince(slug, since));
   return Math.max(0, Math.round(Number(r.refund_usd || 0) * 100));
 }
 async function sampleFillsIn(slug) {
@@ -188,7 +201,7 @@ async function checks(slug) {
     // tick); live with Stripe Tax off makes a subscription with no sales tax, which does not pick it up if Tax is turned on later
     test_mode: Boolean(ch.ok && ch.stripe !== "live" && !preview),
     tax_off: Boolean(ch.ok && ch.stripe === "live" && !ch.tax),
-    tenancy: { others, needs_note: !preview && others >= 1, note: site.tenancy_note || null },
+    tenancy: { others, needs_note: false, note: site.tenancy_note || null, isolation: isolation() },
     size: band ? band.flags : [],
     refund_usd: (await refundableCents(slug)) / 100,
     plan: o ? await rolloverPlan(slug, o) : [],
@@ -218,7 +231,12 @@ async function activate(slug, { tenancy_note, clear_sample = true, test_mode_ok 
   if (!preview) {
     const key = await aiKey();
     if (!key.autofill) throw fail(409, "A paying site's loop stops if the Anthropic key runs dry. Turn auto reload on in the Anthropic console, then tick autofill on the AI credit note (the Instance tab), and Activate again.", { code: "ai_key" });
-    if ((await subscribedCount(slug)) >= 1 && clean(tenancy_note, 500).length < 3 && !site0.tenancy_note) throw fail(400, "Your rule is a runtime per customer before a second customer's production data. To activate anyway, type the reason: it is kept on the site.", { code: "tenancy" });
+    // No tenancy note (Brendan, 2026-09-27): option C, a process and a database login per company, is what stands
+    // before a second customer's production data. A runtime per customer (option D) waits for the first security
+    // questionnaire or enterprise production data that asks for it (the 2026-09-18 decisions). So option C has to be
+    // in force on this instance before a second paying site goes on it.
+    const iso = isolation();
+    if ((await subscribedCount(slug)) >= 1 && !iso.ok) throw fail(409, `A second paying site needs each company's tools isolated in a process of their own, and this instance is not doing that: ${iso.why}. Fix it first (the Instance tab, Module isolation), then Activate again.`, { code: "isolation" });
   }
   const note = clean(tenancy_note, 500);
   const r = await lockSite(site0.id, async (c, site, open) => {
@@ -315,6 +333,8 @@ async function cardDeclined(site0, o0, info) {
     return { moved: true, kind: open.kind };
   });
   await logEvent("site_card_declined", site0.company, { order: o0.id, message: words, preview: r.kind === "preview" });
+  // the launch audit, C11: the manager sees it on the board; Anetix hears it on the phone
+  if (r.kind === "customer") require("./notify").notify("A card was declined at Activate", `${((await q("SELECT name FROM platform.companies WHERE slug=$1", [site0.company])).rows[0] || {}).name || site0.company}: the first charge was declined (${words}). Nothing was charged; the manager is asked for another card.`, { priority: 4, tags: ["credit_card"], ref: site0.company });
   return { ok: false, declined: true, message: `The card was declined (${words}). The order is back to waiting for a card, and the manager is told to use another one. Nothing was charged.` };
 }
 
@@ -534,9 +554,9 @@ async function tidy() {
 }
 
 // ---- Stripe's events, re-read by anetix.ai -----------------------------------------------------------------------------
-// Stage 3 uses them for two things: a paid first invoice finishes an activation whose answer was lost, and the site's
-// current subscription moves the fair-use window at each renewal. Everything else is kept and waits for stage 4 (the
-// standings, a cancel date, back to a demo). A replay changes nothing.
+// A paid first invoice finishes an activation whose answer was lost; the site's current subscription moves the fair-use
+// window at each renewal; and (stage 4, 2026-09-27, src/billing.js) the standing, the cancel date and the end of a
+// subscription act on the site. A replay changes nothing.
 async function billingEvent(b = {}) {
   const ev = b.event || {}, sub = b.subscription && typeof b.subscription === "object" ? b.subscription : null;
   if (!/^evt_[A-Za-z0-9_]{3,}$/.test(String(ev.id || "")) || !clean(ev.type, 80)) throw fail(400, "an event id and type");
@@ -549,7 +569,7 @@ async function billingEvent(b = {}) {
     await finish(o.id, sub, ev.type);
     applied.activated = true;
   }
-  const site = md.site && UUID.test(md.site) ? (await q("SELECT id, company, stage, standing, stripe_subscription, period_end FROM platform.sites WHERE id=$1", [md.site])).rows[0] : null;
+  const site = md.site && UUID.test(md.site) ? (await q("SELECT id, company, stage, standing, cancel_at, ending, stripe_subscription, period_end FROM platform.sites WHERE id=$1", [md.site])).rows[0] : null;
   if (sub && site && site.stage === "subscribed" && site.stripe_subscription === sub.id) {
     if (sub.current_period_end) {
       const ps = new Date(Number(sub.current_period_start) * 1000), pe = new Date(Number(sub.current_period_end) * 1000);
@@ -558,16 +578,11 @@ async function billingEvent(b = {}) {
         applied.period = { start: ps.toISOString(), end: pe.toISOString() };
       }
     }
-    // Stage 3 keeps the standing from Stripe's own status (the Sites tab's Needs attention), and a subscription Stripe
-    // cancelled (its retries ran out, or it was cancelled in the dashboard) is flagged for Brendan. What each one does
-    // to the site (the banner, the AI paused, back to a demo) is stage 4: until then nothing changes on its own.
-    const standing = { active: "good", trialing: "good", past_due: "past_due", unpaid: "unpaid" }[sub.status] || null;
-    if (standing && standing !== site.standing) { await q("UPDATE platform.sites SET standing=$2, updated_at=now() WHERE id=$1", [site.id, standing]); applied.standing = standing; }
-    if (["canceled", "incomplete_expired"].includes(sub.status) && site.standing !== "canceled_at_stripe") {
-      await q("UPDATE platform.sites SET standing='canceled_at_stripe', attention=$2, updated_at=now() WHERE id=$1", [site.id, JSON.stringify({ kind: "canceled_at_stripe", at: new Date().toISOString(), event: ev.id })]);
-      applied.attention = "canceled_at_stripe";
-      await logEvent("site_canceled_at_stripe", site.company, { subscription: sub.id, event: ev.id });
-    }
+    // stage 4 (src/billing.js): the standing (past due, unpaid: AI paused), a cancel date, a cancel on an unpaid month
+    // ending it now, and the end of the subscription (back to a demo when it was asked for; flagged for Brendan when
+    // Stripe ended it for a payment)
+    Object.assign(applied, await require("./billing").onSubscription(site, sub, ev));
+    if (ev.type === "invoice.finalization_failed") Object.assign(applied, await require("./billing").onFinalizationFailed(site, ev));
   }
   await q("INSERT INTO platform.billing_events (stripe_event, type, site_id, subscription, applied) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (stripe_event) DO NOTHING",
     [ev.id, clean(ev.type, 80), site ? site.id : md.site && UUID.test(md.site) ? md.site : null, sub ? clean(sub.id, 80) : null, JSON.stringify(applied)]);
@@ -576,7 +591,7 @@ async function billingEvent(b = {}) {
 
 // ---- the board ---------------------------------------------------------------------------------------------------------
 async function forBoard(co, role) {
-  const out = { notices: await require("./notices").forBoard(co.slug, role), terms: await require("./agreements").forBoard(co, role) };
+  const out = { notices: await require("./notices").forBoard(co.slug, role), terms: await require("./agreements").forBoard(co, role), billing: await require("./billing").forBoard(co.slug, role).catch(() => null) };
   const site = (await q("SELECT stage, welcome_enc IS NOT NULL AS welcome, activated_at FROM platform.sites WHERE company=$1", [co.slug])).rows[0];
   if (site && site.stage === "subscribed") {
     out.site = { subscribed: true, since: site.activated_at };
@@ -613,14 +628,19 @@ async function collectWelcome(req, slug) {
 // opt out at any time for data going forward. The manager changes it here; who and when go on the record.
 async function siteForSettings(slug) {
   const s = await sites.siteRow(String(slug || "").toLowerCase());
-  if (!s || s.stage !== "subscribed") return { subscribed: false };
-  return { subscribed: true, band: s.band ? s.band.name : null, price_usd: s.price_usd == null ? null : Number(s.price_usd), since: s.activated_at, learning_opt_in: Boolean(s.learning_opt_in), terms_link: require("./agreements").termsLink() };
+  // a site back to a demo keeps its way to its old invoices (stage 4, src/billing.js)
+  // a site back to a demo keeps its choice over the data from its paid months (the Terms, 4.4 and 10.2)
+  if (!s || s.stage !== "subscribed") return { subscribed: false, billing: Boolean(s && s.stage === "back_to_demo" && s.stripe_customer), returned_at: s && s.stage === "back_to_demo" ? s.returned_at : null,
+    learning_opt_in: s && s.stage === "back_to_demo" ? Boolean(s.learning_opt_in) : undefined, terms_link: s && s.stage === "back_to_demo" ? require("./agreements").termsLink() : undefined };
+  const B = require("./billing");
+  return { subscribed: true, band: s.band ? s.band.name : null, price_usd: s.price_usd == null ? null : Number(s.price_usd), since: s.activated_at, learning_opt_in: Boolean(s.learning_opt_in), terms_link: require("./agreements").termsLink(),
+    next_bill: s.cancel_at ? null : s.period_end || null, ends_on: s.cancel_at || null, standing: s.standing || "good", line: B.lineFor(s), billing: Boolean(s.stripe_customer) };
 }
 async function setLearning(req, slug, on) {
   if (req.sosRole !== "manager") throw fail(403, "the site's manager makes this choice");
   slug = String(slug || "").toLowerCase();
   const s = await sites.siteRow(slug);
-  if (!s || s.stage !== "subscribed") throw fail(409, "learning is a paying site's choice; a demo's is in the Terms (section 4.4)");
+  if (!s || !["subscribed", "back_to_demo"].includes(s.stage)) throw fail(409, "learning is a paying site's choice; a demo's is in the Terms (section 4.4)");
   const want = on === true;
   if (Boolean(s.learning_opt_in) !== want) {
     await q("UPDATE platform.sites SET learning_opt_in=$2, updated_at=now(), updated_by=$3 WHERE id=$1", [s.id, want, req.sosAccount ? req.sosAccount.login : "manager"]);
@@ -648,7 +668,8 @@ router.get("/api/admin/companies/:slug/refund-due", requireAdmin, guard(async (_
   const slug = String(req.params.slug || "").toLowerCase();
   if (!SLUG.test(slug)) throw fail(404, "no such company");
   const selfserve = require("./selfserve");
-  const purchases = (await selfserve.ledger(slug).catch(() => [])).filter((r) => r.kind === "purchase" && Number(r.paid_usd) > 0)
+  const ss = await selfserve.selfServeRow(slug).catch(() => null);
+  const purchases = (await selfserve.ledger(slug).catch(() => [])).filter((r) => r.kind === "purchase" && Number(r.paid_usd) > 0 && (!ss || !ss.credit_since || new Date(r.created_at) >= new Date(ss.credit_since)))
     .map((r) => ({ ref: r.ref, paid_usd: Number(r.paid_usd), credit_usd: Number(r.delta_usd), at: r.created_at }));
   return { refund_usd: (await refundableCents(slug)) / 100, purchases };
 }));
@@ -676,6 +697,6 @@ wwwRouter.use("/api/www/billing-events", (req, res, next) => (require("./selfser
 wwwRouter.post("/api/www/billing-events", json, guard((b) => billingEvent(b)));
 
 module.exports = {
-  init, SCHEMA, channelProblem, channel, checks, activate, run, finish, rolloverSteps, finishPending, rolloverPlan, refundableCents,
+  init, SCHEMA, channelProblem, channel, www, checks, activate, run, finish, rolloverSteps, finishPending, rolloverPlan, refundableCents,
   decline, sendBack, stopActivating, tidy, billingEvent, forBoard, collectWelcome, siteForSettings, setLearning, router, wwwRouter,
 };

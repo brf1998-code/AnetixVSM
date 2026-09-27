@@ -12,8 +12,8 @@
 // (platform.terms_versions, at the first acceptance). Rows are kept after a company is deleted (the Terms, 10.7:
 // "records of acceptance"), marked gone_at, so a new company that gets the same slug has agreed to nothing.
 //
-// THE SWITCH. platform.settings terms_live, off until Brendan switches it on from the Sites tab once counsel has
-// approved the Terms. Off: demo set-up and top-ups ask nothing, as before, and no board asks. On: both need the tick
+// THE SWITCH. platform.settings terms_live, off until Brendan switches it on from the Sites tab (2026-09-27: he chose
+// to switch it on once version 2026-09-27, his own fill of the brackets, is live, rather than wait for counsel). Off: demo set-up and top-ups ask nothing, as before, and no board asks. On: both need the tick
 // box, a demo's manager who has not agreed sees the box on the board, and a demo that has not agreed starts no new AI
 // work (src/selfserve.js assertCredit). Go live's sign step asks either way: the order form names the version.
 //

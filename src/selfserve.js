@@ -205,8 +205,11 @@ function loginCors(req, res, next) {
 // null for a company that is not self-serve; otherwise the balance, with the top-up page's address.
 async function credit(company) {
   const ss = await selfServeRow(company); if (!ss) return null;
-  const bought = Number((await q("SELECT COALESCE(SUM(delta_usd),0) AS usd FROM platform.credit_ledger WHERE company=$1", [company])).rows[0].usd || 0);
-  const spent = await spentSince(company, ss.created_at);
+  // a site back to a demo (stage 4, src/billing.js) counts its credit from that moment, both sides: the ledger rows and
+  // the spend, so it starts at 0% and the old demo's spend is never handed back as credit
+  const since = ss.credit_since || ss.created_at;
+  const bought = Number((await q("SELECT COALESCE(SUM(delta_usd),0) AS usd FROM platform.credit_ledger WHERE company=$1 AND ($2::timestamptz IS NULL OR created_at >= $2)", [company, ss.credit_since || null])).rows[0].usd || 0);
+  const spent = await spentSince(company, since);
   return { ...balanceOf({ credit_usd: bought, spent_usd: spent }), topup_url: topupUrl(company), since: ss.created_at, email: ss.email, contact: ss.contact };
 }
 // The gate every AI run passes through (called from agent.assertUnderCap). Throws for a self-serve company with
@@ -229,6 +232,11 @@ async function assertCredit(company, opts = {}) {
   if (!company) return;
   if ((await siteStage(company)) === "subscribed") {
     if (opts.runtime || (opts.started && !opts.fairUse)) return;
+    // stage 4 (src/billing.js): Stripe's retries ran out (unpaid), or Stripe ended the subscription for a failed payment
+    // (the account's dunning set to cancel), so new AI work pauses; the tools, and AI inside them, never do
+    const standing = ((await q("SELECT standing FROM platform.sites WHERE company=$1", [company])).rows[0] || {}).standing;
+    if (standing === "unpaid") throw Object.assign(new Error("Payment for this site is overdue, so new AI work is paused until it is paid. Your tools keep running. Update the card under Settings, Manage billing."), { status: 402, code: "unpaid" });
+    if (standing === "canceled_at_stripe") throw Object.assign(new Error("This site's subscription lapsed after its payments failed, so new AI work is paused. Your tools keep running. Write to brendan@anetix.ai or taylor@anetix.ai."), { status: 402, code: "lapsed" });
     return require("./fairuse").assertUnder(company);
   }
   if (opts.started) return;
@@ -419,6 +427,13 @@ async function adminView() {
 }
 // gone with the company (src/feedback.js, the delete route)
 async function deleteCompany(slug) {
+  // the person's own traces on anetix.ai go with the demo (the launch audit, C9): the demo request the pin was made
+  // from, and the pin itself when no other company came in on it. Acceptances of the Terms stay (src/agreements.js).
+  const pin = ((await q("SELECT pin_id FROM platform.self_serve WHERE company=$1", [slug])).rows[0] || {}).pin_id;
+  if (pin) {
+    await q("DELETE FROM platform.demo_requests WHERE pin_id=$1", [pin]);
+    await q("DELETE FROM platform.access_pins p WHERE p.id=$1 AND NOT EXISTS (SELECT 1 FROM platform.self_serve s WHERE s.pin_id=p.id AND s.company<>$2)", [pin, slug]);
+  }
   await q("DELETE FROM platform.credit_ledger WHERE company=$1", [slug]);
   await q("DELETE FROM platform.self_serve WHERE company=$1", [slug]);
   await q("DELETE FROM platform.accounts WHERE role='manager' AND company=$1", [slug]);   // its manager accounts; factors, codes and devices cascade

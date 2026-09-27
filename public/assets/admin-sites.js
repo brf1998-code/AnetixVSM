@@ -151,7 +151,7 @@
         a.channel && !a.channel.ok ? `Activate cannot reach anetix.ai: ${a.channel.why}. The Terms say Anetix aims to switch a signed site on within 24 hours.` : "",
         a.channel && a.channel.ok && a.channel.stripe !== "live" ? `Stripe is in ${a.channel.stripe} mode on anetix.ai, so no real card can be charged yet.` : "",
         a.channel && a.channel.ok && a.channel.stripe === "live" && !a.channel.tax ? "Stripe Tax is off: a subscription made now carries no sales tax and does not pick it up if Tax is turned on later." : "",
-        "Cancelling, the billing portal and Back to demo come in stage 4: until then a customer cancels by writing to you.",
+        "Customers cancel, change the card and see invoices in Manage billing (Stripe's portal); a cancelled site goes back to a demo at the end of its paid month. Not built yet: the yearly size check and the check against Stripe after a restore.",
         (DATA.book.bands || []).some((b) => b.proposed) ? "Large and Very large prices are still marked proposed." : "",
       ].filter(Boolean);
       if (!confirm(`Switch Go live on for customers?\n\n${gaps.map((x) => `- ${x}`).join("\n")}\n\nEvery demo's manager will see Go live and can sign an order form and save a card.`)) return;
@@ -274,7 +274,9 @@
       into.innerHTML = `<div class="act"><b>Subscribed</b> since ${esc(day(sub.activated_at))}${sub.id ? ` · <span class="sub">${esc(sub.id)}</span>` : ""}${sub.period_end ? ` · this period ends ${esc(day(sub.period_end))}` : ""}.
         ${f ? `<br>AI this period: ${usd(f.spend_usd)} of a ${usd(f.line_usd)} fair-use line (${Math.round((f.share_of_line || 0) * 100)}%)${f.lifted ? `, <b>lifted</b> until ${esc(day(f.lift.until))} (${esc(f.lift.note)})` : f.over ? ', <span class="bad">reached: new AI work is paused</span>' : ""}.` : ""}
         <br>Learning: ${sub.learning_opt_in ? "opted in" : "not opted in (the Demos tab shows the demo period only)"}.${sub.tenancy_note ? `<br>Tenancy: ${esc(sub.tenancy_note)}` : ""}
-        ${f && !f.lifted ? `<div class="foot"><input type="text" id="sf-lift" placeholder="why lift the line (a big first month, say)" style="flex:1;min-width:200px"><button class="quiet" id="sf-liftgo" onclick="AdminSites.lift()">Lift the line for this period</button></div>` : ""}</div>`;
+        <br>Payment: ${sub.standing === "past_due" ? '<span class="bad">past due</span> (Stripe is retrying; the manager sees a line)' : sub.standing === "unpaid" ? '<span class="bad">unpaid</span> (retries ran out; new AI work is paused, the tools run)' : sub.standing === "canceled_at_stripe" ? '<span class="bad">Stripe cancelled the subscription</span> (the floor still works until you End it)' : "good"}.${sub.cancel_at ? ` <b>Cancelled by the customer</b>: ends ${esc(day(sub.cancel_at))}, then back to a demo.` : ""}
+        ${f && !f.lifted ? `<div class="foot"><input type="text" id="sf-lift" placeholder="why lift the line (a big first month, say)" style="flex:1;min-width:200px"><button class="quiet" id="sf-liftgo" onclick="AdminSites.lift()">Lift the line for this period</button></div>` : ""}
+        ${["unpaid", "canceled_at_stripe"].includes(sub.standing) ? `<div class="foot"><input type="text" id="sf-endnote" placeholder="why end it (the manager reads this)" style="flex:1;min-width:200px"><input inputmode="numeric" id="sf-endcode" placeholder="authenticator code" autocomplete="one-time-code" maxlength="10"><button class="quiet" id="sf-end" onclick="AdminSites.endSite()">End: back to a demo</button></div><div class="err" id="sf-enderr"></div>` : ""}</div>`;
       return;
     }
     if (!o || !["signed", "activating"].includes(o.state) || (o.state === "signed" && !o.card_saved)) { into.innerHTML = ""; return; }
@@ -292,11 +294,10 @@
         <li>The channel to anetix.ai: ${ch.ok ? `${ok(true)}, Stripe in ${esc(ch.stripe)} mode${ch.tax ? ", Stripe Tax on" : ""}` : `${ok(false)}: ${esc(ch.why || "")}`}</li>
         ${c.tax_off ? `<li><span class="bad">Stripe Tax is off.</span> This subscription would carry no sales tax, and one made now does not pick it up if Tax is turned on later (PAID-SITES.md, sales tax).</li>` : ""}
         ${preview ? `<li>A preview runs the real Stripe calls on its own test Customer, then cancels the subscription at once. Nothing on the company changes.</li>` : `<li>The AI key's auto reload is on: ${ok(c.ai_key && c.ai_key.autofill)}</li>
-        <li>Paying sites on this instance already: ${esc(c.tenancy.others)}${c.tenancy.needs_note ? ". Your rule is a runtime per customer before a second customer's production data: type the reason below to go on." : ""}</li>
+        <li>Paying sites on this instance already: ${esc(c.tenancy.others)}. ${c.tenancy.isolation && c.tenancy.isolation.ok ? "Each company's tools run in a process of their own with their own database login." : `<span class="bad">Tools are not isolated on this instance</span>: ${esc((c.tenancy.isolation || {}).why || "unknown")}.${c.tenancy.others >= 1 ? " Activate refuses a second paying site until they are." : ""}`}</li>
         ${c.size.length ? `<li>Size: ${c.size.map((x) => esc(x.text)).join("; ")}.</li>` : ""}`}
       </ul>
       <b>What changes</b><ul>${c.plan.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
-      ${!preview && c.tenancy.needs_note && !c.tenancy.note ? `<label>Why a second customer on one runtime<input type="text" id="sf-tenancy" style="width:100%"></label>` : ""}
       ${preview ? "" : `<label class="check" style="margin-top:6px"><input type="checkbox" id="sf-clear" checked> Take the sample data out of their tools</label>`}
       ${c.test_mode && o.state !== "activating" ? `<label class="check"><input type="checkbox" id="sf-testmode"> Stripe is in ${esc(ch.stripe)} mode: switch this company on with no real charge anyway (your own test company, say)</label>` : ""}
       <div class="foot"><input inputmode="numeric" id="sf-code" placeholder="authenticator code" autocomplete="one-time-code" maxlength="10">
@@ -349,6 +350,17 @@
     const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/stop-activating`, { code });
     if (!r.ok) { err.textContent = r.json.error || "that did not work"; btn.disabled = false; btn.textContent = "Stop switching on"; return; }
     if (r.json.activated) alert("Stripe had the subscription after all, so the site finished switching on.");
+    close(); await show();
+  }
+  // stage 4 (src/billing.js): End a site whose payment failed for good, or one Stripe cancelled: the subscription is cancelled
+  // now with its open invoices voided, and the site goes back to a demo (tools and data kept, the floor signed out)
+  async function endSite() {
+    const err = document.getElementById("sf-enderr"), code = val("sf-endcode").trim(), note = val("sf-endnote").trim();
+    if (!note) { err.textContent = "Say why, in a few words: the manager reads it."; return; }
+    if (!code) { err.textContent = "Type a fresh code from your authenticator."; return; }
+    if (!confirm("End this site's subscription now? Stripe is asked to cancel it and void any invoice it left open, the floor is signed out, and the site goes back to a demo with its tools and data. The manager's notice carries your reason.\n\nThe Terms (5.8): only once fees are 30 days overdue, and on notice to the customer.")) return;
+    const res = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/end`, { code, note });
+    if (!res.ok) { err.textContent = res.json.error || "that did not work"; return; }
     close(); await show();
   }
   async function lift() {
@@ -435,5 +447,5 @@
       if (n && window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("sites", { n, level: "amber" });
     } catch (e) {}
   }
-  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder, termsToggle, activate, decline, sendBack, stopActivating, lift, sweep };
+  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder, termsToggle, activate, decline, sendBack, stopActivating, lift, sweep, endSite };
 })();

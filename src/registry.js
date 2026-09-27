@@ -705,15 +705,35 @@ const LOCKED_HEADER = /^(content-security-policy|content-security-policy-report-
 // policy names the request's host, and if that ever differed from what the
 // browser sees, every floor page would stop at once.
 const PAGE_LOCK = String(process.env.SOS_PAGE_LOCK || "on").toLowerCase();
+// A redirect out of the module's own mount is dropped (the launch audit's review, 2026-09-27): the page policy's
+// connect-src limits the PATH a module page may fetch, but a browser checks only the host after a redirect, so a module's
+// own server route answering 307 to /api/c/<company>/... would let its page read (or, with a 307, post to) the manager's
+// own routes with the manager's cookie: Manage billing's link, the data export, an approval. A Location that stays in
+// this company's live, staged or test mount of the same module goes through; anything else is removed, and a Refresh
+// header (the same trick) never goes through. Pure but for the request.
+function locationOk(req, value) {
+  const c = req.params.company, m = req.params.module;
+  try {
+    const u = new URL(String(value), `http://mount.invalid${req.originalUrl || "/"}`);
+    if (u.host !== "mount.invalid") return false;
+    const p = `${u.pathname.replace(/\/+$/, "")}/`;
+    return [`/c/${c}/m/${m}/`, `/c/${c}/staging/m/${m}/`, `/c/${c}/test/m/${m}/`].some((b) => p.startsWith(b));
+  } catch (e) { return false; }
+}
+const dropHeader = (req, name, value) => LOCKED_HEADER.test(String(name)) || /^refresh$/i.test(String(name)) || (/^location$/i.test(String(name)) && !locationOk(req, value));
 function lockDown(req, res) {
   if (PAGE_LOCK !== "off") res.setHeader(PAGE_LOCK === "report" ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy", modulePagePolicy(req, req.params.company, req.params.module));
   res.setHeader("X-Content-Type-Options", "nosniff");
-  // module code answers on this same response object; keep it from dropping or widening the policy
+  // module code answers on this same response object; keep it from dropping or widening the policy, and from sending the
+  // browser anywhere outside its own mount (locationOk above)
   const set = res.setHeader.bind(res), remove = res.removeHeader.bind(res), head = res.writeHead.bind(res);
-  res.setHeader = (name, value) => (LOCKED_HEADER.test(String(name)) ? res : set(name, value));
+  res.setHeader = (name, value) => {
+    if (dropHeader(req, name, value)) { if (/^location$/i.test(String(name))) console.warn(`[registry] ${req.params.company}/${req.params.module}: a redirect out of the module's mount was dropped (${String(value).slice(0, 120)})`); return res; }
+    return set(name, value);
+  };
   res.removeHeader = (name) => (LOCKED_HEADER.test(String(name)) ? undefined : remove(name));
   res.writeHead = (status, ...rest) => {
-    for (const h of rest) if (h && typeof h === "object" && !Array.isArray(h)) for (const k of Object.keys(h)) if (LOCKED_HEADER.test(k)) delete h[k];
+    for (const h of rest) if (h && typeof h === "object" && !Array.isArray(h)) for (const k of Object.keys(h)) if (dropHeader(req, k, h[k])) delete h[k];
     return head(status, ...rest);
   };
 }
@@ -744,6 +764,7 @@ function attach(app) {
 }
 
 module.exports = {
+  locationOk, lockDown,
   MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,
   unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany, moduleServices,

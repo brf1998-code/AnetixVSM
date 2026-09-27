@@ -2,21 +2,23 @@
 // purchase is accepted under a version of these, and the version and a hash of this document are kept with each
 // acceptance (src/agreements.js; the orders in src/golive.js).
 //
-// DRAFT FOR COUNSEL, not in effect yet. The words in brackets are counsel's to fill in. The short version, sections 1
-// to 21 and the contact line are what anetix.ai shows at /terms; the screen text and the notes for counsel from
-// Brendan's document are not part of them (the screen text's lines are the WORDS below).
+// The short version, sections 1 to 21 and the contact line are what anetix.ai shows at /terms (public since
+// 2026-09-27); the screen text and the notes for counsel from Brendan's document are not part of them (the screen
+// text's lines are the WORDS below).
 //
-// draft-2, not draft-1: stage 2 shipped draft-1 as a cover page on Common Paper's Cloud Service Agreement. Nobody signed
-// under it, but a version always means one text, so Brendan's own terms start a new one.
+// Versions: draft-1 was stage 2's cover page on Common Paper's Cloud Service Agreement; draft-2 was Brendan's text with
+// counsel's brackets. 2026-09-27 is the first in effect: Brendan filled the brackets himself (the launch audit, C5)
+// rather than wait for counsel, took the review's 16(a) change, and made 10.6 say an export is data, not Tool code.
+// Counsel can still read it; a change after that is a new version.
 //
 // A word changed here once anyone has accepted this version needs a new TERMS_VERSION: an acceptance names the
 // version, and its terms_sha256 is the hash of these exact words (platform.terms_versions keeps them at the first).
 const crypto = require("crypto");
 
-const TERMS_VERSION = "draft-2";
+const TERMS_VERSION = "2026-09-27";
 const DRAFT = /^draft/.test(TERMS_VERSION);
 const TITLE = "Anetix Terms of Service";
-const STATUS = "A draft for counsel, not in effect yet. The words in brackets are counsel's to fill in.";
+const STATUS = "A draft, not in effect yet.";   // shown only for a version whose name starts with "draft"
 
 // The short version: a plain summary, not part of the Terms (it says so), shown above them.
 const SUMMARY = {
@@ -471,7 +473,7 @@ const SECTIONS = [
       {
         "n": "10.6",
         "title": "Backups and export",
-        "text": "Anetix backs up the Service in the ordinary course but does not guarantee that a backup will be complete or restorable. Customer may ask for an export of its Customer Data in a standard machine-readable format at any time while Anetix holds it."
+        "text": "Anetix backs up the Service in the ordinary course but does not guarantee that a backup will be complete or restorable. Customer may export its Customer Data in a standard machine-readable format at any time while Anetix holds it, from the Service's settings or by asking Anetix. An export holds Customer Data, not the code of the Tools, which is part of the Service (section 12.1)."
       },
       {
         "n": "10.7",
@@ -481,7 +483,7 @@ const SECTIONS = [
       {
         "n": "10.8",
         "title": "Personal information",
-        "text": "Where Customer Data includes personal information, Anetix processes it on Customer's behalf to provide the Service. Anetix's privacy notice at [PRIVACY NOTICE URL] describes how Anetix handles personal information of Users and site visitors. If a law requires specific terms for that processing, the parties will agree them in a separate addendum."
+        "text": "Where Customer Data includes personal information, Anetix processes it on Customer's behalf to provide the Service. Anetix's privacy notice at https://anetix.ai/privacy describes how Anetix handles personal information of Users and site visitors. If a law requires specific terms for that processing, the parties will agree them in a separate addendum."
       }
     ]
   },
@@ -630,7 +632,7 @@ const SECTIONS = [
     "n": "16",
     "heading": "Suspension",
     "text": [
-      "Anetix may suspend all or part of the Service for Customer, including by pausing AI Features, if (a) Fees are overdue as described in section 5.8; (b) Customer or its Users breach section 7; (c) Customer's use threatens the security, integrity or availability of the Service or of other customers; or (d) the law, a court or a government authority requires it. Anetix will limit a suspension to what is reasonably needed, give notice when practical, and restore access once the cause is resolved. Fees continue during a suspension Customer caused."
+      "Anetix may suspend all or part of the Service for Customer, including by pausing AI Features, if (a) Customer or its Users breach section 7; (b) Customer's use threatens the security, integrity or availability of the Service or of other customers; or (c) the law, a court or a government authority requires it. Overdue Fees do not suspend the Service: they pause AI Features only as section 5.8 describes, and the Site's Tools keep running. Anetix will limit a suspension to what is reasonably needed, give notice when practical, and restore access once the cause is resolved. Fees continue during a suspension Customer caused."
     ]
   },
   {
@@ -665,7 +667,7 @@ const SECTIONS = [
     "n": "19",
     "heading": "Changes to these Terms",
     "text": [
-      "Anetix may update these Terms by posting a new version, with a new version number, at [TERMS URL]. A material change applies to an existing Subscription from the start of the first billing month that begins at least 30 days after Anetix gives notice of it by email or in the Service, and to a Demo 30 days after that notice. Other changes, and changes the law requires, apply when posted. If Customer does not agree to a change, it may cancel before the change applies. A signed master agreement stays on the version it names until both parties sign a change."
+      "Anetix may update these Terms by posting a new version, with a new version number, at https://anetix.ai/terms. A material change applies to an existing Subscription from the start of the first billing month that begins at least 30 days after Anetix gives notice of it by email or in the Service, and to a Demo 30 days after that notice. Other changes, and changes the law requires, apply when posted. If Customer does not agree to a change, it may cancel before the change applies. A signed master agreement stays on the version it names until both parties sign a change."
     ]
   },
   {
@@ -716,7 +718,7 @@ const SECTIONS = [
       {
         "n": "21.3",
         "title": "Notices",
-        "text": "Anetix gives notice by email to the account or billing email on file, or in the Service. Customer gives notice to Anetix by email at [LEGAL EMAIL], and notices of breach or of a claim also by mail to Anetix, Inc., [MAILING ADDRESS]. An email notice is given when sent unless the sender receives a delivery failure."
+        "text": "Anetix gives notice by email to the account or billing email on file, or in the Service. Customer gives notice to Anetix by email at brf1998@gmail.com, and notices of breach or of a claim also by mail to Anetix, Inc., 34 Lee St, Cambridge, MA 02139. An email notice is given when sent unless the sender receives a delivery failure."
       },
       {
         "n": "21.4",
@@ -767,7 +769,7 @@ const SECTIONS = [
   }
 ];
 
-const CONTACT = "Anetix, Inc., [MAILING ADDRESS], [LEGAL EMAIL].";
+const CONTACT = "Anetix, Inc., 34 Lee St, Cambridge, MA 02139, brf1998@gmail.com.";
 
 function termsDoc() {
   return { format: 2, version: TERMS_VERSION, title: TITLE, draft: DRAFT, status: DRAFT ? STATUS : null, summary: SUMMARY, sections: SECTIONS, contact: CONTACT };
