@@ -33,7 +33,7 @@ const PLATFORM_TABLES = [
 // SOS_CONNECTION_KEY, recovery codes as hashes. Restored only when the file carries them (see restore()).
 const ACCOUNT_TABLES = ["accounts", "account_factors", "account_recovery_codes", "account_passkeys"];   // passkeys (src/passkeys.js) travel with the account they sign in to
 // Never in the file: who tried to sign in from where. It is a log of this instance, and it names addresses.
-const NOT_IN_BACKUP = ["auth_events", "admin_devices"];   // the sign-in log and the trusted devices are this instance's, never a file's
+const NOT_IN_BACKUP = ["auth_events", "admin_devices", "pin_refusals"];   // the sign-in log, the trusted devices and the refused pins are this instance's, never a file's
 
 async function columnInfo(schema, table) {
   return (await q(

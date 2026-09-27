@@ -146,12 +146,12 @@ router.get("/api/admin/demo-requests", admin, guard(async (_req, res) => {
   const rows = await list();
   res.set("Cache-Control", "no-store").json({ requests: rows, open: rows.filter((r) => r.status === "new").length, www_url: selfserve.WWW_URL() });
 }));
-router.post("/api/admin/demo-requests/:id(\\d+)", admin, json, guard(async (req, res) => {
+router.post("/api/admin/demo-requests/:id(\\d{1,9})", admin, json, guard(async (req, res) => {
   const b = req.body || {};
   await setStatus(req.params.id, { status: b.status, note: b.note }, who(req));
   res.json({ ok: true });
 }));
-router.post("/api/admin/demo-requests/:id(\\d+)/pin", admin, json, guard(async (req, res) => {
+router.post("/api/admin/demo-requests/:id(\\d{1,9})/pin", admin, json, guard(async (req, res) => {
   const b = req.body || {};
   res.set("Cache-Control", "no-store").json({ ok: true, ...(await makePin(req.params.id, { days: b.days == null ? 30 : Number(b.days), uses: Number(b.uses) || 1 }, who(req))) });
 }));

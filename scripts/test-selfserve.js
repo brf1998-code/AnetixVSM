@@ -13,7 +13,11 @@ t("typed lower case with a dash or spaces, it normalizes to the stored form", s.
 const NOW = new Date("2026-09-25T12:00:00Z");
 const good = { pin: "K7RM4XQP", label: "Sam", max_uses: 1, uses: 0, expires_at: "2026-10-25T00:00:00Z", revoked_at: null };
 t("a live pin has no problem", s.pinProblem(good, NOW) === null);
-t("no such pin", /not one we gave out/.test(s.pinProblem(null, NOW)));
+t("no such pin", /not one Anetix gave out/.test(s.pinProblem(null, NOW)) && s.pinReason(null, NOW) === "unknown");
+t("each reason has its short words for the Pins tab", ["unknown", "cancelled", "expired", "used", "email"].every((r) => s.PIN_SHORT[r]));
+t("a cancelled or expired pin says how to get a new one, with who to write to", ["cancelled", "expired"].every((r) => /anetix\.ai\/request/.test(s.PIN_WORDS[r]) && /brendan@anetix\.ai or taylor@anetix\.ai/.test(s.PIN_WORDS[r])));
+t("a used pin points at Sign in", /sign in/i.test(s.PIN_WORDS.used) && /sign in/i.test(s.PIN_WORDS.used_mine));
+t("no dashes and no 'we' in what a pin holder reads", Object.values(s.PIN_WORDS).every((w) => !/[\u2013\u2014]/.test(w) && !/\bwe\b/i.test(w)));
 t("a cancelled pin says so", /cancelled/.test(s.pinProblem({ ...good, revoked_at: NOW }, NOW)));
 t("an expired pin says so", /expired/.test(s.pinProblem({ ...good, expires_at: "2026-09-25T11:59:00Z" }, NOW)));
 t("a pin with no expiry does not expire", s.pinProblem({ ...good, expires_at: null }, new Date("2030-01-01")) === null);

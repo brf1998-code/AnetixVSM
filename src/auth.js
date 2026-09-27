@@ -360,24 +360,31 @@ function toLogin(req, res, status, error) {
 
 // ---- one company per session ------------------------------------------------------------------
 // Routes addressed by id instead of by /c/<slug>/: where the owning company is kept.
+// Every pattern here is case-blind, like Express's own routing (found 2026-09-27, the launch audit 0.1): Express
+// answers /API/C/<slug>/... with the /api/c/:slug/... route, so a case-sensitive check here let a session of one
+// company read another's by typing the path in capitals.
 const OWNERS = [
-  [/^\/api\/feedback\/(\d+)(?:\/|$)/, "SELECT company FROM platform.feedback WHERE id=$1"],
-  [/^\/api\/proposals\/(\d+)(?:\/|$)/, "SELECT f.company FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE p.id=$1"],
-  [/^\/api\/runs\/(\d+)(?:\/|$)/, "SELECT company FROM platform.build_runs WHERE id=$1"],
-  [/^\/api\/intakes\/(\d+)(?:\/|$)/, "SELECT company FROM platform.module_intakes WHERE id=$1"],
-  [/^\/api\/attachments\/(\d+)(?:\/|$)/, "SELECT company FROM platform.attachments WHERE id=$1"],
+  [/^\/api\/feedback\/(\d+)(?:\/|$)/i, "SELECT company FROM platform.feedback WHERE id=$1"],
+  [/^\/api\/proposals\/(\d+)(?:\/|$)/i, "SELECT f.company FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE p.id=$1"],
+  [/^\/api\/runs\/(\d+)(?:\/|$)/i, "SELECT company FROM platform.build_runs WHERE id=$1"],
+  [/^\/api\/intakes\/(\d+)(?:\/|$)/i, "SELECT company FROM platform.module_intakes WHERE id=$1"],
+  [/^\/api\/attachments\/(\d+)(?:\/|$)/i, "SELECT company FROM platform.attachments WHERE id=$1"],
 ];
 async function companyGuard(req, res, next) {
   try {
     if (OPEN || req.sosRole === "admin" || !req.sosRole) return next();   // no role = a public path the middleware let through
     const p = req.path;
-    const scoped = /^\/(?:api\/)?c\/([^/]+)(?:\/|$)/.exec(p);
+    const scoped = /^\/(?:api\/)?c\/([^/]+)(?:\/|$)/i.exec(p);
     let owner = scoped ? decodeURIComponent(scoped[1]) : null;
     if (!owner) {
       for (const [re, sql] of OWNERS) {
         const m = re.exec(p);
         if (!m) continue;
-        const row = (await q(sql, [Number(m[1])])).rows[0];
+        // the routes behind these take one to nine digits only (the launch audit 0.1), so what this checks is exactly
+        // what the route will read; an id past the column's range is nobody's
+        const id = Number(m[1]);
+        if (!Number.isSafeInteger(id) || id > 2147483647) return res.status(404).json({ error: "not found" });
+        const row = (await q(sql, [id])).rows[0];
         if (!row) return res.status(404).json({ error: "not found" });
         owner = row.company;
         break;

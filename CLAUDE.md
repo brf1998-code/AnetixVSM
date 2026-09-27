@@ -1676,6 +1676,47 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   module route cannot bounce its page's fetch onto the manager's own routes.
   Tests: `test-billing.js`, `test-lockdown.js`, `e2e/billing.js`,
   `e2e/dataexport.js`; www `test-www.js`, `e2e-activate.js`.
+- **The launch audit's Phase 0** (2026-09-27, the items before the next pin; the audit is the Claude Doc the
+  project doc `claude/launch-readiness-audit-2026-09-26.md` links). (1) **One bad request never stops the product**
+  (`src/errors.js`, 0.1). Found 9/26: any signed-in session opening `/api/runs/abc` ended the process (Express 4
+  does not catch an async route's rejection; the database refused NaN; Node exits on an unhandled rejection).
+  `errors.asyncRoutes()` patches `express/lib/router/layer` so a route's rejected promise goes to `next(err)` (Express
+  5 does this itself; `src/runner-child.js` carries the same lines for module code); `errors.handler`, mounted LAST in
+  server.js after `app.use("/api", errors.apiNotFound)`, answers JSON (a page only for a browser GET outside `/api/`),
+  400 for a malformed value (Postgres 22P02, 22003 and friends), a bad JSON body or a broken % code, 413 for too
+  large, else a 500 that names nothing inside and says who to write to; a 500 is logged with its stack and sends one
+  ntfy alert ("Product error", the route's shape with numbers blanked and the error's class and code, never its
+  message), at most one per 15 minutes (`SOS_ERROR_ALERT_GAP_MS`) with a count of the rest. `errors.guards()`: an
+  unhandled rejection or uncaught exception is logged and alerted and the process goes on; more than 30 uncaught
+  exceptions in a minute exits (Railway restarts it); rejections never count. `db.js` listens for the pool's
+  `error` (an idle connection Postgres dropped used to end the process), and a failed `listen` exits. Every id
+  parameter on every route is `(\\d{1,9})`, so `abc`, `0x10`, `1e3`, `1.5` and twenty digits match no route and get a
+  plain 404. (2) **Found doing 0.1, the worse one: `auth.companyGuard` was case-sensitive and Express routing is
+  not.** A manager of one company read another's board, downloaded its data export and +1'd its requests with
+  `/API/C/<other>/...` or `/api/feedback/0x1/plusone` (confirmed on the live code, 30d15c8). The guard's patterns are
+  case-blind now, the id routes take digits only, and an id past the column's range is 404 in the guard. A reviewer
+  then tried 31 more spellings (`%62`, `%2F`, `;`, dot segments, double slashes, `010`, `%00`) against the real guard
+  and routing: all refused or unrouted. (3) **Pins say why and where to go** (0.3, `selfserve.pinReason`,
+  `PIN_WORDS`, `refusalFor`, `logRefusal`, `platform.pin_refusals`). A used pin typed with the email it was made for
+  answers `{ reason: "used", signin: <that demo's manager login exactly> }` and anetix.ai opens Sign in with the
+  login filled; with another email it says only "already been used". Expired and cancelled say to ask at
+  anetix.ai/request or write to Brendan or Taylor, and the link under the pin box reads "Request a new pin" (with the
+  email). Every refusal is a line on the Pins tab ("Pins refused": when, the pin and email typed, the pin's label,
+  why, where: the pin box, a pin page opened again, before a checkout); the same pin, email, reason and place within
+  ten minutes is one line with a count, and made-up pins from one address merge into one line. anetix.ai passes the
+  visitor's address and allows twenty tries a quarter hour per address at the pin box. Kept 90 days
+  (`dataexport.sweepDemoRequests`), never in a backup, named in the privacy notice (www `privacy.js` 2026-09-27.2).
+  (4) **The caps in plain words** (0.5, `agent.CAP_WORDS`): the instance cap and a company's own budget answer 429
+  "AI work is paused for now ... Everything you built stays and keeps working ... Write to ..." with no dollars and
+  no variable names; the figures go to the log (`[cap]`) and one ntfy alert a month per cap ("AI cap reached").
+  (5) anetix.ai: one line on the wall saying what is sold (0.6, `pages.WALL_LINE`, Brendan's to reword) and refill
+  Checkout Sessions take a card only (0.7, `stripe.sessionParams`). Tests: `scripts/test-errors.js` (30),
+  `scripts/e2e/badids.js` (33: the repro, every route with a parameter found by walking the routers and called with
+  nine bad values as manager, floor and admin with the server's boot id checked throughout, and another company by
+  every spelling), `scripts/e2e/caps.js` (7, started with `SOS_MONTHLY_CAP_USD=5`), `scripts/e2e/selfserve.js` (111),
+  `test-selfserve.js` (51); www `test-www.js` (100), `e2e.js` (60). Left from Phase 0 for Brendan: 0.4 rotate the
+  two shared passwords (never delete them), 0.5 pick `SOS_MONTHLY_CAP_USD` and an Anthropic console limit, 0.8 delete
+  `SOS_FAKE_AGENT` and (after checking it reads 0.5) `TOPUP_RATE`, 0.9 no product pushes in customers' hours.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2911,7 +2952,14 @@ Passwords live only in Railway; never commit them.
   under `/c/:slug/` is scoped for free; a new route addressed by an id must be
   added to the `OWNERS` table in `src/auth.js` (its owning-company lookup) or
   it will be reachable across companies. A new route that names its company in
-  the body scopes itself with `auth.ownsCompany(req, slug)`.
+  the body scopes itself with `auth.ownsCompany(req, slug)`. Every id parameter
+  is `:id(\\d{1,9})` (the guard reads the digits, `Number()` would read `0x10`),
+  and every path test in the guard is case-blind like Express's routing (both
+  holes were live until 2026-09-27; `scripts/e2e/badids.js` walks every route).
+- A route never needs its own try/catch to keep the process up: `src/errors.js`
+  catches a rejected async route and every stray rejection. Throw an error with
+  a `status` (and words a person can read) for a caller's mistake; anything else
+  becomes a 500 that names nothing inside.
 - A new platform table that belongs to a company goes in `backup.js`
   `PLATFORM_TABLES` and, if it holds secrets, stays out of `platform.companies`.
 - A secret, a one-time code, a recovery code or a device token is never

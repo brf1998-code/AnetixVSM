@@ -97,7 +97,7 @@ router.post("/api/feedback", async (req, res) => {
 
 // a request's reply_token (src/arrival.js) goes back to the device that sent it and to nobody else
 const noToken = (row) => { if (row) delete row.reply_token; return row; };
-router.post("/api/feedback/:id/plusone", async (req, res) => {
+router.post("/api/feedback/:id(\\d{1,9})/plusone", async (req, res) => {
   const r = await q("UPDATE platform.feedback SET recurrence = recurrence + 1, updated_at=now() WHERE id=$1 RETURNING *", [req.params.id]);
   res.json(noToken(r.rows[0]));
 });
@@ -111,7 +111,7 @@ router.get("/api/c/:slug/feedback/platform", requireManager, async (req, res) =>
   res.json(rows);
 });
 
-router.post("/api/feedback/:id/close", requireManager, async (req, res) => {
+router.post("/api/feedback/:id(\\d{1,9})/close", requireManager, async (req, res) => {
   const { outcome, declined } = req.body || {};
   const r = await q("UPDATE platform.feedback SET status=$2, outcome=$3, updated_at=now() WHERE id=$1 RETURNING *",
     [req.params.id, declined ? "declined" : "done", outcome || null]);
@@ -122,7 +122,7 @@ router.post("/api/feedback/:id/close", requireManager, async (req, res) => {
 // The manager's close-out on a shipped tile (src/closeloop.js): Done (the asker reads a check mark and a
 // thank-you) or "a little left" (what is left goes back on the board as a linked follow-up). Manager only, and
 // on a path the module page policy does not open, so a module page in a manager's browser cannot reach it.
-router.post("/api/feedback/:id/closeout", requireManager, async (req, res) => {
+router.post("/api/feedback/:id(\\d{1,9})/closeout", requireManager, async (req, res) => {
   try {
     const fb = (await q("SELECT company FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
     if (!fb) return res.status(404).json({ error: "no such request" });
@@ -255,14 +255,14 @@ router.post("/api/c/:slug/batch/remove", requireManager, async (req, res) => {
   await q("UPDATE platform.feedback SET batch_id=NULL, updated_at=now() WHERE company=$1 AND id = ANY($2::int[])", [req.params.slug, ids]);
   res.json({ ok: true });
 });
-router.post("/api/c/:slug/batch/:id/clear", requireManager, async (req, res) => {
+router.post("/api/c/:slug/batch/:id(\\d{1,9})/clear", requireManager, async (req, res) => {
   await q("UPDATE platform.feedback SET batch_id=NULL, updated_at=now() WHERE company=$1 AND batch_id=$2", [req.params.slug, req.params.id]);
   res.json({ ok: true });
 });
 // Build the batch: every item that has a proposal goes into one run; items not
 // reviewed yet leave the batch (the board says how many) so the run is exactly
 // what the manager looked at.
-router.post("/api/c/:slug/batch/:id/build", requireManager, freshPin, async (req, res) => {
+router.post("/api/c/:slug/batch/:id(\\d{1,9})/build", requireManager, freshPin, async (req, res) => {
   const b = (await q("SELECT * FROM platform.batches WHERE id=$1 AND company=$2 AND run_id IS NULL", [req.params.id, req.params.slug])).rows[0];
   if (!b) return res.status(404).json({ error: "no such open batch" });
   const items = (await q(
@@ -405,7 +405,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
 // ---- lifecycle actions (manager only) --------------------------------------
 // "Review with AI" / "Propose anyway". On a request the proposer has already read (it asked a question, or
 // flagged it) the manager is asking for a proposal, so the call drafts one: no sorting, no question.
-router.post("/api/feedback/:id/review", requireManager, async (req, res) => {
+router.post("/api/feedback/:id(\\d{1,9})/review", requireManager, async (req, res) => {
   try {
     const fb = (await q("SELECT id, question, triage, arrival FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
     if (fb && fb.arrival === "proposing") return res.status(409).json({ error: "the proposal for this one is being drafted right now; give it a moment" });
@@ -414,12 +414,12 @@ router.post("/api/feedback/:id/review", requireManager, async (req, res) => {
     // the AI service itself refusing (no credit, a bad key, too busy) is said in plain words and marked for the admin page
     const credit = require("./credit"), kind = credit.classify(e.message);
     await credit.noteFailure(e.message, `the proposal for request #${req.params.id}`);
-    res.status(500).json({ error: kind ? credit.plain(kind) : e.message });
+    res.status(e.code === "cap" ? 429 : 500).json({ error: kind ? credit.plain(kind) : e.message });
   }
 });
 
 // The manager answers the proposer's one question for the person who asked (whoever answers first wins).
-router.post("/api/feedback/:id/answer", requireManager, async (req, res) => {
+router.post("/api/feedback/:id(\\d{1,9})/answer", requireManager, async (req, res) => {
   try {
     const fb = (await q("SELECT company FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
     if (!fb) return res.status(404).json({ error: "no such request" });
@@ -428,7 +428,7 @@ router.post("/api/feedback/:id/answer", requireManager, async (req, res) => {
   } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
 // "Not the same": a request the proposer folded into another one stands on its own again.
-router.post("/api/feedback/:id/unlink", requireManager, async (req, res) => {
+router.post("/api/feedback/:id(\\d{1,9})/unlink", requireManager, async (req, res) => {
   try {
     const fb = (await q("SELECT company FROM platform.feedback WHERE id=$1", [Number(req.params.id) || 0])).rows[0];
     if (!fb) return res.status(404).json({ error: "no such request" });
@@ -444,7 +444,7 @@ async function waitingOnData(proposalIds) {
 }
 
 // Manager decision on a proposal (approve/decline, with optional edits)
-router.post("/api/proposals/:id/decide", requireManager, freshPin, async (req, res) => {
+router.post("/api/proposals/:id(\\d{1,9})/decide", requireManager, freshPin, async (req, res) => {
   const { decision, note, editedBody, editedClass, editedTarget, model } = req.body || {};
   try {
     // the proposal as it stands, before anything the manager typed lands on it
@@ -497,11 +497,11 @@ router.post("/api/runs/batch", requireManager, freshPin, async (req, res) => {
 
 // A manager's decision on a run, with who made it, on the record.
 async function runIds(id) { const r = await pipeline.getRun(Number(id)); return r ? { run: r, ids: { company: r.company, module: r.module, run_id: r.id, feedback_id: null, proposal_id: r.proposal_id, version: r.to_version || null } } : null; }
-router.post("/api/runs/:id/cancel", requireManager, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/cancel", requireManager, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.cancel(Number(req.params.id)); if (x) await record("run_cancelled", { ...x.ids, actor: actor(req), detail: { step: x.run.step, status_before: x.run.status } }); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/confirm", requireManager, freshPin, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/confirm", requireManager, freshPin, async (req, res) => {
   try {
     const x = await runIds(req.params.id); const edited = (req.body || {}).requirement;
     await pipeline.confirmRequirement(Number(req.params.id), edited);
@@ -510,7 +510,7 @@ router.post("/api/runs/:id/confirm", requireManager, freshPin, async (req, res) 
   }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/deploy", requireManager, freshPin, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/deploy", requireManager, freshPin, async (req, res) => {
   try {
     const x = await runIds(req.params.id);
     const gate = x ? adminChange(req, x.run.company) : { ok: true };
@@ -522,21 +522,21 @@ router.post("/api/runs/:id/deploy", requireManager, freshPin, async (req, res) =
   }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/fix", requireManager, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/fix", requireManager, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.fix(Number(req.params.id)); if (x) await record("run_fixed", { ...x.ids, actor: actor(req), before: ((x.run.evidence || {}).cross_check || {}).summary || null, detail: { round: ((x.run.evidence || {}).fix_round || 0) + 1 } }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/override", requireManager, freshPin, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/override", requireManager, freshPin, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.override(Number(req.params.id)); if (x) await record("run_overridden", { ...x.ids, actor: actor(req), before: ((x.run.evidence || {}).cross_check || {}).summary || null }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 // An earlier promise no longer holds (src/acceptance.js, build order item 7): the manager retires the check this
 // build broke, with a reason, and the same build is checked again. On the record with who and why.
-router.post("/api/runs/:id/retire-check", requireManager, freshPin, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/retire-check", requireManager, freshPin, async (req, res) => {
   try { res.json({ ok: true, ...(await pipeline.retirePromise(Number(req.params.id), String((req.body || {}).file || ""), (req.body || {}).reason, actor(req))) }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/rollback", requireManager, freshPin, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/rollback", requireManager, freshPin, async (req, res) => {
   try {
     const x = await runIds(req.params.id);
     const gate = x ? adminChange(req, x.run.company) : { ok: true };
@@ -548,11 +548,11 @@ router.post("/api/runs/:id/rollback", requireManager, freshPin, async (req, res)
   }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/retry", requireManager, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/retry", requireManager, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.retry(Number(req.params.id)); if (x) await record("run_retried", { ...x.ids, actor: actor(req), detail: { step: x.run.step } }); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.get("/api/runs/:id", async (req, res) => {
+router.get("/api/runs/:id(\\d{1,9})", async (req, res) => {
   res.json(await pipeline.getRun(Number(req.params.id)));
 });
 
@@ -565,7 +565,7 @@ router.post("/api/c/:slug/reviews", requireManager, async (req, res) => {
   await record("review_started", { company: req.params.slug, module: (req.body || {}).module || null, actor: actor(req), detail: { model: (req.body || {}).model || null } });
   const { module: mod, model, requested_by } = req.body || {};
   try { res.json(await review.startReview(req.params.slug, mod, agent.inTier(model) ? model : await agent.modelFor(req.params.slug, "design"), requested_by)); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 router.get("/api/c/:slug/reviews", requireManager, async (req, res) => {
   res.json(await review.listReviews(req.params.slug));
@@ -582,6 +582,7 @@ router.get("/api/c/:slug/diagrams/:module", async (req, res) => {
 router.post("/api/c/:slug/diagrams/:module/regenerate", requireManager, async (req, res) => {
   try {
     const row = await registry.getModule(req.params.slug, req.params.module);
+    if (!row || !row.live_version) return res.status(404).json({ error: "no such tool on the floor" });
     const out = await diagrams.generate(req.params.slug, req.params.module, row.live_version, { force: true, model: (req.body || {}).model });
     res.json({ ok: true, ...out });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -645,7 +646,7 @@ router.post("/api/c/:slug/agents/docs", requireManager, async (req, res) => {
   res.json(row);
 });
 
-router.delete("/api/c/:slug/agents/docs/:id", requireManager, async (req, res) => {
+router.delete("/api/c/:slug/agents/docs/:id(\\d{1,9})", requireManager, async (req, res) => {
   const gone = (await q("DELETE FROM platform.agent_docs WHERE company=$1 AND id=$2 RETURNING module, name, content", [req.params.slug, req.params.id])).rows[0];
   if (gone) await record("doc_deleted", { company: req.params.slug, module: gone.module, actor: actor(req), before: gone.content, detail: { name: gone.name } });
   res.json({ ok: true });
@@ -805,7 +806,7 @@ router.get("/api/c/:slug/who/news", async (req, res) => {
   try { const me = whoAmI(req); res.set("Cache-Control", "no-store").json(await closeloop.news(req.params.slug, String(req.query.module || ""), me && me.id)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/c/:slug/who/requests/:id/answer", async (req, res) => {
+router.post("/api/c/:slug/who/requests/:id(\\d{1,9})/answer", async (req, res) => {
   try { res.json(await closeloop.answer({ company: req.params.slug, feedbackId: req.params.id, person: whoAmI(req), role: req.sosRole, answer: (req.body || {}).answer, what: (req.body || {}).what })); }
   catch (e) { res.status(e.status || 400).json({ error: e.message }); }
 });
@@ -822,7 +823,7 @@ router.get("/api/c/:slug/who/question", async (req, res) => {
     res.set("Cache-Control", "no-store").json({ id: fb.id, reading: fb.arrival === "proposing", question: ask ? { text: fb.question.text, options: fb.question.options } : null, added_to: fb.duplicate_of || null, proposed: fb.status !== "new" && !fb.duplicate_of });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/c/:slug/who/requests/:id/reply", async (req, res) => {
+router.post("/api/c/:slug/who/requests/:id(\\d{1,9})/reply", async (req, res) => {
   try {
     const fb = (await q("SELECT * FROM platform.feedback WHERE id=$1 AND company=$2 AND kind='feedback'", [Number(req.params.id) || 0, req.params.slug])).rows[0];
     const me = whoAmI(req), token = String((req.body || {}).token || "");
@@ -835,11 +836,11 @@ router.post("/api/c/:slug/people", requireManager, async (req, res) => {
   try { const out = await people.add(req.params.slug, req.body || {}); await record("person_added", { company: req.params.slug, actor: actor(req), after: out.person.name, detail: { person_id: out.person.id, role: out.person.role } }); res.json(out); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.post("/api/c/:slug/people/:id/pin", requireManager, async (req, res) => {
+router.post("/api/c/:slug/people/:id(\\d{1,9})/pin", requireManager, async (req, res) => {
   try { const out = await people.resetPin(req.params.slug, req.params.id, (req.body || {}).pin); await record("person_pin_reset", { company: req.params.slug, actor: actor(req), after: out.person.name, detail: { person_id: out.person.id } }); res.json(out); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.post("/api/c/:slug/people/:id/active", requireManager, async (req, res) => {
+router.post("/api/c/:slug/people/:id(\\d{1,9})/active", requireManager, async (req, res) => {
   try { const p = await people.setActive(req.params.slug, req.params.id, (req.body || {}).active); await record(p.active ? "person_switched_on" : "person_switched_off", { company: req.params.slug, actor: actor(req), after: p.name, detail: { person_id: p.id } }); res.json({ person: p }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -849,11 +850,11 @@ router.get("/api/admin/data-requests", requireAdmin, async (req, res) => {
   try { res.json({ requests: await datacheck.list({ status: req.query.status || "open" }) }); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/admin/data-requests/:id/resolve", requireAdmin, async (req, res) => {
+router.post("/api/admin/data-requests/:id(\\d{1,9})/resolve", requireAdmin, async (req, res) => {
   try { res.json(await datacheck.resolve(Number(req.params.id), (req.body || {}).note, actor(req))); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.post("/api/admin/data-requests/:id/dismiss", requireAdmin, async (req, res) => {
+router.post("/api/admin/data-requests/:id(\\d{1,9})/dismiss", requireAdmin, async (req, res) => {
   try { res.json(await datacheck.dismiss(Number(req.params.id), (req.body || {}).note, actor(req))); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
@@ -927,11 +928,11 @@ router.get("/api/c/:slug/print/next", async (req, res) => {
   try { const job = await connections.nextJob(req.params.slug, connections.deviceOf(req)); res.set("Cache-Control", "no-store").json(job ? { job } : {}); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/c/:slug/print/jobs/:id/done", async (req, res) => {
+router.post("/api/c/:slug/print/jobs/:id(\\d{1,9})/done", async (req, res) => {
   try { await connections.finishJob(req.params.slug, connections.deviceOf(req), Number(req.params.id), { ok: true, printer: (req.body || {}).printer }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.post("/api/c/:slug/print/jobs/:id/failed", async (req, res) => {
+router.post("/api/c/:slug/print/jobs/:id(\\d{1,9})/failed", async (req, res) => {
   try { await connections.finishJob(req.params.slug, connections.deviceOf(req), Number(req.params.id), { ok: false, printer: (req.body || {}).printer, error: (req.body || {}).error }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });

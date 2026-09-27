@@ -478,30 +478,30 @@ router.post("/api/c/:slug/intakes", requireManager, json, async (req, res) => {
     res.json(await view(it));
   } catch (e) { fail(res, e, 500); }
 });
-router.get("/api/intakes/:id", requireManager, async (req, res) => {
+router.get("/api/intakes/:id(\\d{1,9})", requireManager, async (req, res) => {
   const it = await getIntake(Number(req.params.id));
   if (!it) return res.status(404).json({ error: "not found" });
   res.json(await view(it));
 });
-router.post("/api/intakes/:id/answer", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/answer", requireManager, json, async (req, res) => {
   try { res.json(await view(await answer(Number(req.params.id), String((req.body || {}).id || ""), (req.body || {}).value))); }
   catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/next", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/next", requireManager, json, async (req, res) => {
   try { res.json(await view(await next(Number(req.params.id)))); }
   catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/adjust", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/adjust", requireManager, json, async (req, res) => {
   try { res.json(await view(await adjust(Number(req.params.id), (req.body || {}).text))); }
   catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/confirm", requireManager, freshPin, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/confirm", requireManager, freshPin, json, async (req, res) => {
   try { res.json(await view(await confirm(Number(req.params.id)))); }
   catch (e) { fail(res, e); }
 });
 // A confirmed design whose build never started (an older confirm, or a build
 // that was discarded at the gate): start it now.
-router.post("/api/intakes/:id/build", requireManager, freshPin, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/build", requireManager, freshPin, json, async (req, res) => {
   try {
     const it = await getIntake(Number(req.params.id));
     if (!it) return res.status(404).json({ error: "not found" });
@@ -512,15 +512,15 @@ router.post("/api/intakes/:id/build", requireManager, freshPin, json, async (req
     res.json(await view(await getIntake(it.id)));
   } catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/restart", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/restart", requireManager, json, async (req, res) => {
   try { res.json(await view(await restart(Number(req.params.id)))); }
   catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/abandon", requireManager, json, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/abandon", requireManager, json, async (req, res) => {
   try { res.json(await view(await abandon(Number(req.params.id)))); }
   catch (e) { fail(res, e); }
 });
-router.post("/api/intakes/:id/attach", requireManager, bigJson, async (req, res) => {
+router.post("/api/intakes/:id(\\d{1,9})/attach", requireManager, bigJson, async (req, res) => {
   try {
     const it = await getIntake(Number(req.params.id));
     if (!it) return res.status(404).json({ error: "not found" });
@@ -531,11 +531,11 @@ router.post("/api/intakes/:id/attach", requireManager, bigJson, async (req, res)
     res.json({ ok: true, attachment: a, view: await view(await getIntake(it.id)) });
   } catch (e) { fail(res, e); }
 });
-router.delete("/api/intakes/:id/attach/:aid", requireManager, async (req, res) => {
+router.delete("/api/intakes/:id(\\d{1,9})/attach/:aid(\\d{1,9})", requireManager, async (req, res) => {
   try { await attachments.remove(Number(req.params.aid), Number(req.params.id)); const it = await getIntake(Number(req.params.id)); res.json(await view(it)); }
   catch (e) { fail(res, e); }
 });
-router.get("/api/attachments/:id", requireManager, async (req, res) => {
+router.get("/api/attachments/:id(\\d{1,9})", requireManager, async (req, res) => {
   const a = await attachments.get(Number(req.params.id));
   if (!a) return res.status(404).end();
   res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);

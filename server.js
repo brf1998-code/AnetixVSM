@@ -20,6 +20,11 @@ const people = require("./src/people");
 const accounts = require("./src/accounts");
 const edge = require("./src/edge");
 const selfserve = require("./src/selfserve");
+const errors = require("./src/errors");
+// one bad request never stops the product (src/errors.js, the launch audit 0.1): an async route's rejection reaches the
+// error handler at the bottom, and a stray rejection or throw anywhere is logged instead of ending the process
+errors.asyncRoutes();
+errors.guards();
 
 const PORT = process.env.PORT || 3000;
 const page = (name) => path.join(__dirname, "public", name);
@@ -151,6 +156,8 @@ async function main() {
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module, /c/:slug/staging/m/:module and /c/:slug/test/m/:module
+  app.use("/api", errors.apiNotFound);   // an /api/ path nothing answered: JSON, not Express's HTML page
+  app.use(errors.handler);                // last: every error lands here and gets an answer (src/errors.js)
 
   // every deploy redraws the module's diagrams for the new version, and a tool on the test floor follows the floor
   registry.hooks.deployed = async (company, mod, version) => {
@@ -178,7 +185,9 @@ async function main() {
     diagrams.generate(m.company, m.name, m.live_version).catch((e) => console.error(`diagrams ${m.company}/${m.name}:`, e.message));
   }
 
-  app.listen(PORT, () => console.log(`Anetix instance on :${PORT} (auth ${auth.OPEN ? "OPEN: no passwords set" : "on"})`));
+  const server = app.listen(PORT, () => console.log(`Anetix instance on :${PORT} (auth ${auth.OPEN ? "OPEN: no passwords set" : "on"})`));
+  // a process that cannot listen must end (Railway restarts it): the guards in src/errors.js would otherwise keep it alive serving nothing
+  server.on("error", (e) => { console.error(`[boot] could not listen on :${PORT}: ${e.message}`); process.exit(1); });
   // does this instance have a browser for the page load every build gets (src/pageload.js)? say so in the deploy log
   require("./src/pageload").selfTest().catch((e) => console.error("[pageload] self test:", e.message));
 }

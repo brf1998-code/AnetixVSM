@@ -46,7 +46,7 @@ async function deleteCompany(company) { await q("DELETE FROM platform.notices WH
 
 const router = express.Router();
 const requireManager = (req, res, next) => require("./auth").requireManager(req, res, next);
-router.post("/api/c/:slug/notices/:id(\\d+)/seen", requireManager, async (req, res) => {
+router.post("/api/c/:slug/notices/:id(\\d{1,9})/seen", requireManager, async (req, res) => {
   try { const r = await seen(req, String(req.params.slug || "").toLowerCase(), req.params.id); res.status(r.status).json(r.body); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });

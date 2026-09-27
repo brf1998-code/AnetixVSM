@@ -65,7 +65,9 @@ const PAGE = "/c/demo/m/paperline/";
   t("a person on the test floor ticks a step done, under their name", tick.status === 200 && tick.json.cases.find((c) => c.id === own.id).result.steps[0].state === "done" && tick.json.cases.find((c) => c.id === own.id).result.steps[0].by === "Maria G", tick.json);
   const g1 = await waitFor("the campaign to pass", async () => { const x = await runOf(r1.id); return x.step === "await_deploy" && x.status === "waiting" ? x : null; });
   t("every step closed: the campaign passed and the build is at the deploy gate", g1.evidence.campaign.status === "passed" && /passed: 4 cases, 1 step seen by the platform and 1 done by hand \(Maria G\)/.test(g1.evidence.campaign.line), g1.evidence.campaign);
-  t("passed, approved and the steps are on the record", (await kinds("campaign_passed")).length === 1 && (await kinds("campaign_approved")).length === 1 && (await kinds("campaign_step")).length === 2);
+  // the record is written behind the answer (record() never holds the work up), so give the last row a moment to land
+  // (a run-all on 2026-09-27 read it a moment early once in four)
+  t("passed, approved and the steps are on the record", await waitFor("the campaign's records", async () => (await kinds("campaign_passed")).length === 1 && (await kinds("campaign_approved")).length === 1 && (await kinds("campaign_step")).length === 2, 5000).catch(() => false));
   await mgr.post(`/api/runs/${r1.id}/deploy`);
   await waitFor("r1 live", async () => (await runOf(r1.id)).status === "deployed");
   const st2 = (await mgr.get("/api/c/demo/test-floor")).json;

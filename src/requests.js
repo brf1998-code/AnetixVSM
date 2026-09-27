@@ -108,10 +108,10 @@ const guard = (fn) => async (req, res) => { try { await fn(req, res); } catch (e
 router.get("/api/admin/requests", requireAdmin, guard(async (req, res) => {
   res.set("Cache-Control", "no-store").json(await list(String(req.query.status || "open")));
 }));
-router.post("/api/admin/requests/:id(\\d+)", requireAdmin, json, guard(async (req, res) => {
+router.post("/api/admin/requests/:id(\\d{1,9})", requireAdmin, json, guard(async (req, res) => {
   res.json(await setStage(req.params.id, req.body || {}, who(req)));
 }));
-router.post("/api/admin/requests/:id(\\d+)/close", requireAdmin, json, guard(async (req, res) => {
+router.post("/api/admin/requests/:id(\\d{1,9})/close", requireAdmin, json, guard(async (req, res) => {
   res.json(await close(req.params.id, req.body || {}, who(req)));
 }));
 

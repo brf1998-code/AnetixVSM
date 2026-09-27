@@ -149,6 +149,7 @@
       </div></div>
     <div class="card"><h2>Pins <small id="pins-sub"></small></h2><div id="pins-list" class="hwrap"></div></div>
     <div class="card"><h2>Self-serve companies <small id="ss-sub"></small></h2><div id="ss-list" class="hwrap"></div></div>
+    <div class="card"><h2>Pins refused <small id="rf-sub"></small></h2><p class="sub">Every pin anetix.ai turned away in the last 30 days, with what the person was told. The same pin and email within ten minutes is one line. Kept 90 days.</p><div id="rf-list" class="hwrap"></div></div>
   </section>
 
   <!-- ================= Companies: the list, and one company open at a time ================= -->
@@ -536,7 +537,7 @@ async function loadPins() {
   drawPills();
   document.getElementById("pins-sub").textContent = PINS.pins.length ? `${live} live of ${PINS.pins.length}` : "none yet";
   document.getElementById("ss-sub").textContent = PINS.companies.length ? `${PINS.companies.length}${out ? `, ${out} out of credit` : ""}` : "none yet";
-  const state = (p) => p.problem ? `<span class="sub">${esc(p.problem.replace(/^That pin /, "").replace(/\.$/, ""))}</span>` : '<span class="ok">live</span>';
+  const state = (p) => p.problem ? `<span class="sub">${esc(p.problem)}</span>` : '<span class="ok">live</span>';
   document.getElementById("pins-list").innerHTML = PINS.pins.length ? `<table class="list"><tr><th>Pin</th><th>For</th><th>Email</th><th>Used</th><th>Expires</th><th>Made</th><th>Companies</th><th></th></tr>${PINS.pins.map(p => `<tr data-pin="${p.id}">
     <td><b style="font-family:ui-monospace,monospace;font-size:14px">${esc(p.shown)}</b></td><td>${esc(p.label)}</td><td>${p.email ? esc(p.email) : '<span class="sub">any</span>'}</td><td>${p.uses} of ${p.max_uses}</td>
     <td>${p.expires_at ? new Date(p.expires_at).toLocaleDateString() : "never"}</td><td><small>${esc(p.created_by || "")} ${day(p.created_at)}</small></td>
@@ -548,6 +549,15 @@ async function loadPins() {
     <td>$${c.credit_usd.toFixed(2)}</td><td>$${c.spent_usd.toFixed(2)}</td><td class="${c.level === "red" ? "fail" : c.level === "amber" ? "warn" : "ok"}" style="font-weight:700">$${c.balance_usd.toFixed(2)}</td>
     <td style="white-space:nowrap"><button class="quiet" onclick="grantCredit('${esc(c.slug)}')">Grant credit</button> <a href="/c/${esc(c.slug)}/" class="sub">board</a></td></tr>`).join("")}</table>`
     : '<p class="sub">Nobody has come in from anetix.ai yet.</p>';
+  // refused pins (the launch audit 0.3): what each person was told, so a stuck pin holder can be helped
+  const RF = PINS.refusals || [], WHERE = { pin: "the pin box", home: "coming back to the pin page", check: "before a checkout" };
+  const recent = RF.filter(x => Date.now() - new Date(x.last_at) < 7 * 86400e3 && x.reason !== "unknown").length;
+  document.getElementById("rf-sub").textContent = RF.length ? `${RF.length} in 30 days${recent ? `, ${recent} this week from a real pin` : ""}` : "none in 30 days";
+  document.getElementById("rf-list").innerHTML = RF.length ? `<table class="list"><tr><th>When</th><th>Pin typed</th><th>Pin for</th><th>Email typed</th><th>Why</th><th>Where</th></tr>${RF.map(x => `<tr data-rf="${x.id}">
+    <td><small>${new Date(x.last_at).toLocaleString()}${x.count > 1 ? ` <span class="sub">(${x.count} times)</span>` : ""}</small></td>
+    <td><b style="font-family:ui-monospace,monospace">${esc(x.shown || "")}</b></td><td>${x.label ? esc(x.label) : '<span class="sub">no pin like it</span>'}</td>
+    <td>${x.email ? esc(x.email) : ""}</td><td class="${x.reason === "unknown" ? "sub" : "warn"}">${esc(x.why)}</td><td><small class="sub">${esc(WHERE[x.where_from] || x.where_from || "")}</small></td></tr>`).join("")}</table>`
+    : '<p class="sub">No pin has been refused in the last 30 days.</p>';
 }
 async function makePin() {
   const label = document.getElementById("pin-label").value.trim(); if (label.length < 2) { alert("say who the pin is for"); return; }

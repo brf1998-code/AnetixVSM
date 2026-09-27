@@ -24,6 +24,7 @@
 //
 // Also here, the retention the privacy notice promises (anetix.ai/privacy, "How long Anetix keeps it"):
 //   - a demo request is deleted 12 months after it was made unless it led to a demo (sweep at boot and daily)
+//   - a refused pin's line on the Pins tab is deleted after 90 days (the launch audit 0.3)
 //   - idle(): companies whose last sign-in is 11 months old or more, for the Demos tab (the Terms, 6.3 and 10.7: the
 //     data may go after 12 months with no sign-in; deleting is Brendan's button, with the customer told first)
 const express = require("express");
@@ -106,7 +107,10 @@ async function sweepDemoRequests() {
                        AND NOT EXISTS (SELECT 1 FROM platform.self_serve s WHERE s.pin_id = p.id)
                        AND NOT EXISTS (SELECT 1 FROM platform.demo_requests d WHERE d.pin_id = p.id)`).catch((e) => { console.error("[retention] pins:", e.message); return { rowCount: 0 }; });
   if (p.rowCount) console.log(`[retention] ${p.rowCount} unused pin(s) older than 12 months deleted (the privacy notice)`);
-  return r.rowCount + p.rowCount;
+  // a refused pin's line (the pin and email typed, the address) is kept 90 days (the launch audit 0.3; the privacy notice)
+  const f = await q("DELETE FROM platform.pin_refusals WHERE last_at < now() - interval '90 days'").catch((e) => { console.error("[retention] pin refusals:", e.message); return { rowCount: 0 }; });
+  if (f.rowCount) console.log(`[retention] ${f.rowCount} refused pin line(s) older than 90 days deleted (the privacy notice)`);
+  return r.rowCount + p.rowCount + f.rowCount;
 }
 let sweepTimer = null;
 function startSweeps() {

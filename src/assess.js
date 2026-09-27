@@ -613,20 +613,20 @@ router.get("/api/admin/assess/options", requireAdmin, async (req, res) => {
 router.post("/api/admin/assess", requireAdmin, json, async (req, res) => {
   try { const b = req.body || {}; res.json(await create({ plan: b.plan, company: b.company || null, budget_usd: b.budget_usd, by: who(req) })); } catch (e) { fail(res, e); }
 });
-router.get("/api/admin/assess/:id", requireAdmin, async (req, res) => {
+router.get("/api/admin/assess/:id(\\d{1,9})", requireAdmin, async (req, res) => {
   try { res.set("Cache-Control", "no-store").json(await get(Number(req.params.id))); } catch (e) { fail(res, e); }
 });
-router.get("/api/admin/assess/:id/pick", requireAdmin, async (req, res) => {
+router.get("/api/admin/assess/:id(\\d{1,9})/pick", requireAdmin, async (req, res) => {
   try { res.set("Cache-Control", "no-store").json(await nextPick(Number(req.params.id))); } catch (e) { fail(res, e); }
 });
-router.post("/api/admin/assess/:id/pick", requireAdmin, json, async (req, res) => {
+router.post("/api/admin/assess/:id(\\d{1,9})/pick", requireAdmin, json, async (req, res) => {
   try { res.json(await pick(Number(req.params.id), req.body || {}, who(req))); } catch (e) { fail(res, e); }
 });
-router.post("/api/admin/assess/:id/stop", requireAdmin, json, async (req, res) => {
+router.post("/api/admin/assess/:id(\\d{1,9})/stop", requireAdmin, json, async (req, res) => {
   try { await stop(Number(req.params.id), who(req)); res.json({ ok: true }); } catch (e) { fail(res, e); }
 });
 // One trial in full, model and all (after the picks, to read the answers side by side with their names).
-router.get("/api/admin/assess/:id/trials/:tid", requireAdmin, async (req, res) => {
+router.get("/api/admin/assess/:id(\\d{1,9})/trials/:tid(\\d{1,9})", requireAdmin, async (req, res) => {
   try {
     const t = (await q("SELECT * FROM platform.assessment_trials WHERE id=$1 AND assessment_id=$2", [Number(req.params.tid), Number(req.params.id)])).rows[0];
     if (!t) return res.status(404).json({ error: "trial not found" });

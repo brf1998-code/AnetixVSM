@@ -669,13 +669,28 @@ async function assertUnderCap(company, opts = {}) {
   const own = await companyCap(company);
   if (own) {
     const mine = await monthlySpend(company);
-    if (mine.usd >= own) throw new Error(`this company's AI budget for the month is used up ($${mine.usd.toFixed(2)} of $${own.toFixed(2)}). The platform's admin can raise it on the admin page.`);
+    if (mine.usd >= own) { capReached(`${company}'s own budget`, mine.usd, own); throw Object.assign(new Error(CAP_WORDS.company), { status: 429, code: "cap" }); }
   }
   // the instance cap still counts everything, but it refuses demos only: a paying site's limit is its fair-use line
   if (MONTHLY_CAP_USD > 0 && !(await subscribedSite(company))) {
     const all = await monthlySpend(null);
-    if (all.usd >= MONTHLY_CAP_USD) throw new Error(`monthly AI cap for the whole instance reached ($${all.usd.toFixed(2)} of $${MONTHLY_CAP_USD.toFixed(2)}). Raise SOS_MONTHLY_CAP_USD to continue.`);
+    if (all.usd >= MONTHLY_CAP_USD) { capReached("the instance cap (SOS_MONTHLY_CAP_USD)", all.usd, MONTHLY_CAP_USD); throw Object.assign(new Error(CAP_WORDS.instance), { status: 429, code: "cap" }); }
   }
+}
+// What a company's people read at a cap (the launch audit 0.5, 2026-09-27): no dollars, no variable names, what still
+// works and who to write to. The figures go to the log and, once a month per cap, to Anetix's phones. "monthly AI cap"
+// and "AI budget" stay in the words: src/checks.js, src/pipeline.js and src/assess.js tell a cap stop by them.
+const CAP_WORDS = {
+  instance: "AI work is paused for now: the monthly AI cap for demos on Anetix is reached. Everything you built stays and keeps working; new requests wait until it is lifted. Write to brendan@anetix.ai or taylor@anetix.ai.",
+  company: "This company's AI budget for the month is used up. Everything you built stays and keeps working; new requests wait until Anetix raises it or the month turns. Write to brendan@anetix.ai or taylor@anetix.ai.",
+};
+const capTold = new Set();   // "<cap> <month>": one alert a month per cap (in memory; a restart may send one more)
+function capReached(which, usd, cap) {
+  console.warn(`[cap] ${which} reached: $${usd.toFixed(2)} of $${cap.toFixed(2)} this month; new AI work is refused`);
+  const key = `${which} ${new Date().toISOString().slice(0, 7)}`;
+  if (capTold.has(key)) return;
+  capTold.add(key);
+  try { require("./notify").notify("AI cap reached", `${which} is reached for this month ($${usd.toFixed(2)} of $${cap.toFixed(2)}). New AI work is refused until it is raised; paying sites are not affected.`, { priority: 4, tags: ["money_with_wings"] }); } catch (_) { /* never */ }
 }
 
 module.exports = {
@@ -683,5 +698,5 @@ module.exports = {
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
   SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,
-  initMeter, meter, costOf, RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT,
+  initMeter, meter, costOf, RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT, CAP_WORDS,
 };

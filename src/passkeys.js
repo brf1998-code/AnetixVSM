@@ -240,7 +240,7 @@ router.post("/api/me/passkeys", json, guard(async (req, res) => {
   res.set("Set-Cookie", hintCookie(req, rpId(req)));
   res.json({ ok: true, passkey: row });
 }));
-router.post("/api/me/passkeys/:id(\\d+)/remove", json, guard(async (req, res) => {
+router.post("/api/me/passkeys/:id(\\d{1,9})/remove", json, guard(async (req, res) => {
   if (!named(req, res)) return;
   const gone = await remove(req, req.sosAccount, req.params.id);
   if (!gone) return res.status(404).json({ error: "no such passkey on your account" });

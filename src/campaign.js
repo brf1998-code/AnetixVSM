@@ -705,15 +705,15 @@ const freshPin = (req, res, next) => require("./people").requireFreshPin(req, re
 const guard = (fn) => async (req, res) => { try { await fn(req, res); } catch (e) { res.status(e.status || 500).json({ error: e.message }); } };
 const who = (req) => actor(req, req.sosAccount && req.sosAccount.name ? req.sosAccount.name : null);
 
-router.get("/api/runs/:id(\\d+)/campaign", guard(async (req, res) => {
+router.get("/api/runs/:id(\\d{1,9})/campaign", guard(async (req, res) => {
   const camp = await forRun(Number(req.params.id));
   if (!camp) return res.status(404).json({ error: "no test campaign on this build" });
   res.set("Cache-Control", "no-store").json(publicView(camp.status === "walking" ? await tick(camp.id) : camp));
 }));
-router.post("/api/runs/:id(\\d+)/campaign/approve", requireManager, freshPin, json, guard(async (req, res) => res.json(await approve(Number(req.params.id), req.body || {}, who(req)))));
-router.post("/api/runs/:id(\\d+)/campaign/skip", requireManager, json, guard(async (req, res) => res.json(await skip(Number(req.params.id), (req.body || {}).reason, who(req)))));
-router.post("/api/runs/:id(\\d+)/campaign/waive", requireManager, freshPin, json, guard(async (req, res) => res.json(await waive(Number(req.params.id), (req.body || {}).reason, who(req)))));
-router.post("/api/runs/:id(\\d+)/campaign/steps/:case/:n(\\d+)", requireManager, json, guard(async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/campaign/approve", requireManager, freshPin, json, guard(async (req, res) => res.json(await approve(Number(req.params.id), req.body || {}, who(req)))));
+router.post("/api/runs/:id(\\d{1,9})/campaign/skip", requireManager, json, guard(async (req, res) => res.json(await skip(Number(req.params.id), (req.body || {}).reason, who(req)))));
+router.post("/api/runs/:id(\\d{1,9})/campaign/waive", requireManager, freshPin, json, guard(async (req, res) => res.json(await waive(Number(req.params.id), (req.body || {}).reason, who(req)))));
+router.post("/api/runs/:id(\\d{1,9})/campaign/steps/:case/:n(\\d{1,9})", requireManager, json, guard(async (req, res) => {
   const camp = await forRun(Number(req.params.id));
   if (!camp) throw fail(404, "no test campaign on this build");
   res.json(await answerStep(camp.id, req.params.case, req.params.n, req.body || {}, who(req)));
@@ -726,7 +726,7 @@ router.get("/api/c/:slug/who/campaign", guard(async (req, res) => {
   for (const camp of rows) steps = steps.concat(stepsForScreen(camp, mod, req.query.page));
   res.set("Cache-Control", "no-store").json({ steps, campaign: rows[0] ? { id: rows[0].id, title: rows[0].title, module: rows[0].module, version: rows[0].version } : null });
 }));
-router.post("/api/c/:slug/who/campaign/steps/:campaign(\\d+)/:case/:n(\\d+)", json, guard(async (req, res) => {
+router.post("/api/c/:slug/who/campaign/steps/:campaign(\\d{1,9})/:case/:n(\\d{1,9})", json, guard(async (req, res) => {
   const camp = await get(Number(req.params.campaign));
   if (!camp || camp.company !== req.params.slug) throw fail(404, "no such campaign");
   res.json(await answerStep(camp.id, req.params.case, req.params.n, req.body || {}, who(req)));

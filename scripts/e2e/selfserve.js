@@ -41,7 +41,7 @@ async function www(method, path, body, key = KEY) {
   t("no key: closed", (await www("POST", "/api/www/pin", { pin: "AAAA" }, null)).status === 401);
   t("wrong key: closed", (await www("POST", "/api/www/pin", { pin: "AAAA" }, "not-the-key-but-long-enough-x")).status === 401);
   const nope = await www("POST", "/api/www/pin", { pin: "ZZZZ-ZZZZ", email: "sam@acme.test" });
-  t("a pin nobody made is refused with the reason", nope.status === 403 && /not one we gave out/.test(nope.json.error), nope.json);
+  t("a pin nobody made is refused with the reason", nope.status === 403 && nope.json.reason === "unknown" && /not one Anetix gave out/.test(nope.json.error), nope.json);
 
   // ---- a pin from the admin page
   const bad = await admin.post("/api/admin/pins", { label: "" });
@@ -82,11 +82,32 @@ async function www(method, path, body, key = KEY) {
   t("the pre-checkout check: a used pin is refused there too", chk.status === 403, chk.json);
   t("one company, one ledger row", (await q("SELECT count(*)::int AS n FROM platform.companies WHERE slug LIKE 'acme-wire%'")).rows[0].n === 1 && (await q("SELECT count(*)::int AS n FROM platform.credit_ledger WHERE company=$1", [SLUG])).rows[0].n === 1);
   const used = await www("POST", "/api/www/pin", { pin: PIN, email: "sam@acme.test" });
-  t("the pin is used up now", used.status === 403 && /already been used/.test(used.json.error), used.json);
+  t("the pin is used up now: it made this email's demo, so the answer says to sign in and names the login (0.3)", used.status === 403 && used.json.reason === "used" && /already made your demo/.test(used.json.error) && used.json.signin === MGRLOGIN, used.json);
+  const usedOther = await www("POST", "/api/www/pin", { pin: PIN, email: "someone@else.test" });
+  t("typed with another email, a used pin says only that it was used, and names nobody", usedOther.status === 403 && usedOther.json.reason === "used" && !usedOther.json.signin && /already been used/.test(usedOther.json.error), usedOther.json);
   const c2 = await www("POST", "/api/www/companies", { pin: PIN, name: "Second Try", email: "x@y.test", ref: "cs_test_2", paid_usd: 30, credit_usd: 30 });
   t("and makes no second company", c2.status === 403, c2.json);
   const list1 = await admin.get("/api/admin/pins");
   t("the Pins view shows the pin used, the company it made, and the company with its balance and contact", (() => { const p = list1.json.pins.find((x) => x.shown === PIN); const c = list1.json.companies.find((x) => x.slug === SLUG); return p && /used/.test(p.problem) && p.companies === SLUG && c && c.balance_usd === 30 && c.email === "sam@acme.test" && c.contact === "Sam Jones"; })(), list1.json);
+  // ---- refusals on the Pins tab, and the words for a cancelled or expired pin (the launch audit 0.3)
+  const refused = list1.json.refusals || [];
+  t("the Pins tab lists each refusal with its reason and where it happened", refused.some((x) => x.pin === "ZZZZZZZZ" && x.reason === "unknown" && x.why === "not a pin we made") && refused.some((x) => x.pin_id && x.reason === "used" && x.email === "sam@acme.test" && x.where_from === "pin") && refused.some((x) => x.reason === "used" && x.where_from === "check"), refused);
+  const px = (await admin.post("/api/admin/pins", { label: "Old one", email: "old@one.test", days: 30 })).json.pin;
+  await admin.post(`/api/admin/pins/${px.id}/revoke`, {});
+  const cx = await www("POST", "/api/www/pin", { pin: px.shown, email: "old@one.test", where: "pin", ip: "198.51.100.7" });
+  t("a cancelled pin says how to get a new one", cx.status === 403 && cx.json.reason === "cancelled" && /anetix\.ai\/request/.test(cx.json.error) && /brendan@anetix\.ai or taylor@anetix\.ai/.test(cx.json.error), cx.json);
+  const pe = (await admin.post("/api/admin/pins", { label: "Late one", email: "late@one.test", days: 30 })).json.pin;
+  await q("UPDATE platform.access_pins SET expires_at = now() - interval '1 day' WHERE id=$1", [pe.id]);
+  const ex = await www("POST", "/api/www/pin", { pin: pe.shown, email: "late@one.test" });
+  t("an expired pin says so and how to get a new one", ex.status === 403 && ex.json.reason === "expired" && /anetix\.ai\/request/.test(ex.json.error), ex.json);
+  await www("POST", "/api/www/pin", { pin: pe.shown, email: "late@one.test", where: "home" });
+  await www("POST", "/api/www/pin", { pin: pe.shown, email: "late@one.test", where: "home" });
+  const rf2 = (await admin.get("/api/admin/pins")).json.refusals || [];
+  const home = rf2.filter((x) => x.pin_id === pe.id && x.where_from === "home");
+  t("the same pin, email, reason and place within ten minutes is one line with a count", home.length === 1 && home[0].count === 2, home);
+  t("the line keeps the address anetix.ai passed, the pin's label and the short reason", rf2.some((x) => x.pin_id === px.id && x.ip === "198.51.100.7" && x.label === "Old one" && x.why === "cancelled"), rf2.filter((x) => x.pin_id === px.id));
+  const pl = (await admin.get("/api/admin/pins")).json.pins;
+  t("the pins list says expired and cancelled in short words", pl.find((x) => x.id === pe.id).problem === "expired" && pl.find((x) => x.id === px.id).problem === "cancelled");
 
   // ---- the manager signs in with the account: password, then the authenticator set up on the first sign-in
   const wrongCo = await client().post("/login", { password: MGRPW, company: SLUG });
@@ -219,6 +240,8 @@ async function www(method, path, body, key = KEY) {
   const c4pin = await admin.post("/api/admin/pins", { label: "Sam third", email: "sam@acme.test", max_uses: 1, days: 30 });
   const c4 = await www("POST", "/api/www/companies", { pin: c4pin.json.pin.shown, name: "Acme Third Plant", contact: "Sam Jones", email: "sam@acme.test", ref: "cs_test_4", paid_usd: 30, credit_usd: 30, collect: true });
   t("a second company on the same email gets the login with the company code in it", c4.status === 200 && c4.json.created && c4.json.manager.login === "sam+acme-third-plant@acme.test", c4.json);
+  const u4 = await www("POST", "/api/www/pin", { pin: c4pin.json.pin.shown, email: "sam@acme.test" });
+  t("its used pin opens Sign in with exactly that login, not another demo's on the same email (0.3)", u4.status === 403 && u4.json.signin === "sam+acme-third-plant@acme.test", u4.json);
   // the webhook lands first (no collect): the passwords wait for the person's browser
   const p5 = await admin.post("/api/admin/pins", { label: "Webhook first", email: "lee@late.test", max_uses: 1, days: 30 });
   const c5 = await www("POST", "/api/www/companies", { pin: p5.json.pin.shown, name: "Late Browser Co", contact: "Lee", email: "lee@late.test", ref: "cs_test_5", paid_usd: 30, credit_usd: 30 });

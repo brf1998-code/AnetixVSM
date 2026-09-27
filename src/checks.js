@@ -148,7 +148,7 @@ router.get("/api/c/:slug/checks", requireManager, async (req, res) => {
     res.json({ runs: rows, counts, labeled: labeled.length, wrong: wrong.length, models: require("./agent").MODELS, labels: require("./agent").ALL_MODELS, review_model: await require("./agent").modelFor(req.params.slug, "review") });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/label", requireManager, json, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/label", requireManager, json, async (req, res) => {
   const { label, note } = req.body || {};
   if (!["right", "wrong", "unsure", ""].includes(String(label || ""))) return res.status(400).json({ error: "label must be right, wrong or unsure" });
   try {
@@ -161,7 +161,7 @@ router.post("/api/runs/:id/label", requireManager, json, async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id/replay", requireManager, json, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/replay", requireManager, json, async (req, res) => {
   try { res.json(await replayRun(Number(req.params.id), String((req.body || {}).model || ""))); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });

@@ -101,7 +101,7 @@ async function estimate(company, mod, model) {
 async function startReview(company, mod, model, requestedBy) {
   if (!MODELS.some((m) => m.id === model)) throw new Error("unknown model");
   const row = await registry.getModule(company, mod);
-  if (!row) throw new Error(`unknown module ${company}/${mod}`);
+  if (!row) throw Object.assign(new Error(`unknown module ${company}/${mod}`), { status: 404 });
   const running = (await q("SELECT id FROM platform.reviews WHERE company=$1 AND module=$2 AND status='running'", [company, mod])).rows[0];
   if (running) throw new Error(`review #${running.id} is still running`);
   if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured on this instance");

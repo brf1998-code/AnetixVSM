@@ -42,7 +42,8 @@
 //   POST /api/www/credit           { slug, ref, paid_usd, credit_usd }      a top-up; the same ref again adds nothing
 //   GET  /api/www/companies/:slug                                           name and balance, for the top-up page
 // Admin routes (with the platform router, admin session):
-//   GET  /api/admin/pins                       every pin and every self-serve company with its balance
+//   GET  /api/admin/pins                       every pin, every self-serve company with its balance, and the last 30
+//                                              days of refused pins with the reason (platform.pin_refusals)
 //   POST /api/admin/pins                       { label, max_uses, days }  make one
 //   POST /api/admin/pins/:id/revoke
 //   GET  /api/admin/companies/:slug/credit     the ledger and the balance
@@ -91,6 +92,22 @@ CREATE TABLE IF NOT EXISTS platform.credit_ledger (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS credit_ledger_company ON platform.credit_ledger (company, id);
+-- every pin anetix.ai refused, with the reason (the launch audit 0.3, 2026-09-27: five attempts from outside on 9/26,
+-- four refused, and nothing said which of five reasons anyone saw). The same pin, email, reason and place within ten
+-- minutes is one row with a count. Kept 90 days (src/dataexport.js sweep; the privacy notice says so); never in a backup.
+CREATE TABLE IF NOT EXISTS platform.pin_refusals (
+  id          SERIAL PRIMARY KEY,
+  pin         TEXT,                      -- as typed, cleaned (an invitation, not a password)
+  pin_id      INTEGER,                   -- the pin it matched, when it matched one
+  email       TEXT,                      -- the email typed with it
+  reason      TEXT NOT NULL,             -- unknown | cancelled | expired | used | email
+  where_from  TEXT,                      -- pin (the wall's box) | home (a pin page opened again) | check (before a checkout)
+  ip          TEXT,
+  count       INTEGER NOT NULL DEFAULT 1,
+  first_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pin_refusals_last ON platform.pin_refusals (last_at DESC);
 `;
 async function init() { await q(SCHEMA); }
 
@@ -109,19 +126,36 @@ function makePin() {
 }
 function normalizePin(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16); }
 function showPin(s) { return `${s.slice(0, 4)}-${s.slice(4)}`; }
-// Why a pin is no good, or null when it is. Pure; now for the tests.
-function pinProblem(row, now = new Date()) {
-  if (!row) return "That pin is not one we gave out.";
-  if (row.revoked_at) return "That pin has been cancelled.";
-  if (row.expires_at && new Date(row.expires_at) <= now) return "That pin has expired.";
-  if (Number(row.uses) >= Number(row.max_uses)) return "That pin has already been used.";
+// Why a pin is no good, as a reason (unknown, cancelled, expired, used) or null when it is good. Pure.
+function pinReason(row, now = new Date()) {
+  if (!row) return "unknown";
+  if (row.revoked_at) return "cancelled";
+  if (row.expires_at && new Date(row.expires_at) <= now) return "expired";
+  if (Number(row.uses) >= Number(row.max_uses)) return "used";
   return null;
 }
+// What the person reads for each reason (the launch audit 0.3: a used pin said nothing about Sign in, and an expired or
+// cancelled one said nothing about getting another; anetix.ai also turns the link under the pin box into "Request a new
+// pin" for those two). "used_mine" is a used pin whose email matches: it made THEIR demo, and anetix.ai opens Sign in
+// with the login filled. The words work on any page that shows them (the set-up form's error too).
+const HELP = "brendan@anetix.ai or taylor@anetix.ai";
+const PIN_WORDS = {
+  unknown: "That pin is not one Anetix gave out. Check it against the message it came in.",
+  cancelled: `That pin was cancelled. To get a new one, ask at anetix.ai/request or write to ${HELP}.`,
+  expired: `That pin has expired. To get a new one, ask at anetix.ai/request or write to ${HELP}.`,
+  used: "That pin has already been used. If it made your demo, sign in with your email instead.",
+  used_mine: "That pin already made your demo, so it will not open it again. Sign in with your email instead.",
+  email: "That pin and email do not go together. Use the email the pin was made for.",
+};
+// the Pins tab's short words for a reason
+const PIN_SHORT = { unknown: "not a pin we made", cancelled: "cancelled", expired: "expired", used: "already used", email: "wrong email for the pin" };
+// Why a pin is no good, in the words a person reads, or null when it is good. Pure.
+function pinProblem(row, now = new Date()) { const r = pinReason(row, now); return r ? PIN_WORDS[r] : null; }
 // A pin made for an email works only with that email (typed any case, spaces around it ignored). A pin from before
 // emails were asked for (email NULL) takes any. Pure.
 function pinEmailProblem(row, email) {
   if (!row || !row.email) return null;
-  return String(email || "").trim().toLowerCase() === row.email ? null : "That pin and email do not go together. Use the email the pin was made for.";
+  return String(email || "").trim().toLowerCase() === row.email ? null : PIN_WORDS.email;
 }
 // The company's code from its name: "Acme Wire & Cable Inc." -> "acme-wire-cable-inc". Pure.
 function slugFrom(name) {
@@ -149,6 +183,38 @@ function balanceOf({ credit_usd = 0, spent_usd = 0, unit_usd = UNIT() }) {
 async function pinRow(pin) {
   const p = normalizePin(pin); if (!p) return null;
   return (await q("SELECT * FROM platform.access_pins WHERE pin=$1", [p])).rows[0] || null;
+}
+// The refusal for a pin and an email, or null when they are good: { reason, error, signin? }. A used pin typed with
+// the email it was made for made THAT person's demo, so the answer carries the manager account's login and anetix.ai
+// opens Sign in with it filled (the launch audit 0.3). Anyone else learns only that the pin was used.
+async function refusalFor(row, email) {
+  const reason = pinReason(row) || (pinEmailProblem(row, email) ? "email" : null);
+  if (!reason) return null;
+  const out = { reason, error: PIN_WORDS[reason] };
+  const typed = String(email || "").trim().toLowerCase();
+  if (reason === "used" && row && row.email && typed === row.email) {
+    // exactly the account the demo made for this email: the email itself, or <local>+<slug>@<domain> when the email
+    // already had an account (createCompany), and switched on; never another manager of that company
+    const at = typed.lastIndexOf("@");
+    const a = (await q(`SELECT a.login FROM platform.self_serve s JOIN platform.accounts a ON a.company=s.company AND a.role='manager' AND a.status='active'
+                         WHERE s.pin_id=$1 AND (a.login=$2::text OR a.login = $3::text || '+' || s.company || $4::text) ORDER BY a.created_at LIMIT 1`,
+      [row.id, typed, at > 0 ? typed.slice(0, at) : typed, at > 0 ? typed.slice(at) : ""])).rows[0];
+    if (a) { out.error = PIN_WORDS.used_mine; out.signin = a.login; }
+  }
+  return out;
+}
+// One line on the Pins tab for a refusal. Never throws: the person's answer never waits on it.
+const REFUSED_WHERE = new Set(["pin", "home", "check"]);
+async function logRefusal({ pin, row, email, reason, where, ip }) {
+  try {
+    const p = normalizePin(pin) || null, e = clean(email, 200).toLowerCase() || null, w = REFUSED_WHERE.has(where) ? where : "pin", addr = clean(ip, 64) || null;
+    // a pin that matches nothing is merged by address too (the latest typed kept), so a loop of made-up pins is one line
+    const bumped = await q(`UPDATE platform.pin_refusals SET count=count+1, last_at=now(), ip=coalesce($5, ip), pin=$1, email=$2
+       WHERE id = (SELECT id FROM platform.pin_refusals WHERE reason=$3 AND where_from=$4 AND last_at > now() - interval '10 minutes'
+                     AND ((pin IS NOT DISTINCT FROM $1::text AND email IS NOT DISTINCT FROM $2::text) OR ($3 = 'unknown' AND $5::text IS NOT NULL AND ip = $5::text))
+                   ORDER BY id DESC LIMIT 1) RETURNING id`, [p, e, reason, w, addr]);
+    if (!bumped.rows.length) await q("INSERT INTO platform.pin_refusals (pin, pin_id, email, reason, where_from, ip) VALUES ($1,$2,$3,$4,$5,$6)", [p, row ? row.id : null, e, reason, w, addr]);
+  } catch (err) { console.error("[pins] a refusal was not logged:", err.message); }
 }
 async function selfServeRow(company) {
   return (await q("SELECT * FROM platform.self_serve WHERE company=$1", [company])).rows[0] || null;
@@ -333,7 +399,7 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
     if (done) { await client.query("COMMIT"); return done; }
     const spent = (await client.query(
       "UPDATE platform.access_pins SET uses=uses+1 WHERE id=$1 AND revoked_at IS NULL AND uses < max_uses AND (expires_at IS NULL OR expires_at > now()) RETURNING id", [row.id])).rows[0];
-    if (!spent) throw fail(403, pinProblem((await client.query("SELECT * FROM platform.access_pins WHERE id=$1", [row.id])).rows[0]) || "That pin has already been used.");
+    if (!spent) throw fail(403, pinProblem((await client.query("SELECT * FROM platform.access_pins WHERE id=$1", [row.id])).rows[0]) || PIN_WORDS.used);
     if ((await client.query("SELECT 1 FROM platform.companies WHERE slug=$1", [slug])).rows[0]) slug = await freeSlug(name);   // taken in the meantime
     await client.query("INSERT INTO platform.companies (slug, name, demo) VALUES ($1,$2,$3)", [slug, name, Boolean(demo)]);
     // the handout (the floor password, the manager's login and first password) is committed WITH the company, so a
@@ -419,11 +485,16 @@ async function ledger(slug) {
 // Every pin and every self-serve company, for the admin page.
 async function adminView() {
   const pins = (await q("SELECT p.*, (SELECT string_agg(s.company, ', ') FROM platform.self_serve s WHERE s.pin_id=p.id) AS companies FROM platform.access_pins p ORDER BY p.id DESC")).rows
-    .map((p) => ({ ...p, shown: showPin(p.pin), problem: pinProblem(p) }));
+    .map((p) => ({ ...p, shown: showPin(p.pin), problem: PIN_SHORT[pinReason(p)] || null }));
+  // the last 30 days of refusals, newest first (the launch audit 0.3)
+  const refusals = (await q(`SELECT r.id, r.pin, r.pin_id, r.email, r.reason, r.where_from, r.ip, r.count, r.first_at, r.last_at, p.label
+      FROM platform.pin_refusals r LEFT JOIN platform.access_pins p ON p.id=r.pin_id
+     WHERE r.last_at > now() - interval '30 days' ORDER BY r.last_at DESC LIMIT 60`)).rows
+    .map((r) => ({ ...r, shown: r.pin && r.pin.length === 8 ? showPin(r.pin) : r.pin, why: PIN_SHORT[r.reason] || r.reason }));
   const ss = (await q("SELECT s.*, c.name FROM platform.self_serve s JOIN platform.companies c ON c.slug=s.company ORDER BY s.created_at DESC")).rows;
   const companies = [];
   for (const s of ss) companies.push({ slug: s.company, name: s.name, email: s.email, contact: s.contact, since: s.created_at, ...(await credit(s.company)) });
-  return { pins, companies, www_url: WWW_URL() };
+  return { pins, companies, refusals, www_url: WWW_URL() };
 }
 // gone with the company (src/feedback.js, the delete route)
 async function deleteCompany(slug) {
@@ -433,6 +504,7 @@ async function deleteCompany(slug) {
   if (pin) {
     await q("DELETE FROM platform.demo_requests WHERE pin_id=$1", [pin]);
     await q("DELETE FROM platform.access_pins p WHERE p.id=$1 AND NOT EXISTS (SELECT 1 FROM platform.self_serve s WHERE s.pin_id=p.id AND s.company<>$2)", [pin, slug]);
+    await q("DELETE FROM platform.pin_refusals r WHERE r.pin_id=$1 AND NOT EXISTS (SELECT 1 FROM platform.access_pins p WHERE p.id=r.pin_id)", [pin]);
   }
   await q("DELETE FROM platform.credit_ledger WHERE company=$1", [slug]);
   await q("DELETE FROM platform.self_serve WHERE company=$1", [slug]);
@@ -458,8 +530,8 @@ wwwRouter.use("/api/www", (req, res, next) => {
 wwwRouter.post("/api/www/pin", json, guard(async (req, res) => {
   const b = req.body || {};
   const row = await pinRow(b.pin);
-  const why = pinProblem(row) || pinEmailProblem(row, b.email);
-  if (why) return res.status(403).json({ ok: false, error: why });
+  const no = await refusalFor(row, b.email);
+  if (no) { await logRefusal({ pin: b.pin, row, email: b.email, reason: no.reason, where: b.where || "pin", ip: b.ip }); return res.status(403).json({ ok: false, ...no }); }
   res.json({ ok: true, label: row.label, uses_left: Number(row.max_uses) - Number(row.uses) });
 }));
 wwwRouter.post("/api/www/companies", json, guard(async (req, res) => {
@@ -478,8 +550,8 @@ wwwRouter.post("/api/www/companies", json, guard(async (req, res) => {
 wwwRouter.post("/api/www/check", json, guard(async (req, res) => {
   const b = req.body || {};
   const row = await pinRow(b.pin);
-  const why = pinProblem(row) || pinEmailProblem(row, b.email);
-  if (why) return res.status(403).json({ ok: false, error: why });
+  const no = await refusalFor(row, b.email);
+  if (no) { await logRefusal({ pin: b.pin, row, email: b.email, reason: no.reason, where: "check", ip: b.ip }); return res.status(403).json({ ok: false, ...no }); }
   const accounts = require("./accounts");
   const login = accounts.cleanLogin(b.email);
   if (b.email != null && !accounts.validLogin(login)) return res.status(400).json({ ok: false, error: "That email address does not look like one." });
@@ -512,7 +584,7 @@ adminRouter.post("/api/admin/pins", requireAdmin, json, guard(async (req, res) =
   const row = await makePinRow(req.body || {}, who(req));
   res.json({ ok: true, pin: { ...row, shown: showPin(row.pin) } });
 }));
-adminRouter.post("/api/admin/pins/:id(\\d+)/revoke", requireAdmin, guard(async (req, res) => res.json({ ok: true, pin: await revokePin(req.params.id, who(req)) })));
+adminRouter.post("/api/admin/pins/:id(\\d{1,9})/revoke", requireAdmin, guard(async (req, res) => res.json({ ok: true, pin: await revokePin(req.params.id, who(req)) })));
 adminRouter.get("/api/admin/companies/:slug/credit", requireAdmin, guard(async (req, res) => {
   const slug = String(req.params.slug || "").toLowerCase();
   res.set("Cache-Control", "no-store").json({ credit: await credit(slug), ledger: await ledger(slug) });
@@ -527,7 +599,7 @@ adminRouter.post("/api/admin/companies/:slug/credit", requireAdmin, json, guard(
 module.exports = {
   init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL, keyOk,
   creditToken, previewToken, topupUrl, wwwOrigins, loginCors,
-  pinEmailProblem,
+  pinEmailProblem, pinReason, PIN_WORDS, PIN_SHORT, refusalFor, logRefusal,
   pinRow, selfServeRow, spentSince, credit, assertCredit, siteStage, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,
   wwwRouter, adminRouter, keyOk,
 };

@@ -112,6 +112,14 @@ S4="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW
 fresh; start "SOS_BROWSER=off $S4"
 run billing                env $S4 node scripts/e2e/billing.js
 
+# the launch audit 0.1: bad values in every route's parameters, and another company by every spelling (no restart loop,
+# so a crash shows as a dead server)
+fresh; start "SOS_BROWSER=off"
+run badids                 node scripts/e2e/badids.js
+# the launch audit 0.5: what a company reads at an AI cap
+fresh; start "SOS_BROWSER=off SOS_MONTHLY_CAP_USD=5"
+run caps                   node scripts/e2e/caps.js
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop

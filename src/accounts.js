@@ -470,7 +470,7 @@ router.get("/api/admin/accounts/me/devices", (req, res, next) => authLib().requi
   if (!mine(req, res)) return;
   res.set("Cache-Control", "no-store").json({ devices: await devices.list(req.sosAccount.id), days: devices.DAYS, max: devices.MAX_PER_ACCOUNT });
 }));
-router.post("/api/admin/accounts/me/devices/:id(\\d+)/remove", (req, res, next) => authLib().requireAdmin(req, res, next), json, guard(async (req, res) => {
+router.post("/api/admin/accounts/me/devices/:id(\\d{1,9})/remove", (req, res, next) => authLib().requireAdmin(req, res, next), json, guard(async (req, res) => {
   if (!mine(req, res)) return;
   const gone = await devices.remove(req.sosAccount.id, req.params.id);
   if (!gone) return res.status(404).json({ error: "no such device on your account" });
@@ -512,7 +512,7 @@ router.post("/api/admin/accounts", (req, res, next) => authLib().requireAdmin(re
   res.set("Cache-Control", "no-store");
   res.json({ ok: true, ...out });
 }));
-router.post("/api/admin/accounts/:id(\\d+)/:action", (req, res, next) => authLib().requireAdmin(req, res, next), json, guard(async (req, res) => {
+router.post("/api/admin/accounts/:id(\\d{1,9})/:action", (req, res, next) => authLib().requireAdmin(req, res, next), json, guard(async (req, res) => {
   const id = Number(req.params.id), action = req.params.action, ip = edge.clientIp(req), self = Boolean(req.sosAccount && req.sosAccount.id === id);
   if (!(await byId(id))) return res.status(404).json({ error: "no such account" });
   if (action === "disable") {

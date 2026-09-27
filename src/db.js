@@ -13,6 +13,9 @@ const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: /railway|rlwy\.net|sslmode=require/.test(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
 });
+// an idle connection the database dropped (a Postgres restart on Railway) is an 'error' event on the pool: without a
+// listener Node ends the process (the launch audit, 0.1). The pool makes a new connection on the next query.
+pool.on("error", (e) => console.error(`[db] an idle connection failed: ${e.message}`));
 
 async function q(text, params) {
   return pool.query(text, params);

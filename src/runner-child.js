@@ -20,6 +20,21 @@ const path = require("path");
 const express = require("express");
 const { Pool } = require("pg");
 
+// A tool route's rejected promise reaches the error handler below and gets an answer, instead of leaving the visitor's
+// request hanging until the platform's timeout (the same few lines as src/errors.js asyncRoutes, kept here because this
+// file requires nothing of the platform's; the launch audit 0.1).
+{
+  const Layer = require("express/lib/router/layer");
+  Layer.prototype.handle_request = function handle(req, res, next) {
+    const fn = this.handle;
+    if (fn.length > 3) return next();
+    try {
+      const out = fn(req, res, next);
+      if (out && typeof out.then === "function") out.then(null, (err) => next(err || new Error("a route's promise was rejected with nothing")));
+    } catch (err) { next(err); }
+  };
+}
+
 // everything the platform handed over arrives in ONE variable and leaves the environment at once,
 // so module code that looks at process.env finds nothing
 const boot = JSON.parse(process.env.SOS_RUNNER_BOOT || "{}");
