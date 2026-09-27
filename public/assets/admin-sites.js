@@ -139,7 +139,7 @@
   function channelHtml(a) {
     if (!a || !a.channel) return "";
     const c = a.channel, key = a.ai_key;
-    return `<p class="sub" style="margin:6px 0 0">Activate's channel to anetix.ai: ${c.ok ? `<b style="color:var(--green)">up</b>, Stripe in ${esc(c.stripe)} mode${c.tax ? ", Stripe Tax on" : ""}.` : `<b style="color:var(--red)">down</b>: ${esc(c.why)}.`} The AI key's auto reload: ${key && key.autofill ? "on" : '<b style="color:#b26a00">not noted as on</b> (Activate needs it: the Overview tab\'s AI credit note)'}.</p>`;
+    return `<p class="sub" style="margin:6px 0 0">Activate's channel to anetix.ai: ${c.ok ? `<b style="color:var(--green)">up</b>, Stripe in ${esc(c.stripe)} mode${c.tax ? ", Stripe Tax on" : ""}.` : `<b style="color:var(--red)">down</b>: ${esc(c.why)}.`} The AI key's auto reload: ${key && key.autofill ? "on" : '<b style="color:#b26a00">not noted as on</b> (Activate needs it: the Instance tab\'s AI credit note)'}.</p>`;
   }
   async function toggle(open) {
     const g = (DATA && DATA.golive) || {};

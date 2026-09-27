@@ -217,7 +217,7 @@ async function activate(slug, { tenancy_note, clear_sample = true, test_mode_ok 
   if (!preview && ch.stripe !== "live" && test_mode_ok !== true) throw fail(409, `Stripe on anetix.ai is in ${ch.stripe} mode, so this would switch ${slug} on with no real charge. Tick "Stripe is in test mode" to do it anyway (your own test company, say).`, { code: "test_mode" });
   if (!preview) {
     const key = await aiKey();
-    if (!key.autofill) throw fail(409, "A paying site's loop stops if the Anthropic key runs dry. Turn auto reload on in the Anthropic console, then tick autofill on the AI credit note (the Overview tab), and Activate again.", { code: "ai_key" });
+    if (!key.autofill) throw fail(409, "A paying site's loop stops if the Anthropic key runs dry. Turn auto reload on in the Anthropic console, then tick autofill on the AI credit note (the Instance tab), and Activate again.", { code: "ai_key" });
     if ((await subscribedCount(slug)) >= 1 && clean(tenancy_note, 500).length < 3 && !site0.tenancy_note) throw fail(400, "Your rule is a runtime per customer before a second customer's production data. To activate anyway, type the reason: it is kept on the site.", { code: "tenancy" });
   }
   const note = clean(tenancy_note, 500);
