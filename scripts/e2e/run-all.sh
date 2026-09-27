@@ -131,6 +131,9 @@ run spendwatch             node scripts/e2e/spendwatch.js
 fresh; start "SOS_BROWSER=off"
 run phase1                 node scripts/e2e/phase1.js
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run phase1-browser node scripts/e2e/phase1-browser.js; }
+# Phase 2's first item: nothing a manager or the floor reads from /api/ names a model or carries an AI cost
+fresh; start "SOS_BROWSER=off"
+run leaks                  node scripts/e2e/leaks.js
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

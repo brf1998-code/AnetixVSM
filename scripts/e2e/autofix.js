@@ -49,7 +49,7 @@ const PAGE = "/c/demo/m/paperline/";
   const g3 = await settle(r3);
   t("after two automatic rounds it stops for the manager", g3.status === "failed" && g3.evidence.fix_round === 2 && /^internal tests failed: the check that came with this change does not pass/.test(lastErr(g3)), `${g3.step}/${g3.status} round ${g3.evidence.fix_round}: ${lastErr(g3)}`);
   t("both rounds were the platform's", notes(g3).filter((n) => /the platform sent the findings back to the agent on its own/.test(n)).length === 2, notes(g3).join(" | "));
-  const cl = (await mgr.get("/api/c/demo/checks")).json; const row3 = rowsOf(cl.runs || cl).find((r) => r.id === r3);
+  const cl = (await (await login(PW.admin, "")).get("/api/c/demo/checks")).json; const row3 = rowsOf(cl.runs || cl).find((r) => r.id === r3);
   t("the checks log calls it what it is, with the rounds on it", row3 && row3.reason === "its own check failed" && row3.fix_round === 2, row3 && `${row3.reason} / ${row3.fix_round}`);
   const fix3 = await mgr.post(`/api/runs/${r3}/fix`);
   t("the manager still has one manual round (3 of 3)", fix3.status === 200, fix3.text);

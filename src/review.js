@@ -54,7 +54,8 @@ async function historyText(company, mod) {
     `- #${f.id} [${f.status}${f.recurrence > 1 ? `, seen x${f.recurrence}` : ""}] from "${f.screen || "?"}" by ${f.name || "anonymous"}: "${f.message}"${f.outcome ? ` -> ${f.outcome.slice(0, 160)}` : ""}`
   ).join("\n") : "(no feedback yet)";
   const runText = runs.length ? runs.map((r) =>
-    `- run #${r.id} ${r.lane} ${r.status} v${r.from_version}->v${r.to_version || "?"} (${r.model || "?"}, $${Number(r.cost_usd).toFixed(2)})${r.summary ? `: ${r.summary.slice(0, 200).replace(/\n/g, " ")}` : ""}`
+    // no model and no cost in the brief: what the review writes lands on the company's cards (Phase 2, 2026-09-27)
+    `- run #${r.id} ${r.lane} ${r.status} v${r.from_version}->v${r.to_version || "?"}${r.summary ? `: ${r.summary.slice(0, 200).replace(/\n/g, " ")}` : ""}`
   ).join("\n") : "(no builds yet)";
   return `Feedback history (newest first):\n${fbText}\n\nBuild history (newest first):\n${runText}`;
 }
@@ -151,7 +152,7 @@ async function runReview(reviewId) {
       `INSERT INTO platform.feedback (company, module, page, screen, target_file, message, name, status, review_id)
        VALUES ($1,$2,NULL,$3,$4,$5,$6,'reviewing',$7) RETURNING id`,
       [company, mod, screens ? screens.label : (f.target_file === "routes.js" ? "Server logic" : f.target_file), f.target_file,
-       `${f.title}${f.why ? `\n\nWhy: ${f.why}` : ""}`, `System review #${reviewId} (${modelInfo(model).label})`, reviewId])).rows[0];
+       `${f.title}${f.why ? `\n\nWhy: ${f.why}` : ""}`, `System review #${reviewId}`   /* which model reviewed stays on platform.reviews: a card's name is read by the company (Phase 2) */, reviewId])).rows[0];
     await q(
       `INSERT INTO platform.proposals (feedback_id, body, class, target_file, rationale, model, status) VALUES ($1,$2,$3,$4,$5,$6,'draft')`,
       [fb.id, f.proposal, f.class, f.target_file, `Priority ${f.priority}. ${f.why || ""}`.trim(), model]);

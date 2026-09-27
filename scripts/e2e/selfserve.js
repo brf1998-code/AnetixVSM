@@ -130,7 +130,7 @@ async function www(method, path, body, key = KEY) {
   const ev = await mgr.post(`/api/c/${SLUG}/me/enroll/verify`, { code: await codeFor(es.json.secret.replace(/\s/g, "")) });
   t("the right code enrolls and hands over ten recovery codes", ev.status === 200 && ev.json.recovery_codes && ev.json.recovery_codes.length === 10, ev.json);
   const board = await mgr.get(`/api/c/${SLUG}/board`);
-  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === 30 && board.json.credit.line === "300% left." && board.json.credit.percent === 300 && board.json.credit.level === "ok", board.json.credit);
+  t("enrolled, the manager reaches the board, which carries the credit line", board.status === 200 && board.json.role === "manager" && board.json.credit && board.json.credit.balance_usd === undefined && board.json.credit.percent === 300 && board.json.credit.line === "300% left." && board.json.credit.percent === 300 && board.json.credit.level === "ok", board.json.credit);
   // a second sign-in now needs the code
   const m2 = client();
   const need = await m2.post("/login", { name: MGRLOGIN, password: MGRPW });
@@ -169,10 +169,11 @@ async function www(method, path, body, key = KEY) {
   t("paperline added to the new company", add.status === 200, add.json);
   await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',28,'{}')", [SLUG]);
   const low = await mgr.get(`/api/c/${SLUG}/board`);
-  t("$28 spent: $2 left, 20% of the $10 unit, amber", low.json.credit.balance_usd === 2 && low.json.credit.percent === 20 && low.json.credit.level === "amber", low.json.credit);
+  const adminBoard = async () => (await admin.get(`/api/c/${SLUG}/board`)).json;   // the dollars are Anetix's (src/companyview.js); the manager reads the percent
+  t("$28 spent: $2 left, 20% of the $10 unit, amber", (await adminBoard()).credit.balance_usd === 2 && !("balance_usd" in low.json.credit) && low.json.credit.percent === 20 && low.json.credit.level === "amber", low.json.credit);
   await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',2,'{}')", [SLUG]);
   const out = await mgr.get(`/api/c/${SLUG}/board`);
-  t("$30 spent: out, red, the line says nothing runs", out.json.credit.balance_usd === 0 && out.json.credit.level === "red" && /used up/.test(out.json.credit.line) && out.json.credit.percent === 0 && !/\$/.test(out.json.credit.line), out.json.credit);
+  t("$30 spent: out, red, the line says nothing runs", out.json.credit.out === true && (await adminBoard()).credit.balance_usd === 0 && out.json.credit.level === "red" && /used up/.test(out.json.credit.line) && out.json.credit.percent === 0 && !/\$/.test(out.json.credit.line), out.json.credit);
   const fb = await floor.post("/api/feedback", { company: SLUG, module: "paperline", page: "/", message: "the timer should count down", name: "Sam" });
   t("feedback still lands", fb.status === 200 || fb.status === 201, fb.json);
   await sleep(1500);   // the proposer on arrival tries and is refused by the credit gate
@@ -192,7 +193,7 @@ async function www(method, path, body, key = KEY) {
   t("and so does the whole gate for it", await require("../../src/agent").assertUnderCap(SLUG, { started: true }).then(() => true, (e) => e.message));
   await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ($1,'paperline','test','x',1.5,'{}')", [SLUG]);
   const over = await mgr.get(`/api/c/${SLUG}/board`);
-  t("the build that ran past zero: 0% shown, never a negative", over.json.credit.balance_usd === -1.5 && over.json.credit.percent === 0 && over.json.credit.level === "red", over.json.credit);
+  t("the build that ran past zero: 0% shown, never a negative", (await adminBoard()).credit.balance_usd === -1.5 && over.json.credit.percent === 0 && over.json.credit.level === "red", over.json.credit);
 
   // ---- a top-up, idempotent; an admin grant
   const top = await www("POST", "/api/www/credit", { slug: SLUG, ref: "cs_test_topup_1", paid_usd: 20, credit_usd: 10 });
@@ -273,7 +274,7 @@ async function www(method, path, body, key = KEY) {
   const des = await dana.post(`/api/c/${DSLUG}/me/enroll/start`, {});
   t("the demo manager sets up the authenticator", (await dana.post(`/api/c/${DSLUG}/me/enroll/verify`, { code: await codeFor(des.json.secret.replace(/\s/g, "")) })).status === 200);
   const dboard = await dana.get(`/api/c/${DSLUG}/board`);
-  t("and reaches the board as its manager, the demo flag and $15 on it", dboard.status === 200 && dboard.json.role === "manager" && dboard.json.company.demo === true && dboard.json.credit.balance_usd === 15, dboard.json && { role: dboard.json.role, demo: dboard.json.company && dboard.json.company.demo });
+  t("and reaches the board as its manager, the demo flag and $15 on it", dboard.status === 200 && dboard.json.role === "manager" && dboard.json.company.demo === true && dboard.json.credit.percent === 150 && dboard.json.credit.balance_usd === undefined, dboard.json && { role: dboard.json.role, demo: dboard.json.company && dboard.json.company.demo });
   // the login page opens the account form for a demo (no company password to type), the password box for anyone else
   const mode = async (c) => (await client().get(`/login/mode?c=${encodeURIComponent(c)}`)).json.mode;
   t("the login page is told a demo signs in by account", await mode(DSLUG) === "account");

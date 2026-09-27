@@ -233,14 +233,16 @@ async function loadChats() {
   if (!r.ok) { MGR = false; document.getElementById("jonah").innerHTML = `<div class="head"><h2>Ask Jonah</h2></div><div class="locked">Jonah answers managers. Sign in with the manager password to ask what is going on and what to look for on the floor.</div>`; return; }
   const j = await r.json(); MGR = true; MODELS = j.models;
   const sel = document.getElementById("model");
-  if (!sel.options.length) sel.innerHTML = MODELS.map(m => `<option value="${m.id}" ${m.id === j.defaultModel ? "selected" : ""}>${esc(m.label)} ($${m.in}/$${m.out} per M)</option>`).join("");
-  document.getElementById("prev").innerHTML = j.chats.length ? "Earlier: " + j.chats.slice(0, 5).map(c => `<a onclick="openChat(${c.id})">${esc((c.title || "chat").slice(0, 32))} ($${Number(c.cost_usd).toFixed(2)})</a>`).join("") : "";
+  // the platform lends one AI choice and no prices (Anetix's rule: no model names or costs on a company's pages)
+  if (!sel.options.length) sel.innerHTML = MODELS.map(m => `<option value="${m.id}" ${m.id === j.defaultModel ? "selected" : ""}>${esc(m.label)}</option>`).join("");
+  sel.style.display = MODELS.length > 1 ? "" : "none";
+  document.getElementById("prev").innerHTML = j.chats.length ? "Earlier: " + j.chats.slice(0, 5).map(c => `<a onclick="openChat(${c.id})">${esc((c.title || "chat").slice(0, 32))}</a>`).join("") : "";
   renderChips();
 }
 function renderChips() { document.getElementById("chips").innerHTML = CHAT && CHAT.messages.length ? "" : SUGGESTED.map(s => `<button class="chip" onclick="askText(${JSON.stringify(s).replace(/"/g, "&quot;")})">${esc(s)}</button>`).join(""); }
 function renderMsgs() {
   const box = document.getElementById("msgs");
-  box.innerHTML = (CHAT ? CHAT.messages : []).map(m => `<div class="m ${m.role === "user" ? "user" : "jonah"}">${esc(m.content)}${m.role === "assistant" ? `<span class="cost">Jonah · ${esc(labelOf(m.model))} · $${Number(m.cost_usd || 0).toFixed(3)}</span>` : ""}</div>`).join("") + (BUSY ? `<div class="m jonah thinking">Jonah is reading the numbers…</div>` : "");
+  box.innerHTML = (CHAT ? CHAT.messages : []).map(m => `<div class="m ${m.role === "user" ? "user" : "jonah"}">${esc(m.content)}${m.role === "assistant" ? `<span class="cost">Jonah</span>` : ""}</div>`).join("") + (BUSY ? `<div class="m jonah thinking">Jonah is reading the numbers…</div>` : "");
   box.scrollTop = box.scrollHeight;
   renderChips();
 }

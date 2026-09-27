@@ -162,7 +162,7 @@ function catalogHtml(m, c, qq, columns, catalog) {
 }
 function draftsHtml(m, c) {
   const d = c.drafts; if (!d || !d.lookups || !d.lookups.length) return "";
-  return `<div class="q"><b>What IT needs to build</b> <span class="sub">drafted ${when(d.at)} by ${esc(d.model)}; nothing here touched the ERP. For Epicor, paste the SQL into BAQ Designer's SQL import (Kinetic 2024.2 and later) or build the BAQ from it by hand.</span>
+  return `<div class="q"><b>What IT needs to build</b> <span class="sub">drafted ${when(d.at)}${d.model ? ` by ${esc(d.model)}` : ""}; nothing here touched the ERP. For Epicor, paste the SQL into BAQ Designer's SQL import (Kinetic 2024.2 and later) or build the BAQ from it by hand.</span>
     ${d.lookups.map((l, i) => `<div style="margin-top:8px"><b>${esc(l.query)}</b>: call it <code>${esc(l.erp_object_name)}</code>. ${esc(l.purpose)}
       <pre class="note" id="dr-${m.module}-${c.name}-${i}">${esc(l.definition)}</pre>
       <button class="quiet" style="margin-top:4px" onclick="copyText('dr-${m.module}-${c.name}-${i}')">Copy</button> <button class="quiet" style="margin-top:4px" onclick="useDraft('${m.module}','${c.name}',${i})">Use its path and field map</button>

@@ -112,6 +112,7 @@ async function main() {
 
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
+  app.use(require("./src/companyview").middleware);   // what a manager or floor reads of /api/: no model names, no AI costs (src/companyview.js)
   app.use(people.attach);      // who is standing at this device, if anyone (a name and a PIN, src/people.js)
   app.use(connections.deviceCookie);   // a random device id per browser, so a print job goes back to the screen that asked
 
@@ -136,7 +137,7 @@ async function main() {
   app.get("/c/:slug", (req, res) => res.redirect(`/c/${req.params.slug}/`));
   app.get("/c/:slug/agents", auth.requireAdmin, (_req, res) => res.sendFile(page("agents.html")));   // Anetix's side of a company (the launch audit 1.18)
   app.get("/c/:slug/diagrams/:module", (_req, res) => res.sendFile(page("diagrams.html")));
-  app.get("/c/:slug/checks", auth.requireManager, (_req, res) => res.sendFile(page("checks.html")));
+  app.get("/c/:slug/checks", auth.requireAdmin, (_req, res) => res.sendFile(page("checks.html")));   // Anetix's: it names models and replays on them (Phase 2, 2026-09-27)
   app.get("/c/:slug/connections", auth.requireManager, (_req, res) => res.sendFile(page("connections.html")));
   app.get("/c/:slug/people", auth.requireManager, (_req, res) => res.sendFile(page("people.html")));
   app.get("/c/:slug/settings", auth.requireManager, (_req, res) => res.sendFile(page("settings.html")));

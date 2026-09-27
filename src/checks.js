@@ -1,3 +1,5 @@
+// Admin only since 2026-09-27 (the launch audit, Phase 2's first item): the log names the models, replays on them and
+// exports the diffs, which are Anetix's; no manager page ever linked here (the admin page's company card does).
 // The checks log (docs/CHECKS-CAMPAIGN.md): every build run with the verdict
 // the platform gave it, why it stopped when it stopped, and the manager's own
 // verdict on that verdict ("the reviewer was right" / "wrong"). The labeled set
@@ -12,7 +14,7 @@ const { execFileSync } = require("child_process");
 const { q } = require("./db");
 const registry = require("./registry");
 const agent = require("./agent");
-const { requireManager } = require("./auth");
+const { requireAdmin } = require("./auth");
 const { record, actor } = require("./record");
 
 // Why a run stopped, in one word the campaign can count on.
@@ -138,7 +140,7 @@ async function exportChecks(company, { onlyLabeled = false } = {}) {
 const router = express.Router();
 const json = express.json({ limit: "1mb" });
 
-router.get("/api/c/:slug/checks", requireManager, async (req, res) => {
+router.get("/api/c/:slug/checks", requireAdmin, async (req, res) => {
   try {
     const rows = await listChecks(req.params.slug);
     const counts = {};
@@ -148,7 +150,7 @@ router.get("/api/c/:slug/checks", requireManager, async (req, res) => {
     res.json({ runs: rows, counts, labeled: labeled.length, wrong: wrong.length, models: require("./agent").MODELS, labels: require("./agent").ALL_MODELS, review_model: await require("./agent").modelFor(req.params.slug, "review") });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id(\\d{1,9})/label", requireManager, json, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/label", requireAdmin, json, async (req, res) => {
   const { label, note } = req.body || {};
   if (!["right", "wrong", "unsure", ""].includes(String(label || ""))) return res.status(400).json({ error: "label must be right, wrong or unsure" });
   try {
@@ -161,11 +163,11 @@ router.post("/api/runs/:id(\\d{1,9})/label", requireManager, json, async (req, r
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post("/api/runs/:id(\\d{1,9})/replay", requireManager, json, async (req, res) => {
+router.post("/api/runs/:id(\\d{1,9})/replay", requireAdmin, json, async (req, res) => {
   try { res.json(await replayRun(Number(req.params.id), String((req.body || {}).model || ""))); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
-router.get("/api/c/:slug/checks/export", requireManager, async (req, res) => {
+router.get("/api/c/:slug/checks/export", requireAdmin, async (req, res) => {
   try {
     const data = await exportChecks(req.params.slug, { onlyLabeled: req.query.labeled === "1" });
     res.set("Content-Disposition", `attachment; filename="checks-${req.params.slug}-${new Date().toISOString().slice(0, 10)}.json"`).json(data);

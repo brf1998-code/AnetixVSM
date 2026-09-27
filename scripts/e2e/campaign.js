@@ -88,7 +88,7 @@ const PAGE = "/c/demo/m/paperline/";
   const f2 = await waitFor("the run to fail at the campaign", async () => { const x = await runOf(r2.id); return x.status === "failed" ? x : null; });
   t("the build fails at the campaign step with the failed cases on it", f2.step === "campaign" && f2.evidence.campaign.status === "failed" && f2.evidence.campaign.failed.length === 2 && /^test campaign failed/.test(lastErr(f2)), f2.evidence.campaign);
   t("a person's words travel with the failure", f2.evidence.campaign.failed.some((f) => f.kind === "guided" && /station count/.test(f.words) && f.by === "Brendan F"), f2.evidence.campaign.failed);
-  t("the checks log names it", rowsOf((await mgr.get("/api/c/demo/checks")).json.runs || (await mgr.get("/api/c/demo/checks")).json).find((r) => r.id === r2.id).reason === "test campaign failed");
+  t("the checks log names it", rowsOf((await admin.get("/api/c/demo/checks")).json.runs || (await admin.get("/api/c/demo/checks")).json).find((r) => r.id === r2.id).reason === "test campaign failed");
   t("without words, not right is refused", (await mgr.post(`/api/runs/${r2.id}/campaign/steps/${gc.id}/1`, { answer: "not_right" })).status === 409);
   const fx = await mgr.post(`/api/runs/${r2.id}/fix`);
   t("the findings go back to the agent", fx.status === 200);
@@ -118,7 +118,7 @@ const PAGE = "/c/demo/m/paperline/";
   await mgr.post(`/api/runs/${r4.id}/deploy`);
   await waitFor("r4 live", async () => (await runOf(r4.id)).status === "deployed");
   const d4 = await runOf(r4.id);
-  t("the shipped tile says it was deployed over a failed campaign, and the checks log too", d4.evidence.campaign.status === "waived" && /removed on purpose/.test(d4.evidence.campaign.waived.reason) && rowsOf((await mgr.get("/api/c/demo/checks")).json.runs || (await mgr.get("/api/c/demo/checks")).json).find((r) => r.id === r4.id).reason === "deployed over a failed test campaign");
+  t("the shipped tile says it was deployed over a failed campaign, and the checks log too", d4.evidence.campaign.status === "waived" && /removed on purpose/.test(d4.evidence.campaign.waived.reason) && rowsOf((await admin.get("/api/c/demo/checks")).json.runs || (await admin.get("/api/c/demo/checks")).json).find((r) => r.id === r4.id).reason === "deployed over a failed test campaign");
   t("waived is on the record", (await kinds("campaign_waived")).length === 1);
 
   // ---- skip, with a reason

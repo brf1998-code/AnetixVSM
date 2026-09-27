@@ -1798,9 +1798,35 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   back (never the amount). Fake agent marker `FAILBUILD` stops a build partway with $0.42 on it. Tests:
   `scripts/test-phase1.js` (18), `scripts/e2e/phase1.js`, `scripts/e2e/phase1-browser.js` (19, a phone at 390x844),
   `scripts/e2e/passkeys-browser.js` (44, the phone that turns on its screen lock and never sets up the app); board,
-  checks and campaign browser suites read the new words; www `test-www.js`, `e2e.js` (the restart wording). Still
-  open from the review: the intake and board APIs carry model and cost fields a manager's page never shows (the
-  JSON has them), and checks.html names models to managers.
+  checks and campaign browser suites read the new words; www `test-www.js`, `e2e.js` (the restart wording).
+- **Phase 2's first item: no model names and no AI costs in what a company reads** (2026-09-27, Brendan: "incorporate
+  the two model name leaks in the phase 2 build"). The pages never showed them; the JSON behind them did (the board's
+  runs, proposals, reviews, credit dollars, spend and cap figures, the new-tool popout, the record and its export, a
+  run on its own), and so did the checks log page and a tool's own AI (the Plant KPIs tool's Jonah printed "Opus 5.5 ·
+  $0.012" and a model picker with prices). `src/companyview.js` is one middleware, mounted right after
+  `auth.companyGuard`: every `/api/` answer to a manager or floor session goes through `scrub()`. A key that carries
+  an AI cost (`COST`: cost_usd, costUsd, sdk_cost_usd, estimate_usd, spend, maxRunUsd, maxBatchUsd, cap_usd,
+  monthly_cap_usd) is dropped; `refunded_usd` becomes `refunded: true`; a key that names a model (`MODEL`: model,
+  models, proposal_model, models_seen, review_model, arm, ab, model_propose/build/review) is dropped when what it holds
+  names one, so a tool's own "model" column (a machine's model) stays; the platform's own gate keeps its fact as
+  `cross_check.platform: true` (index.html reads it); a demo's credit becomes `{ percent, level, line, topup_url, out }`
+  (index.html reads `out`); a string naming a model (an id `claude-<family>-...` in any case, a label as written,
+  "Opus 5.5") says "the AI", and the cost cap and safety budget lines lose their figures. An admin, anetix.ai's key
+  (no session role), a tool's own routes (`/c/<slug>/m/...`), the connections routes (a spreadsheet's columns may be
+  called model or cost_usd) and a tool's files (`/api/c/<slug>/modules/<name>/export`) are never touched. The data
+  export scrubs its requests and record, never the tools' rows or the new-tool answers. The checks log (page and its
+  API: list, label, replay, export) is admin only, like the agent settings (1.18); a review's cost estimate is admin
+  only; a manager's `model` in approve, batch or review start is not read. A system review's cards are named "System
+  review #N" (the model stays on `platform.reviews`) and its brief no longer lists each run's model and cost. **What a
+  tool is lent for AI** (`registry.moduleServices` `ai`, and the spec `src/runner.js` hands a tool's process):
+  `models` is `LENT_MODELS` (one choice, `{ id: "standard", label: "Standard" }`), `modelFor()` answers "standard",
+  and `chat()` picks the model itself and answers `{ text, model: "standard", costUsd: 0 }`; the usage rows and the
+  record keep the real model and cost. The Plant KPIs page hides its picker when there is one choice and shows no cost.
+  Tests: `scripts/test-companyview.js` (17), `scripts/e2e/leaks.js` (makes proposals, a shipped build, a stopped one,
+  a review, a new-tool request, a log line naming a model and a cost cap; then calls every GET route that takes a
+  parameter, found by walking the routers, as a manager and as the floor, and reads each answer for a model's id or
+  label, a cost key, any `*_usd` but a price and any `$` figure; the admin's copy still has them; Jonah as a manager).
+  Still open: `/api/c/<slug>/modules/<name>/export` hands a manager a tool's code, while C9 says the tools are Anetix's.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the

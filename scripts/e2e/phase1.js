@@ -64,7 +64,7 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   await q("UPDATE platform.companies SET demo=true WHERE slug='demo'");
   const ss = require("../../src/selfserve");
   await ss.addCredit({ slug: "demo", credit_usd: 30, kind: "grant", note: "e2e", by: "e2e" });
-  const before = (await board(mgr)).credit;
+  const before = (await board(admin)).credit;   // the dollars: an admin's copy (src/companyview.js)
   t("the demo runs on credit", before && Math.abs(before.balance_usd - 30) < 0.01, before);
   const fid = (await floor.post("/api/feedback", { company: "demo", module: "paperline", page: PAGE, message: "count the scrapped sheets per shift FAILBUILD" })).json.id;
   const prop = await proposalFor(mgr, fid);
@@ -81,10 +81,13 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   t("it is on the list of stops, open", stops1.length === 1 && !stops1[0].addressed_at && stops1[0].step === "build" && Number(stops1[0].refunded_usd) === 0.42, stops1);
   const ledger = (await q("SELECT delta_usd, kind, note FROM platform.credit_ledger WHERE company='demo' AND kind='adjust' ORDER BY id")).rows;
   t("what it spent went back to the credit as an adjust row", ledger.length === 1 && Number(ledger[0].delta_usd) === 0.42 && new RegExp(`run #${runId}`).test(ledger[0].note), ledger);
-  const after1 = (await board(mgr)).credit;
+  const after1 = (await board(admin)).credit;
   t("so the demo's balance is where it was", Math.abs(after1.balance_usd - before.balance_usd) < 0.01, [before.balance_usd, after1.balance_usd]);
-  const r1 = (await board(mgr)).runs.find((r) => r.id === runId);
+  const r1 = (await board(admin)).runs.find((r) => r.id === runId);
   t("the run remembers what was handed back", Number(r1.evidence.refunded_usd) === 0.42, r1.evidence);
+  // the manager reads only that it was handed back (src/companyview.js, Phase 2's first item)
+  const m1 = (await board(mgr)).runs.find((r) => r.id === runId);
+  t("and the manager's copy says so without the figure", m1.evidence.refunded === true && m1.evidence.refunded_usd === undefined, m1.evidence);
   const alert1 = await waitFor("the phone alert", async () => { const a = await notified("A demo build stopped: Demo Company"); return a.length ? a : null; }, 5000).catch(() => []);
   t("Anetix's phones heard, with the dollars and without the error line", alert1.length === 1 && /\$0\.42 handed back/.test(alert1[0].message) && !/FAILBUILD/.test(alert1[0].message), alert1);
   // the same run stops again: only what it spent since goes back
@@ -106,9 +109,9 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   await mgr.post(`/api/runs/${runId}/cancel`, {});
 
   // ---- 1.17: Anetix's model trials never come off a demo's credit ---------------------------------------------------
-  const b0 = (await board(mgr)).credit.balance_usd;
+  const b0 = (await board(admin)).credit.balance_usd;
   await q("INSERT INTO platform.ai_usage (company, module, kind, model, cost_usd, detail) VALUES ('demo', 'paperline', 'assess', 'e2e', 5, '{}')");
-  t("a trial's spend under the demo leaves its credit alone", Math.abs((await board(mgr)).credit.balance_usd - b0) < 0.01);
+  t("a trial's spend under the demo leaves its credit alone", Math.abs((await board(admin)).credit.balance_usd - b0) < 0.01);
   t("and its own budget", (await require("../../src/agent").monthlySpend("demo")).usd < 5);
 
   // ---- 1.19: a demo's diagrams are drawn when asked -------------------------------------------------------------------

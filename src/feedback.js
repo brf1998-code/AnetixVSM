@@ -276,7 +276,7 @@ router.post("/api/c/:slug/batch/:id(\\d{1,9})/build", requireManager, freshPin, 
   try {
     if (await waitingOnData(ids)) return res.status(409).json({ error: "One of these changes is waiting on data from your ERP connection. Take it out of the batch, or build the batch once it is back." });
     await q("UPDATE platform.proposals SET status='approved' WHERE id = ANY($1::int[]) AND status='draft'", [ids]);
-    const run = await pipeline.startRun(ids, { model: (req.body || {}).model });
+    const run = await pipeline.startRun(ids, { model: req.sosRole === "admin" ? (req.body || {}).model : undefined });   // the build model is Anetix's (1.18)
     for (const it of items) await record("proposal_approved", { company: req.params.slug, module: b.module, actor: actor(req), feedback_id: it.id, proposal_id: it.proposal_id, run_id: run.id, detail: { batch: b.id, model: (req.body || {}).model || null } });
     await q("UPDATE platform.batches SET run_id=$2 WHERE id=$1", [b.id, run.id]);
     await q("UPDATE platform.feedback SET batch_id=NULL, updated_at=now() WHERE batch_id=$1 AND status <> 'in_progress'", [b.id]);
@@ -447,7 +447,8 @@ async function waitingOnData(proposalIds) {
 
 // Manager decision on a proposal (approve/decline, with optional edits)
 router.post("/api/proposals/:id(\\d{1,9})/decide", requireManager, freshPin, async (req, res) => {
-  const { decision, note, editedBody, editedClass, editedTarget, model } = req.body || {};
+  const { decision, note, editedBody, editedClass, editedTarget } = req.body || {};
+  const model = req.sosRole === "admin" ? (req.body || {}).model : undefined;   // the build model is Anetix's to pick (1.18)
   try {
     // the proposal as it stands, before anything the manager typed lands on it
     const was = (await q("SELECT p.*, f.company, f.module FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE p.id=$1", [req.params.id])).rows[0];
@@ -490,7 +491,7 @@ router.post("/api/runs/batch", requireManager, freshPin, async (req, res) => {
     if (owners.some((c) => !auth.ownsCompany(req, c))) return res.status(403).json({ error: "this login is for another company" });
     if (await waitingOnData(ids)) return res.status(409).json({ error: "One of these changes is waiting on data from your ERP connection. Build the others, or wait until it is back." });
     await q("UPDATE platform.proposals SET status='approved' WHERE id = ANY($1::int[]) AND status='draft'", [ids]);
-    const run = await pipeline.startRun(ids, { model: (req.body || {}).model });
+    const run = await pipeline.startRun(ids, { model: req.sosRole === "admin" ? (req.body || {}).model : undefined });   // the build model is Anetix's (1.18)
     for (const p of (await q("SELECT p.id, p.feedback_id, f.company, f.module FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE p.id = ANY($1::int[])", [ids])).rows)
       await record("proposal_approved", { company: p.company, module: p.module, actor: actor(req), feedback_id: p.feedback_id, proposal_id: p.id, run_id: run.id, detail: { batch: true, model: (req.body || {}).model || null } });
     res.json({ ok: true, run });
@@ -559,13 +560,15 @@ router.get("/api/runs/:id(\\d{1,9})", async (req, res) => {
 });
 
 // ---- system review: re-baseline a whole module (manager) --------------------
-router.get("/api/c/:slug/reviews/estimate", requireManager, async (req, res) => {
+router.get("/api/c/:slug/reviews/estimate", requireAdmin, async (req, res) => {   // dollars and a model: Anetix's
   try { res.json(await review.estimate(req.params.slug, String(req.query.module), agent.inTier(req.query.model) ? req.query.model : await agent.modelFor(req.params.slug, "design"))); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.post("/api/c/:slug/reviews", requireManager, async (req, res) => {
-  await record("review_started", { company: req.params.slug, module: (req.body || {}).module || null, actor: actor(req), detail: { model: (req.body || {}).model || null } });
-  const { module: mod, model, requested_by } = req.body || {};
+  // which model reviews is Anetix's to pick (the launch audit 1.18): a manager's pick is not read
+  const model = req.sosRole === "admin" ? (req.body || {}).model : undefined;
+  await record("review_started", { company: req.params.slug, module: (req.body || {}).module || null, actor: actor(req), detail: { model: model || null } });
+  const { module: mod, requested_by } = req.body || {};
   try { res.json(await review.startReview(req.params.slug, mod, agent.inTier(model) ? model : await agent.modelFor(req.params.slug, "design"), requested_by)); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });

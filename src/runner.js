@@ -274,7 +274,7 @@ async function load({ company, lane, mod, version, schema, dir, manifest }) {
   const { peerSchemas, peers } = await peersOf(company, lane, rec);
   if ((lane === "live" || lane === dbroles.TEST) && !peers.includes(mod)) peers.push(mod);
   const connections = {}; for (const [n, c] of Object.entries((manifest && manifest.connections) || {})) if (c && c.kind) connections[n] = c.kind;
-  const spec = { mod, version, dir, entry: (manifest && manifest.entry) || "routes.js", schema: String(schema).toLowerCase(), manifest, connections, peerSchemas, peers, models: agent.MODELS };
+  const spec = { mod, version, dir, entry: (manifest && manifest.entry) || "routes.js", schema: String(schema).toLowerCase(), manifest, connections, peerSchemas, peers, models: registry.LENT_MODELS };
   try { await send(rec, { op: "load", spec }); }
   catch (e) {
     if (e.timeout) { kill(rec); throw new Error(`routes.js did not finish loading within ${Math.round(LOAD_TIMEOUT_MS / 1000)} seconds`); }

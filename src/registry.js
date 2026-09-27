@@ -21,6 +21,8 @@
 // Deploy/rollback = repoint live_version and remount. Git is not involved at
 // runtime; version directories are immutable once created.
 const fs = require("fs");
+// the one AI choice a tool is lent (moduleServices: ai; src/runner.js hands it to a tool's process); never a model's name
+const LENT_MODELS = [{ id: "standard", label: "Standard" }];
 const path = require("path");
 const crypto = require("crypto");
 const express = require("express");
@@ -233,21 +235,24 @@ function moduleServices(company, mod, manifest, version, lane = "live") {
       const files = row && row.live_version ? await versionFiles(company, mod, row.live_version) : null;
       return files && files[name] ? files[name] : "";
     },
+    // What a tool is lent for AI (Phase 2, 2026-09-27): no model names and no costs, because a tool's page is read by
+    // the company (CLAUDE.md). One opaque choice, the platform picks the model, and an answer comes back with that
+    // choice and a cost of 0; the record and the usage rows keep the real ones for Anetix.
     ai: {
-      models: agent.MODELS,
-      modelFor: (role) => agent.modelFor(company, role),
-      async chat({ model, system, messages, maxTokens, kind, detail }) {
+      models: LENT_MODELS,
+      modelFor: async () => LENT_MODELS[0].id,
+      async chat({ system, messages, maxTokens, kind, detail }) {
         // walled off from the data (src/datawall.js): a persona reads the company's rows by design, so it does not run
         if (await require("./datawall").isWalled(company)) throw Object.assign(new Error("AI reading of the company's data is switched off for this company, so this helper cannot answer. Anetix can switch it on."), { status: 409 });
         await agent.assertUnderCap(company, { runtime: true });   // a live tool's own AI: never stopped at a paying site's fair-use line (src/selfserve.js)
-        const m = model && agent.MODELS.some((x) => x.id === model) ? model : await agent.modelFor(company, "propose");
+        const m = await agent.modelFor(company, "propose");
         const out = await agent.runChat({ model: m, company, system, messages, maxTokens });
         await agent.recordUsage(company, mod, kind || "chat", m, out.costUsd, onTest ? { ...(detail || {}), lane: "test" } : detail);
         const asked = [...(messages || [])].reverse().find((x) => x && x.role === "user");
         const rec = require("./record").record;
         await rec("chat_question", { company, module: mod, actor: "person", after: asked ? String(asked.content) : null, detail: { persona: kind || "chat", ...(onTest ? { lane: "test" } : {}) } });
         await rec("chat_answer", { company, module: mod, actor: "agent", after: out.text, detail: { persona: kind || "chat", model: m, cost_usd: out.costUsd || 0, ...(onTest ? { lane: "test" } : {}) } });
-        return { ...out, model: m };
+        return { text: out.text, model: LENT_MODELS[0].id, costUsd: 0 };
       },
     },
   };
@@ -778,6 +783,7 @@ function attach(app) {
 }
 
 module.exports = {
+  LENT_MODELS,
   locationOk, lockDown,
   MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,

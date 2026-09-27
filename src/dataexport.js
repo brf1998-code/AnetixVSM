@@ -142,7 +142,10 @@ router.get("/api/c/:slug/export", auth.requireManager, async (req, res) => {
   if (exporting.has(slug)) return res.status(429).json({ error: "An export of this company is being made already. Try again in a minute." });
   exporting.add(slug);
   try {
-    const doc = await exportCompany(req.params.slug);
+    let doc = await exportCompany(req.params.slug);
+    // the platform's words in it (a request's name, a question, the record) name no model for a manager (src/companyview.js);
+    // the tools' own rows and the new-tool answers are the company's words, as they keep them, and are never touched
+    if (req.sosRole !== "admin") { const { scrub } = require("./companyview"); for (const k of ["requests", "record"]) if (doc[k]) doc = { ...doc, [k]: scrub(doc[k]) }; }
     await logEvent("data_exported", doc.company.slug, { by: req.sosAccount ? req.sosAccount.login : req.sosRole, tools: doc.tools.length, requests: doc.requests.length });
     res.set({ "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="anetix-${doc.company.slug}-data-${doc.exported_at.slice(0, 10)}.json"` });
     res.type("application/json").send(JSON.stringify(doc, null, 1));

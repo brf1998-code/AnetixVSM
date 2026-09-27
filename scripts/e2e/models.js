@@ -18,7 +18,7 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   const PAGE = "/c/demo/m/paperline/";
   const file = async (message) => (await floor.post("/api/feedback", { company: "demo", module: "paperline", page: PAGE, message })).json;
   const models = async () => (await admin.get("/api/admin/models")).json;
-  const runOf = async (id) => (await mgr.get(`/api/runs/${id}`)).json;
+  const runOf = async (id) => (await admin.get(`/api/runs/${id}`)).json;   // which model ran is Anetix's to read (src/companyview.js)
 
   // ---- the tier, the defaults, the retired variables
   let m = await models();
@@ -32,7 +32,8 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   t("the manager's Settings route has the company's switches and tools and names no model", sv.company && sv.company.slug === "demo" && Array.isArray(sv.modules) && !/claude|fable|opus|sonnet|haiku|principles/i.test(JSON.stringify(sv)), sv);
   const ag = (await admin.get("/api/c/demo/agents")).json.models;
   t("the company's agent settings offer the two, pin nothing, and follow Fable", ag.list.length === 2 && Object.values(ag.pins).every((x) => x === null) && ag.propose === F && ag.defaults.build === F, ag);
-  t("the checks page replays on the review model by default", (await mgr.get("/api/c/demo/checks")).json.review_model === F);
+  t("the checks page replays on the review model by default", (await admin.get("/api/c/demo/checks")).json.review_model === F);
+  t("the checks log is Anetix's: a manager gets 403 (Phase 2)", (await mgr.get("/api/c/demo/checks")).status === 403 && (await mgr.get("/api/c/demo/checks/export")).status === 403);
   t("the short text jobs run on Sonnet 5, and the page offers Sonnet 5, Haiku 4.5 and the two", m.settings.summary === "claude-sonnet-5" && m.summary_choices.map((x) => x.id).join() === `claude-sonnet-5,claude-haiku-4-5-20251001,${F},${O}`, m.summary_choices);
   t("but not a retired model", (await admin.post("/api/admin/models", { summary: "claude-opus-5" })).status === 400);
 
@@ -50,18 +51,18 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   // ---- the baseline moves every job; a job of its own moves one
   t("the baseline can be moved to Opus 5.5", (await admin.post("/api/admin/models", { baseline: O })).json.defaults.propose === O);
   const f1 = await file("make the station name text bigger");
-  const p1 = await proposalFor(mgr, f1.id);
+  const p1 = await proposalFor(admin, f1.id);
   t("a new request is proposed on the new baseline", p1.model === O, p1);
   await admin.post("/api/admin/models", { jobs: { propose: F } });
   m = await models();
   t("a job of its own: propose on Fable, the rest on the baseline", m.defaults.propose === F && m.defaults.build === O && m.settings.jobs.propose === F, m.defaults);
   const f2 = await file("show the order label in bold text");
-  t("and the next proposal follows it", (await proposalFor(mgr, f2.id)).model === F);
+  t("and the next proposal follows it", (await proposalFor(admin, f2.id)).model === F);
   await admin.post("/api/admin/models", { baseline: F, jobs: { propose: null } });
   m = await models();
   t("back to Fable everywhere, nothing of its own", m.settings.baseline === F && !Object.keys(m.settings.jobs).length && Object.values(m.defaults).every((x) => x === F), m.settings);
   const rv = (await mgr.post("/api/c/demo/reviews", { module: "paperline" })).json;
-  t("a system review runs on the design job's model", rv.model === F, rv);
+  t("a system review runs on the design job's model, and the manager's answer does not say which", ((await admin.get("/api/c/demo/reviews")).json.find((x) => x.id === rv.id) || {}).model === F && rv.id && rv.model === undefined, rv);
   await waitFor("the system review", async () => ((await mgr.get("/api/c/demo/reviews")).json.find((x) => x.id === rv.id) || {}).status !== "running");
 
   // ---- the live A/B
@@ -70,11 +71,11 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   t("the A/B starts with its jobs and a start time", on.settings.ab.on && on.settings.ab.jobs.join() === "propose,build,design" && on.settings.ab.since);
   const ids = [];
   for (const w of ["make the legend text darker", "show the shift clock bigger", "make the station colors brighter", "display the takt time larger"]) ids.push((await file(w)).id);
-  const props = []; for (const id of ids) props.push(await proposalFor(mgr, id));
+  const props = []; for (const id of ids) props.push(await proposalFor(admin, id));
   const onF = props.filter((p) => p.model === F).length, onO = props.filter((p) => p.model === O).length;
   t("four new requests split two and two between the models", onF === 2 && onO === 2, props.map((p) => p.model));
   const s1 = await ship(mgr, [ids[0]]);
-  const summarized = async (runId) => ((await mgr.get(`/api/c/demo/record?kind=build_summarized&run_id=${runId}`)).json.rows || [])[0];
+  const summarized = async (runId) => ((await admin.get(`/api/c/demo/record?kind=build_summarized&run_id=${runId}`)).json.rows || [])[0];
   t("a build's plain summary is written on the short text model, and the record says which", ((await summarized(s1.runId)) || {}).detail?.model === "claude-sonnet-5", await summarized(s1.runId));
   await admin.post("/api/admin/models", { summary: O });
   const s2 = await ship(mgr, [ids[1]]);
@@ -84,7 +85,7 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   t("two builds, one on each arm, and the arm is kept on the run", r1.model !== r2.model && r1.evidence.ab.arm === r1.model && r2.evidence.ab.arm === r2.model, [r1.model, r2.model]);
   // a functionality change: its requirement and its review run on the build's arm
   const fx = (await file("count scrap per shift and keep it")).id;
-  const px = await proposalFor(mgr, fx);
+  const px = await proposalFor(admin, fx);
   const dx = (await mgr.post(`/api/proposals/${px.id}/decide`, { decision: "approve" })).json;
   const rxId = (dx.run || dx).id;
   await waitFor("the requirement", async () => { const x = await runOf(rxId); return x.step === "confirm_requirement" && x.status === "waiting"; });
@@ -101,6 +102,7 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   await admin.post("/api/admin/models/unpin", { slug: "demo" });
   // a new module on the A/B
   const it = (await mgr.post("/api/c/demo/intakes", {})).json;
+  it.model = (await admin.get(`/api/intakes/${it.id}`)).json.model;
   t("a new module's intake is given an arm", [F, O].includes(it.model), it.model);
   m = await models();
   const split = m.ab.split;
@@ -110,12 +112,12 @@ const F = "claude-fable-5-1", O = "claude-opus-5-5";
   t("and the new module on its arm", split[it.model].intakes.started === 1, split[it.model].intakes);
   const off = (await admin.post("/api/admin/models/ab", { on: false })).json;
   t("the A/B stops and keeps when it ran", off.settings.ab.on === false && off.settings.ab.since === on.settings.ab.since && off.settings.ab.ended);
-  const after = await proposalFor(mgr, (await file("make the header text larger")).id);
+  const after = await proposalFor(admin, (await file("make the header text larger")).id);
   t("after the A/B, new work is back on the baseline", after.model === F, after.model);
   t("the numbers of the test that ran stay on the page", (await models()).ab.split[F].builds.started + (await models()).ab.split[O].builds.started === 3);
 
   // ---- material for the head-to-head: a labeled run and a module design
-  t("label the functionality run Right", (await mgr.post(`/api/runs/${rxId}/label`, { label: "right", note: "the check was right" })).status === 200);
+  t("label the functionality run Right", (await admin.post(`/api/runs/${rxId}/label`, { label: "right", note: "the check was right" })).status === 200);
   const answerFor = (qn) => ({ text: qn.id === "name" ? "Tool crib" : "Check text for the intake", choice: { picks: [((qn.options || [])[0] || {}).id].filter(Boolean), other: "" }, roles: { floor: "6" }, devices: { floor: ["phone"] }, order: ["waiting", "checked out", "back on the shelf"], items: ["tools go missing"], attach: { note: "" } }[qn.kind]);
   let view = (await mgr.get(`/api/intakes/${it.id}`)).json;
   for (let guard = 0; guard < 6 && ["answering", "thinking"].includes(view.status); guard++) {
