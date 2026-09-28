@@ -633,15 +633,29 @@ async function recordUsage(company, moduleName, kind, model, costUsd, detail) {
 }
 
 // Month-to-date AI spend (runs + proposals), optionally per company.
+// AI spend, one formula everywhere (the launch audit 2.2, 2026-09-27: the header, the company list and card and loop
+// health each summed a different set of sources, and the list and card left out new-tool design, sample data and
+// diagrams). The six places a cost is filed: builds, proposals, system reviews, brand guides, ai_usage (every other
+// kind) and diagrams. A company's figure leaves out the model trials (ai_usage kind assess, Anetix's own since 1.17);
+// the instance's total carries everything on the key.
+const SPEND_SOURCES = `
+  SELECT company, cost_usd AS usd, created_at AS at, NULL::text AS kind FROM platform.build_runs
+  UNION ALL SELECT f.company, p.cost_usd, p.created_at, NULL FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id
+  UNION ALL SELECT company, cost_usd, created_at, NULL FROM platform.reviews
+  UNION ALL SELECT slug, (brand->>'cost_usd')::numeric, (brand->>'built_at')::timestamptz, NULL FROM platform.companies WHERE brand IS NOT NULL AND brand->>'built_at' IS NOT NULL
+  UNION ALL SELECT company, cost_usd, created_at, kind FROM platform.ai_usage
+  UNION ALL SELECT company, cost_usd, created_at, NULL FROM platform.diagrams`;
+// -> { by: { slug: usd }, total } since `since` (a Date or ISO string; null = this calendar month)
+async function spendSince(since = null) {
+  const rows = (await q(`SELECT company, SUM(usd) FILTER (WHERE kind IS DISTINCT FROM 'assess')::numeric AS usd, SUM(usd)::numeric AS all_usd
+                           FROM (${SPEND_SOURCES}) s WHERE at >= COALESCE($1::timestamptz, date_trunc('month', now())) GROUP BY company`, [since])).rows;
+  const by = {}; let total = 0;
+  for (const r of rows) { if (r.company) by[r.company] = Number(r.usd || 0); total += Number(r.all_usd || 0); }
+  return { by, total };
+}
 async function monthlySpend(company) {
-  const r = (await q(`
-    SELECT COALESCE((SELECT SUM(cost_usd) FROM platform.build_runs WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0)
-         + COALESCE((SELECT SUM(p.cost_usd) FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id
-                      WHERE p.created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR f.company=$1)),0)
-         + COALESCE((SELECT SUM(cost_usd) FROM platform.reviews WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0)
-         + COALESCE((SELECT SUM((brand->>'cost_usd')::numeric) FROM platform.companies WHERE brand IS NOT NULL AND (brand->>'built_at')::timestamptz >= date_trunc('month', now()) AND ($1::text IS NULL OR slug=$1)),0)
-         + COALESCE((SELECT SUM(cost_usd) FROM platform.ai_usage WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR (company=$1 AND kind IS DISTINCT FROM 'assess'))),0)
-         + COALESCE((SELECT SUM(cost_usd) FROM platform.diagrams WHERE created_at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)),0) AS usd`, [company || null])).rows[0];
+  const r = (await q(`SELECT COALESCE(SUM(usd) FILTER (WHERE $1::text IS NULL OR (company=$1 AND kind IS DISTINCT FROM 'assess')), 0) AS usd
+                        FROM (${SPEND_SOURCES}) s WHERE at >= date_trunc('month', now()) AND ($1::text IS NULL OR company=$1)`, [company || null])).rows[0];
   const usd = Number(r.usd || 0);
   // For one company the cap that counts is its own (set on the admin page);
   // the instance-wide cap is only shown when the company has none.
@@ -707,5 +721,5 @@ module.exports = {
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
   SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,
-  initMeter, meter, costOf, RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, assertUnderCap, companyCap, AGENT_EFFORT, CAP_WORDS,
+  initMeter, meter, costOf, RETIRED_ENV, retiredEnvSet, MAX_RUN_USD, MAX_BATCH_USD, runCapUsd, MONTHLY_CAP_USD, monthlySpend, spendSince, assertUnderCap, companyCap, AGENT_EFFORT, CAP_WORDS,
 };

@@ -26,6 +26,7 @@ const R = runner(), t = R.t;
   t("off: the settings page has no test floor card", !(await st.locator("#tf-card").isVisible()));
   const a = await ctxA.newPage(); watch(a, "admin"); a.on("dialog", (d) => d.accept());
   await a.goto(BASE + "/admin#companies/demo"); await a.waitForSelector("#companies .card");
+  await a.click("#companies .card details.comore > summary");   // the test floor sits behind the card's More since 2026-09-28 (the launch audit 2.4)
   const secOff = a.locator("#companies .card .sec", { hasText: "Test floor" });
   t("off: the admin card carries the switch and says off", (await secOff.count()) === 1 && /Off\./.test(await secOff.innerText()) && (await secOff.locator("button", { hasText: "Switch on" }).count()) === 1, await secOff.innerText());
 

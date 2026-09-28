@@ -167,7 +167,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFklEQVR
   await ad.fill("#cr-bal", "80"); await ad.locator("#mcard button", { hasText: "Save" }).click();
   await ad.waitForFunction(() => /About \$80\.00 left/.test(document.getElementById("credit-line").textContent), null, { timeout: 8000 });
   t("the admin enters the balance and reads the projection", /AI credit/.test(line0) && /About \$80\.00 left/.test(await ad.locator("#credit-line").innerText()));
-  t("the header pill carries the balance on every tab", /\$80\.00 left/.test(await ad.locator("#pill-credit").innerText()));
+  t("with the balance fine the header has no pill for it (a pill only when something wants a look, the launch audit 2.5)", (await ad.locator("#pill-credit").count()) === 0);
   await ad.click('#shell nav a[data-tab="health"]'); await ad.waitForSelector("#h-table tr td");
   t("loop health carries what the proposer did on arrival", /proposed on arrival/.test(await ad.locator("#h-table").innerText()));
 

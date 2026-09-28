@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anetix · Admin</title>
-<link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/anetix-touch-180.png"><link rel="manifest" href="/manifest.webmanifest"><meta name="apple-mobile-web-app-title" content="Anetix">
 <link rel="stylesheet" href="/assets/admin-shell.css">
 <style>
-  /* The admin page: seven tabs, one job each (Pins since 2026-09-25: who may come in from anetix.ai, and the companies that did) (the header and the tab row are /assets/admin-shell.*).
+  /* The admin page: one job a tab (the header and the tab row are /assets/admin-shell.*). Demos first and by default
+     since 2026-09-28 (the launch audit 2.3): every company that came in from anetix.ai, who is stuck, what happened
+     lately. Library and Models sit behind More (2.4).
      Health: is the loop turning, and what is waiting on us. Companies: one company open at a time.
      Library: every separate module, then the instances of it. Models: which of the two models is the
      baseline, the head-to-head assessment and the live A/B (/assets/admin-models.js). Accounts: Anetix's
@@ -36,6 +38,8 @@
   #co-list a.on { border-color:var(--navy); box-shadow:inset 3px 0 0 var(--navy); }
   #co-list a.add { background:transparent; border-style:dashed; color:var(--navy); font-weight:700; text-align:center; }
   #co-list a.add.on { background:#fff; }
+  #co-list a.quietadd { border:none; font-weight:600; font-size:12px; color:var(--steel); text-align:left; padding:4px 11px; }
+  details.comore { margin-top:12px; } details.comore > summary { font-weight:700; }
   .cohead { display:flex; align-items:flex-start; gap:10px; flex-wrap:wrap; } .cohead h2 { font-size:19px; flex:1; min-width:200px; }
   .secs { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:10px; margin-top:12px; }
   .sec { border:1px solid var(--line); border-radius:9px; padding:11px 12px; font-size:13px; line-height:1.5; min-width:0; }
@@ -148,7 +152,6 @@
         <button class="primary" onclick="makePin()" style="margin:0">Make the pin</button>
       </div></div>
     <div class="card"><h2>Pins <small id="pins-sub"></small></h2><div id="pins-list" class="hwrap"></div></div>
-    <div class="card"><h2>Self-serve companies <small id="ss-sub"></small></h2><div id="ss-list" class="hwrap"></div></div>
     <div class="card"><h2>Pins refused <small id="rf-sub"></small></h2><p class="sub">Every pin anetix.ai turned away in the last 30 days, with what the person was told. The same pin and email within ten minutes is one line. Kept 90 days.</p><div id="rf-list" class="hwrap"></div></div>
   </section>
 
@@ -232,7 +235,7 @@
     </div>
     <div class="card">
       <h2>Backup and restore</h2>
-      <p class="sub" style="margin-top:4px">The backup is one JSON file with every platform table (companies, module versions and their files, feedback, runs, docs, reviews, diagrams) and every company's live module data, plus the admin accounts (passwords and recovery codes as hashes, authenticator secrets encrypted). The sign-in log is left out. Take one before every demo. Restore replaces everything on the instance with the file and restarts the platform; it asks for a fresh code from your authenticator, and every admin signs in again afterwards.</p>
+      <p class="sub" style="margin-top:4px">The backup is one JSON file with every platform table (companies, module versions and their files, feedback, runs, docs, reviews, diagrams) and every company's live module data, plus the admin accounts (passwords and recovery codes as hashes, authenticator secrets encrypted). The sign-in log is left out. Railway keeps daily backups of the database too; take one of these before a restore or a big change. Restore replaces everything on the instance with the file and restarts the platform; it asks for a fresh code from your authenticator, and every admin signs in again afterwards.</p>
       <a href="/api/admin/backup" download><button class="go">Download backup</button></a>
       <button class="quiet" onclick="openRestore()">Restore from a backup file</button>
       <span class="sub" id="backup-note"></span>
@@ -253,21 +256,19 @@ const P = {};
 function drawPills() {
   const lv = (x) => (x === "unknown" ? "" : x);
   AdminShell.setPills([
-    P.credit && { id: "credit", label: "AI credit", value: P.credit.value, level: lv(P.credit.level), href: "#instance", title: P.credit.title },
-    P.spend && { id: "spend", label: "AI spend", value: P.spend.value, level: P.spend.level, href: "#instance", title: "This month, every company, against the instance cap" },
+    P.credit && { id: "credit", label: "Anthropic key", value: P.credit.value, level: lv(P.credit.level), href: "#instance", title: P.credit.title },
     P.data && { id: "data", label: "Waiting on us", value: P.data.value, level: P.data.level, href: "#health", title: "Data requests: changes that need ERP data the connection does not give yet" },
     P.requests && { id: "requests", label: "Requests", value: P.requests.value, level: P.requests.level, href: "#requests", title: "Requests to Anetix: feedback about the software itself, from every board" },
     P.demoreq && P.demoreq.open && { id: "demoreq", label: "Demo requests", value: `${P.demoreq.open} new`, level: "amber", href: "#pins", title: "People who asked for a demo on anetix.ai and have not had an answer yet" },
-    P.pins && { id: "pins", label: "Self-serve", value: P.pins.value, level: P.pins.level, href: "#pins", title: "Companies that came in from anetix.ai with a pin, and whether any is out of AI credit" },
+    P.pins && { id: "pins", label: "Out of credit", value: P.pins.value, level: P.pins.level, href: "#demos", title: "Demos with no AI credit left that nobody has marked seen (Seen, clear it on the Demos tab)" },
     P.isolation && { id: "isolation", label: "Isolation", value: P.isolation.value, level: P.isolation.level, href: "#instance", title: "Whether module code runs in a process of its own with a database login of its own" },
     P.edge && { id: "edge", label: "Edge", value: P.edge.value, level: P.edge.level, href: "#instance", title: "Whether a request that did not come through Cloudflare is refused" },
     P.signin && { id: "signin", label: "Sign-in", value: P.signin.value, level: P.signin.level, href: "#accounts", title: P.signin.title },
-    P.models && { id: "models", label: "Models", value: P.models.value, level: P.models.level, href: "#models", title: P.models.title },
-  ]);
+  ].filter((p) => p && (p.level === "amber" || p.level === "red")));   // a pill only when something wants a look (the launch audit 2.5)
   const worst = (...xs) => (xs.some((x) => x && x.level === "red") ? "red" : xs.some((x) => x && x.level === "amber") ? "amber" : null);
   AdminShell.setBadge("health", { level: worst(P.data) });
   AdminShell.setBadge("requests", { n: P.requests ? P.requests.open : undefined, level: worst(P.requests) });
-  AdminShell.setBadge("pins", P.demoreq && P.demoreq.open ? { n: P.demoreq.open, level: "amber" } : { n: P.pins ? P.pins.live : undefined, level: worst(P.pins) });
+  AdminShell.setBadge("pins", P.demoreq && P.demoreq.open ? { n: P.demoreq.open, level: "amber" } : { n: P.pins ? P.pins.live : undefined, level: null });
   AdminShell.setBadge("accounts", { level: worst(P.signin) });
   AdminShell.setBadge("models", { level: worst(P.models) });
   AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null) });
@@ -376,11 +377,11 @@ async function loadCredit() {
   const c = await r.json(), el = document.getElementById("credit");
   const color = { red: "var(--red)", amber: "#c2620a", ok: "var(--green)", unknown: "var(--steel)" }[c.level] || "var(--steel)";
   const out = c.outage ? `<div style="color:var(--red);font-weight:700">The AI service refused a call at ${new Date(c.outage.at).toLocaleString()} (${c.outage.kind === "key" ? "the key was not accepted" : "no credit left"}${c.outage.where ? `, during ${esc(c.outage.where)}` : ""}) and nothing has worked since. No proposal or build will run until it is fixed.</div>` : "";
-  P.credit = { level: c.level, title: c.line, value: c.outage ? "refused, nothing runs" : !c.known ? "balance not entered" : `$${Number(c.balance_usd).toFixed(2)} left${c.days_left != null ? `, ${c.days_left} day${c.days_left === 1 ? "" : "s"}` : ""}${c.anchor && c.anchor.autofill ? " (autofill)" : ""}` };
+  P.credit = { level: c.level, title: c.line, value: c.outage ? "refused, nothing runs" : !c.known ? "balance not entered" : `$${Number(c.balance_usd).toFixed(2)} left${c.days_left != null ? `, ${c.days_left} day${c.days_left === 1 ? "" : "s"}` : ""}${c.anchor && c.anchor.autofill ? " (auto reload)" : ""}` };
   drawPills();
   el.style.borderLeft = `4px solid ${color}`;
   el.innerHTML = out + `<b style="color:${color}">AI credit</b> · <span id="credit-line">${esc(c.line)}</span>`
-    + (c.known ? ` <small style="color:var(--steel)">By the platform's own count since ${new Date(c.anchor.noted_at).toLocaleDateString()} ($${c.anchor.balance_usd.toFixed(2)} then, $${c.spent_since.toFixed(2)} spent since)${c.anchor.autofill ? " · autofill is on" : ""}. Anything else spending on the same key is not seen here.</small>` : ` <small style="color:var(--steel)">Burning $${Number(c.burn_per_day).toFixed(2)} a day over the last ${c.burn_days} day${c.burn_days === 1 ? "" : "s"}.</small>`)
+    + (c.known ? ` <small style="color:var(--steel)">By the platform's own count since ${new Date(c.anchor.noted_at).toLocaleDateString()} ($${c.anchor.balance_usd.toFixed(2)} then, $${c.spent_since.toFixed(2)} spent since)${c.anchor.autofill ? " · auto reload is on" : ""}. Anything else spending on the same key is not seen here.</small>` : ` <small style="color:var(--steel)">Burning $${Number(c.burn_per_day).toFixed(2)} a day over the last ${c.burn_days} day${c.burn_days === 1 ? "" : "s"}.</small>`)
     + ` <a href="#" onclick="creditForm();return false" style="white-space:nowrap">${c.known ? "update the balance" : "enter the balance"}</a>`
     + slopeSvg(c);
 }
@@ -406,7 +407,7 @@ function slopeSvg(c) {
 function creditForm() {
   openModal(`<h2>AI credit balance</h2><p class="sub">Read it off the Anthropic console (Plans and billing) and type it here. The platform subtracts what it spends from now on and projects the day it runs out.</p>
     <input id="cr-bal" type="number" min="0" step="0.01" placeholder="Balance in dollars, as of now">
-    <label style="display:block;margin-top:10px;font-size:13px"><input id="cr-auto" type="checkbox" style="width:auto"> Autofill is set up on the key (a low balance is then not an alarm)</label>
+    <label style="display:block;margin-top:10px;font-size:13px"><input id="cr-auto" type="checkbox" style="width:auto"> Auto reload is on for the key in the Anthropic console (a low balance is then not an alarm)</label>
     <input id="cr-note" placeholder="Note (optional)">
     <div style="margin-top:12px"><button class="primary" onclick="creditSave()">Save</button><button onclick="closeModal()">Cancel</button></div>`);
 }
@@ -543,22 +544,16 @@ async function loadPins() {
   // low credit is the demo's own business and lights nothing here; out of credit lights red until it is marked seen
   // (Brendan, 2026-09-27: "do not notify me if people are low on credits ... I should be able to clear or acknowledge")
   const live = PINS.pins.filter(p => !p.problem).length, out = PINS.companies.filter(c => c.balance_usd <= 0 && !c.seen).length;
-  P.pins = { live, value: `${PINS.companies.length} compan${PINS.companies.length === 1 ? "y" : "ies"}${out ? `, ${out} out of credit` : ""}, ${live} live pin${live === 1 ? "" : "s"}`, level: out ? "red" : "ok" };
+  P.pins = { live, value: `${out} demo${out === 1 ? "" : "s"}`, level: out ? "red" : "ok" };
   drawPills();
   document.getElementById("pins-sub").textContent = PINS.pins.length ? `${live} live of ${PINS.pins.length}` : "none yet";
-  document.getElementById("ss-sub").textContent = PINS.companies.length ? `${PINS.companies.length}${out ? `, ${out} out of credit` : ""}` : "none yet";
   const state = (p) => p.problem ? `<span class="sub">${esc(p.problem)}</span>` : '<span class="ok">live</span>';
   document.getElementById("pins-list").innerHTML = PINS.pins.length ? `<table class="list"><tr><th>Pin</th><th>For</th><th>Email</th><th>Used</th><th>Expires</th><th>Made</th><th>Companies</th><th></th></tr>${PINS.pins.map(p => `<tr data-pin="${p.id}">
     <td><b style="font-family:ui-monospace,monospace;font-size:14px">${esc(p.shown)}</b></td><td>${esc(p.label)}</td><td>${p.email ? esc(p.email) : '<span class="sub">any</span>'}</td><td>${p.uses} of ${p.max_uses}</td>
     <td>${p.expires_at ? new Date(p.expires_at).toLocaleDateString() : "never"}</td><td><small>${esc(p.created_by || "")} ${day(p.created_at)}</small></td>
-    <td>${p.companies ? p.companies.split(", ").map(c => `<a href="#companies/${esc(c)}">${esc(c)}</a>`).join(", ") : '<span class="sub">none yet</span>'}</td>
+    <td>${p.companies ? p.companies.split(", ").map(c => `<a href="#demos/${esc(c)}">${esc(c)}</a>`).join(", ") : '<span class="sub">none yet</span>'}</td>
     <td style="white-space:nowrap">${state(p)}${!p.problem ? ` <button class="danger" onclick="revokePin(${p.id})">Cancel</button>` : ""}</td></tr>`).join("")}</table>`
     : '<p class="sub">No pins yet. Make one above and send it to the person with the address of anetix.ai.</p>';
-  document.getElementById("ss-list").innerHTML = PINS.companies.length ? `<table class="list"><tr><th>Company</th><th>Contact</th><th>Since</th><th>Bought</th><th>Used</th><th>Left</th><th></th></tr>${PINS.companies.map(c => `<tr data-ss="${esc(c.slug)}">
-    <td><a href="#companies/${esc(c.slug)}"><b>${esc(c.name)}</b></a> <small class="sub">/c/${esc(c.slug)}/</small></td><td>${esc(c.contact || "")}${c.email ? `<br><small>${esc(c.email)}</small>` : ""}</td><td>${day(c.since)}</td>
-    <td>$${c.credit_usd.toFixed(2)}</td><td>$${c.spent_usd.toFixed(2)}</td><td class="${c.level === "red" ? "fail" : c.level === "amber" ? "warn" : "ok"}" style="font-weight:700">$${c.balance_usd.toFixed(2)}</td>
-    <td style="white-space:nowrap">${c.balance_usd <= 0 && !c.seen ? `<button class="quiet" onclick="creditSeen('${esc(c.slug)}')" title="Clears the red light until they refill and run out again">Seen, clear it</button> ` : ""}<button class="quiet" onclick="grantCredit('${esc(c.slug)}')">Grant credit</button> <a href="/c/${esc(c.slug)}/" class="sub">board</a></td></tr>`).join("")}</table>`
-    : '<p class="sub">Nobody has come in from anetix.ai yet.</p>';
   // refused pins (the launch audit 0.3): what each person was told, so a stuck pin holder can be helped
   const RF = PINS.refusals || [], WHERE = { pin: "the pin box", home: "coming back to the pin page", check: "before a checkout" };
   const recent = RF.filter(x => Date.now() - new Date(x.last_at) < 7 * 86400e3 && x.reason !== "unknown").length;
@@ -575,10 +570,12 @@ async function makePin() {
   const j = await post("/api/admin/pins", { label, email, max_uses: document.getElementById("pin-uses").value, days: document.getElementById("pin-days").value });
   if (!j.ok) return;
   document.getElementById("pin-label").value = ""; document.getElementById("pin-email").value = "";
-  openModal(`<h2>A pin for ${esc(label)}</h2><p class="sub">Send them the pin with this link, which opens straight to the pin box: <b>${esc((PINS ? PINS.www_url : "https://anetix.ai").replace(/\/+$/, ""))}/pin</b>. They enter it with <b>${esc(j.pin.email || email)}</b>, set up their sign-in, and their demo is made on the spot.</p>
-    <p style="font-size:30px;letter-spacing:.08em;font-family:ui-monospace,monospace;text-align:center;margin:14px 0"><b id="pin-shown">${esc(j.pin.shown)}</b></p>
-    <p class="sub">${j.pin.max_uses} compan${j.pin.max_uses === 1 ? "y" : "ies"} · ${j.pin.expires_at ? "expires " + new Date(j.pin.expires_at).toLocaleDateString() : "never expires"}. It stays readable on the Pins tab.</p>
-    <div><button class="go" onclick="closeModal()">Done</button></div>`);
+  const mailto = `mailto:${encodeURIComponent(j.pin.email || email)}?subject=${encodeURIComponent(j.subject || "Your Anetix demo pin")}&body=${encodeURIComponent(j.message || "")}`;
+  openModal(`<h2>A pin for ${esc(label)}</h2>
+    <p style="font-size:30px;letter-spacing:.08em;font-family:ui-monospace,monospace;text-align:center;margin:10px 0"><b id="pin-shown">${esc(j.pin.shown)}</b></p>
+    <p class="sub">${j.pin.max_uses} compan${j.pin.max_uses === 1 ? "y" : "ies"} · ${j.pin.expires_at ? "expires " + new Date(j.pin.expires_at).toLocaleDateString() : "never expires"}. Send them this; the pin stays readable on the Pins tab.</p>
+    <textarea id="drp-msg" rows="10" style="width:100%;font-size:13px">${esc(j.message || "")}</textarea>
+    <div><button class="primary" onclick="drCopy()">Copy the message</button><a class="quiet" href="${esc(mailto)}" style="display:inline-block;padding:8px 12px">Open in email</a><button class="go" onclick="closeModal()">Done</button></div>`);
   loadPins();
 }
 // ---- demo requests from the form on anetix.ai (src/demorequests.js) ----
@@ -613,7 +610,7 @@ function drCard(d) {
       ${line("Good times", esc(d.call_times))}${line("Size", d.size ? esc(d.size) + " people" : "")}${line("Makes", esc(d.makes))}
       ${line("Would like", d.goal ? esc(d.goal).replace(/\n/g, "<br>") : "")}
       ${line("Heard from", d.heard ? esc(d.heard) + (d.heard_more ? `: ${esc(d.heard_more)}` : "") : esc(d.heard_more))}
-      ${line("Pin", pin)}${line("Company", d.companies ? d.companies.split(", ").map(c => `<a href="#companies/${esc(c)}">${esc(c)}</a>`).join(", ") : "")}
+      ${line("Pin", pin)}${line("Company", d.companies ? d.companies.split(", ").map(c => `<a href="#demos/${esc(c)}">${esc(c)}</a>`).join(", ") : "")}
       ${line("Note", d.note ? esc(d.note) : "")}
     </div>
     <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
@@ -671,9 +668,9 @@ async function revokePin(id) {
   if (!confirm("Cancel this pin? It stops working at once. A company it already made stays.")) return;
   await post(`/api/admin/pins/${id}/revoke`, {}); loadPins();
 }
-async function creditSeen(slug) { const j = await post(`/api/admin/companies/${encodeURIComponent(slug)}/credit/seen`, {}); if (j && j.ok) loadPins(); }
+async function creditSeen(slug) { const j = await post(`/api/admin/companies/${encodeURIComponent(slug)}/credit/seen`, {}); if (j && j.ok) { loadPins(); if (window.AdminDemos) AdminDemos.refresh(); } }
 function grantCredit(slug) {
-  const c = (PINS && PINS.companies.find(x => x.slug === slug)) || (D && D.companies.find(x => x.slug === slug)) || { name: slug };
+  const c = (PINS && PINS.companies.find(x => x.slug === slug)) || (D && D.companies.find(x => x.slug === slug)) || (window.AdminDemos && AdminDemos.company(slug)) || { name: slug };
   const cr = c.credit || (c.balance_usd != null ? c : null);
   openModal(`<h2>Grant AI credit to ${esc(c.name)}</h2><p class="sub">${cr ? `They have $${cr.balance_usd.toFixed(2)} left of $${cr.credit_usd.toFixed(2)}. ` : "This company is not self-serve yet; a grant makes it one, and its AI spend counts against the credit from now on. "}Free, from us: a negative amount takes credit back.</p>
     <input id="gc-usd" type="number" step="1" placeholder="dollars" autocomplete="off"><input id="gc-note" placeholder="why (optional), e.g. pilot allowance" autocomplete="off">
@@ -683,7 +680,7 @@ function grantCredit(slug) {
 async function grantCreditSend(slug) {
   const usd = Number(document.getElementById("gc-usd").value); if (!usd) return;
   const j = await post(`/api/admin/companies/${slug}/credit`, { usd, note: document.getElementById("gc-note").value });
-  if (j.ok) { closeModal(); loadPins(); load(); }
+  if (j.ok) { closeModal(); loadPins(); load(); if (window.AdminDemos) AdminDemos.refresh(); }
 }
 async function load() {
   if (!(await loadMe())) return;
@@ -705,8 +702,6 @@ async function load() {
   const pick = document.getElementById("c-model"), had = pick.value;
   pick.innerHTML = D.models.map(m => `<option value="${m.id}" ${m.id === (had || D.defaults.design) ? "selected" : ""}>guide by ${m.label} ($${m.in}/$${m.out} per M tokens)</option>`).join("");
   drawInstance(); drawLibrary(); drawCompanies();
-  const ms = D.modelSettings;
-  P.models = { value: `${ml(ms.baseline)} baseline${ms.ab.on ? " · A/B running" : ""}`, level: "", title: "Which of the two models every job runs on by default, and whether the live A/B is splitting new work" };
   drawPills();
   if (D.companies.some(c => c.brand && c.brand.status === "building")) setTimeout(load, 5000);
 }
@@ -716,8 +711,7 @@ const day = (t) => t ? new Date(t).toLocaleDateString() : "";
 // ---- Instance tab: spend against the cap, and the models a new company starts on
 function drawInstance() {
   const cap = D.monthlyCap, over = cap && D.totalSpend >= cap, near = cap && D.totalSpend >= 0.8 * cap;
-  P.spend = { value: `$${D.totalSpend.toFixed(2)}${cap ? ` of $${cap.toFixed(2)}` : ""} this month`, level: over ? "red" : near ? "amber" : "ok" };
-  drawPills();
+  P.spend = { value: `$${D.totalSpend.toFixed(2)}${cap ? ` of $${cap.toFixed(2)}` : ""} this month`, level: over ? "red" : near ? "amber" : "ok" };   // the Instance tab's dot only, no pill (2.5)
   document.getElementById("top").innerHTML = `<b>This month:</b> $${D.totalSpend.toFixed(2)} across ${D.companies.length} compan${D.companies.length === 1 ? "y" : "ies"}${cap ? `, of a $${cap.toFixed(2)} cap for the whole instance (SOS_MONTHLY_CAP_USD). At the cap, no proposal or build runs anywhere.` : " (no instance-wide cap)."}<br>
     <b>Models:</b> baseline ${esc(ml(D.modelSettings.baseline))}; propose ${esc(ml(D.defaults.propose))}, build ${esc(ml(D.defaults.build))}, review ${esc(ml(D.defaults.review))}, design ${esc(ml(D.defaults.design))}, short text ${esc(ml(D.modelSettings.summary))}${D.modelSettings.ab.on ? ", live A/B on" : ""} <span class="sub">(set on the <a href="#models">Models</a> tab; a company's pins are on its agent settings page; its own budget is on the company, under AI budget and models)</span>
     <table class="list" style="margin-top:8px"><tr><th>Company</th><th>This month</th><th>Its own cap</th></tr>${D.companies.map(c => `<tr><td><a href="#companies/${c.slug}">${esc(c.name)}</a></td><td>$${c.spend_usd.toFixed(2)}</td><td>${c.monthly_cap_usd ? "$" + Number(c.monthly_cap_usd).toFixed(2) : '<span class="sub">none</span>'}</td></tr>`).join("")}</table>`;
@@ -761,9 +755,16 @@ function openSlug() {
   return (D.companies.find(c => c.slug === want) || D.companies.find(c => c.slug === LAST_CO) || D.companies[0]).slug;
 }
 let LAST_CO = null;
+const CO_MORE = new Set();   // the company cards whose More is open, kept across a redraw
+function coMore(slug, open) { if (open) CO_MORE.add(slug); else CO_MORE.delete(slug); }
+// the launch audit 2.1 (2026-09-28): a demo's only way in is its manager's account, so no floor password is how it
+// should be, not a red flag; red is kept for what is wrong: a company still on the old shared passwords, or one with
+// no way in at all
 function coFlag(c) {
-  const a = c.access || {};
-  if (a.legacy_login || !(a.own_floor && (a.own_manager || (c.managers || []).length))) return '<span class="fail">sign-in needs setting</span>';
+  const a = c.access || {}, accounts = (c.managers || []).length;
+  if (a.legacy_login) return '<span class="fail">still on the shared passwords</span>';
+  if (!accounts && !(a.own_floor && a.own_manager)) return '<span class="fail">sign-in needs setting</span>';
+  if (accounts && !c.demo && !a.own_floor) return '<span class="warn">no floor password yet</span>';
   if (c.brand && c.brand.status === "building") return '<span class="warn">brand guide building</span>';
   return "";
 }
@@ -773,7 +774,7 @@ function drawCompanies() {
   AdminShell.setBadge("companies", { n: D.companies.length });
   document.getElementById("co-list").innerHTML = D.companies.map(c => `<a href="#companies/${c.slug}" class="${c.slug === open ? "on" : ""}"><b>${esc(c.name)}</b>
     <small>${c.feedback.open} open · ${c.modules.length} module${c.modules.length === 1 ? "" : "s"} · $${c.spend_usd.toFixed(2)} this month${coFlag(c) ? "<br>" + coFlag(c) : ""}</small></a>`).join("")
-    + `<a href="#companies/new" class="add ${open === "new" ? "on" : ""}">+ Add a company</a>`;
+    + `<a href="#companies/new" class="add quietadd ${open === "new" ? "on" : ""}" title="Companies come in from anetix.ai with a pin; this makes one by hand">Add a company by hand</a>`;
   document.getElementById("add-card").style.display = open === "new" ? "" : "none";
   const c = D.companies.find(x => x.slug === open);
   document.getElementById("companies").innerHTML = c ? companyCard(c) : "";
@@ -796,19 +797,25 @@ function companyCard(c) {
         ${c.modules.length ? `<table class="list"><tr><th>Module</th><th>On the floor</th><th></th></tr>${c.modules.map(m => `<tr><td><b>${esc(m.title)}</b> <small class="sub">(${esc(m.name)})</small></td>
           <td>${m.live_version ? `v${m.live_version}` : '<span class="warn">not live yet</span>'}${m.staged_version ? ` <small class="sub">v${m.staged_version} staged</small>` : ""}</td>
           <td style="white-space:nowrap">${m.live_version ? `<a href="/c/${c.slug}/m/${m.name}/">Open</a>${hasTour(m.name) ? ` <a class="tourlink" style="margin-left:6px" href="/c/${c.slug}/m/${m.name}/?tour=1">Start tour</a>` : ""}` : ""}</td></tr>`).join("")}</table>` : '<div class="sub">None yet.</div>'}
-        <div style="margin-top:8px"><select id="lib-${c.slug}">${addable.map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
-          <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
-          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; the agent designs it">New module</button></div></div>
-      <div class="sec"><h3>Sign-in</h3>${accessText(c)}<br><button class="quiet" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button>
+      </div>
+      <div class="sec"><h3>Sign-in</h3>${accessText(c)}${c.demo ? "" : `<br><button class="quiet" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button>`}
         <div class="sub" style="margin-top:6px">Names and PINs for the people on the floor are on its <a href="/c/${c.slug}/people">People</a> page.</div></div>
+      <div class="sec"><h3>AI credit</h3>${c.credit ? `<b class="${c.credit.level === "red" ? "fail" : c.credit.level === "amber" ? "warn" : "ok"}">$${c.credit.balance_usd.toFixed(2)} left</b> of $${c.credit.credit_usd.toFixed(2)} bought or granted, $${c.credit.spent_usd.toFixed(2)} used since ${day(c.credit.since)}.${c.credit.balance_usd <= 0 ? " <b class=\"fail\">Nothing runs for them until credit is added.</b>" : ""}${c.credit.contact || c.credit.email ? `<br><small class="sub">${esc(c.credit.contact || "")}${c.credit.email ? ` · ${esc(c.credit.email)}` : ""}</small>` : ""}<br><small class="sub">They add credit at <a href="${esc(c.credit.topup_url)}" target="_blank" rel="noopener">${esc(c.credit.topup_url)}</a>; the ledger is on the <a href="#demos/${esc(c.slug)}">Demos</a> tab.</small>` : `<span class="sub">Not self-serve: this company was made here, not from anetix.ai, and runs on its budget. A grant makes it self-serve, with its AI spend counted against the credit from then on.</span>`}<br>
+        <button class="quiet" onclick="grantCredit('${c.slug}')">Grant credit</button></div>
+    </div>
+    <details class="comore" data-more="${esc(c.slug)}" ${CO_MORE.has(c.slug) ? "open" : ""} ontoggle="coMore('${esc(c.slug)}', this.open)"><summary>More: add a tool, AI budget and models, test floor, what the AI reads, brand</summary>
+    <div class="secs">
+      <div class="sec wide"><h3>Add a tool</h3><select id="lib-${c.slug}">${addable.map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
+          <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
+          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; the agent designs it">New module</button></div>
       <div class="sec"><h3>AI budget and models</h3>${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "No budget of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}<br>
         <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="width:150px;margin-top:6px"> <button class="quiet" onclick="setCap('${c.slug}')">Save</button>
         <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(${(c.models.pinned || []).length ? `pinned here: ${c.models.pinned.join(", ")}; ` : "all on the platform's models; "}change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
-      <div class="sec"><h3>AI credit</h3>${c.credit ? `<b class="${c.credit.level === "red" ? "fail" : c.credit.level === "amber" ? "warn" : "ok"}">$${c.credit.balance_usd.toFixed(2)} left</b> of $${c.credit.credit_usd.toFixed(2)} bought or granted, $${c.credit.spent_usd.toFixed(2)} used since ${day(c.credit.since)}.${c.credit.balance_usd <= 0 ? " <b class=\"fail\">Nothing runs for them until credit is added.</b>" : ""}${c.credit.contact || c.credit.email ? `<br><small class="sub">${esc(c.credit.contact || "")}${c.credit.email ? ` · ${esc(c.credit.email)}` : ""}</small>` : ""}<br><small class="sub">They add credit at <a href="${esc(c.credit.topup_url)}" target="_blank" rel="noopener">${esc(c.credit.topup_url)}</a>; the ledger is on the <a href="#pins">Pins</a> tab.</small>` : `<span class="sub">Not self-serve: this company was made here, not from anetix.ai, and runs on its budget. A grant makes it self-serve, with its AI spend counted against the credit from then on.</span>`}<br>
-        <button class="quiet" onclick="grantCredit('${c.slug}')">Grant credit</button></div>
       <div class="sec"><h3>Test floor</h3>${testFloorHtml(c)}</div>
       <div class="sec"><h3>What the AI reads</h3>${dataWallHtml(c)}</div>
       <div class="sec wide"><h3>Brand</h3>${brandHtml(c)}</div>
+    </div></details>
+    <div class="secs">
       <div class="sec"><h3>Agent docs</h3>${c.docs.length ? `<details><summary>${c.docs.length} doc${c.docs.length === 1 ? "" : "s"} the agents read</summary><ul>` + c.docs.map(d => `<li>${esc(d.name)} <span class="sub">(${d.module ? "module " + esc(d.module) : "company-wide"}, ${d.bytes} bytes, ${d.source === "repo" ? "seeded" : "edited"})</span></li>`).join("") + `</ul></details>` : "None."}
         <div class="sub" style="margin-top:6px">Read and edit them on <a href="/c/${c.slug}/agents">agent settings and docs</a>.</div></div>
       <div class="sec dz"><h3>Danger zone</h3>Everything this company owns goes, with no undo apart from a backup file. Asks for the slug and a fresh code.<br>
@@ -888,7 +895,7 @@ function accessText(c) {
   const a = c.access || {};
   if (a.legacy_login) return '<span class="fail">still on the shared floor and manager passwords from before 2026-09-19. Anyone holding those can sign in here.</span>';
   // a self-serve company: the floor's shared password, and for the manager an account with an authenticator app (never a shared manager password)
-  if ((c.managers || []).length) return `${a.own_floor ? "its own floor password" : '<span class="fail">no floor password yet (the floor cannot sign in)</span>'}; manager sign-in is by account:<br>` + c.managers.map(m => `<b>${esc(m.login)}</b> <small class="sub">(${esc(m.name || "")}${m.status !== "active" ? ", switched off" : ""}; ${m.enrolled ? "authenticator set up" : '<span class="warn">authenticator not set up yet: set up at their first sign-in</span>'}${m.last_sign_in ? `; last sign-in ${new Date(m.last_sign_in).toLocaleDateString()}` : "; never signed in"})</small> <button class="quiet" style="margin:2px 0;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-password','${esc(m.login)}')">New password</button>${m.enrolled ? `<button class="quiet" style="margin:2px 0 2px 4px;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-factor','${esc(m.login)}')">Reset authenticator</button>` : ""}`).join("<br>");
+  if ((c.managers || []).length) return `${a.own_floor ? "its own floor password" : c.demo ? "a demo: no floor password (the floor gets its own when the site goes live)" : '<span class="warn">no floor password yet (the floor cannot sign in)</span>'}; manager sign-in is by account:<br>` + c.managers.map(m => `<b>${esc(m.login)}</b> <small class="sub">(${esc(m.name || "")}${m.status !== "active" ? ", switched off" : ""}; ${m.enrolled ? "authenticator set up" : '<span class="warn">authenticator not set up yet: set up at their first sign-in</span>'}${m.last_sign_in ? `; last sign-in ${new Date(m.last_sign_in).toLocaleDateString()}` : "; never signed in"})</small> <button class="quiet" style="margin:2px 0;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-password','${esc(m.login)}')">New password</button>${m.enrolled ? `<button class="quiet" style="margin:2px 0 2px 4px;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-factor','${esc(m.login)}')">Reset authenticator</button>` : ""}`).join("<br>");
   if (a.own_floor && a.own_manager) return "its own floor and manager passwords" + (a.updated_at ? ", set " + new Date(a.updated_at).toLocaleDateString() : "");
   return `<span class="fail">${a.own_floor ? "no manager password yet (only an admin can manage it)" : a.own_manager ? "no floor password yet (the floor cannot sign in)" : "no passwords yet"}</span>`;
 }
@@ -1056,7 +1063,7 @@ async function loadAccounts() {
   if (!A.key_pinned) notes.push(`<div class="note bad"><b>SOS_CONNECTION_KEY is not set.</b> Authenticator secrets are encrypted under it, and setup is refused until it exists (without it they would hang off SESSION_SECRET, and rotating that would lock every admin out). Add it in Railway: any long random string, never changed afterwards.</div>`);
   if (ME.shared_password) notes.push(`<div class="note amber"><b>You are signed in with the shared admin password.</b> Add an account for yourself below, sign out, sign in with it ("Anetix staff sign in" on the login page) and set up the authenticator. The moment one account has a working authenticator the shared password stops opening admin, and SOS_ADMIN_PASSWORD can leave Railway.</div>`);
   else if (A.shared_password_open) notes.push(`<div class="note amber">The shared admin password still opens admin, because no account has a working authenticator yet.</div>`);
-  else notes.push(`<div class="note good">The shared admin password no longer opens admin. If SOS_ADMIN_PASSWORD is still a Railway variable, it can go.</div>`);
+  else notes.push(`<div class="note good">The shared admin password no longer opens admin.</div>`);
   document.getElementById("acc-notes").innerHTML = notes.join("");
   P.signin = ME.two_fa_off ? { value: "2FA is OFF", level: "red", title: "SOS_ADMIN_2FA=off: accounts sign in with a password alone" }
     : !A.key_pinned ? { value: "SOS_CONNECTION_KEY not set", level: "red", title: "Authenticator setup is refused until it exists" }
@@ -1185,7 +1192,7 @@ async function enrollVerify(inCard) {
 }
 AdminShell.mount({
   title: "Admin",
-  tabs: [{ id: "health", label: "Health" }, { id: "requests", label: "Requests" }, { id: "pins", label: "Pins" }, { id: "demos", label: "Demos" }, { id: "sites", label: "Sites" }, { id: "companies", label: "Companies" }, { id: "library", label: "Library" }, { id: "models", label: "Models" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }],
+  tabs: [{ id: "demos", label: "Demos" }, { id: "pins", label: "Pins" }, { id: "sites", label: "Sites" }, { id: "requests", label: "Requests" }, { id: "health", label: "Health" }, { id: "companies", label: "Companies" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }, { id: "library", label: "Library", more: true }, { id: "models", label: "Models", more: true }],
   onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); if (id === "demos" && window.AdminDemos) AdminDemos.show(rest); if (id === "sites" && window.AdminSites) AdminSites.show(rest); window.scrollTo(0, 0); },
 });
 load();

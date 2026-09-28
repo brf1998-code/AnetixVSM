@@ -136,9 +136,11 @@ async function answer(id, qid, value) {
     const name = String(value || "").trim().slice(0, 80);
     const slug = slugify(name) || (name ? `module-${it.id}` : "");
     if (slug && (await slugTaken(it.company, slug, it.id, name))) throw new Error(`"${name}" is already the name of a tool here. Pick another.`);
-    fields.name = name || null; fields.slug = slug || null;
+    // its tables may not land on another company's (the launch audit 2.14): the address steps to -2 when they would
+    const free = slug ? await require("./migrate").freeToolSlug(it.company, slug, (s) => slugTaken(it.company, s, it.id, null)) : "";
+    fields.name = name || null; fields.slug = free || null;
     answers.name = name;
-    await setFeedback(it, { message: name ? `New tool: ${name}` : "New tool", module: slug || null });
+    await setFeedback(it, { message: name ? `New tool: ${name}` : "New tool", module: free || null });
   } else {
     answers[qid] = value;
   }

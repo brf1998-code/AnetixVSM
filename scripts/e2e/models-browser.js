@@ -19,12 +19,15 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   p.on("dialog", (d) => d.accept());
   await p.goto(BASE + "/admin#models");
   await p.waitForSelector("#am-baseline");
+  // the head-to-head and the live A/B wait behind More since 2026-09-28 (the launch audit 2.4)
+  t("the head-to-head and the live A/B are folded behind More", !(await p.locator("#am-more").evaluate((d) => d.open)) && /More: the head-to-head/.test(await p.locator("#am-more > summary").innerText()));
+  await p.click("#am-more > summary");
   const text = await p.locator("#models-root").innerText();
   t("the Models tab shows the baseline, the head-to-head and the live A/B", /Baseline/.test(text) && /Head-to-head/.test(text) && /Live A\/B/.test(text), text.slice(0, 400));
   t("the baseline reads Fable 5.1", (await p.locator("#am-baseline .big").innerText()).trim() === "Fable 5.1");
   t("the retired variable is named on the page", /SOS_MODEL_PROPOSE/.test(text));
   t("the short text jobs show their own model, Sonnet 5", /Short text jobs/i.test(text) && (await p.locator("#am-summary").inputValue()) === "claude-sonnet-5");
-  t("the tab row has Models, and the pill says the baseline", (await p.locator('#shell nav a[data-tab="models"]').count()) === 1 && /Fable 5\.1 baseline/.test(await p.locator("#pill-models").innerText()));
+  t("the tab row has Models (behind More, open while it is the tab in view), and no pill for the baseline", (await p.locator('#shell nav a[data-tab="models"]').count()) === 1 && (await p.locator("#pill-models").count()) === 0);
   await p.waitForSelector("#am-assess");
   const card = await p.locator("#am-assess").innerText();
   t("the newest head-to-head is open, with its status", new RegExp(`Head-to-head #${newest}`).test(card) && /stopped/.test(card), card.slice(0, 300));
@@ -68,10 +71,15 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   await p.waitForFunction(() => document.querySelector("#am-baseline .big").innerText.trim() === "Fable 5.1");
 
   // the short text model from the page, and back
+  // the launch audit 2.13: the tab draws itself again after a save; the second choice waits for that, or it is made on the
+  // old page and the redraw puts the first one back before Save is pressed
+  const oldSummary = await p.$("#am-summary");
   await p.selectOption("#am-summary", "claude-haiku-4-5-20251001"); await p.click('#am-baseline button:has-text("Save") >> nth=0');
   await waitFor("the short text model", async () => (await admin.get("/api/admin/models")).json.settings.summary === "claude-haiku-4-5-20251001");
   t("the short text model moves from the page", true);
-  await p.waitForSelector("#am-summary"); await p.selectOption("#am-summary", "claude-sonnet-5"); await p.click('#am-baseline button:has-text("Save") >> nth=0');
+  await p.waitForFunction((el) => !el.isConnected, oldSummary, { timeout: 15000 });
+  await p.waitForFunction(() => (document.querySelector("#am-summary") || {}).value === "claude-haiku-4-5-20251001");
+  await p.selectOption("#am-summary", "claude-sonnet-5"); await p.click('#am-baseline button:has-text("Save") >> nth=0');
   await waitFor("back to Sonnet 5", async () => (await admin.get("/api/admin/models")).json.settings.summary === "claude-sonnet-5");
 
   // the A/B switch from the page
@@ -85,7 +93,7 @@ const SHOTS = process.env.SOS_E2E_SHOTS || "";
   // phone width: no sideways scroll on the page itself
   const ph = await browser.newContext({ viewport: { width: 390, height: 844 } }); await ph.addCookies(admin.cookies());
   const pp = await ph.newPage(); watch(pp, "phone");
-  await pp.goto(BASE + "/admin#models"); await pp.waitForSelector("#am-assess");
+  await pp.goto(BASE + "/admin#models"); await pp.waitForSelector("#am-more > summary"); await pp.click("#am-more > summary"); await pp.waitForSelector("#am-assess");
   const wide = await pp.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   t("the Models tab fits a phone (tables scroll inside their own box)", wide <= 1, wide);
   if (SHOTS) await pp.screenshot({ path: `${SHOTS}/models-phone.png`, fullPage: true });

@@ -75,6 +75,14 @@ async function main() {
   });
 
   app.use("/assets", express.static(path.join(__dirname, "public", "assets")));
+  // the Anetix mark for a tab and a phone's home screen (2026-09-27): /favicon.ico, which a browser asks for on its own,
+  // /apple-touch-icon.png, which iOS asks for when a page names none, and the manifest Android reads; public like /assets
+  const ICON = (f, type) => (_req, res) => res.set("Cache-Control", "public, max-age=86400").type(type).sendFile(path.join(__dirname, "public", "assets", f));
+  app.get("/favicon.ico", ICON("favicon.ico", "image/x-icon"));
+  app.get("/apple-touch-icon.png", ICON("anetix-touch-180.png", "image/png"));
+  const MANIFEST = JSON.stringify({ name: "Anetix", short_name: "Anetix", start_url: "/", display: "browser", background_color: "#14171c", theme_color: "#14171c",
+    icons: [{ src: "/assets/anetix-192.png", sizes: "192x192", type: "image/png" }, { src: "/assets/anetix-512.png", sizes: "512x512", type: "image/png" }, { src: "/assets/anetix-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }] });
+  app.get("/manifest.webmanifest", (_req, res) => res.set("Cache-Control", "public, max-age=86400").type("application/manifest+json").send(MANIFEST));
   // Railway's deploy check (fast, says nothing about what is behind it); ?deep=1 also asks the database, for the
   // outside watch (anetix.ai's, www/uptime.js; the launch audit 1.15)
   // v: the commit Railway deployed (its first 7 characters), so the outside check (ops/outside-check) can say from outside

@@ -117,7 +117,7 @@
     if (!g.key_set) return `<div class="glswitch" id="gl-switch"><div class="grow"><b>Go live on anetix.ai is not available:</b> SOS_WWW_KEY is not set on this instance.</div></div>`;
     return g.open
       ? `<div class="glswitch on" id="gl-switch"><div class="grow"><b>Go live is on.</b> Every demo's manager sees Go live on their board and in Settings, and can sign an order form on anetix.ai. The Terms say Anetix aims to switch a signed site on within 24 hours, and the customer may withdraw until then.</div><button class="quiet" id="gl-toggle" onclick="AdminSites.toggle(false)">Switch it off</button></div>`
-      : `<div class="glswitch" id="gl-switch"><div class="grow"><b>Go live is off for customers.</b> No manager sees it and their links do not open. Yours do: open a site and press Open go-live to walk through it as its manager.${g.terms_draft ? ` The terms are ${esc(g.terms_version)}, a draft for counsel.` : ""}</div><button class="go" id="gl-toggle" onclick="AdminSites.toggle(true)">Switch it on</button></div>`;
+      : `<div class="glswitch" id="gl-switch"><div class="grow"><b>Go live is off for customers.</b> No manager sees it and their links do not open. Yours do: open a site and press Open go-live to walk through it as its manager.${g.terms_draft ? ` The terms are ${esc(g.terms_version)}, a draft for counsel.` : ""}</div><button class="quiet" id="gl-toggle" onclick="AdminSites.toggle(true)" title="Opens Go live to every demo's manager; the confirm lists what is still open first">Switch it on for customers</button></div>`;
   }
   // The Terms' switch (src/agreements.js): off, demo set-up and refills ask nothing; on, both ask for the tick box, and
   // every demo manager who has not agreed sees the box on the board (new AI work waits for it).
@@ -151,7 +151,7 @@
         a.channel && !a.channel.ok ? `Activate cannot reach anetix.ai: ${a.channel.why}. The Terms say Anetix aims to switch a signed site on within 24 hours.` : "",
         a.channel && a.channel.ok && a.channel.stripe !== "live" ? `Stripe is in ${a.channel.stripe} mode on anetix.ai, so no real card can be charged yet.` : "",
         a.channel && a.channel.ok && a.channel.stripe === "live" && !a.channel.tax ? "Stripe Tax is off: a subscription made now carries no sales tax and does not pick it up if Tax is turned on later." : "",
-        "Customers cancel, change the card and see invoices in Manage billing (Stripe's portal); a cancelled site goes back to a demo at the end of its paid month. Not built yet: the yearly size check and the check against Stripe after a restore.",
+        "Customers cancel, change the card and see invoices in Manage billing (Stripe's portal); a cancelled site goes back to a demo at the end of its paid month (stage 4). Not built yet: the yearly size check and the check against Stripe after a restore.",
         (DATA.book.bands || []).some((b) => b.proposed) ? "Large and Very large prices are still marked proposed." : "",
       ].filter(Boolean);
       if (!confirm(`Switch Go live on for customers?\n\n${gaps.map((x) => `- ${x}`).join("\n")}\n\nEvery demo's manager will see Go live and can sign an order form and save a card.`)) return;

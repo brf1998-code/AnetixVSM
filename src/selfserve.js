@@ -320,6 +320,19 @@ async function assertCredit(company, opts = {}) {
   if (c.balance_usd <= 0) throw new Error(`this company's AI credit is used up. Add credit at ${c.topup_url} to keep going.`);
 }
 
+// The message a person gets with their pin (Brendan sends it; nothing here sends mail), the same whichever way the pin
+// was made, a demo request's "Make their pin" or "Make the pin" by hand (the launch audit 2.8). It says what to have
+// ready before starting, how to sign in later, and where to get help. Pure. No dashes: it goes out.
+const PIN_HELP = "brendan@anetix.ai or taylor@anetix.ai";
+function pinMessage({ name, email, pin, days, url }) {
+  const first = String(name || "").trim().split(/\s+/)[0] || "there";
+  url = String(url || WWW_URL()).replace(/\/+$/, "");
+  return `Hi ${first},\n\nHere is your pin to try Anetix: ${pin}\n\n`
+    + `Before you start: the sign-in has a second step. On a phone you can use Face ID or a fingerprint. On a computer, have an authenticator app ready on your phone (Google Authenticator, Microsoft Authenticator, 1Password or similar).\n\n`
+    + `Go to ${url}/pin and enter the pin with this email address (${email}). You will name your company, pick a password and set up that second step, and then your demo board is ready, with AI credit from us to build your first tool.${days ? ` The pin is good for ${days} days.` : ""}\n\n`
+    + `To come back later, go to ${url} and choose Sign in, with the same email and password.\n\n`
+    + `If anything gets in the way, write to ${PIN_HELP} or reply here.`;
+}
 // ---- writes ------------------------------------------------------------------------------------------------------
 async function makePinRow({ label, max_uses, days, email }, by) {
   label = clean(label, 80); if (label.length < 2) throw fail(400, "say who the pin is for");
@@ -442,7 +455,7 @@ async function collectHandout(slug) {
 // The manager accounts of a self-serve company, as the www service and the admin card read them: login and whether
 // the authenticator is set up, never anything secret.
 async function managers(slug) {
-  return (await require("./accounts").managersOf(slug)).map((a) => ({ id: a.id, login: a.login, name: a.display_name, enrolled: a.enrolled, status: a.status, last_sign_in: a.last_sign_in }));
+  return (await require("./accounts").managersOf(slug)).map((a) => ({ id: a.id, login: a.login, name: a.display_name, enrolled: a.enrolled, status: a.status, last_sign_in: a.last_sign_in, locked: a.locked, created_at: a.created_at }));
 }
 // More credit for a company that exists. Idempotent on ref.
 async function addCredit({ slug, ref, paid_usd, credit_usd, kind = "purchase", note, by, write_off = true }) {
@@ -596,7 +609,10 @@ adminRouter.get("/api/admin/www-preview", requireAdmin, guard(async (_req, res) 
 adminRouter.get("/api/admin/pins", requireAdmin, guard(async (_req, res) => res.set("Cache-Control", "no-store").json(await adminView())));
 adminRouter.post("/api/admin/pins", requireAdmin, json, guard(async (req, res) => {
   const row = await makePinRow(req.body || {}, who(req));
-  res.json({ ok: true, pin: { ...row, shown: showPin(row.pin) } });
+  const shown = showPin(row.pin), days = Number((req.body || {}).days);
+  // the same message a demo request's pin comes with (the launch audit 2.8)
+  res.json({ ok: true, pin: { ...row, shown }, subject: "Your Anetix demo pin",
+    message: pinMessage({ name: row.label, email: row.email || "", pin: shown, days: Number.isFinite(days) && days > 0 ? days : (row.expires_at ? Math.round((new Date(row.expires_at) - Date.now()) / 86400e3) : 0) }) });
 }));
 adminRouter.post("/api/admin/pins/:id(\\d{1,9})/revoke", requireAdmin, guard(async (req, res) => res.json({ ok: true, pin: await revokePin(req.params.id, who(req)) })));
 adminRouter.get("/api/admin/companies/:slug/credit", requireAdmin, guard(async (req, res) => {
@@ -620,7 +636,7 @@ adminRouter.post("/api/admin/companies/:slug/credit/seen", requireAdmin, guard(a
 }));
 
 module.exports = {
-  init, SCHEMA, makePin, normalizePin, showPin, pinProblem, slugFrom, balanceOf, WWW_URL, keyOk,
+  init, SCHEMA, makePin, normalizePin, showPin, pinProblem, pinMessage, slugFrom, balanceOf, WWW_URL, keyOk,
   creditToken, previewToken, topupUrl, wwwOrigins, loginCors,
   pinEmailProblem, pinReason, PIN_WORDS, PIN_SHORT, refusalFor, logRefusal,
   pinRow, selfServeRow, spentSince, credit, assertCredit, siteStage, makePinRow, revokePin, freeSlug, createCompany, addCredit, ledger, adminView, deleteCompany, managers, collectHandout,

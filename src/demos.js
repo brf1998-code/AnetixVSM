@@ -66,9 +66,56 @@ function answersOf(intake) {
   return out;
 }
 
+// Who is stuck (the launch audit 2.9, 2026-09-27): the facts were all here and no page flagged anything. Pure, over
+// the demos the list already has and the pins: -> [{ slug, name, kind, text, since }], the ones to act on first.
+const HOUR = 3600e3, DAYMS = 24 * HOUR;
+const agoWords = (ms) => (ms < 2 * HOUR ? `${Math.max(1, Math.round(ms / 60000))} minutes` : ms < 2 * DAYMS ? `${Math.round(ms / HOUR)} hours` : `${Math.round(ms / DAYMS)} days`);
+const STUCK_ORDER = ["locked", "stopped", "out", "no_2fa", "idle", "pin"];
+function stuckOf({ demos = [], pins = [], now = Date.now() } = {}) {
+  const out = [];
+  for (const d of demos) {
+    if (d.subscribed) continue;   // a paying site is looked after on the Sites tab
+    const since = new Date(d.since).getTime(), m = d.manager, c = d.counts || {};
+    if (m && m.locked) out.push({ slug: d.slug, name: d.name, kind: "locked", text: "the manager's account is locked after wrong tries; it opens again by itself in 15 minutes, or give a new password on the company card", since: d.last_activity || d.since });
+    if (Number(c.stopped_now) > 0) out.push({ slug: d.slug, name: d.name, kind: "stopped", text: `${c.stopped_now === 1 ? "a build stopped" : `${c.stopped_now} builds stopped`} and nobody has started it again`, since: d.last_activity || d.since });
+    if (d.money && d.money.balance_usd != null && Number(d.money.balance_usd) <= 0) out.push({ slug: d.slug, name: d.name, kind: "out", text: `${d.seen ? "marked seen; " : ""}nothing new is proposed or built until they refill or you grant some`, since: d.last_activity || d.since, seen: Boolean(d.seen) });
+    if (m && !m.enrolled && now - since > HOUR) out.push({ slug: d.slug, name: d.name, kind: "no_2fa", text: `has not finished setting up the sign-in (no authenticator app or passkey) ${agoWords(now - since)} after coming in`, since: d.since });
+    else if (m && m.enrolled && !Number(c.intakes) && !Number(c.requests) && !(d.modules || []).length && now - since > DAYMS) out.push({ slug: d.slug, name: d.name, kind: "idle", text: `signed in but has started nothing in ${agoWords(now - since)}`, since: d.since });
+  }
+  for (const p of pins) {
+    if (p.problem || Number(p.uses) > 0) continue;
+    const made = new Date(p.created_at).getTime();
+    if (now - made > 2 * DAYMS) out.push({ slug: null, name: p.label, kind: "pin", pin_id: p.id, text: `the pin made for ${p.label}${p.email ? ` (${p.email})` : ""} has not been used in ${agoWords(now - made)}`, since: p.created_at });
+  }
+  return out.sort((a, b) => STUCK_ORDER.indexOf(a.kind) - STUCK_ORDER.indexOf(b.kind) || new Date(a.since) - new Date(b.since));
+}
+
 // ---- reads ---------------------------------------------------------------------------------------------------------
+// What happened lately across the demos, newest first (the launch audit 2.9): a demo came in, a manager signed in, a
+// request or a new tool, a change went live, a refill, a demo request. A paying site's own days are the plant's and stay
+// out (as everywhere on this tab), unless it opted in to learning.
+async function activity({ days = 14, limit = 40 } = {}) {
+  const rows = (await q(`
+    WITH ss AS (SELECT s.company, c.name, CASE WHEN st.converted_at IS NOT NULL AND NOT COALESCE(st.learning_opt_in, false) THEN st.converted_at END AS until
+                  FROM platform.self_serve s JOIN platform.companies c ON c.slug=s.company LEFT JOIN platform.sites st ON st.company=s.company)
+    SELECT * FROM (
+      SELECT s.created_at AS at, 'demo' AS kind, s.company, ss.name AS company_name, s.contact AS who, NULL::text AS words, NULL::text AS module
+        FROM platform.self_serve s JOIN ss ON ss.company=s.company
+      UNION ALL SELECT e.at, 'signin', a.company, ss.name, a.login, e.event, NULL
+        FROM platform.auth_events e JOIN platform.accounts a ON a.id=e.account_id JOIN ss ON ss.company=a.company
+       WHERE a.role='manager' AND e.event IN ('login_ok','login_passkey','signin_trusted_device','recovery_used') AND (ss.until IS NULL OR e.at < ss.until)
+      UNION ALL SELECT r.created_at, r.kind, r.company, ss.name, r.actor_name, left(COALESCE(r.after, ''), 160), r.module
+        FROM platform.record r JOIN ss ON ss.company=r.company
+       WHERE r.kind IN ('feedback_filed','intake_confirmed','deployed') AND (ss.until IS NULL OR r.created_at < ss.until)
+      UNION ALL SELECT l.created_at, 'refill', l.company, ss.name, NULL, l.paid_usd::text, NULL
+        FROM platform.credit_ledger l JOIN ss ON ss.company=l.company WHERE l.kind='purchase' AND (ss.until IS NULL OR l.created_at < ss.until)
+      UNION ALL SELECT d.created_at, 'demo_request', NULL, d.company, d.name, d.wants, NULL FROM platform.demo_requests d
+    ) x WHERE at > now() - ($1::int * interval '1 day') ORDER BY at DESC LIMIT $2`, [days, limit]).catch((e) => { console.error("[demos] activity:", e.message); return { rows: [] }; })).rows;
+  return rows;
+}
+
 async function companiesIn(slug) {
-  const rows = (await q(`SELECT s.company AS slug, c.name, c.demo, s.email, s.contact, s.created_at AS since, s.pin_id, p.label AS pin_label, p.pin,
+  const rows = (await q(`SELECT s.company AS slug, c.name, c.demo, s.email, s.contact, s.created_at AS since, s.pin_id, p.label AS pin_label, p.pin, s.credit_seen_usd,
                                 st.converted_at, st.learning_opt_in, st.stage AS site_stage
                    FROM platform.self_serve s JOIN platform.companies c ON c.slug=s.company LEFT JOIN platform.access_pins p ON p.id=s.pin_id
                    LEFT JOIN platform.sites st ON st.company=s.company
@@ -117,8 +164,10 @@ async function countsOf(slug, until = null) {
                              COUNT(*) FILTER (WHERE kind='module_request')::int AS module_requests
                       FROM platform.feedback WHERE company=$1 AND ($2::timestamptz IS NULL OR created_at < $2)`, [slug, until])).rows[0];
   const r = (await q(`SELECT COUNT(*)::int AS builds, COUNT(*) FILTER (WHERE status='deployed')::int AS deployed,
-                             COUNT(*) FILTER (WHERE status='failed')::int AS stopped, COUNT(*) FILTER (WHERE status='rolled_back')::int AS rolled_back
-                      FROM platform.build_runs WHERE company=$1 AND ($2::timestamptz IS NULL OR created_at < $2)`, [slug, until])).rows[0];
+                             COUNT(*) FILTER (WHERE status='failed')::int AS stopped, COUNT(*) FILTER (WHERE status='rolled_back')::int AS rolled_back,
+                             COUNT(*) FILTER (WHERE status='failed' AND NOT EXISTS (SELECT 1 FROM platform.build_runs n WHERE n.company=b.company
+                               AND COALESCE(n.module,'')=COALESCE(b.module,'') AND n.id > b.id))::int AS stopped_now
+                      FROM platform.build_runs b WHERE company=$1 AND ($2::timestamptz IS NULL OR created_at < $2)`, [slug, until])).rows[0];
   const i = (await q(`SELECT COUNT(*)::int AS intakes, COUNT(*) FILTER (WHERE status='done')::int AS intakes_done,
                              COUNT(*) FILTER (WHERE status='abandoned')::int AS intakes_abandoned
                       FROM platform.module_intakes WHERE company=$1 AND ($2::timestamptz IS NULL OR created_at < $2)`, [slug, until])).rows[0];
@@ -148,7 +197,9 @@ async function summaryOf(c, loop) {
   return {
     slug: c.slug, name: c.name, demo: Boolean(c.demo), email: c.email, contact: c.contact, since: c.since,
     pin: c.pin_id ? { id: c.pin_id, label: c.pin_label, shown: c.pin ? `${c.pin.slice(0, 4)}-${c.pin.slice(4)}` : null } : null,
-    manager: m ? { login: m.login, enrolled: m.enrolled, last_sign_in: m.last_sign_in } : null,
+    manager: m ? { id: m.id, login: m.login, enrolled: m.enrolled, last_sign_in: m.last_sign_in, locked: Boolean(m.locked), created_at: m.created_at } : null,
+    // out of credit and marked seen on this tab ("Seen, clear it": self_serve.credit_seen_usd, the credit bought then)
+    seen: Boolean(credit0 && c.credit_seen_usd != null && Number(c.credit_seen_usd) >= Number(credit0.credit_usd)),
     money: { ...moneyOf(ledger), spent_usd: credit ? credit.spent_usd : 0, balance_usd: credit ? credit.balance_usd : 0, percent: credit ? credit.percent : 0, level: credit ? credit.level : null,
       margin_usd: money(moneyOf(ledger).paid_usd - (credit ? credit.spent_usd : 0)) },
     modules: modules.map((x) => ({ name: x.name, title: x.title, live_version: x.live_version, versions: x.versions })),
@@ -184,7 +235,10 @@ async function list() {
   // the Terms, 6.3 and 10.7: a company's data may go after 12 months with no sign-in; these are a month from it (src/dataexport.js)
   const idle = await require("./dataexport").idle();
   const stops = await require("./demostops").list().catch(() => ({ open: [], addressed: [] }));   // builds that stopped before a preview (the launch audit 1.20)
-  return { totals, demos, use_cases, idle, stops };
+  const pins = (await q("SELECT id, label, email, uses, max_uses, expires_at, revoked_at, created_at FROM platform.access_pins ORDER BY id DESC")).rows
+    .map((p) => ({ ...p, problem: selfserve.pinProblem ? selfserve.pinProblem(p) : null }));
+  const stuck = stuckOf({ demos, pins });
+  return { totals, demos, use_cases, idle, stops, stuck, activity: await activity() };
 }
 
 async function detail(slug) {
@@ -256,4 +310,4 @@ router.get("/api/admin/demos/:slug", requireAdmin, guard(async (req, res) => {
   res.set("Cache-Control", "no-store").json(d);
 }));
 
-module.exports = { router, list, detail, exportAll, moneyOf, useCaseOf, answersOf };
+module.exports = { router, list, detail, exportAll, moneyOf, useCaseOf, answersOf, stuckOf, activity };

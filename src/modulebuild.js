@@ -209,6 +209,8 @@ async function startBuild(intake) {
   const { company, slug, name: title } = intake;
   if (!slug) throw new Error("the module has no name");
   if (await registry.getModule(company, slug)) throw new Error(`a module named "${slug}" already exists`);
+  const clash = await require("./migrate").schemaClash(company, slug);   // the launch audit 2.14
+  if (clash) throw new Error(`this tool's tables would be the same as ${clash.company}'s ${clash.name}: rename it and build again`);
   const model = await require("./intake").intakeModel(intake);   // the model that designed it builds it and checks the build
   // starting rows: the first spreadsheet attached to the intake
   const files = await attachments.list(intake.id);

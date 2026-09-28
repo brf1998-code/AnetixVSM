@@ -2,6 +2,9 @@
 // what it built and how. The list: totals, one row per company, and the use cases (what each new-tool request was
 // for). One company open (#demos/<slug>): the money, the tools and the requests for new ones with every answer, the
 // requests on its board in the person's own words, the builds, and the process step by step from the record.
+// Since 2026-09-28 (the launch audit 2.3 and 2.9) it is the admin page's first tab: who is stuck comes first, then what
+// happened lately, and a company's row carries Grant credit and, once it is out, Seen, clear it (they were on the Pins
+// tab's Self-serve companies card, which is gone).
 // Mounted by admin.html (AdminShell onShow "demos"). No secret lives here: /assets is served before the login, and
 // every call it makes is an admin-only route.
 (function () {
@@ -52,6 +55,13 @@
       #demos-root details summary { cursor:pointer; color:var(--navy); font-weight:600; font-size:12.5px; margin-top:4px; }
       #demos-root .back { display:inline-block; margin:6px 0 2px; font-weight:600; }
       #demos-root .chip.live { background:#e6f1ea; color:var(--green); } #demos-root .chip.demo { background:#dfeaf6; color:#1f5c99; }
+      #demos-root .stuck li { margin:6px 0; line-height:1.45; } #demos-root .stuck .k { font-weight:700; }
+      #demos-root .stuck .locked .k, #demos-root .stuck .stopped .k, #demos-root .stuck .out .k { color:var(--red); }
+      #demos-root .stuck .no_2fa .k, #demos-root .stuck .idle .k, #demos-root .stuck .pin .k { color:#b26a00; }
+      #demos-root .act { list-style:none; margin:6px 0 0; padding:0; } #demos-root .act li { padding:5px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.4; }
+      #demos-root .act li:last-child { border-bottom:none; } #demos-root .act .t { color:var(--steel); font-size:11.5px; display:inline-block; min-width:118px; }
+      #demos-root .act .snip { color:var(--steel); }
+      #demos-root tr.row button { margin:4px 4px 0 0; min-height:28px; padding:3px 8px; font-size:12px; }
     `;
     document.head.appendChild(s);
   }
@@ -86,6 +96,30 @@
     LIST = await get("/api/admin/demos"); drawList();
   }
 
+  // ---- who is stuck, and what happened lately (the launch audit 2.9) ------------------------------------------------
+  const STUCK_WORD = { locked: "Locked out", stopped: "Build stopped", out: "Out of credit", no_2fa: "Sign-in not set up", idle: "Nothing started", pin: "Pin not used" };
+  function stuckCard(list) {
+    if (!list || !list.length) return `<div class="card" id="demo-stuck"><h2>Who is stuck <small>nobody right now</small></h2><p class="sub" style="margin:0">A pin unused for two days, a sign-in not finished, nothing started after a day, a build that stopped, no credit left or a locked account shows up here.</p></div>`;
+    return `<div class="card" id="demo-stuck"><h2>Who is stuck <small>${list.length} to look at</small></h2><ul class="stuck">${list.map((x) => `<li class="${esc(x.kind)}"><span class="k">${esc(STUCK_WORD[x.kind] || x.kind)}</span> · ${x.slug ? `<a href="#demos/${esc(x.slug)}">${esc(x.name)}</a>` : `<a href="#pins">${esc(x.name)}</a>`}: ${esc(x.text)}${x.kind === "out" && !x.seen ? ` <button class="quiet" style="margin:0 0 0 6px;min-height:26px;padding:2px 8px" onclick="creditSeen('${esc(x.slug)}')">Seen, clear it</button>` : ""}${x.kind === "out" ? ` <button class="quiet" style="margin:0 0 0 4px;min-height:26px;padding:2px 8px" onclick="grantCredit('${esc(x.slug)}')">Grant credit</button>` : ""}</li>`).join("")}</ul></div>`;
+  }
+  function actLine(a) {
+    const co = a.company ? `<a href="#demos/${esc(a.company)}">${esc(a.company_name || a.company)}</a>` : `<b>${esc(a.company_name || "")}</b>`;
+    const snip = (w) => (w ? ` <span class="snip">"${esc(String(w).slice(0, 120))}"</span>` : "");
+    switch (a.kind) {
+      case "demo": return `${co} came in${a.who ? ` (${esc(a.who)})` : ""}`;
+      case "signin": return `${co}: ${esc(a.who || "the manager")} signed in${a.words === "login_passkey" ? " with a passkey" : a.words === "recovery_used" ? " with a recovery code" : ""}`;
+      case "feedback_filed": return `${co}: a request${a.module ? ` on ${esc(a.module)}` : ""}${a.who ? ` from ${esc(a.who)}` : ""}${snip(a.words)}`;
+      case "intake_confirmed": return `${co} approved a new tool${a.module ? `: ${esc(a.module)}` : ""}`;
+      case "deployed": return `${co}: a change went live${a.module ? ` on ${esc(a.module)}` : ""}`;
+      case "refill": return `${co} refilled their credit${a.words ? ` ($${Number(a.words).toFixed(2)})` : ""}`;
+      case "demo_request": return `${esc(a.who || "Someone")} at <b>${esc(a.company_name || "")}</b> asked for a demo${a.words ? ` (${esc(a.words === "both" ? "a pin and a call" : a.words === "call" ? "a call first" : "a pin")})` : ""} <a href="#pins">Pins</a>`;
+      default: return `${co}: ${esc(a.kind)}`;
+    }
+  }
+  function activityCard(list) {
+    return `<div class="card" id="demo-activity"><h2>Recent activity <small>the last two weeks, newest first</small></h2>${list && list.length ? `<ul class="act">${list.map((a) => `<li><span class="t">${when(a.at)}</span> ${actLine(a)}</li>`).join("")}</ul>` : '<p class="sub" style="margin:0">Nothing in the last two weeks.</p>'}</div>`;
+  }
+
   // ---- the list -------------------------------------------------------------------------------------------------
   function drawList() {
     const L = LIST, T = L.totals;
@@ -93,7 +127,7 @@
       <td class="who"><b>${esc(d.name)}</b>${d.demo ? '<span class="chip demo">DEMO</span>' : ""}<small>${esc(d.contact || "")}${d.email ? ` · ${esc(d.email)}` : ""}</small></td>
       <td>${day(d.since)}<br><small class="sub">active ${esc(ago(d.last_activity))}</small></td>
       <td>${d.manager ? (d.manager.enrolled ? '<span class="ok">2FA set up</span>' : '<span class="warn">no 2FA yet</span>') : '<span class="sub">no account</span>'}<br><small class="sub">${d.manager && d.manager.last_sign_in ? `signed in ${esc(ago(d.manager.last_sign_in))}` : "never signed in"}</small></td>
-      <td>${pct(d.money)}</td>
+      <td>${pct(d.money)}${d.subscribed ? "" : `<br><button class="quiet" onclick="event.stopPropagation();grantCredit('${esc(d.slug)}')">Grant credit</button>${Number(d.money.balance_usd) <= 0 && !d.seen ? `<button class="quiet" onclick="event.stopPropagation();creditSeen('${esc(d.slug)}')">Seen, clear it</button>` : ""}`}</td>
       <td>${usd(d.money.paid_usd)}<br><small class="sub">${d.money.purchases} refill${d.money.purchases === 1 ? "" : "s"}</small></td>
       <td>${usd(d.money.spent_usd)}</td>
       <td>${d.modules.length ? d.modules.map((m) => `${esc(m.title || m.name)}${m.live_version ? ` <small class="sub">v${m.live_version}</small>` : ' <small class="sub">(not live)</small>'}`).join("<br>") : '<span class="sub">nothing yet</span>'}${d.counts.intakes ? `<br><small class="sub">${d.counts.intakes} new-tool request${d.counts.intakes === 1 ? "" : "s"}</small>` : ""}</td>
@@ -105,7 +139,7 @@
       ${u.purpose ? `<p>${esc(u.purpose)}</p>` : ""}
       ${u.thing || u.today || u.who ? `<p class="meta">${u.thing ? `Tracks: ${esc(u.thing)}. ` : ""}${u.today ? `Today: ${esc(u.today)}. ` : ""}${u.who ? `Who: ${esc(u.who)}.` : ""}</p>` : ""}
       ${u.bluf ? `<p><b>Design:</b> ${esc(u.bluf)}</p>` : ""}</div>`).join("");
-    root().innerHTML = `
+    root().innerHTML = stuckCard(L.stuck) + `
       <div class="card"><div class="grid">
         ${kpi("Companies", T.companies, `${T.demos} demos · ${T.active_7d} active this week · ${T.enrolled} with 2FA`)}
         ${kpi("Paid us", usd(T.paid_usd), `${T.purchases} refill${T.purchases === 1 ? "" : "s"} through Stripe`)}
@@ -120,9 +154,18 @@
         <table class="list"><tr><th>Company</th><th>Last sign-in</th><th>Can go after</th></tr>${L.idle.map((x) => `<tr><td><a href="#demos/${esc(x.slug)}">${esc(x.name)}</a></td><td>${esc(new Date(x.last_sign_in).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }))}</td><td>${esc(new Date(x.delete_after).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" }))}</td></tr>`).join("")}</table></div>` : ""}
       <div class="card"><h2>Companies <small>newest first; open one for everything it did</small></h2>
         ${L.demos.length ? `<div style="overflow-x:auto"><table class="list"><tr><th>Company</th><th>Since</th><th>Sign-in</th><th>Credit left</th><th>Paid</th><th>AI spend</th><th>Built</th><th>Requests</th><th>Changes</th></tr>${rows}</table></div>` : '<p class="sub">Nobody has come in from anetix.ai yet. Make a pin on the Pins tab.</p>'}</div>
+      ${activityCard(L.activity)}
       <div class="card"><h2>Use cases <small>what each request for a new tool was for, newest first</small></h2>
         ${ucs || '<p class="sub">No new-tool requests yet.</p>'}</div>`;
-    if (window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("demos", { n: L.demos.length, level: L.stops && L.stops.open.length ? "red" : null });
+    badgeFrom(L);
+  }
+  // the tab's count, and a dot: red for a build stopped before a preview or someone locked out or out of credit and not
+  // seen, amber for anyone else stuck
+  function badgeFrom(L) {
+    if (!window.AdminShell || !AdminShell.setBadge) return;
+    const st = L.stuck || [];
+    const red = (L.stops && L.stops.open.length) || st.some((x) => x.kind === "locked" || x.kind === "stopped" || (x.kind === "out" && !x.seen));
+    AdminShell.setBadge("demos", { n: L.demos.length, level: red ? "red" : st.length ? "amber" : null });
   }
 
   // ---- one company -----------------------------------------------------------------------------------------------
@@ -154,7 +197,7 @@
         <div class="links"><a href="/c/${esc(d.slug)}/" target="_blank" rel="noopener">Open their board</a><a href="#companies/${esc(d.slug)}">Company card</a><a href="/api/c/${esc(d.slug)}/record/export">Download the record</a><a href="#" style="color:var(--red)" data-slug="${esc(d.slug)}" data-name="${esc(d.name)}" onclick="openDelete(this.dataset.slug, this.dataset.name);return false" title="Delete this demo company and everything in it (the slug typed back and your code)">Delete this demo</a></div></div>
         <p class="sub">${esc(d.contact || "")}${d.email ? ` · ${esc(d.email)}` : ""} · came in ${when(d.since)}${d.pin ? ` on pin ${esc(d.pin.shown)} (${esc(d.pin.label)})` : ""} · ${d.manager ? `${esc(d.manager.login)}, ${d.manager.enrolled ? "2FA set up" : "no 2FA yet"}, ${d.manager.last_sign_in ? `signed in ${esc(ago(d.manager.last_sign_in))}` : "never signed in"}` : "no account"} · active ${esc(ago(d.last_activity))}</p>
         <div class="grid">
-          ${kpi("Credit left", pct(m), `${usd(m.bought_credit_usd + m.granted_usd + m.adjusted_usd)} of credit in all`)}
+          ${kpi("Credit left", pct(m), `${usd(m.bought_credit_usd + m.granted_usd + m.adjusted_usd)} of credit in all${d.subscribed ? "" : ` · <a href="#" onclick="grantCredit('${esc(d.slug)}');return false">Grant credit</a>${Number(m.balance_usd) <= 0 && !d.seen ? ` · <a href="#" onclick="creditSeen('${esc(d.slug)}');return false">Seen, clear it</a>` : ""}`}`)}
           ${kpi("Paid us", usd(m.paid_usd), `${m.purchases} refill${m.purchases === 1 ? "" : "s"}`)}
           ${kpi("AI spend", usd(m.spent_usd), `paid minus spend ${usd(m.margin_usd)}`)}
           ${kpi("Tools", d.modules.filter((x) => x.live_version).length + " live", `${d.counts.intakes} new-tool request${d.counts.intakes === 1 ? "" : "s"}, ${d.counts.intakes_done} built`)}
@@ -192,6 +235,10 @@
     } catch (e) { root().innerHTML = `<div class="card"><p class="fail">${esc(e.message)}</p><p><a href="#demos">Back to all demos</a></p></div>`; }
   }
   // the tab's count in the header, without opening it
-  async function badge() { try { LIST = await get("/api/admin/demos"); if (window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("demos", { n: LIST.demos.length, level: LIST.stops && LIST.stops.open.length ? "red" : null }); } catch (e) {} }
-  window.AdminDemos = { show, badge, addressed: addressedStop };
+  async function badge() { try { LIST = await get("/api/admin/demos"); badgeFrom(LIST); } catch (e) {} }
+  // after Grant credit or Seen, clear it (in admin.html): the list or the open company again
+  async function refresh() { if ((window.AdminShell && AdminShell.current().id) === "demos") await show(AdminShell.current().rest); else await badge(); }
+  // a company's name and credit for the Grant credit box
+  function company(slug) { const d = LIST && LIST.demos.find((x) => x.slug === slug); return d ? { name: d.name, balance_usd: d.money.balance_usd, credit_usd: d.money.bought_credit_usd + d.money.granted_usd + d.money.adjusted_usd } : null; }
+  window.AdminDemos = { show, badge, refresh, company, addressed: addressedStop };
 })();

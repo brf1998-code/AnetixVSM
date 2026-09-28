@@ -90,7 +90,15 @@ const windowFor = (role) => (role === "admin" ? WINDOWS.admin : WINDOWS.device);
 // failed logins per client IP before /login answers 429 for the rest of the window
 const LOGIN_MAX_FAILS = Number(process.env.SOS_LOGIN_MAX_FAILS || 10);
 const LOGIN_WINDOW_MS = Number(process.env.SOS_LOGIN_WINDOW_MIN || 15) * 60 * 1000;
-const OPEN = !FLOOR && !MANAGER && !ADMIN;
+// Open (every request an admin, no sign-in) used to be what no password variables at all meant, which made taking the
+// old shared passwords out of Railway a trap (the launch audit 2.12, 2026-09-27). It is an explicit switch for local
+// work now, SOS_OPEN=1, and a hosted deployment (Railway, or NODE_ENV=production) never honors it: with no password
+// variables there, sign-in is by account and each company's own passwords, nothing else.
+const HOSTED = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID || process.env.NODE_ENV === "production");
+const OPEN = process.env.SOS_OPEN === "1" && !HOSTED;
+if (process.env.SOS_OPEN === "1" && HOSTED) console.error("[auth] SOS_OPEN=1 is ignored here: a hosted deployment is never open. Take the variable out.");
+else if (OPEN) console.warn("[auth] OPEN (SOS_OPEN=1): every request is an admin with no sign-in. Local work only.");
+else if (!FLOOR && !MANAGER && !ADMIN) console.log("[auth] no shared password variables: sign-in is by account and by each company's own passwords");
 // token for the platform's own internal requests (smoke checks hit the staged
 // mount over HTTP); generated per process unless pinned by env
 const INTERNAL = process.env.SOS_INTERNAL_TOKEN || crypto.randomBytes(16).toString("hex");

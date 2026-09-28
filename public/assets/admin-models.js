@@ -187,11 +187,16 @@
     </div>`;
   }
 
+  // The head-to-head and the live A/B are how the baseline was decided; with it decided they wait behind More (the
+  // launch audit 2.4), open again once opened (kept across a redraw).
+  let MORE_OPEN = false;
   function draw() {
     style();
+    const running = (M && M.settings && M.settings.ab && M.settings.ab.on) || (A && A.assessment && A.assessment.status === "running");
     document.getElementById("models-root").innerHTML = baselineCard() +
+      `<details id="am-more" ${MORE_OPEN || running ? "open" : ""} ontoggle="AdminModels.more(this.open)"><summary style="font-weight:700;margin:12px 0 4px">More: the head-to-head and the live A/B <span class="sub">(how the baseline was decided)</span></summary>` +
       `<div class="card" id="am-h2h"><h2>Head-to-head <small>stored work done again by both models, scored against what happened, picked blind</small></h2>${startForm()}<h3 style="margin-top:14px">Assessments</h3><div id="am-list">${listRows()}</div></div>` +
-      `<div id="am-open">${assessmentCard()}</div>` + abCard();
+      `<div id="am-open">${assessmentCard()}</div>` + abCard() + `</details>`;
     window.AdminModels.estimate();   // the start form's estimate needs its inputs on the page first
   }
 
@@ -264,6 +269,7 @@
 
   window.AdminModels = {
     show() { load().catch((e) => console.error("models:", e)); },
+    more(open) { MORE_OPEN = Boolean(open); },
     estimate() { const el = document.getElementById("am-est"); if (el) el.textContent = estimateLine(); },
     async saveBaseline() {
       const v = document.getElementById("am-base").value;

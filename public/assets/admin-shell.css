@@ -29,6 +29,7 @@ a { color:var(--navy); }
 #shell nav a:hover { opacity:1; background:rgba(255,255,255,.08); }
 #shell nav a.on { opacity:1; background:var(--fog); color:var(--navy); }
 #shell nav a .n { font-weight:500; opacity:.7; margin-left:4px; }
+#shell nav a.moretab { opacity:.6; font-weight:600; }
 #shell nav a .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-left:6px; vertical-align:1px; }
 #shell nav a .dot.amber { background:#ffb454; } #shell nav a .dot.red { background:#ff7a70; }
 #shell nav a.on .dot.amber { background:var(--amber); } #shell nav a.on .dot.red { background:var(--red); }

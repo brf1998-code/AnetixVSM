@@ -84,7 +84,7 @@ const R = runner(), t = R.t;
 
   // the admin's loop health
   const ctxA = await browser.newContext({ viewport: { width: 1280, height: 900 } }); await ctxA.addCookies(admin.cookies());
-  const a = await ctxA.newPage(); watch(a, "admin"); await a.goto(BASE + "/admin"); await a.waitForSelector("#h-table tr td", { timeout: 10000 });
+  const a = await ctxA.newPage(); watch(a, "admin"); await a.goto(BASE + "/admin#health"); await a.waitForSelector("#h-table tr td", { timeout: 10000 });
   const at = await a.locator("body").innerText();
   t("loop health tells the test stops apart and counts the promises", /tests: .*broke a promise/.test(at) && /own check/.test(at) && /screen/.test(at) && /promises: \d+ added · 1 retired/.test(at), (at.match(/tests:[^\n]*|promises:[^\n]*/g) || []));
   t("the health table still fits its card", await a.evaluate(() => { const tb = document.getElementById("h-table"), c = tb.closest(".card") || tb.parentElement; return tb.getBoundingClientRect().right <= c.getBoundingClientRect().right + 1; }));

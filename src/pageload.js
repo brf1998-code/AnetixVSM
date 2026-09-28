@@ -218,17 +218,25 @@ async function look({ origin, mounts, manifest, files, liveManifest = null, live
   return { ok: fresh.length === 0, mode, screens: screens.length, problems: fresh.slice(0, 12), inherited: inherited.length, notes: [...new Set(notes)].slice(0, 12), ...(fellBack ? { fell_back: fellBack } : {}), ms: Date.now() - started };
 }
 
+// On Railway a missing browser means the image was built another way (the launch audit 2.11: railway.json says
+// Nixpacks, and nixpacks.toml is what installs Chromium; the service's own setting says Railpack). One phone alert.
+function noBrowserAlert(why) {
+  if (!process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_PROJECT_ID) return;
+  if ((process.env.SOS_BROWSER || "").toLowerCase() === "off") return;
+  try { require("./notify").notify("The build check has no browser", `On this deploy ${why}, so every build's screens are checked without opening them. railway.json must say builder NIXPACKS (nixpacks.toml installs Chromium); the deploy log's [pageload] line says more.`, { priority: 4, tags: ["warning"] }); } catch (e) { /* never from here */ }
+}
 // At boot, once, behind the listen: does the browser this instance has actually start? The deploy log then says
 // which way builds will be looked at, instead of the first build finding out.
 async function selfTest() {
   const exe = browserPath();
-  if (!exe) { console.log(`[pageload] no browser on this instance${(process.env.SOS_BROWSER || "").toLowerCase() === "off" ? " (SOS_BROWSER=off)" : ""}: screens are checked without one (script syntax, the screen answers)`); return { mode: "static" }; }
+  if (!exe) { console.log(`[pageload] no browser on this instance${(process.env.SOS_BROWSER || "").toLowerCase() === "off" ? " (SOS_BROWSER=off)" : ""}: screens are checked without one (script syntax, the screen answers)`); noBrowserAlert("no browser was found"); return { mode: "static" }; }
   try {
     const b = await launch(); const v = await b.version(); await b.close();
     console.log(`[pageload] browser starts: ${v} at ${exe}; every build's screens are opened in it before the deploy gate`);
     return { mode: "browser", version: v };
   } catch (e) {
     console.error(`[pageload] the browser at ${exe} would not start (${String(e.message).split("\n")[0].slice(0, 200)}); screens are checked without one until it does`);
+    noBrowserAlert("the browser would not start");
     return { mode: "static", error: e.message };
   }
 }

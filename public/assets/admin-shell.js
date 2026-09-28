@@ -9,9 +9,11 @@
 //   AdminShell.setBadge("companies", { n: 3 })        a count after the tab's name
 //   AdminShell.setBadge("instance", { level: "red" }) a dot: something on that tab wants looking at
 //   AdminShell.go("companies/acme")
+// A tab with more: true sits behind "More" at the end of the row (the launch audit 2.4: the experiments out of the
+// way); the row opens them when one of them is the tab in view, or when More is pressed.
 (function () {
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  let cfg = null; const badges = {};
+  let cfg = null; const badges = {}; let moreOpen = false;
   function parse() {
     const h = decodeURIComponent((location.hash || "").replace(/^#/, ""));
     const i = h.indexOf("/"), id = i < 0 ? h : h.slice(0, i), rest = i < 0 ? "" : h.slice(i + 1);
@@ -19,10 +21,15 @@
   }
   function drawTabs() {
     const cur = parse().id;
-    document.querySelector("#shell nav").innerHTML = cfg.tabs.map((t) => {
+    const one = (t) => {
       const b = badges[t.id] || {};
       return `<a href="#${t.id}" data-tab="${t.id}" class="${t.id === cur ? "on" : ""}" ${t.id === cur ? 'aria-current="page"' : ""}>${esc(t.label)}${b.n != null ? `<span class="n">${esc(b.n)}</span>` : ""}${b.level ? `<span class="dot ${esc(b.level)}" title="${esc(b.title || "something here wants looking at")}"></span>` : ""}</a>`;
-    }).join("");
+    };
+    const main = cfg.tabs.filter((t) => !t.more), extra = cfg.tabs.filter((t) => t.more);
+    const show = moreOpen || extra.some((t) => t.id === cur);
+    const lvl = extra.map((t) => (badges[t.id] || {}).level).find(Boolean);
+    document.querySelector("#shell nav").innerHTML = main.map(one).join("")
+      + (extra.length ? `<a href="#" data-more="1" class="moretab" aria-expanded="${show}">${show ? "Less" : "More"}${!show && lvl ? `<span class="dot ${esc(lvl)}"></span>` : ""}</a>` + (show ? extra.map(one).join("") : "") : "");
   }
   function show() {
     const { id, rest } = parse();
@@ -39,6 +46,10 @@
         <div class="pills" id="shell-pills"></div>
         <nav aria-label="${esc(c.title)} sections"></nav></div>`;
       window.addEventListener("hashchange", show);
+      document.querySelector("#shell nav").addEventListener("click", (e) => {
+        const m = e.target.closest("[data-more]"); if (!m) return;
+        e.preventDefault(); moreOpen = !(moreOpen || cfg.tabs.some((t) => t.more && t.id === parse().id)); drawTabs();
+      });
       show();
     },
     current: () => parse(),

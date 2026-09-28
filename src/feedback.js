@@ -314,6 +314,19 @@ const DEFAULT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 
 // A short fingerprint of the icon the company has now: the board puts it in the icon's address (?v=) so a browser
 // that keys its icon cache by URL never shows one company's mark on another's board (Safari did, 2026-09-24).
 const iconVersion = (b) => require("crypto").createHash("sha1").update(b && b.icon ? String(b.icon) : `anetix:${b && b.colors && b.colors.primary ? b.colors.primary : "#14171c"}`).digest("hex").slice(0, 10);
+// The home-screen icon (2026-09-27): iOS takes a PNG only, so this answers the company's own icon when the brand guide
+// found a PNG or JPEG, else the Anetix mark at 180 px (public/assets/anetix-touch-180.png).
+const TOUCH_PNG = require("fs").readFileSync(require("path").join(__dirname, "..", "public", "assets", "anetix-touch-180.png"));
+router.get("/api/c/:slug/icon.png", async (req, res) => {
+  const co = await company(req.params.slug);
+  const b = co && co.brand;
+  const etag = `"${iconVersion(b)}-png"`;
+  res.set("Cache-Control", "no-cache").set("ETag", etag);
+  if (req.headers["if-none-match"] === etag) return res.status(304).end();
+  const m = b && b.icon && /^data:image\/(png|jpeg|jpg);base64,/.exec(b.icon);
+  if (m) return res.type(`image/${m[1] === "jpg" ? "jpeg" : m[1]}`).send(Buffer.from(b.icon.split(",", 2)[1], "base64"));
+  res.type("image/png").send(TOUCH_PNG);
+});
 router.get("/api/c/:slug/icon", async (req, res) => {
   const co = await company(req.params.slug);
   const b = co && co.brand;
@@ -757,11 +770,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   const eff = (c, job) => (agent.inTier(c[`model_${job}`]) ? c[`model_${job}`] : defs[job]);
   const docs = (await q("SELECT company, module, name, source, updated_at, length(content) AS bytes FROM platform.agent_docs ORDER BY company, module NULLS FIRST, name")).rows;
   const counts = (await q(`SELECT company, count(*) FILTER (WHERE status='new')::int AS open, count(*)::int AS total FROM platform.feedback GROUP BY company`)).rows;
-  const spend = (await q(`
-    SELECT c.slug,
-      COALESCE((SELECT SUM(cost_usd) FROM platform.build_runs r WHERE r.company=c.slug AND r.created_at >= date_trunc('month', now())),0)
-    + COALESCE((SELECT SUM(p.cost_usd) FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE f.company=c.slug AND p.created_at >= date_trunc('month', now())),0) AS usd
-    FROM platform.companies c`)).rows;
+  const spend = await agent.spendSince(null);   // this month, one formula (agent.spendSince, the launch audit 2.2)
   const runs = (await q("SELECT company, count(*)::int AS n, count(*) FILTER (WHERE status='deployed')::int AS deployed FROM platform.build_runs GROUP BY company")).rows;
   const access = (await q("SELECT * FROM platform.company_access")).rows;
   const selfServe = {};   // the balance of every company that came in from anetix.ai (src/selfserve.js)
@@ -776,7 +785,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       docs: docs.filter((d) => d.company === c.slug),
       feedback: counts.find((x) => x.company === c.slug) || { open: 0, total: 0 },
       runs: runs.find((x) => x.company === c.slug) || { n: 0, deployed: 0 },
-      spend_usd: Number((spend.find((x) => x.slug === c.slug) || {}).usd || 0),
+      spend_usd: Math.round((spend.by[c.slug] || 0) * 100) / 100,
       monthly_cap_usd: c.monthly_cap_usd == null ? null : Number(c.monthly_cap_usd),
       access: auth.accessPublic(access.find((a) => a.company === c.slug)),
       brand: brandPublic(c.brand),
@@ -792,7 +801,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
     defaults: defs,
     modelSettings: settings,
     monthlyCap: agent.MONTHLY_CAP_USD,
-    totalSpend: (await agent.monthlySpend(null)).usd,
+    totalSpend: Math.round(spend.total * 100) / 100,
     runner: require("./runner").status(),
   });
 });
@@ -1046,7 +1055,7 @@ router.post("/api/admin/companies/:slug/modules", requireAdmin, async (req, res)
       catch (e) { console.error(`[brand] restyle ${co.slug}/${mod}:`, e.message); }
     }
     res.json({ ok: true, ...r, restyle_run: restyle });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ---- admin: brand guide from a URL, restyle a module to it ---------------------

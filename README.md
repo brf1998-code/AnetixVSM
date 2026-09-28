@@ -5,6 +5,7 @@ and staged versions), and the agent build service that turns approved floor
 feedback into deployed changes. First module: the Paper Airplane Line demo.
 
 `CLAUDE.md` is the working guide (revision paths, deploy procedure, rules).
+`docs/FEATURES.md` is what is built, piece by piece, with the tests for each.
 `docs/DEMO-RUNBOOK.md` is the facilitator script. `docs/ROADMAP.md` is the vision.
 
 ## Run locally
@@ -14,8 +15,8 @@ Needs Node 20+, Postgres, and (for the AI parts) an Anthropic API key.
 ```bash
 createdb sos                      # or set DATABASE_URL
 npm install
-SOS_FAKE_AGENT=1 npm start        # whole loop, zero API cost
-# or: ANTHROPIC_API_KEY=sk-... npm start
+SOS_OPEN=1 SOS_FAKE_AGENT=1 npm start   # whole loop, zero API cost, no sign-in
+# or: SOS_OPEN=1 ANTHROPIC_API_KEY=sk-... npm start
 ```
 
 Open http://localhost:3000 (lands on the Demo Company board at `/c/demo/`),
@@ -23,8 +24,9 @@ http://localhost:3000/c/demo/m/paperline/ for the line, `/c/demo/agents` for
 models and agent docs, `/admin` for companies. Modules under `modules/` are
 imported into the database on first boot; no seed step.
 
-With no `SOS_FLOOR_PASSWORD` / `SOS_MANAGER_PASSWORD` set, every request is a
-manager (local dev). Set both for anything reachable from the internet.
+`SOS_OPEN=1` makes every request an admin with no sign-in (local work only). A
+hosted instance (Railway, or `NODE_ENV=production`) ignores it; since 2026-09-28
+no password variables at all no longer means open.
 
 ## Env vars
 
@@ -35,11 +37,12 @@ manager (local dev). Set both for anything reachable from the internet.
 | `SOS_MODEL_BASELINE` | the first baseline model (`claude-fable-5-1` or `claude-opus-5-5`, default Fable) until one is saved on `/admin#models`; every job runs on one of those two (`src/agent.js`). `SOS_MODEL_PROPOSE`, `SOS_MODEL_BUILD`, `SOS_MODEL_REVIEW`, `SOS_MODEL`, `SOS_MODEL_INTAKE` are no longer read (since 2026-09-22) |
 | `SOS_MODEL_SUMMARY` | the first model for the short text jobs (plain summaries, plain-words rewrites), Sonnet 5 by default, until one is saved on `/admin#models` |
 | `SOS_FLOOR_PASSWORD`, `SOS_MANAGER_PASSWORD`, `SOS_ADMIN_PASSWORD` | the old shared passwords: floor and manager only for a company still on `legacy_login`; admin only until the first named admin account has set up its authenticator (`src/accounts.js`), then take `SOS_ADMIN_PASSWORD` out |
-| `SOS_CONNECTION_KEY` | the key stored secrets are encrypted under (ERP logins, admin authenticator secrets); required before an authenticator can be set up; never change it |
+| `SOS_CONNECTION_KEY` | REQUIRED: the key stored secrets are encrypted under (ERP logins, every authenticator secret, the per-company database passwords); an authenticator cannot be set up without it; never change it |
 | `SOS_EDGE_SECRET`, `SOS_EDGE_MODE` | the value Cloudflare's Transform Rule puts in `X-SOS-Edge`; requests without it are refused (`report` = count only) (`src/edge.js`) |
 | `SESSION_SECRET` | signs the session cookie |
-| `SOS_MAX_RUN_USD` | per build run cap (default 1.50); the run is aborted past it |
-| `SOS_MONTHLY_CAP_USD` | no new proposals or runs past this (default 25) |
+| `SOS_OPEN` | `1` = no sign-in, every request an admin; local only, a hosted instance ignores it |
+| `SOS_MAX_RUN_USD`, `SOS_MAX_BATCH_USD` | per build run and per batch caps; unset or 0 = no cap (the default) |
+| `SOS_MONTHLY_CAP_USD` | the instance's monthly ceiling; unset or 0 = none (the default; `src/spendwatch.js` sends alerts instead) |
 | `SOS_FAKE_AGENT` | `1` = scripted agent, no API calls |
 | `PORT` | default 3000 |
 

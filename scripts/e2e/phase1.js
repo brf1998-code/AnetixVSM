@@ -187,7 +187,7 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   t("under the limit on two routes: not yet", kills === 1);
   runner.timedOut(rec, "paperline", reqOf);
   t(`${runner.HANG_LIMIT} on two routes inside five minutes: restarted`, kills === 2 && rec.timeouts.length === 0);
-  const evs = await waitFor("the events", async () => { const r = (await q("SELECT kind, detail FROM platform.events WHERE kind IN ('tool_timeout','tool_restarted') ORDER BY id")).rows; return r.filter((e) => e.kind === "tool_restarted").length >= 2 ? r : null; }, 5000).catch(() => []);
+  const evs = await waitFor("the events", async () => { const r = (await q("SELECT kind, detail FROM platform.events WHERE kind IN ('tool_timeout','tool_restarted') ORDER BY id")).rows; return r.filter((e) => e.kind === "tool_restarted").length >= 2 && r.filter((e) => e.kind === "tool_timeout").length >= 2 * runner.HANG_LIMIT + 2 ? r : null; }, 5000).catch(() => []);
   t("each timeout is an event with the route's shape, and each restart one more", evs.filter((e) => e.kind === "tool_timeout").length === 2 * runner.HANG_LIMIT + 2 && evs.filter((e) => e.kind === "tool_restarted").length === 2 && evs.some((e) => e.detail.where === "GET /paperline/api/jobs/:n"), evs.map((e) => e.detail));
   t("and Anetix's phones heard once", (await waitFor("the restart alert", async () => { const a = await notified("A tool process was restarted"); return a.length ? a : null; }, 5000).catch(() => [])).length === 1);
   pinger.close();
@@ -198,5 +198,18 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   t("and says the deployed version and the boot, for the outside check", "v" in deep.json && (deep.json.v === null || /^[0-9a-f]{7}$/.test(deep.json.v)) && /^\d+$/.test(String(deep.json.boot)), deep.json);
 
   await q("UPDATE platform.companies SET demo=false WHERE slug='demo'");
+
+  // the Anetix mark in the tab and on a phone's home screen (2026-09-27)
+  const anon = client();
+  const ico = await fetch(`${process.env.SOS_E2E_BASE || "http://127.0.0.1:3999"}/favicon.ico`);
+  const touch = await fetch(`${process.env.SOS_E2E_BASE || "http://127.0.0.1:3999"}/apple-touch-icon.png`);
+  const man = await anon.get("/manifest.webmanifest");
+  t("the tab icon, the home screen icon and the manifest answer before any sign-in", ico.status === 200 && /icon/.test(ico.headers.get("content-type")) && touch.status === 200 && touch.headers.get("content-type") === "image/png" && man.status === 200 && man.json.name === "Anetix" && man.json.icons.length === 3, [ico.status, touch.status, man.status]);
+  t("and every icon the manifest names is there", (await Promise.all(man.json.icons.map((i) => fetch(`${process.env.SOS_E2E_BASE || "http://127.0.0.1:3999"}${i.src}`)))).every((r) => r.status === 200));
+  const loginHtml = (await anon.get("/login")).text;
+  t("the sign-in page names them", /rel="apple-touch-icon" href="\/assets\/anetix-touch-180\.png"/.test(loginHtml) && /rel="manifest"/.test(loginHtml) && /href="\/favicon\.ico"/.test(loginHtml));
+  const boardHtml = (await mgr.get("/c/demo/")).text;
+  const cicon = await mgr.get("/api/c/demo/icon.png");
+  t("a board's home screen icon is a PNG: the company's own, else the Anetix mark", /href="\/api\/c\/demo\/icon\.png"/.test(boardHtml) && cicon.status === 200 && (cicon.headers.get("content-type") || "").startsWith("image/"), cicon.status);
   R.done();
 })().catch(R.abort);

@@ -241,18 +241,9 @@ function compute(bundle, { now = new Date(), windowDays = 30 } = {}) {
   return { window_days: windowDays, as_of: (now instanceof Date ? now : new Date(now)).toISOString(), same_shift_hours: SAME_SHIFT_HOURS, fleet, companies };
 }
 
-// Spend per company since a moment: the same five sources monthlySpend adds
-// up, grouped by company.
+// Spend per company since a moment: the six sources the header, the company list and card use too.
 async function spendSince(since) {
-  const rows = (await q(`
-    SELECT company, SUM(usd)::numeric AS usd FROM (
-      SELECT company, cost_usd AS usd FROM platform.build_runs WHERE created_at >= $1
-      UNION ALL SELECT f.company, p.cost_usd FROM platform.proposals p JOIN platform.feedback f ON f.id=p.feedback_id WHERE p.created_at >= $1
-      UNION ALL SELECT company, cost_usd FROM platform.reviews WHERE created_at >= $1
-      UNION ALL SELECT slug, (brand->>'cost_usd')::numeric FROM platform.companies WHERE brand IS NOT NULL AND (brand->>'built_at')::timestamptz >= $1
-      UNION ALL SELECT company, cost_usd FROM platform.ai_usage WHERE created_at >= $1
-    ) s GROUP BY company`, [since])).rows;
-  const out = {}; for (const r of rows) out[r.company] = Number(r.usd || 0); return out;
+  return (await agent.spendSince(since)).by;   // the one formula (agent.spendSince, the launch audit 2.2): diagrams included
 }
 
 async function load(windowDays) {

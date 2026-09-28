@@ -134,6 +134,11 @@ run phase1                 node scripts/e2e/phase1.js
 # Phase 2's first item: nothing a manager or the floor reads from /api/ names a model or carries an AI cost
 fresh; start "SOS_BROWSER=off"
 run leaks                  node scripts/e2e/leaks.js
+# the rest of Phase 2: one spend formula, who is stuck, one pin message, tools never on another company's tables, and
+# the admin page with Demos first and the experiments behind More
+fresh; start "SOS_BROWSER=off"
+run phase2                 node scripts/e2e/phase2.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run phase2-browser node scripts/e2e/phase2-browser.js; }
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

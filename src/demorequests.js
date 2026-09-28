@@ -110,11 +110,9 @@ async function setStatus(id, { status, note }, by) {
     [d.id, status || null, note === undefined ? null : long(note, 2000), by || null]);
   await logEvent("demo_request_status", String(d.id), { status: status || d.status, by });
 }
-// The message a person gets with their pin (Brendan sends it; nothing here sends mail). Pure. No dashes: it goes out.
-function messageFor({ name, email, pin, days, url }) {
-  const first = String(name || "").trim().split(/\s+/)[0] || "there";
-  return `Hi ${first},\n\nThanks for asking to try Anetix. Here is your demo pin: ${pin}\n\nGo to ${url}/pin and enter it with this email address (${email}). You will name your company, pick a password and set up an authenticator app, and then your demo board is ready, with AI credit from us to build your first tool.${days ? ` The pin is good for ${days} days.` : ""}\n\nReply here with any questions.`;
-}
+// The message a person gets with their pin: one message whichever way the pin was made (selfserve.pinMessage, the
+// launch audit 2.8). Kept under this name for the callers and tests that know it.
+const messageFor = (x) => selfserve.pinMessage(x);
 async function makePin(id, { days = 30, uses = 1 } = {}, by) {
   const d = (await q("SELECT * FROM platform.demo_requests WHERE id=$1", [Number(id)])).rows[0];
   if (!d) throw fail(404, "no such request");

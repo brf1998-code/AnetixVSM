@@ -21,6 +21,29 @@ const KEEP_SNAPSHOTS = Number(process.env.SOS_KEEP_SNAPSHOTS || 10);
 // Schema names must be bare SQL identifiers; slugs may carry dashes.
 const ident = (s) => String(s).replace(/[^a-z0-9_]/gi, "_");
 function liveSchema(company, mod) { return `mod_${ident(company)}_${ident(mod)}`; }
+// Two companies' tools must never share tables (the launch audit 2.14, 2026-09-27): a schema is mod_<company>_<tool>
+// with dashes read as underscores, so acme + north-scrap and acme-north + scrap would both be mod_acme_north_scrap.
+// -> { company, name } of the tool (or a new-tool request under way at another company) already on those tables, or
+// null. A company's own slug cannot clash with another's (slugs carry no underscores), so the check is per tool.
+async function schemaClash(company, mod, { intakes = true } = {}) {
+  const want = `${ident(company)}_${ident(mod)}`;
+  const rows = (await q("SELECT company, name FROM platform.modules WHERE NOT (company=$1 AND name=$2)", [company, mod])).rows;
+  if (intakes) {
+    const more = await q("SELECT company, slug AS name FROM platform.module_intakes WHERE slug IS NOT NULL AND status NOT IN ('abandoned','done') AND company<>$1", [company]).catch(() => ({ rows: [] }));
+    rows.push(...more.rows);
+  }
+  return rows.find((r) => `${ident(r.company)}_${ident(r.name)}` === want) || null;
+}
+// The tool's own name when its tables are free, else the name with -2, -3 ... (a tool's slug is only its address;
+// the manager sees the name they typed). `taken(slug)` is the company's own test (another tool or request there).
+async function freeToolSlug(company, slug, taken = async () => false) {
+  for (let i = 1; i < 60; i++) {
+    const s = i === 1 ? slug : `${slug.slice(0, 30 - String(i).length - 1).replace(/-+$/, "")}-${i}`;
+    if (i > 1 && (await taken(s))) continue;
+    if (!(await schemaClash(company, s))) return s;
+  }
+  throw new Error("could not find a free name for this tool's tables");
+}
 function stagingSchema(company, mod) { return `stg_${ident(company)}_${ident(mod)}`; }
 // the test floor (docs/TEST-ENVIRONMENT.md): a third set of tables per tool, built from the version's own
 // migrations with sequences of its own, so nothing done there advances a sequence on the real floor
@@ -468,7 +491,7 @@ async function restoreSnapshot(company, mod, snapName) {
 }
 
 module.exports = {
-  liveSchema, stagingSchema, testSchema, buildTestSchema, dropTestSchema, rowsProblems, columnsByTable, ROW_CAP, setSequencesPastData,
+  liveSchema, stagingSchema, testSchema, schemaClash, freeToolSlug, ident, buildTestSchema, dropTestSchema, rowsProblems, columnsByTable, ROW_CAP, setSequencesPastData,
   validateMigrationSql, applyMigrations,
   rebuildStagingClone, snapshotSchema, recordSnapshot, restoreSnapshot, tablesIn, columnsOf,
   indexShape, indexOnLive, ensureIndexes, declaredIndexes,

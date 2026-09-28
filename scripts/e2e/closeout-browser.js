@@ -116,7 +116,7 @@ const R = runner(), t = R.t;
 
   // ---- the admin's loop health shows the manager's taps
   const ctxA = await browser.newContext({ viewport: { width: 1280, height: 900 } }); await ctxA.addCookies(admin.cookies());
-  const a = await ctxA.newPage(); watch(a, "admin"); await a.goto(BASE + "/admin"); await a.waitForSelector("#h-table tr td", { timeout: 10000 });
+  const a = await ctxA.newPage(); watch(a, "admin"); await a.goto(BASE + "/admin#health"); await a.waitForSelector("#h-table tr td", { timeout: 10000 });
   const adminText = await a.locator("body").innerText();
   t("loop health: the tile and the company row name the manager's done and a little left", /manager: \d+ done, \d+ a little left/.test(adminText) && /manager: \d+ done · \d+ a little left/.test(adminText), adminText.match(/manager:[^\n]*/g));
   t("the health table still fits its card", await a.evaluate(() => { const tb = document.getElementById("h-table"), card = tb.closest(".card") || tb.parentElement; return tb.getBoundingClientRect().right <= card.getBoundingClientRect().right + 1; }));

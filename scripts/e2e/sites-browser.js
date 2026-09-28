@@ -29,7 +29,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   await p.goto(`${BASE}/admin#sites`);
   await p.waitForSelector("#sites-table", { timeout: 15000 });
   const tabs = await p.locator("#shell nav a").allInnerTexts();
-  t("Sites is the tenth tab, between Demos and Companies", tabs.length === 10 && tabs.findIndex((x) => /^Sites/.test(x)) === tabs.findIndex((x) => /^Demos/.test(x)) + 1 && /^Companies/.test(tabs[tabs.findIndex((x) => /^Sites/.test(x)) + 1]), tabs);
+  t("Demos is the first tab (the launch audit 2.3), then Pins, then Sites", /^Demos/.test(tabs[0]) && /^Pins/.test(tabs[1]) && /^Sites/.test(tabs[2]) && /^More/.test(tabs[tabs.length - 1]), tabs);
   const bookRows = await p.locator("#sites-root .card").first().locator("table tr").count();
   t("the price book shows five bands, two with the price proposed", bookRows === 6 && (await p.locator("#sites-root .card").first().locator(".chip.prop").count()) === 2, bookRows);
   t("and says floor space moves a site up one band at most, and the fair-use line", /moves a site up one band at most/.test(await p.locator("#sites-root .card").first().innerText()) && /80% of the fee/.test(await p.locator("#sites-root .card").first().innerText()));

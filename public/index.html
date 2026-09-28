@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" id="favicon" href="/api/c/__company__/icon"><link rel="apple-touch-icon" id="touchicon" href="/api/c/__company__/icon">
+<link rel="icon" id="favicon" href="/api/c/__company__/icon"><link rel="apple-touch-icon" id="touchicon" href="/api/c/__company__/icon.png">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anetix · Improvement Board</title>
 <style>
@@ -1278,7 +1278,7 @@ function applyBrand(b, iconV) {
   // the address carries the icon's own version, so a browser that keys its icon cache by URL (Safari) never shows
   // one company's mark on another company's board, and a rebuilt brand guide shows at once
   const icon = `/api/c/${SLUG}/icon` + (iconV ? `?v=${iconV}` : "");
-  document.getElementById("favicon").href = icon; document.getElementById("touchicon").href = icon;
+  document.getElementById("favicon").href = icon; document.getElementById("touchicon").href = `/api/c/${SLUG}/icon.png` + (iconV ? `?v=${iconV}` : "");   // iOS takes a PNG only
   const mark = document.getElementById("comark");
   if (b && b.has_icon) { mark.src = icon; mark.style.display = "inline-block"; } else mark.style.display = "none";
 }

@@ -156,8 +156,9 @@ function widgetInject(html, company, mod, version, mount, manifest, { demo = fal
   // a module with a printer connection gets the platform's print helper: it
   // carries queued labels from this device to the printer chosen on it
   if (hasPrinter(manifest)) tag += `\n<script src="/assets/print-helper.js" data-company="${company}" data-module="${mod}"></script>`;
-  // tab and home-screen icon: the company's brand icon when it has one
-  const icon = `<link rel="icon" href="/api/c/${company}/icon"><link rel="apple-touch-icon" href="/api/c/${company}/icon">`;
+  // tab and home-screen icon: the company's brand icon when it has one, else the Anetix mark (the home-screen one is a
+  // PNG, the only kind iOS takes: /icon.png)
+  const icon = `<link rel="icon" href="/api/c/${company}/icon"><link rel="apple-touch-icon" href="/api/c/${company}/icon.png">`;
   html = html.includes("</head>") ? html.replace("</head>", `${icon}\n</head>`) : icon + html;
   return html.includes("</body>") ? html.replace("</body>", `${tag}\n</body>`) : html + tag;
 }
@@ -372,6 +373,9 @@ async function importFromRepo(company, mod) {
   const row = await getModule(company, mod);
 
   if (!row) {
+    // its tables may not be another company's (the launch audit 2.14): refused with the pair it would share with
+    const clash = await require("./migrate").schemaClash(company, mod);
+    if (clash) throw Object.assign(new Error(`${mod} cannot be added to ${company}: its tables would be the same as ${clash.company}'s ${clash.name}. Give one of the two companies a different code.`), { status: 409 });
     await q("INSERT INTO platform.modules (company, name, title, live_version, repo_hash) VALUES ($1,$2,$3,1,$4)",
       [company, mod, manifest.title, hash]);
     await insertVersion(company, mod, 1, "repo", "initial version from repo", files);

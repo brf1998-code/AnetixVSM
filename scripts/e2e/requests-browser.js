@@ -77,7 +77,8 @@ const SHOTS = process.env.SOS_SHOTS || "";   // a folder: screenshots land there
   await a.goto(`${BASE}/admin#requests`); await a.waitForSelector(`#req-open [data-request="${req.id}"]`, { timeout: 15000 });
   const tab = await a.locator('#shell nav a[data-tab="requests"]').innerText();
   t("the Requests tab carries the open count", /Requests\s*\d+/.test(tab.replace(/\n/g, " ")), tab);
-  t("the pill says how many are open", /open/.test(await a.locator("#pill-requests").innerText()));
+  // a pill only while one is new (the launch audit 2.5): this one is already being looked at, so the tab's count is it
+  t("no pill once every open request has been looked at", (await a.locator("#pill-requests").count()) === 0);
   const card = a.locator(`#req-open [data-request="${req.id}"]`);
   t("the request shows the company, the person and the stage", /Maria Browser/.test(await card.innerText()) && /Looking at it/.test(await card.innerText()) && /Looking at the phone layout now/.test(await card.innerText()), await card.innerText());
   if (SHOTS) await a.screenshot({ path: `${SHOTS}/admin-requests.png`, fullPage: true });
