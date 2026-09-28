@@ -71,9 +71,9 @@ function scrub(v, depth = 0) {
   return out;
 }
 // Who gets the scrub: a signed-in manager or floor session, on the platform's own /api/ routes.
-// Two kinds of answer are the company's own and pass untouched: a spreadsheet's rows on the connections routes (a
-// column may be called model or cost_usd) and a tool's files (code, /modules/<name>/export).
-const OWN = [/^\/api\/c\/[^/]+\/connections(?:\/|$)/i, /^\/api\/c\/[^/]+\/modules\/[^/]+\/export$/i];
+// One kind of answer is the company's own and passes untouched: a spreadsheet's rows on the connections routes (a
+// column may be called model or cost_usd). A tool's files (/modules/<name>/export) are admin only since 2026-09-27.
+const OWN = [/^\/api\/c\/[^/]+\/connections(?:\/|$)/i];
 function applies(req) {
   const role = req.sosRole;
   if (!role || role === "admin") return false;

@@ -29,7 +29,7 @@ t("a model column that is a machine's model stays, and so does a company called 
 t("a company's budget and a pinned model are gone; a refund says only that it happened", own.company.monthly_cap_usd === undefined && own.company.model_build === undefined && own.evidence.refunded === true && own.evidence.refunded_usd === undefined, own);
 t("the safety budget line loses its figure", c.words("build stopped at the safety budget ($4.00)") === "build stopped at the safety budget");
 const req = (role, p) => ({ sosRole: role, path: p });
-t("a spreadsheet's rows and a tool's files pass untouched", !c.applies(req("manager", "/api/c/acme/connections/scrap/sheet/upload")) && !c.applies(req("manager", "/api/c/acme/modules/scrap/export")));
+t("a spreadsheet's rows pass untouched", !c.applies(req("manager", "/api/c/acme/connections/scrap/sheet/upload")));
 t("it applies to a manager and the floor on /api/", c.applies(req("manager", "/api/c/acme/board")) && c.applies(req("floor", "/API/runs/3")));
 t("never to an admin, a caller with no session role, or a tool's own routes", !c.applies(req("admin", "/api/c/acme/board")) && !c.applies(req(undefined, "/api/www/companies")) && !c.applies(req("manager", "/c/acme/m/scrap/api/rows")));
 let sent = null;

@@ -195,6 +195,7 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   // ---- 1.13: the deep health check ----------------------------------------------------------------------------------
   const deep = await client().get("/health?deep=1");
   t("/health?deep=1 asks the database", deep.status === 200 && deep.json.db === true && deep.json.draining === false, deep.text);
+  t("and says the deployed version and the boot, for the outside check", "v" in deep.json && (deep.json.v === null || /^[0-9a-f]{7}$/.test(deep.json.v)) && /^\d+$/.test(String(deep.json.boot)), deep.json);
 
   await q("UPDATE platform.companies SET demo=false WHERE slug='demo'");
   R.done();

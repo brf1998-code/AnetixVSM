@@ -45,7 +45,7 @@ const R = runner(), t = R.t;
   t("setup: seven proposals, all UI", props.every((p) => p && p.id && p.class === "ui"), props.map((p) => p && p.class));
   const drafted = (await mgr.get(`/api/c/demo/record?kind=proposal_drafted&feedback_id=${R1}`)).json;
   const rows = rowsOf(drafted);
-  const exported = (await mgr.get("/api/c/demo/modules/paperline/export")).json.files;
+  const exported = (await admin.get("/api/c/demo/modules/paperline/export")).json.files;
   const totalChars = Object.values(exported).reduce((s, c) => s + String(c).length, 0);
   t("the proposer was given the whole module: its context is at least every character of every live file, nothing cut", rows[0] && rows[0].detail.context_chars >= totalChars && !rows[0].detail.context_cut, { context_chars: rows[0] && rows[0].detail.context_chars, totalChars });
   t("and that is more than the old cuts allowed (routes.js alone is over 8,000)", exported["routes.js"].length > 8000 && totalChars > 8000 * Object.keys(exported).length / 2, { routes: exported["routes.js"].length, totalChars });

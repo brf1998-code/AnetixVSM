@@ -86,6 +86,13 @@ function leaks(v, at = "", found = []) {
   t("the floor's board names no model and carries no cost", !leaks(fb).length, leaks(fb));
   t("the checks log is Anetix's", (await mgr.get("/api/c/demo/checks")).status === 403 && (await mgr.get("/api/c/demo/checks/export")).status === 403 && (await mgr.post(`/api/runs/${r2}/label`, { label: "right" })).status === 403);
   t("and so is a review's cost estimate", (await mgr.get("/api/c/demo/reviews/estimate?module=paperline")).status === 403);
+  // a tool's code is Anetix's (Brendan, 2026-09-27): the export of its files is admin only; the company's data is not
+  const codeMgr = await mgr.get("/api/c/demo/modules/paperline/export"), codeFloor = await floor.get("/api/c/demo/modules/paperline/export");
+  const codeAdmin = await admin.get("/api/c/demo/modules/paperline/export");
+  t("a tool's code is not handed to a manager or the floor", codeMgr.status === 403 && codeFloor.status === 403 && !/routes\.js/.test(codeMgr.text || "") && !/routes\.js/.test(codeFloor.text || ""), [codeMgr.status, codeFloor.status]);
+  t("an admin still gets it", codeAdmin.status === 200 && codeAdmin.json.files && typeof codeAdmin.json.files["routes.js"] === "string", codeAdmin.status);
+  const data = await mgr.get("/api/c/demo/export");
+  t("and the manager still downloads the company's data, with no code in it", data.status === 200 && !/router\.get\(|module\.exports/.test(data.text || JSON.stringify(data.json || "")), data.status);
 
   const ids = { id: String(r2), slug: "demo", company: "demo", name: "paperline", module: "paperline", mod: "paperline" };
   const fillFor = (p, over) => p.replace(/:(\w+)(\([^)]*\))?/g, (_m, n) => encodeURIComponent((over && over[n]) || ids[n] || "1"));
@@ -95,7 +102,7 @@ function leaks(v, at = "", found = []) {
     if (/intakes\/:id/.test(p)) variants.push(fillFor(p, { id: String(it.id) }));
     if (/reviews\/:id|review/.test(p)) variants.push(fillFor(p, { id: String(rv.id) }));
     if (/runs\/:id/.test(p)) variants.push(fillFor(p, { id: String(shipped.runId) }));
-    // a spreadsheet's rows and a tool's files are the company's own and pass untouched by design (companyview.OWN)
+    // a spreadsheet's rows are the company's own and pass untouched by design (companyview.OWN)
     if (!require("../../src/companyview").applies({ sosRole: "manager", path: fillFor(p) })) continue;
     for (const url of variants) for (const [who, c] of [["manager", mgr], ["floor", floor]]) {
       const r = await c.get(url);

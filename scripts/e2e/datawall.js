@@ -49,7 +49,7 @@ const PAGE = "/c/demo/m/paperline/";
   const before = prompts().length;
   const built = await intakeTo("Crib list", [["name", "shelf"], [`${CANARY} caliper`, "A1"], ["Torque wrench", "A2"]]);
   t("setup: a module built from an intake with a spreadsheet, the wall down", built.run.status === "deployed" && built.attached && built.slug, built);
-  const seedFiles = (await mgr.get(`/api/c/demo/modules/${built.slug}/export`)).json.files;
+  const seedFiles = (await admin.get(`/api/c/demo/modules/${built.slug}/export`)).json.files;
   t("setup: its first migration carries the marker as starting rows (the wall was down)", /INSERT/.test(seedFiles["migrations/001.sql"]) && seedFiles["migrations/001.sql"].includes(CANARY));
   t("setup: with the wall down the intake's rows reached a prompt", carries(since(before)).length > 0);
 
@@ -83,7 +83,7 @@ const PAGE = "/c/demo/m/paperline/";
   t("the run log says the starting rows were withheld from the agent", /starting rows withheld from migrations\/001\.sql/.test((g2.log || []).map((l) => l.note).join("\n")));
   await mgr.post(`/api/runs/${g2.id}/deploy`);
   await waitFor("the change live", async () => (await runOf(g2.id)).status === "deployed");
-  const after = (await mgr.get(`/api/c/demo/modules/${built.slug}/export`)).json.files;
+  const after = (await admin.get(`/api/c/demo/modules/${built.slug}/export`)).json.files;
   t("after the build the migration still carries its rows byte for byte (restored)", after["migrations/001.sql"] === seedFiles["migrations/001.sql"]);
   await waitFor("diagrams for the new version", async () => prompts().slice(mark).some((p) => /diagrams/.test(p.kind) && p.company === "demo" && JSON.stringify(p).includes(built.slug)), 30000).catch(() => {});
   // a fix round after a broken promise: the findings go back to the agent with no value quoted
@@ -111,7 +111,7 @@ const PAGE = "/c/demo/m/paperline/";
   await admin.post("/api/admin/companies/demo/test-floor", { on: false });
   // an intake with a spreadsheet, walled: the rows never reach a prompt, the module seeds nothing, the platform loads the list after the deploy
   const walledBuild = await intakeTo("Gauge list", [["name", "shelf"], [`${CANARY} gauge`, "B1"], ["Depth gauge", "B2"]]);
-  const wf = (await mgr.get(`/api/c/demo/modules/${walledBuild.slug}/export`)).json.files;
+  const wf = (await admin.get(`/api/c/demo/modules/${walledBuild.slug}/export`)).json.files;
   t("walled: the new module's migration seeds no rows and declares the starting list as a connection", !/INSERT/i.test(wf["migrations/001.sql"]) && /"starting"/.test(wf["module.json"]) && /"kind": "files"/.test(wf["module.json"]), wf["module.json"]);
   const items = (await mgr.get(`/c/demo/m/${walledBuild.slug}/api/items`)).json;
   t("walled: the platform loaded the starting list into the tool after the deploy", items && items.items && items.items.some((i) => i.name === `${CANARY} gauge`) && items.items.length === 2, items);

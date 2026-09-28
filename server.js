@@ -77,9 +77,12 @@ async function main() {
   app.use("/assets", express.static(path.join(__dirname, "public", "assets")));
   // Railway's deploy check (fast, says nothing about what is behind it); ?deep=1 also asks the database, for the
   // outside watch (anetix.ai's, www/uptime.js; the launch audit 1.15)
+  // v: the commit Railway deployed (its first 7 characters), so the outside check (ops/outside-check) can say from outside
+  // that a push went live; boot changes on every start, so it can tell a restart with no new version
+  const V = String(process.env.RAILWAY_GIT_COMMIT_SHA || "").slice(0, 7) || null;
   app.get("/health", async (req, res) => {
-    if (!req.query.deep) return res.json({ ok: true, boot: process.env.SOS_BOOT_ID });
-    try { await q("SELECT 1"); res.set("Cache-Control", "no-store").json({ ok: true, db: true, boot: process.env.SOS_BOOT_ID, draining: require("./src/restart").state.draining }); }
+    if (!req.query.deep) return res.json({ ok: true, v: V, boot: process.env.SOS_BOOT_ID });
+    try { await q("SELECT 1"); res.set("Cache-Control", "no-store").json({ ok: true, db: true, v: V, boot: process.env.SOS_BOOT_ID, draining: require("./src/restart").state.draining }); }
     catch (e) { res.status(503).json({ ok: false, db: false }); }
   });
   app.get("/login", (_req, res) => res.sendFile(page("login.html")));

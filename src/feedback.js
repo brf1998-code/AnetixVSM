@@ -1171,8 +1171,10 @@ router.post("/api/admin/restore", requireAdmin, express.json({ limit: "300mb" })
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ---- admin/manager: module version export (for revising a module from Cowork)
-router.get("/api/c/:slug/modules/:name/export", requireManager, async (req, res) => {
+// ---- admin: a tool's code, one version's files (for revising a tool from Cowork). Admin only since 2026-09-27
+// (Brendan: "a manager should be able to download data but not the tool code, the tool code is owned by us"; the
+// Terms 10.6). A company's own data is Settings' "Your data" (src/dataexport.js), which never carries code.
+router.get("/api/c/:slug/modules/:name/export", requireAdmin, async (req, res) => {
   const row = await registry.getModule(req.params.slug, req.params.name);
   if (!row) return res.status(404).json({ error: "unknown module" });
   const version = req.query.version ? Number(req.query.version) : row.live_version;

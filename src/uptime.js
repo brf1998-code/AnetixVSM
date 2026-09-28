@@ -1,8 +1,8 @@
 // Each service watches the other (the launch audit 1.15). anetix.ai asks this product's /health?deep=1 every minute
 // (www/uptime.js) and this product asks anetix.ai's /health: a service that is down cannot say so itself, so the other
 // one does, to Anetix's phones. Three misses in a row send one alert; the first answer after that sends "answers again"
-// with how long it was out. Both run on Railway, so a Railway-wide outage silences both: an outside checker on
-// https://app.anetix.ai/health?deep=1 (UptimeRobot or the like, pointed at the same ntfy topic) covers that case.
+// with how long it was out. Both run on Railway, so a Railway-wide outage silences both: the outside check
+// (ops/outside-check, a Cloudflare Worker on the same ntfy topic) covers that case.
 //
 // Runs only where an alert can go (NTFY_TOPIC set) and SOS_UPTIME_WATCH is not 0. SOS_UPTIME_MS: how often (60 s).
 const WWW_URL = () => String(process.env.SOS_WWW_URL || "https://anetix.ai").replace(/\/+$/, "");

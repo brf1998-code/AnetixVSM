@@ -1813,7 +1813,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   (index.html reads `out`); a string naming a model (an id `claude-<family>-...` in any case, a label as written,
   "Opus 5.5") says "the AI", and the cost cap and safety budget lines lose their figures. An admin, anetix.ai's key
   (no session role), a tool's own routes (`/c/<slug>/m/...`), the connections routes (a spreadsheet's columns may be
-  called model or cost_usd) and a tool's files (`/api/c/<slug>/modules/<name>/export`) are never touched. The data
+  called model or cost_usd) are never touched. The data
   export scrubs its requests and record, never the tools' rows or the new-tool answers. The checks log (page and its
   API: list, label, replay, export) is admin only, like the agent settings (1.18); a review's cost estimate is admin
   only; a manager's `model` in approve, batch or review start is not read. A system review's cards are named "System
@@ -1826,7 +1826,31 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   a review, a new-tool request, a log line naming a model and a cost cap; then calls every GET route that takes a
   parameter, found by walking the routers, as a manager and as the floor, and reads each answer for a model's id or
   label, a cost key, any `*_usd` but a price and any `$` figure; the admin's copy still has them; Jonah as a manager).
-  Still open: `/api/c/<slug>/modules/<name>/export` hands a manager a tool's code, while C9 says the tools are Anetix's.
+  **A tool's code is Anetix's** (the same night, Brendan: "a manager should be able to download data but not the tool
+  code, the tool code is owned by us"): `GET /api/c/<slug>/modules/<name>/export` (one version's files) is admin only;
+  no UI called it. A manager keeps Settings' "Your data" (`src/dataexport.js`, never code) and what the board and
+  Versions panel show (file names in "what changed?", titles of the checks, the plain summaries). `leaks.js` checks
+  the 403 for a manager and the floor, the admin's copy, and that the data export carries no code.
+- **The outside check** (2026-09-27, `ops/outside-check/`, the launch audit 1.15's optional outside checker; Brendan:
+  "an optional outside checker that can verify for me and notify me"). A Cloudflare Worker (`worker.mjs`, pasted into
+  the dashboard; setup in its `README.md`) on a one-minute Cron Trigger, outside Railway, sending to the same
+  `NTFY_TOPIC`. It asks `app.anetix.ai/health?deep=1` (up, database, version, boot), `app.anetix.ai/login` (the path
+  through Cloudflare's edge rule, which `/health` is exempt from; a 403 there names the rule), `anetix.ai/health` and
+  `anetix.ai/`. A failure is asked twice more 15 s apart before it counts; one that answers on a retry is a short miss.
+  It says: that it is running (the first run, with what it saw), what is not answering (one alert, then hourly), what
+  answers again (and after how long), a new version on either service ("is on <sha> now": a push confirmed from
+  outside), a restart with no new version, and a quiet morning line at `SUMMARY_HOUR_UTC` (12). State is one KV key
+  written only on a change. Both `/health` answers now carry `v` (the first 7 of `RAILWAY_GIT_COMMIT_SHA`, null
+  locally) and `boot` (the product had it; anetix.ai's is new). Tests: `scripts/test-outside-check.js` (24, no
+  network), `phase1.js` and www `e2e.js` read the new `/health` fields. Known limit: KV can be a minute behind between
+  Cloudflare's locations, so a transition may rarely be said twice.
+- **anetix.ai's front page crash, and its own error guard** (2026-09-27, found running www's `e2e.js` for the outside
+  check). The $30 refill change (6998d6f) declared `const money = { ..., money(...) }` inside the `/` route, so every
+  visit with a good pin threw inside an async route, which on Express 4 and Node 22 ends the process (no pin holder had
+  opened it since the deploy). Renamed, and www got `errors.js` (the product's `src/errors.js` pattern: async routes to
+  `next(err)`, a plain 500 page, one alert per 15 minutes, guards on stray rejections). Its `e2e.js` and
+  `e2e-activate.js` still expected the $20 refill; both now read $30 (the unused bought credit refunded at Activate is
+  $30, the first invoice $2,470). Run the www suites after any www change: they are what caught it.
 - **The Anetix mark** (2026-09-25, `public/assets/anetix-mark.svg`, the square
   with the blue A on #14171c, and `anetix-a.svg`, the A alone; the blue is
   the Finn Operations logo's #4c90d1, Brendan's ask): on the admin band, the
@@ -2902,8 +2926,8 @@ something to interrupt; the fake agent stamps a visible
 - So: to revise a module from Cowork, edit `modules/<name>/`, push, done. But
   if the in-app agent has built versions since the last import, the repo copy
   is behind. **Export the live version first** and edit that:
-  `GET https://sos.finnoperations.com/api/c/demo/modules/paperline/export`
-  (manager cookie) returns `{files}`; write them over `modules/paperline/`,
+  `GET https://app.anetix.ai/api/c/demo/modules/paperline/export`
+  (an admin session; admin only since 2026-09-27) returns `{files}`; write them over `modules/paperline/`,
   then make the change. Otherwise the agent's changes get superseded (they
   remain in the DB and are still rollback-able, but not live).
 - **Never edit an existing migration file.** Migrations are applied once per
