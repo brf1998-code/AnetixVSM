@@ -1887,8 +1887,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   stops at `converted_at`. (10) **This file** (2.10): the feature history moved here from CLAUDE.md, whose variable
   lines were wrong (the connection key, the caps, the admin password, the open rule). (11) **No browser, an alert**
   (2.11, `pageload.noBrowserAlert`): on Railway, a boot with no Chromium or one that will not start sends one ntfy
-  alert; railway.json says NIXPACKS and nixpacks.toml installs Chromium (the service's own setting still reads
-  Railpack; railway.json wins). (12) **Open is a switch production never honours** (2.12, `auth.HOSTED`, `auth.OPEN`):
+  alert; since 2026-09-28 railway.json says RAILPACK and railpack.json installs Debian's Chromium (it was Nixpacks
+  and nixpacks.toml until then; see "Built with Railpack"). (12) **Open is a switch production never honours** (2.12, `auth.HOSTED`, `auth.OPEN`):
   no password variables no longer means open; `SOS_OPEN=1` opens a local instance, and never one on Railway or with
   `NODE_ENV=production`; `.env.example` boots closed. (13) **The models test waits for the reload** (2.13,
   `models-browser.js`). (14) **Two companies' tools never share tables** (2.14, `migrate.schemaClash`,
@@ -2155,9 +2155,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   (every inline script parsed with `vm.Script`, every screen asked for); the
   run log and the gate line say which way it looked. Boot logs one
   `[pageload]` line saying whether the browser starts. Chromium comes from
-  `nixpacks.toml` (`nixPkgs = ["...", "chromium"]`; Railway builds this repo
-  with Nixpacks because railway.json says so, whatever the service settings
-  show); found on the PATH or at `SOS_CHROMIUM_PATH`; it runs `--no-sandbox`
+  `railpack.json` (`deploy.aptPackages`, Debian's `chromium` at
+  `/usr/bin/chromium`; Nixpacks and `nixpacks.toml` until 2026-09-28, see
+  "Built with Railpack"); found on the PATH or at `SOS_CHROMIUM_PATH`; it runs `--no-sandbox`
   because the container is root (agent-written page code in an unsandboxed
   renderer; the browser here is the platform's own check, not a place module
   code runs, and module code itself is now isolated, see option C). Evidence: `evidence.checks = { ok, kind, detail, smoke,
@@ -2935,3 +2935,14 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   changed. On /admin a code box left empty makes the button ask for the passkey; the step-up modal has "Use my passkey".
 - **Low credit no longer lights /admin.** Only out of credit does, and "Seen, clear it" on the Pins tab clears it
   (`self_serve.credit_seen_usd`, the credit bought at that moment) until the company refills and runs out again.
+
+- **Built with Railpack (2026-09-28).** Both services moved off Nixpacks, which Railway lists as deprecated, to
+  Railpack, its default. railway.json says `"builder": "RAILPACK"` in both repos (railway.json overrides the service
+  setting, so the file is what decides). `railpack.json` in each repo pins Node 24 (`packages.node`; Nixpacks was
+  running 24.10, and `engines` alone says only ">=20"). In sos it also lists `chromium` and `fonts-liberation` under
+  `deploy.aptPackages`, so the runtime image (Debian trixie slim, running as root) has Debian's real Chromium at
+  `/usr/bin/chromium`; the Ubuntu apt package the Nixpacks image had was only a snap stub, which is why Chromium came
+  from Nix before. `nixpacks.toml` is gone. What to read after a deploy: the build log names Railpack, the deploy log's
+  `[pageload]` line says the browser starts at /usr/bin/chromium, and the `[runner]` line still says "as its own user"
+  and "Node permission flags on" (the runner's per-company uid has to read Node under /mise and the app under /app).
+  No "The build check has no browser" phone alert. Rollback is the previous deployment in Railway.

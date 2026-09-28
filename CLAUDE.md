@@ -150,6 +150,7 @@ Index of `docs/FEATURES.md`, in its order:
 - What the platform lends a module
 - Plant KPIs module
 - 2026-09-27: five fixes from Brendan before the next phase of the audit (its own section at the end)
+- Built with Railpack (2026-09-28)
 
 ## What this is
 
@@ -242,6 +243,11 @@ in Brendan's Terminal:
    `pat.md`/`node_modules`, pushes `main`. Railway auto-deploys.
 3. Claude watches the deploy with the Railway MCP (`list-deployments`,
    `get-logs`). Boot log shows `[registry] ...` lines for module imports.
+
+Railway builds both repos with **Railpack** (railway.json `"builder": "RAILPACK"`,
+since 2026-09-28; Nixpacks before). `railpack.json` pins Node 24 and, in sos,
+installs Debian's Chromium for the page check (`deploy.aptPackages`). A system
+package the product needs goes there, never in a Nixpacks file.
 
 If a future session does have the repo attached as a source, pushing from the
 sandbox works the same way (`git push` from a clone) and the Terminal step
