@@ -40,6 +40,10 @@ t("and a password variable set does not open anything", openWith({ SOS_FLOOR_PAS
 const { pinMessage } = require("../src/selfserve");
 const m = pinMessage({ name: "Sam at Acme Wire", email: "sam@acme.test", pin: "K7RM-4XQP", days: 30, url: "https://anetix.ai/" });
 t("the first name, the pin, the email, the pin link and how long", /^Hi Sam,/.test(m) && m.includes("K7RM-4XQP") && m.includes("sam@acme.test") && m.includes("https://anetix.ai/pin") && /30 days/.test(m));
+t("two numbered lists: getting in, then a four step tour with the board's own button names (2026-09-28)", /Getting in:\n1\. [^\n]+\n2\. [^\n]+\n3\. /.test(m) && /A quick tour, with AI credit from us:\n1\. [^\n]+\n2\. [^\n]+\n3\. [^\n]+\n4\. /.test(m) && ["+ New tool", "Approve build", "Sample data", "Feedback", "Make it live", "Roll back"].every((b) => m.includes(`"${b}"`)));
+{ const board = require("fs").readFileSync(require("path").join(__dirname, "../public/index.html"), "utf8"), widget = require("fs").readFileSync(require("path").join(__dirname, "../public/assets/feedback-widget.js"), "utf8");
+  t("every button the tour names is on the board or the tool's feedback button, word for word", />\+ New tool</.test(board) && />Approve build</.test(board) && />Sample data</.test(board) && /"Make it live"/.test(board) && />Roll back</.test(board) && /<\/svg>Feedback'/.test(widget)); }
+t("short enough to read at a glance: under 1,600 characters", m.length < 1600, m.length);
 t("what to have ready, how to come back, where to get help", /Face ID or a fingerprint/.test(m) && /authenticator app/.test(m) && /To come back later, go to https:\/\/anetix\.ai and choose Sign in/.test(m) && /brendan@anetix\.ai or taylor@anetix\.ai/.test(m));
 t("no dashes, no we", !/[–—]/.test(m) && !/ - /.test(m) && !/\b(we|our)\b/i.test(m), m);
 

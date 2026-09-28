@@ -42,5 +42,7 @@ t("the code step says Remember this device, on a phone too (3.14)", /Remember th
 const backup = fs.readFileSync(path.join(__dirname, "../src/backup.js"), "utf8");
 t("the tickets are never in a backup, and a restore clears them", /NOT_IN_BACKUP = \[[^\]]*"signin_tickets"/.test(backup) && /"platform\.signin_tickets"\]\)\.join/.test(backup));
 
+t("the board's Add credit says what a refill is for: the AI and free demos for other plants (Brendan 2026-09-28)", (index.match(/A refill pays for the AI your builds use and keeps free demos going for other plants/g) || []).length === 2 && !/empower/i.test(index));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

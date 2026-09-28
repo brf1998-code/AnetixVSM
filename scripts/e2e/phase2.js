@@ -38,7 +38,7 @@ const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
   t("no dashes in it (it goes out)", !/[–—]/.test(m) && !/ - /.test(m));
   const dr = await q("INSERT INTO platform.demo_requests (name, email, company, wants) VALUES ('Pat Doe','pat@zeta.test','Zeta Tools','pin') RETURNING id");
   const drPin = (await admin.post(`/api/admin/demo-requests/${dr.rows[0].id}/pin`, { days: 30 })).json;
-  t("a demo request's pin comes with the same message", drPin.message && drPin.message.replace(/Pat|pat@zeta\.test|[A-Z0-9]{4}-[A-Z0-9]{4}/g, "") === m.replace(/Sam|sam@acme\.test|[A-Z0-9]{4}-[A-Z0-9]{4}/g, ""), drPin.message);
+  t("a demo request's pin comes with the same message", drPin.message && drPin.message.replace(/\bPat\b|pat@zeta\.test|[A-Z0-9]{4}-[A-Z0-9]{4}/g, "") === m.replace(/\bSam\b|sam@acme\.test|[A-Z0-9]{4}-[A-Z0-9]{4}/g, ""), drPin.message);
 
   // ---- 2.1 and 2.9: a demo from a pin, then the ways a demo gets stuck
   const pin = await selfserve.makePinRow({ label: "Lee at Stuck Co", email: "lee@stuck.test", max_uses: 1, days: 30 }, "e2e");

@@ -2997,8 +2997,22 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   so on the set-up form and the refill page the checkbox stretched to its own line above the words); the set-up
   form names the email as the sign-in (`autocomplete="username"`), so a password manager saves the password under
   the email and fills it at the next sign-in instead of under the person's name.
-  Tests: run-all 43 suites, 1,607 checks (new `phase3` 27, with a fake Stripe on 4555); `scripts/test-phase3.js` 15;
+  **What a refill is for (Brendan, 2026-09-28):** wherever Add credit is offered (the board's credit line and its
+  out-of-credit panel here; the refill page, its thanks and the page about the product on anetix.ai) the words say a
+  refill pays for the AI your builds use and keeps free demos going for other plants, and the refill page adds the
+  mission: operators and managers in charge of the software they work with, and American manufacturing stronger for
+  it. No dollar figure of AI cost, and not the word "empower" (Brendan's own banned list).
+  Tests: run-all 43 suites, 1,607 checks (new `phase3` 27, with a fake Stripe on 4555); `scripts/test-phase3.js` 16;
   every unit suite; passkeys-browser 44; demorequests-browser 33 (its pin now lands on /start); www
-  test-www 121, e2e 82 (with the product reading refills from www's fake Stripe), e2e-golive 56,
+  test-www 123, e2e 82 (with the product reading refills from www's fake Stripe), e2e-golive 56,
   e2e-golive-browser 26, e2e-activate 50.
+
+- **The pin message is two short lists (2026-09-28).** Brendan: "more concise and include instructions." `selfserve.pinMessage`
+  (the one message whichever way a pin is made) is now: the pin and how long it is good for; "Getting in" in three
+  steps (the pin with the email, company and password, the second step); "A quick tour" in four steps with the
+  board's own button names ("+ New tool" and "Approve build", "Sample data", "Feedback" as the operator, "Approve
+  build", the preview, "Make it live" and "Roll back" as the manager); how to come back; who to write to. Still no
+  dashes and no "we". `scripts/test-phase2.js` checks every named button is still on the board word for word, so a
+  renamed button fails the test until the message follows. Tests: test-phase2 20, e2e phase2 21 (its comparison
+  now matches the name as a whole word: "Sam" was also taking the "Sam" out of "Sample data"), demorequests-browser 33.
 

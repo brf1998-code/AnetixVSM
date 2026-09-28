@@ -322,14 +322,24 @@ async function assertCredit(company, opts = {}) {
 
 // The message a person gets with their pin (Brendan sends it; nothing here sends mail), the same whichever way the pin
 // was made, a demo request's "Make their pin" or "Make the pin" by hand (the launch audit 2.8). It says what to have
-// ready before starting, how to sign in later, and where to get help. Pure. No dashes: it goes out.
+// ready before starting, how to sign in later, and where to get help. Since 2026-09-28 (Brendan: "more concise and
+// include instructions") it is two short numbered lists, getting in and a four step tour of the loop, with the board's
+// own button names ("+ New tool", "Approve build", "Sample data", "Feedback", "Make it live", "Roll back"; rename one
+// there and rename it here). Pure. No dashes: it goes out.
 const PIN_HELP = "brendan@anetix.ai or taylor@anetix.ai";
 function pinMessage({ name, email, pin, days, url }) {
   const first = String(name || "").trim().split(/\s+/)[0] || "there";
   url = String(url || WWW_URL()).replace(/\/+$/, "");
-  return `Hi ${first},\n\nHere is your pin to try Anetix: ${pin}\n\n`
-    + `Before you start: the sign-in has a second step. On a phone you can use Face ID or a fingerprint. On a computer, have an authenticator app ready on your phone (Google Authenticator, Microsoft Authenticator, 1Password or similar).\n\n`
-    + `Go to ${url}/pin and enter the pin with this email address (${email}). You will name your company, pick a password and set up that second step, and then your demo board is ready, with AI credit from us to build your first tool.${days ? ` The pin is good for ${days} days.` : ""}\n\n`
+  return `Hi ${first},\n\nHere is your pin to try Anetix: ${pin}${days ? ` (good for ${days} days)` : ""}\n\n`
+    + `Getting in:\n`
+    + `1. Go to ${url}/pin and enter the pin with this email address (${email}).\n`
+    + `2. Name your company and pick a password.\n`
+    + `3. Set up the second sign-in step: Face ID or a fingerprint on a phone, or an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, 1Password or similar) if you are on a computer.\n\n`
+    + `A quick tour, with AI credit from us:\n`
+    + `1. Press "+ New tool" and describe something your floor tracks on a whiteboard, paper or a spreadsheet. Answer its questions and press "Approve build".\n`
+    + `2. Press "Sample data" on the new tool to fill it with a made-up week of work.\n`
+    + `3. Be the operator: open the tool, press "Feedback" and ask for a change in plain words. You can talk instead of typing, or add a photo or a spreadsheet.\n`
+    + `4. Be the manager: the request comes back to the board ready to build, or with a question if it needs one. Press "Approve build", try the preview, then "Make it live". "Roll back" undoes it.\n\n`
     + `To come back later, go to ${url} and choose Sign in, with the same email and password.\n\n`
     + `If anything gets in the way, write to ${PIN_HELP} or reply here.`;
 }
