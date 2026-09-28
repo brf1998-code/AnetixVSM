@@ -151,6 +151,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Plant KPIs module
 - 2026-09-27: five fixes from Brendan before the next phase of the audit (its own section at the end)
 - Built with Railpack (2026-09-28)
+- anetix.ai: the account first, and the principle only (2026-09-28, www repo)
 
 ## What this is
 

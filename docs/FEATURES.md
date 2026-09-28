@@ -2946,3 +2946,15 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   `[pageload]` line says the browser starts at /usr/bin/chromium, and the `[runner]` line still says "as its own user"
   and "Node permission flags on" (the runner's per-company uid has to read Node under /mise and the app under /app).
   No "The build check has no browser" phone alert. Rollback is the previous deployment in Railway.
+
+- **anetix.ai: the account first, and the principle only (2026-09-28, www repo).** A good pin now goes straight to
+  `/start` (name the company, pick a password) instead of the page about the product, because a person who read first
+  could leave and come back with no password (Brendan, after his own walkthrough). Making the demo lands on `/`,
+  which shows the page about the product to the browser that made it (the seven day welcome cookie) and leads on to
+  `/welcome`, the sign-in and the authenticator. `/start` checks the pin with the product on every view (where
+  `home`, which `pin_refusals.where_from` already knew), since the front page no longer does. The page carries the
+  principle only: the pilot's figures (the "not possible in February" section) and the floor photo are gone (the photo
+  out of the repo), a "rules the loop runs on" section stands in for them (the manager gate, the checks, rollback,
+  the data download in Settings), and the bio no longer names the alpha. Brendan says the results on a call, never
+  on the page. The headshots stay (his call). The pin message (`selfserve.pinMessage`) already described this order,
+  so the product did not change. Tests: www test-www 112, e2e 69, e2e-golive 56, e2e-golive-browser 26, e2e-activate 50.
