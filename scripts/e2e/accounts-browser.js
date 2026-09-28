@@ -112,7 +112,7 @@ async function codeFor(secretText, delta = 0) {
   t("before the code step there is no remember box", !(await page.locator("#rememberbox").isVisible()));
   await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]");
   await page.waitForSelector("#codebox", { state: "visible" });
-  t("the code step carries 'Remember this computer for 30 days', unticked", (await page.locator("#rememberbox").isVisible()) && /Remember this computer for 30 days/.test(await page.locator("#rememberlabel").innerText()) && !(await page.locator("#remember").isChecked()));
+  t("the code step carries 'Remember this device for 30 days', unticked", (await page.locator("#rememberbox").isVisible()) && /Remember this device for 30 days/.test(await page.locator("#rememberlabel").innerText()) && !(await page.locator("#remember").isChecked()));
   await page.click("#userec");
   t("choosing a recovery code takes the box away", !(await page.locator("#rememberbox").isVisible()));
   await page.reload(); await page.fill("#nm", NAME); await page.fill("#pw", made.password); await page.click("button[type=submit]"); await page.waitForSelector("#codebox", { state: "visible" });

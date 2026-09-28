@@ -91,7 +91,7 @@ const EMAIL = "sam.lee@acmewire.test";
   const pr = (await q("SELECT d.status, d.pin_id, p.email, p.label, p.max_uses FROM platform.demo_requests d JOIN platform.access_pins p ON p.id=d.pin_id WHERE d.id=$1", [r[0].id])).rows[0];
   t("the pin is for their email, one company, tied to the request, which is now Pin sent", pr && pr.email === EMAIL && pr.label === "Sam Lee at Acme Wire" && pr.max_uses === 1 && pr.status === "pin_sent", pr);
   const opened = await wwwPost("/pin", { pin: shown, email: EMAIL });
-  t("the pin opens anetix.ai with that email", opened.status === 303 && opened.location === "/", opened.status);
+  t("the pin opens anetix.ai with that email, straight to making the account (2026-09-28)", opened.status === 303 && opened.location === "/start", [opened.status, opened.location]);
   await a.click("#mcard button.go"); await a.waitForTimeout(800);
   t("the card shows the pin and Pin sent", /Pin sent/.test(await a.textContent(`[data-dr="${r[0].id}"]`)) && (await a.textContent(`[data-dr="${r[0].id}"]`)).includes(shown));
   t("and the Pins list below has it", (await a.textContent("#pins-list")).includes(shown));

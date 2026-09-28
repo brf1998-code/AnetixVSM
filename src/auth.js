@@ -507,6 +507,30 @@ async function loginHandler(req, res) {
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
+// GET /login/ticket?t=<id>.<token>: the one sign-in a new demo's manager gets straight from anetix.ai's set-up form
+// (src/tickets.js, the launch audit 3.8). Good: the enrollment-only session a password would give, and on to the
+// authenticator setup. Anything else: the sign-in page with the email filled in, where the password works as always.
+// The ticket rides in the address, so this answer tells the browser to send no Referer on, and is never cached.
+async function ticketHandler(req, res) {
+  const ip = clientIp(req);
+  res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+  const wait = loginBlocked(ip);
+  if (wait) return res.redirect(303, "/login");
+  try {
+    const r = await require("./tickets").redeem(req.query.t);
+    if (!r.ok) {
+      noteLoginFail(ip);
+      await accounts.event("ticket_refused", { login: r.login || null, ip, detail: { why: r.why } });
+      return res.redirect(303, `/login${r.login ? `?account=${encodeURIComponent(r.login)}` : ""}`);
+    }
+    loginFails.delete(ip);
+    await accounts.event("signin_ticket", { account_id: r.account.id, login: r.account.login, ip });
+    accounts.forget(r.account.id);
+    const out = startAccountSession(req, res, r.account, { enroll: true });
+    res.redirect(303, out.enroll_url || `/c/${r.account.company}/`);
+  } catch (e) { console.error("[ticket]", e.message); res.redirect(303, "/login"); }
+}
+
 // The session a named account gets, however it proved who it is (password and code here, a passkey in
 // src/passkeys.js): the cookie, and the answer the sign-in pages act on.
 function startAccountSession(req, res, account, { enroll = false, extraCookies = [], now = Date.now() } = {}) {
@@ -539,5 +563,5 @@ async function loginMode(slug) {
 module.exports = { startAccountSession,
   middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
   setPasswords, accountsOnly, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
-  clientIp, ENROLL_PATHS, WINDOWS, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
+  clientIp, ENROLL_PATHS, WINDOWS, ticketHandler, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

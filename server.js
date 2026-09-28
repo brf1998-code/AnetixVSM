@@ -35,6 +35,7 @@ async function main() {
   await accounts.init();      // named admin accounts, their authenticators and recovery codes, the sign-in log (src/accounts.js)
   await require("./src/passkeys").init();   // passkeys: sign in with an email and Face ID, a fingerprint or the device PIN (src/passkeys.js); after accounts, whose table it points at
   await require("./src/devices").init();   // trusted admin devices: "remember this computer", the code skipped at sign-in for 30 days (src/devices.js)
+  await require("./src/tickets").init();   // one sign-in straight from demo setup on anetix.ai, before any second factor exists (src/tickets.js, 3.8)
   await record.init();   // the interaction record: insert-only, what everyone said and decided
   await people.init();        // operator identity: names and PINs per company
   await require("./src/closeloop").init();   // close the loop: my requests, what went live, fixed it / not quite
@@ -50,6 +51,7 @@ async function main() {
   await require("./src/campaign").init();    // the test campaign: proposed by the AI, approved by the manager, run on the test floor, a step before the deploy gate
   await require("./src/datawall").init();    // the data wall: whether the AI may read a company's data, a switch per company on /admin (src/datawall.js)
   await require("./src/selfserve").init();   // self-serve companies from anetix.ai: access pins, the credit ledger, the credit gate (src/selfserve.js)
+  require("./src/stripecheck").bootLine();   // whether a refill is checked with Stripe before it is added (src/stripecheck.js, 3.7)
   await require("./src/demorequests").init();   // demo requests from anetix.ai's form, on the Pins tab (src/demorequests.js)
   await require("./src/sample").init();      // sample data for a demo's tools: the AI fills a tool with a made-up week, and clears exactly those rows (src/sample.js)
   await require("./src/sites").init();       // paid sites: the price book and the pipeline on the Sites tab of /admin (src/sites.js, docs/PAID-SITES.md)
@@ -101,6 +103,8 @@ async function main() {
   // addresses and nothing else; any other origin gets no CORS headers and the browser refuses to read the answer.
   app.options("/login", selfserve.loginCors);
   app.post("/login", selfserve.loginCors, express.json(), auth.loginHandler);
+  // a new demo's one sign-in straight from anetix.ai's set-up form, on to the authenticator setup (src/tickets.js, 3.8)
+  app.get("/login/ticket", auth.ticketHandler);
   // a passkey sign-in (src/passkeys.js): the same CORS as /login, since anetix.ai's wall offers it too
   app.options(["/login/passkey/options", "/login/passkey"], selfserve.loginCors);
   app.post("/login/passkey/options", selfserve.loginCors, express.json(), require("./src/passkeys").beginSignIn);

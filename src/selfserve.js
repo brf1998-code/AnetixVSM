@@ -571,6 +571,12 @@ wwwRouter.post("/api/www/companies", json, guard(async (req, res) => {
   } else if (r.created) { r.passwords = null; r.manager = null; r.kept = true; }   // not a browser (the webhook): the handout stays for the person
   const ms = await managers(r.company.slug);
   const login = r.manager ? r.manager.login : ms.length ? ms[0].login : null;
+  // the person's browser, the first time its demo is made: one sign-in straight on to the authenticator setup, so the
+  // password just picked is not asked for again (src/tickets.js, 3.8). This answer is the only place it is ever given.
+  if (b.collect && r.created && login) {   // made just now for this browser (a replay of the same form is created: false)
+    const a = (await q("SELECT * FROM platform.accounts WHERE login=$1 AND role='manager' AND company=$2", [login, r.company.slug])).rows[0];
+    if (a) r.signin_ticket = await require("./tickets").mint(a);
+  }
   res.json({ ok: true, ...r, managers: ms, login_url: `/login?next=${encodeURIComponent(`/c/${r.company.slug}/`)}${login ? `&account=${encodeURIComponent(login)}` : ""}`, floor_login_url: `/login?next=${encodeURIComponent(`/c/${r.company.slug}/`)}` });
 }));
 // Before the checkout: does this pin still work, and is the email one an account can be made for.
@@ -586,6 +592,10 @@ wwwRouter.post("/api/www/check", json, guard(async (req, res) => {
 }));
 wwwRouter.post("/api/www/credit", json, guard(async (req, res) => {
   const b = req.body || {};
+  // 3.7: with STRIPE_READ_KEY set, Stripe itself must back the refill before a cent is added (src/stripecheck.js). A
+  // payment credited before is still answered "already done" first, so a replay never needs Stripe.
+  const done = clean(b.ref, 200) && (await q("SELECT 1 FROM platform.credit_ledger WHERE ref=$1", [clean(b.ref, 200)])).rows[0];
+  if (!done) await require("./stripecheck").verifyTopup({ ref: clean(b.ref, 200), slug: String(b.slug || "").toLowerCase(), paid_usd: b.paid_usd, credit_usd: b.credit_usd });
   res.json({ ok: true, ...(await addCredit({ slug: b.slug, ref: b.ref, paid_usd: b.paid_usd, credit_usd: b.credit_usd, kind: "purchase" })) });
 }));
 wwwRouter.get("/api/www/companies/:slug", guard(async (req, res) => {

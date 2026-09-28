@@ -1098,9 +1098,9 @@ async function loadDevices(days) {
   if (!ME.me) { el.textContent = "Sign in with your own account to see these."; return; }
   const r = await fetch("/api/admin/accounts/me/devices", { cache: "no-store" }); if (!r.ok) { el.textContent = ""; return; }
   const j = await r.json();
-  sub.textContent = `ticked "Remember this computer" at sign-in; each lasts ${j.days || days || 30} days, ${j.max || 10} at most`;
+  sub.textContent = `ticked "Remember this device" at sign-in; each lasts ${j.days || days || 30} days, ${j.max || 10} at most`;
   el.innerHTML = j.devices.length ? `<table class="acc" id="acc-devices-list"><tr><th>Computer</th><th>Since</th><th>Last used</th><th></th></tr>` + j.devices.map(d => `<tr data-device="${d.id}"><td><b>${esc(d.label)}</b></td><td>${day(d.issued_at)} <small class="sub">(until ${day(d.expires_at)})</small></td><td>${d.last_used_at ? when(d.last_used_at) : "not yet"}</td><td><button class="quiet" onclick="removeDevice(${d.id})">Remove</button></td></tr>`).join("") + `</table>`
-    : `None. Tick "Remember this computer" on the code step when you next sign in and this browser skips the code for ${j.days || days || 30} days. A computer holding that is an admin without a code, so keep FileVault and the lock screen on.`;
+    : `None. Tick "Remember this device" on the code step when you next sign in and this browser skips the code for ${j.days || days || 30} days. A computer holding that is an admin without a code, so keep FileVault and the lock screen on.`;
 }
 async function removeDevice(id) {
   if (await accPost(`/api/admin/accounts/me/devices/${id}/remove`, {})) loadAccounts();

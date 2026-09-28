@@ -152,6 +152,7 @@ Index of `docs/FEATURES.md`, in its order:
 - 2026-09-27: five fixes from Brendan before the next phase of the audit (its own section at the end)
 - Built with Railpack (2026-09-28)
 - anetix.ai: the account first, and the principle only (2026-09-28, www repo)
+- The launch audit's Phase 3, first pass: the sign-in from setup, refills checked with Stripe, the quick fixes (2026-09-28)
 
 ## What this is
 
@@ -292,6 +293,12 @@ tool list, 401 from the API) proves the CLI itself starts.
   that restart a tool process (`src/runner.js`). Never set `SOS_BOOT_ID`: the
   build fence (`src/pipeline.js`) needs it to be the boot's start time.
   `SOS_EXPORT_ATTACH_MAX` / `SOS_EXPORT_ATTACH_TOTAL`: the export's file limits.
+- `STRIPE_READ_KEY` (2026-09-28, the launch audit 3.7): a Stripe RESTRICTED key with one permission, Checkout
+  Sessions: Read (`rk_live_...` here). With it, a refill is added only when Stripe itself backs the session
+  (`src/stripecheck.js`); without it, on anetix.ai's word as before, and the Sites tab says "Refills checked with
+  Stripe: no". It can charge no one; never put the anetix-www secret key here. `STRIPE_API_BASE` points it at a fake
+  Stripe in tests only; never set it on Railway. `SOS_SIGNIN_TICKET_MIN` (60): how long a new demo's one sign-in
+  from setup is good (`src/tickets.js`, 3.8).
 - `SOS_WWW_KEY`: the shared key the anetix.ai service (`www/`) sends in
   `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on
   both services; unset = those routes answer 401). `SOS_WWW_URL`: the front
@@ -418,7 +425,9 @@ Passwords live only in Railway; never commit them.
 - A secret, a one-time code, a recovery code or a device token is never
   logged and never returned, apart from the one enrollment answer that shows
   a person their own (and the one Set-Cookie that hands a browser its device
-  token). A new destructive admin action takes `auth.checkAdminCode`, and a
+  token, and the one `POST /api/www/companies` answer that hands anetix.ai a new
+  demo's sign-in ticket, `src/tickets.js`; a ticket opens only an account with no
+  second factor, once, into the enrollment-only session). A new destructive admin action takes `auth.checkAdminCode`, and a
   trusted device never stands in for that code. A new route that moves a
   change toward the floor takes `people.requireFreshPin` after
   `requireManager`. A new admin

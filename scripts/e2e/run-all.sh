@@ -139,6 +139,11 @@ run leaks                  node scripts/e2e/leaks.js
 fresh; start "SOS_BROWSER=off"
 run phase2                 node scripts/e2e/phase2.js
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run phase2-browser node scripts/e2e/phase2-browser.js; }
+# Phase 3: a new demo's one sign-in from setup (3.8), and a refill added only when Stripe backs it (3.7; the script
+# runs the fake Stripe the server reads on 4555)
+P3="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test STRIPE_READ_KEY=rk_test_phase3 STRIPE_API_BASE=http://127.0.0.1:4555"
+fresh; start "SOS_BROWSER=off $P3"
+run phase3                 env $P3 node scripts/e2e/phase3.js
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

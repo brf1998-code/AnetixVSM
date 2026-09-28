@@ -2958,3 +2958,47 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the data download in Settings), and the bio no longer names the alpha. Brendan says the results on a call, never
   on the page. The headshots stay (his call). The pin message (`selfserve.pinMessage`) already described this order,
   so the product did not change. Tests: www test-www 112, e2e 69, e2e-golive 56, e2e-golive-browser 26, e2e-activate 50.
+
+- **The launch audit's Phase 3, first pass: the sign-in from setup, refills checked with Stripe, the quick fixes
+  (2026-09-28).** Brendan's calls: build 3.8 first, then 3.6 and 3.7, the quick fixes 3.2, 3.4, 3.13, 3.14 and the
+  dependency pass 3.18; the rest Later. 3.5 and 3.15 were already covered (the Terms tick box with its refund words
+  and the footer contacts; 2.15's percent-only credit).
+  (3.8) **A new demo is not asked for its password again.** `src/tickets.js`: when anetix.ai makes a demo for the
+  person's browser (`POST /api/www/companies` with `collect`, created just now), the answer carries
+  `signin_ticket` = `<id>.<token>` (32 random bytes; only the sha256 kept in `platform.signin_tickets`, with the
+  account's generation and an hour, `SOS_SIGNIN_TICKET_MIN`). anetix.ai keeps it in the person's own welcome cookie;
+  "Sign in to your demo" on the page about the product and "Set up your authenticator" on /welcome go through
+  `/welcome/go` there, which spends it from the cookie and sends the browser to `GET /login/ticket?t=` here. That
+  claims it in one statement and starts the enrollment-only session a password would, then the authenticator setup.
+  It opens only a switched-on manager account with a company, at the same generation, with NO verified
+  authenticator and no passkey (the only state a password alone signs in to), once. Anything else: the sign-in page
+  with the email filled (`/login?account=`), a made-up ticket names no one, the answer sends no Referer and is never
+  cached, and the sign-in log says `signin_ticket` or `ticket_refused` with why. Never in a backup; a restore
+  clears them. www's /welcome with a good ticket leads with the button and folds the password form under "Sign in
+  with your password instead".
+  (3.7) **The product reads a refill in Stripe itself.** `src/stripecheck.js` with `STRIPE_READ_KEY` (a restricted
+  key, Checkout Sessions: Read only): `POST /api/www/credit` adds nothing unless Stripe says the session is a paid,
+  complete refill (`metadata.kind` topup) for this company, for the dollars claimed, naming the credit claimed, and
+  that credit is not more than the dollars. A payment already on the ledger is "already done" first, without asking
+  Stripe. Refused: 403 `unverified` and a phone alert; Stripe out of reach: 503, nothing added (the page says try
+  again, Stripe resends its webhook, the reconcile asks later). Unset: as before, and the Sites tab line "Refills
+  checked with Stripe" says no (and warns when the read key's mode differs from anetix.ai's Stripe).
+  (3.6, www) **A missed refill is found.** anetix.ai lists the paid refills of the last `RECONCILE_DAYS` (3) days in
+  Stripe every `RECONCILE_MS` (6 hours, and 5 minutes after boot) and sends each through the same fulfil the page and
+  the webhook use; only one that never arrived adds credit, and each such is a phone alert.
+  (3.2, www) a pin typed into Sign in as "ABCD EFGH" is caught as a pin. (3.4, www) after a refill the page leads
+  with the thanks and Back to your board, the refill form folded under Refill again. (3.13) the board's DEMO strip:
+  its rolling words are hidden from screen readers and one line says "A demo company on Anetix". (3.14) "Remember
+  this device", on the product's sign-in and anetix.ai's. (3.18) puppeteer-core 24 to 25 (its browser download path
+  pulled extract-zip's advisories; this app never downloads a browser); `engines` is Node 22.12 or newer, and
+  Railway runs 24. npm audit is clean on both services.
+  From Brendan's first outside feedback, in www: the hero reads "A manager tries it, approves it and the floor has it
+  the same shift"; a tick box now sits beside its sentence on every page (the rule was only on the Go live screens,
+  so on the set-up form and the refill page the checkbox stretched to its own line above the words); the set-up
+  form names the email as the sign-in (`autocomplete="username"`), so a password manager saves the password under
+  the email and fills it at the next sign-in instead of under the person's name.
+  Tests: run-all 43 suites, 1,607 checks (new `phase3` 27, with a fake Stripe on 4555); `scripts/test-phase3.js` 15;
+  every unit suite; passkeys-browser 44; demorequests-browser 33 (its pin now lands on /start); www
+  test-www 121, e2e 82 (with the product reading refills from www's fake Stripe), e2e-golive 56,
+  e2e-golive-browser 26, e2e-activate 50.
+

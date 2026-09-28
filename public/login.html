@@ -40,7 +40,7 @@
     <div id="codebox" style="display:none">
       <div class="hint" id="codehint">Type the 6 digit code your authenticator app shows for Anetix.</div>
       <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digit code" maxlength="24" spellcheck="false">
-      <label class="remember" id="rememberbox"><input type="checkbox" id="remember"><span id="rememberlabel">Remember this computer for 30 days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.</span></label>
+      <label class="remember" id="rememberbox"><input type="checkbox" id="remember"><span id="rememberlabel">Remember this device for 30 days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.</span></label>
       <div class="hint"><a href="#" id="userec">Phone not with you? Use a recovery code</a></div>
     </div>
     <button type="submit">Sign in</button>
@@ -150,7 +150,7 @@ document.getElementById("f").onsubmit = async (e) => {
       // an account whose second factor is a passkey, with no app (the launch audit 1.3): the passkey signs in; on a
       // device without it, one of the recovery codes stands in
       if (j.passkey_first && !recovery) { recoveryMode("This account signs in with its passkey: use Sign in with a passkey, or type one of the recovery codes you saved. Each works once."); document.getElementById("userec").style.display = "none"; }
-      if (j.remember_days) document.getElementById("rememberlabel").textContent = "Remember this computer for " + j.remember_days + " days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.";
+      if (j.remember_days) document.getElementById("rememberlabel").textContent = "Remember this device for " + j.remember_days + " days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.";
       if (first && res.ok) { err.style.display = "none"; return; }
     }
     err.textContent = j.error ? j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : ".") : "That did not match.";

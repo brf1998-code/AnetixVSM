@@ -542,7 +542,8 @@ async function pipeline() {
   const cancelling = out.filter((r) => r.stage === "subscribed" && r.cancel_at).length;
   const golive = await require("./golive").status().catch(() => null);   // the switch for Go live on anetix.ai (stage 2)
   const activate = require("./activate");
-  const activation = { channel: await activate.channel().catch((e) => ({ ok: false, why: e.message })), ai_key: await q("SELECT autofill, noted_at FROM platform.ai_credit ORDER BY id DESC LIMIT 1").then((x) => x.rows[0] || null).catch(() => null) };
+  const sc = require("./stripecheck");
+  const activation = { refill_check: { on: sc.on(), mode: sc.mode() }, channel: await activate.channel().catch((e) => ({ ok: false, why: e.message })), ai_key: await q("SELECT autofill, noted_at FROM platform.ai_credit ORDER BY id DESC LIMIT 1").then((x) => x.rows[0] || null).catch(() => null) };
   const terms = await require("./agreements").status().catch(() => null);   // the Terms' switch (src/agreements.js)
   return { book: bookView(book), stages, attention, alerts, cancelling, rows: out, stage_labels: STAGE_LABEL, golive, activation, terms };
 }
