@@ -356,6 +356,24 @@ function checkOutside(files, fromFiles, outside) {
   return found;
 }
 
+// ---- migrations (2026-09-28) -----------------------------------------------------------
+// A build's new migration files are held to the migration validator (src/migrationsql.js) here, before staging, so a
+// refused statement is a gate finding the fix round names, not a build that stops at staging with no fix round.
+// Only at build time (a lane is given); a file the version started from already had is the lane rule's business.
+function checkMigrations(files, fromFiles, lane) {
+  const found = [];
+  if (!lane) return found;
+  const { validateMigrationSql } = require("./migrationsql");
+  for (const rel of Object.keys(files).filter((r) => /^migrations\/[^/]+\.sql$/.test(r)).sort()) {
+    if (fromFiles && fromFiles[rel] != null) continue;
+    const v = validateMigrationSql(String(files[rel] || ""));
+    if (v.ok) continue;
+    found.push({ rule: "migration-shape", file: rel, label: describe(rel), line: 0, what: `has a statement the platform will not run (${v.errors.slice(0, 3).join("; ")})`,
+      why: "a migration is CREATE TABLE, CREATE INDEX, ALTER TABLE ... ADD COLUMN and INSERT INTO table (columns) VALUES (...) only, each ending in a semicolon, with no SELECT, no quoted names, no dollar signs and no server functions", evidence: "" });
+  }
+  return found;
+}
+
 // ---- entry points ---------------------------------------------------------------------
 // files / fromFiles: { "routes.js": "text", "pages/board.html": "text", ... }
 // lane: "ui" | "functionality" | "module" | null (null = server and layout rules only)
@@ -374,7 +392,7 @@ function check({ files, fromFiles = null, lane = null, outside = null }) {
   const server = read(files);
   const inheritedKeys = new Set(fromFiles ? read(fromFiles).map(keyOf) : []);
   const inherited = server.filter((f) => inheritedKeys.has(keyOf(f)));
-  const violations = [...checkLayout(files), ...server.filter((f) => !inheritedKeys.has(keyOf(f))), ...checkLane(files, fromFiles, lane), ...checkOutside(files, fromFiles, outside)];
+  const violations = [...checkLayout(files), ...server.filter((f) => !inheritedKeys.has(keyOf(f))), ...checkLane(files, fromFiles, lane), ...checkMigrations(files, fromFiles, lane), ...checkOutside(files, fromFiles, outside)];
   return { ok: violations.length === 0, violations, inherited, lane, checked: Object.keys(files).filter((r) => SERVER_FILE.test(r)) };
 }
 

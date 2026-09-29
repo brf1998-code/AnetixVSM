@@ -3099,3 +3099,40 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   removes a connection an existing tool already declares (Chris's tracker keeps its Epicor button until a change takes
   it out or the ERP is turned on and set up). Tests: `scripts/e2e/outside.js` (47), `scripts/test-modulegate.js`
   section 16 (109 in all). With both: run-all 45 suites, 1,717 checks, and every unit suite.
+
+- **Migrations run exactly what was checked (2026-09-28, `src/migrationsql.js`, `src/migrate.js`).** A verified
+  bypass: `splitStatements` cut only on a `;` at a line end and `applyMigrations` ran the RAW file on the platform's
+  pool, so `CREATE TABLE x (id int); CREATE ROLE evil LOGIN SUPERUSER PASSWORD 'p';` on one line passed as one
+  CREATE TABLE and made a superuser (reproduced on a real Postgres with the old code). Same-line `ALTER ROLE` and
+  `SET search_path` passed too, and so did single statements `INSERT INTO x SELECT ... FROM pg_catalog.pg_authid` and
+  `INSERT INTO x SELECT pg_read_file(...)`. Fixed in order: (1) `applyMigrations` runs the validator's statements one
+  at a time in the transaction, each as `{ text, queryMode: "extended" }` (the extended protocol refuses a text that
+  holds two commands), with `SET LOCAL standard_conforming_strings TO on`, never `m.sql`; a refused file hands back no
+  statements. (2) The splitter is a small scanner: every `;` outside a string literal, a quoted name and a comment
+  splits; `--` and nested `/* */` comments are removed; a `$` outside quoted text (dollar quoting, parameters) and an
+  `E'...'` or `U&'...'` string (whose backslash escapes the scanner does not read) are refused outright. (3) An INSERT
+  is `INSERT INTO ident (cols) VALUES (...)[, (...)]` and nothing after the last row (no SELECT, RETURNING or ON
+  CONFLICT); an ALTER TABLE only adds columns (one ALTER); the forbidden words gained ROLE, USER, SET, EXECUTE, CALL,
+  SELECT, PROCEDURE, LISTEN, NOTIFY, PREPARE, IMPORT (whole words outside literals, still allowed as a column being
+  defined, `role TEXT`), and a list that is refused even as a name: `pg_*`, `information_schema`, and the functions
+  that run a query given as text or touch server files or settings (`query_to_xml`, `table_to_xml`,
+  `schema_to_xml`, `database_to_xml`, `cursor_to_xml` and their variants, `lo_*`, `dblink*`, `set_config`,
+  `current_setting`), because a VALUES row or a DEFAULT could call them with the SQL hidden in a string. A double
+  quote is now judged outside literals only (a JSON seed like `'{"k": 1}'::jsonb` passes; it used to be refused).
+  Also closed: the index self-heal (`declaredIndexes`) ran a regex over the raw file, so a `CREATE INDEX ...` written
+  INSIDE a seed row's text was found and run at every boot; it now reads the validator's statements, replays a
+  CREATE INDEX only when it is a statement of its own that passes, and builds UNIQUE constraints from bare names
+  only. The module gate runs the validator on a build's new migration files (rule `migration-shape`, lanes only), so a
+  refused statement is a finding the fix round names instead of a build that stops at staging with no fix round.
+  GUARDRAILS.md, MODULE-CONTRACT.md and the build prompt say the new shape. At boot, `migrate.auditStored()` checks
+  every migration file stored in any version against the rule as it is now and logs each one it would refuse with
+  whether the floor tables already have it (an applied file never runs on the floor again; it would run again on a
+  test floor rebuild, a copy into another company, or, when not yet applied, the tool's next deploy); event
+  `migration_audit`. The boot log also names the database role the platform connects as and its powers (`[db]`).
+  Tests: `scripts/test-migrate.js` (84: the five payloads and 39 ways around the splitter and the shapes refused, 16
+  normal shapes and the skeleton passing, the self-heal, every migration on disk, and on a real Postgres that no
+  payload runs, a normal file runs statement by statement, the protocol refuses two commands, and the audit names a
+  refused stored file); `test-modulegate.js` section 17; `test-restore.js` (the self-heal's declarations now in file
+  order). **Next, not built:** run migrations under a per-company migrator role (owns only that company's
+  `mod_`/`stg_`/`tst_` schemas, NOSUPERUSER NOCREATEROLE NOCREATEDB, no USAGE on `platform`), entered with `SET LOCAL
+  ROLE` inside the migration transaction, so a validator miss cannot reach past the company.

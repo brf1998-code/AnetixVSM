@@ -156,6 +156,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The pin message is two short lists (2026-09-28)
 - Changes join the preview (2026-09-28)
 - Outside connections are off until Anetix turns them on, one tool at a time; integration requests (2026-09-28)
+- Migrations run exactly what was checked (2026-09-28)
 
 ## What this is
 
@@ -225,8 +226,13 @@ something to interrupt; the fake agent stamps a visible
 - **Never edit an existing migration file.** Migrations are applied once per
   schema by filename; edits to `001.sql` do nothing on the live database. Add
   `002.sql` etc. Additive only (CREATE TABLE / ADD COLUMN / CREATE INDEX /
-  INSERT). The validator rejects DROP/UPDATE/DELETE/etc. and even the bare
-  word `do` anywhere in a statement, so mind seed text.
+  `INSERT INTO t (cols) VALUES (...)`). The validator (`src/migrationsql.js`)
+  splits on every `;` outside quoted text and comments, rejects
+  DROP/UPDATE/DELETE/SELECT/SET/ROLE/etc. as whole words outside string
+  literals, and `applyMigrations` runs only the statements it validated, one
+  at a time through the extended protocol (see "Migrations run exactly what
+  was checked"). Never run a migration file, or text taken from one, any
+  other way.
 - Migration seed values (starting inventory, settings) only apply to a fresh
   database. To change them on the live instance use the module's API or SQL.
 

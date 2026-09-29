@@ -212,5 +212,15 @@ t("ordinary headers are fine", gate.check({ files: mod(wrap(`  router.get("/x.cs
   const split = require("../src/intake").splitHandoffs({ connections: [{ kind: "erp", name: "Epicor", what_for: "late jobs" }, { kind: "scanners", name: "scanners" }, { kind: "printer", name: "Zebra" }], handoffs: [{ kind: "erp", system: "epicor", would_add: "x", until: "y" }] }, ["printer"]);
   t("a design keeps what is on and hands off the rest, once per system", split.connections.map((c) => c.kind).join(",") === "scanners,printer" && split.handoffs.length === 1 && split.handoffs[0].kind === "erp", split); }
 
+// 17. a build's new migration files are held to the migration validator before staging (src/migrationsql.js, 2026-09-28)
+{ const payload = "CREATE TABLE x (id int); CREATE ROLE evil LOGIN SUPERUSER PASSWORD 'p';\n";
+  t("a new migration with a second statement on the line is a gate finding", has(gate.check({ files: { ...from, "migrations/009.sql": payload }, fromFiles: from, lane: "functionality" }), "migration-shape"));
+  t("a new module's migrations are held too", has(gate.check({ files: { ...from, "migrations/001.sql": "INSERT INTO x SELECT pg_read_file('/etc/passwd');" }, lane: "module" }), "migration-shape"));
+  t("a good new migration passes", gate.check({ files: { ...from, "migrations/009.sql": "ALTER TABLE items ADD COLUMN note TEXT;\nINSERT INTO items (name) VALUES ('a; b');\n" }, fromFiles: from, lane: "functionality" }).ok);
+  t("a file the version started from is the lane rule's business, not this one", !has(gate.check({ files: { ...from, "migrations/009.sql": payload }, fromFiles: { ...from, "migrations/009.sql": payload }, lane: "functionality" }), "migration-shape"));
+  t("the registry's backstop (no lane) does not re-judge stored migrations", gate.check({ files: { ...from, "migrations/009.sql": payload } }).violations.every((v) => v.rule !== "migration-shape"));
+  const text = gate.forAgent(gate.record(gate.check({ files: { ...from, "migrations/009.sql": payload }, fromFiles: from, lane: "functionality" })), []);
+  t("the fix round is told the statement and the shapes allowed", /forbidden operation in: CREATE ROLE evil/.test(text) && /INSERT INTO table \(columns\) VALUES/.test(text), text); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

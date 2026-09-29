@@ -197,6 +197,12 @@ async function main() {
   // can this instance run module code in a process of its own, with a database login of its own? find out before anything is mounted
   await require("./src/runner").selfTest().catch((e) => console.error("[runner] self test:", e.message));
   await registry.loadAll();
+  // the migration rule got stricter (2026-09-28): which stored migration files it would refuse, in the log, never blocking
+  require("./src/migrate").auditStored().catch((e) => console.error("[migrate] audit:", e.message));
+  // which database role the platform itself runs as (migrations run on it): the name and its powers, never a secret
+  q("SELECT current_user AS who, r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user")
+    .then((x) => { const r = x.rows[0] || {}; console.log(`[db] the platform connects as ${r.who}: superuser ${r.rolsuper ? "yes" : "no"}, create roles ${r.rolcreaterole ? "yes" : "no"}, create databases ${r.rolcreatedb ? "yes" : "no"}, bypass row security ${r.rolbypassrls ? "yes" : "no"}`); })
+    .catch((e) => console.error("[db] role check:", e.message));
   await require("./src/testfloor").boot();   // every company whose switch is on gets its test floor back
   // companies from before per-company passwords keep the shared ones until the admin sets their own
   await auth.ensureAccessRows();

@@ -108,9 +108,14 @@ INSERT INTO name (...) VALUES (...);          -- seed rows only
 ```
 
 Rules the validator enforces: bare table names (no schema prefix, no quotes);
-no DROP, DELETE, UPDATE, TRUNCATE, GRANT, functions, triggers, or DO blocks as
-operations; each statement ends in `;` at the end of a line. Column names such
-as `updated_at` or `deleted_at` and seed text are fine (the check is on whole
+no SELECT, DROP, DELETE, UPDATE, TRUNCATE, GRANT, SET, ROLE, USER, EXECUTE,
+CALL, functions, triggers, or DO blocks as operations; nothing starting `pg_`,
+no `information_schema`, no dollar signs outside quoted text, no `E'...'`
+strings; an INSERT names its columns and ends with its last row; an ALTER
+TABLE only adds columns; each statement ends in `;`. The platform splits the
+file on every `;` outside quoted text and comments, checks each statement,
+and runs exactly those, one at a time. Column names such as `updated_at`,
+`deleted_at` or `role TEXT` and seed text are fine (the check is on whole
 words with string literals ignored). Never edit a migration file that already
 exists; add the next number.
 

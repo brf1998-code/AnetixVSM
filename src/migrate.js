@@ -50,65 +50,40 @@ function stagingSchema(company, mod) { return `stg_${ident(company)}_${ident(mod
 function testSchema(company, mod) { return `tst_${ident(company)}_${ident(mod)}`; }
 
 // ---- validation -----------------------------------------------------------
-// Allowed statement shapes (whitespace-insensitive, case-insensitive):
-//   CREATE TABLE [IF NOT EXISTS] <ident> ...
-//   CREATE [UNIQUE] INDEX [IF NOT EXISTS] <ident> ON <ident> ...
-//   ALTER TABLE <ident> ADD COLUMN [IF NOT EXISTS] ...
-//   INSERT INTO <ident> ...            (seed data only)
-// Anything else is rejected. Table identifiers must be bare names (no schema
-// qualification, no quotes) so the platform controls the schema via search_path.
-// Forbidden operations, checked as WHOLE words with string literals blanked
-// out. Until 2026-09-17 this was a substring match on the raw statement, so a
-// column named updated_at, deleted_at, owner_name, granted_at, reset_count,
-// rule_text, trigger_level or copy_count, and any seed value containing "do"
-// or "update", was rejected as a forbidden operation. Functionality builds
-// (the ones that add migrations) died at the build step on that, which looked
-// like a rejection on the board. A forbidden word directly followed by a
-// column type (owner TEXT, cluster INTEGER) is a column definition, not an
-// operation, and is allowed too.
-const FORBIDDEN_WORDS = /\b(DROP|TRUNCATE|DELETE|UPDATE|GRANT|REVOKE|SECURITY|FUNCTION|TRIGGER|RULE|EXTENSION|COPY|VACUUM|REINDEX|CLUSTER|OWNER|RESET|DO)\b(?!\s+(?:TEXT|VARCHAR|CHAR|INTEGER|INT|SMALLINT|BIGINT|SERIAL|BIGSERIAL|BOOLEAN|BOOL|NUMERIC|DECIMAL|REAL|DOUBLE|FLOAT|TIMESTAMPTZ|TIMESTAMP|DATE|TIME|JSONB|JSON|UUID|BYTEA)\b)/i;
-const FORBIDDEN_PHRASES = /\b(ALTER\s+SCHEMA|CREATE\s+SCHEMA|SET\s+ROLE|ALTER\s+TABLE\s+\w+\s+(?:DROP|RENAME|ALTER)\b)/i;
-const stripLiterals = (st) => st.replace(/'(?:[^']|'')*'/g, "''");
-// A parenthesised list of bare column names (an index's columns, an INSERT's column
-// list, a UNIQUE constraint) is never an operation, whatever the columns are called:
-// CREATE INDEX ... ON items (owner) was rejected for the word OWNER (run #58, 2026-09-24).
-const stripIdentLists = (st) => st.replace(/\(\s*[a-z_][a-z0-9_]*(?:\s+(?:ASC|DESC))?(?:\s*,\s*[a-z_][a-z0-9_]*(?:\s+(?:ASC|DESC))?)*\s*\)/gi, "()");
-const FORBIDDEN = { test: (st) => { const bare = stripIdentLists(stripLiterals(st)); return FORBIDDEN_PHRASES.test(bare) || FORBIDDEN_WORDS.test(bare); } };
-const BARE_IDENT = "[a-z_][a-z0-9_]*";
-const ALLOWED = [
-  new RegExp(`^CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${BARE_IDENT}\\s*\\(`, "i"),
-  new RegExp(`^CREATE\\s+(UNIQUE\\s+)?INDEX\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${BARE_IDENT}\\s+ON\\s+${BARE_IDENT}\\b`, "i"),
-  new RegExp(`^ALTER\\s+TABLE\\s+${BARE_IDENT}\\s+ADD\\s+COLUMN\\s+(IF\\s+NOT\\s+EXISTS\\s+)?${BARE_IDENT}\\b`, "i"),
-  new RegExp(`^INSERT\\s+INTO\\s+${BARE_IDENT}\\b`, "i"),
-];
+// The validator lives in src/migrationsql.js (pure, so the module gate and the tests use it). What it passes is a
+// list of statements; applyMigrations runs exactly those, one at a time, and never the file (2026-09-28: the file
+// used to run whole, so a second statement on the same line as the first ran unchecked, with platform rights).
+const { splitStatements, validateMigrationSql, statementProblem, stripLiterals } = require("./migrationsql");
 
-function splitStatements(sql) {
-  // naive split on ";" at line ends. Migration files are agent/platform
-  // authored, so we keep the dialect simple on purpose (no functions, no $$).
-  return sql
-    .split(/;\s*(?:\r?\n|$)/)
-    .map((s) => s.replace(/--[^\n]*/g, "").trim())
-    .filter(Boolean);
-}
-
-function validateMigrationSql(sql) {
-  const errors = [];
-  const statements = splitStatements(sql);
-  if (!statements.length) errors.push("migration file contains no statements");
-  for (const st of statements) {
-    if (FORBIDDEN.test(st)) {
-      errors.push(`forbidden operation in: ${st.slice(0, 80)}`);
-      continue;
-    }
-    if (/\bpublic\s*\.|\bplatform\s*\.|\bmod_|\bstg_|\bsnap_|\btst_|"/i.test(st)) {
-      errors.push(`schema-qualified or quoted identifier not allowed: ${st.slice(0, 80)}`);
-      continue;
-    }
-    if (!ALLOWED.some((re) => re.test(st))) {
-      errors.push(`statement shape not allowed (additive-only): ${st.slice(0, 80)}`);
+// The rule got stricter on 2026-09-28. A file already applied to a tool's floor tables never runs there again
+// (applyMigrations skips it), but it does run again when the test floor is rebuilt from the version's own migrations,
+// when the tool is copied into another company, and every file of a version that has never been live runs at its
+// first deploy. So at boot every migration file stored in any version is checked against the rule as it is now, and
+// each one it would refuse is logged with whether the floor already has it. Never blocks anything; it tells Anetix
+// which tool would need a new migration before one of those moments. -> { checked, refused: [...] }
+async function auditStored() {
+  const rows = (await q("SELECT company, module, version, files FROM platform.module_versions ORDER BY company, module, version")).rows;
+  const byFile = new Map();
+  for (const r of rows) {
+    for (const [rel, text] of Object.entries(r.files || {})) {
+      if (!/^migrations\/[^/]+\.sql$/.test(rel) || typeof text !== "string") continue;
+      const key = `${r.company}\u0000${r.module}\u0000${rel}\u0000${text}`;
+      if (!byFile.has(key)) byFile.set(key, { company: r.company, module: r.module, file: rel, text, versions: [] });
+      byFile.get(key).versions.push(r.version);
     }
   }
-  return { ok: errors.length === 0, errors, count: statements.length };
+  const refused = [];
+  for (const f of byFile.values()) {
+    const v = validateMigrationSql(f.text);
+    if (v.ok) continue;
+    const name = f.file.replace(/^migrations\//, "");
+    const onFloor = await q(`SELECT 1 FROM ${liveSchema(f.company, f.module)}._migrations WHERE file=$1`, [name]).then((x) => x.rows.length > 0).catch(() => false);
+    refused.push({ company: f.company, module: f.module, file: f.file, versions: f.versions, on_floor: onFloor, why: v.errors.slice(0, 3) });
+  }
+  console.log(`[migrate] audit: ${byFile.size} stored migration file(s) checked against the rule as it is now; ${refused.length ? `${refused.length} it would refuse` : "every one passes"}`);
+  for (const r of refused) console.warn(`[migrate] audit: ${r.company}/${r.module} ${r.file} (v${r.versions.join(", v")}; ${r.on_floor ? "already on the floor tables, runs again only on a test floor rebuild or a copy" : "NOT applied to the floor yet: its next deploy stops here"}): ${r.why.join(" | ")}`);
+  if (refused.length) await logEvent("migration_audit", "instance", { checked: byFile.size, refused: refused.map(({ why, ...rest }) => ({ ...rest, why })) });
+  return { checked: byFile.size, refused };
 }
 
 // ---- migration bookkeeping ------------------------------------------------
@@ -140,7 +115,10 @@ async function applyMigrations(schema, versionDir) {
     try {
       await client.query("BEGIN");
       await client.query(`SET LOCAL search_path TO ${schema}`);
-      await client.query(m.sql);
+      // plain '...' text reads no backslash escapes, as the splitter assumed
+      await client.query("SET LOCAL standard_conforming_strings TO on");
+      // exactly what was validated, one statement at a time; the extended protocol refuses a text with two commands in it
+      for (const st of v.statements) await client.query({ text: st, queryMode: "extended" });
       await client.query(`INSERT INTO ${schema}._migrations (file) VALUES ($1)`, [m.file]);
       await client.query("COMMIT");
     } catch (e) {
@@ -167,32 +145,45 @@ async function applyMigrations(schema, versionDir) {
 // with applyMigrations. Handled: CREATE [UNIQUE] INDEX, ALTER TABLE ... ADD
 // CONSTRAINT ... UNIQUE (...), and CONSTRAINT/UNIQUE (...) lines inside a
 // CREATE TABLE body. A column-level UNIQUE on a single column is not.
-const unq = (s) => s.replace(/^"|"$/g, "");
-function tableBodies(sql) {
-  const out = [];
-  const re = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?("?[\w.]+"?)\s*\(/gi;
-  let m;
-  while ((m = re.exec(sql))) {
-    let depth = 1, i = re.lastIndex;
-    while (i < sql.length && depth > 0) { if (sql[i] === "(") depth++; else if (sql[i] === ")") depth--; i++; }
-    out.push({ table: unq(m[1]), body: sql.slice(re.lastIndex, i - 1) });
-  }
-  return out;
+// Built from the same statements the validator reads (2026-09-28): until then a regex ran over the raw file, so an
+// index statement written INSIDE a seed row's text was found and run here, unchecked. Now a CREATE INDEX is replayed
+// only when it is a statement of its own that the validator passes, as written; a UNIQUE constraint only from bare
+// names (the constraint, the table, the columns), whatever the statement around it says.
+const identList = (s) => {
+  const cols = String(s || "").split(",").map((c) => c.trim()).filter(Boolean);
+  return cols.length && cols.every((c) => /^[a-z_][a-z0-9_]*$/i.test(c)) ? cols.join(", ") : null;
+};
+function bodyAfter(text, open) {
+  let depth = 1, i = open;
+  while (i < text.length && depth > 0) { if (text[i] === "(") depth++; else if (text[i] === ")") depth--; i++; }
+  return text.slice(open, i - 1);
 }
 function declaredIndexes(sql) {
-  sql = sql.replace(/--[^\n]*/g, "");
   const out = [];
   let m;
-  const idx = /\bCREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?("?\w+"?)\s+ON\s+([^;]+)/gi;
-  while ((m = idx.exec(sql))) out.push({ name: unq(m[2]), exec: `CREATE ${m[1] ? "UNIQUE " : ""}INDEX IF NOT EXISTS ${m[2]} ON ${m[3].trim()}` });
-  const alt = /\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?("?[\w.]+"?)\s+ADD\s+CONSTRAINT\s+("?\w+"?)\s+(UNIQUE\s*\([^)]*\))/gi;
-  while ((m = alt.exec(sql))) out.push({ name: unq(m[2]), exec: `ALTER TABLE ${m[1]} ADD CONSTRAINT ${m[2]} ${m[3]}` });
-  for (const t of tableBodies(sql)) {
-    const con = /(?:CONSTRAINT\s+("?\w+"?)\s+)?\bUNIQUE\s*\(([^)]*)\)/gi;
-    while ((m = con.exec(t.body))) {
-      const cols = m[2].split(",").map((c) => c.trim()).filter(Boolean).join(", ");
-      if (m[1]) out.push({ name: unq(m[1]), exec: `ALTER TABLE ${t.table} ADD CONSTRAINT ${m[1]} UNIQUE (${cols})` });
-      else out.push({ name: null, table: t.table, cols, exec: `ALTER TABLE ${t.table} ADD UNIQUE (${cols})` });
+  for (const st of splitStatements(sql).statements) {
+    const bare = stripLiterals(st);
+    if ((m = /^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s+ON\s+/i.exec(bare))) {
+      if (statementProblem(st)) continue;
+      out.push({ name: m[2], exec: st.replace(/^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?/i, (x, u) => `CREATE ${u ? "UNIQUE " : ""}INDEX IF NOT EXISTS `) });
+      continue;
+    }
+    const alt = /^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([a-z_][a-z0-9_]*)\b/i.exec(bare);
+    if (alt) {
+      const re = /\bADD\s+CONSTRAINT\s+([a-z_][a-z0-9_]*)\s+UNIQUE\s*\(([^)]*)\)/gi;
+      while ((m = re.exec(bare))) { const cols = identList(m[2]); if (cols) out.push({ name: m[1], exec: `ALTER TABLE ${alt[1]} ADD CONSTRAINT ${m[1]} UNIQUE (${cols})` }); }
+      continue;
+    }
+    const tb = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s*\(/i.exec(bare);
+    if (tb) {
+      const body = bodyAfter(bare, tb[0].length);
+      const con = /(?:CONSTRAINT\s+([a-z_][a-z0-9_]*)\s+)?\bUNIQUE\s*\(([^)]*)\)/gi;
+      while ((m = con.exec(body))) {
+        const cols = identList(m[2]);
+        if (!cols) continue;
+        if (m[1]) out.push({ name: m[1], exec: `ALTER TABLE ${tb[1]} ADD CONSTRAINT ${m[1]} UNIQUE (${cols})` });
+        else out.push({ name: null, table: tb[1], cols, exec: `ALTER TABLE ${tb[1]} ADD UNIQUE (${cols})` });
+      }
     }
   }
   return out;
@@ -206,6 +197,7 @@ async function ensureIndexes(schema, versionDir) {
   try {
     await client.query("BEGIN");
     await client.query(`SET LOCAL search_path TO ${schema}`);
+    await client.query("SET LOCAL standard_conforming_strings TO on");
     for (const w of wanted) {
       const have = w.name
         ? (await client.query(
@@ -218,7 +210,7 @@ async function ensureIndexes(schema, versionDir) {
       if (have) continue;
       await client.query("SAVEPOINT one");
       try {
-        await client.query(w.exec);
+        await client.query({ text: w.exec, queryMode: "extended" });
         made.push(w.name || `${w.table} UNIQUE (${w.cols})`);
       } catch (e) {
         await client.query("ROLLBACK TO SAVEPOINT one");
@@ -492,7 +484,7 @@ async function restoreSnapshot(company, mod, snapName) {
 
 module.exports = {
   liveSchema, stagingSchema, testSchema, schemaClash, freeToolSlug, ident, buildTestSchema, dropTestSchema, rowsProblems, columnsByTable, ROW_CAP, setSequencesPastData,
-  validateMigrationSql, applyMigrations,
+  validateMigrationSql, applyMigrations, auditStored, splitStatements,
   rebuildStagingClone, snapshotSchema, recordSnapshot, restoreSnapshot, tablesIn, columnsOf,
   indexShape, indexOnLive, ensureIndexes, declaredIndexes,
 };

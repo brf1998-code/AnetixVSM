@@ -119,7 +119,8 @@ ALTER TABLE params ADD CONSTRAINT params_code_section UNIQUE (code, section);
   await migrate.recordSnapshot(CO, MOD, 6, bad);
   ok((await q("SELECT 1 FROM pg_indexes WHERE schemaname=$1 AND indexname NOT LIKE '%_pkey'", [bad])).rows.length === 0, "the snapshot carries no indexes, like demo's");
   const decl = migrate.declaredIndexes(fs.readFileSync(path.join(vdir, "migrations", "001.sql"), "utf8"));
-  assert.deepStrictEqual(decl.map((d) => d.name || `${d.table}:${d.cols}`), ["watch_logs_date_station", "watch_logs_reading_idx", "params_code_section", "params_section_code", "params:code"]);
+  // in file order since 2026-09-28 (the declarations are read from the validator's statements); the set is what counts
+  assert.deepStrictEqual(decl.map((d) => d.name || `${d.table}:${d.cols}`).sort(), ["watch_logs_date_station", "watch_logs_reading_idx", "params_code_section", "params_section_code", "params:code"].sort());
   ok(true, "five declarations found in the migration (index, plain index, alter-add, named body constraint, bare body UNIQUE)");
   let r5 = await migrate.ensureIndexes(live, vdir);
   assert.deepStrictEqual(r5.made.sort(), ["params UNIQUE (code)", "params_code_section", "params_section_code", "watch_logs_date_station", "watch_logs_reading_idx"].sort());
