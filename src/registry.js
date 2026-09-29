@@ -143,15 +143,15 @@ function screenFor(manifest, pagePath) {
   return entries.find((e) => routeMatches(e.route, rel)) || null;
 }
 
-// A demo's tool pages carry a link back to the improvement board (Brendan, 2026-09-27: "it is easy to get lost then
-// struggle to get back to the improvement board"). A paid site's floor keeps its own view of the tool: activation sets
-// companies.demo false (src/activate.js). Remembered 15 seconds so a page load is not a query every time.
+// A trial's tool pages carry a link back to the improvement board (Brendan, 2026-09-27: "it is easy to get lost then
+// struggle to get back to the improvement board"); every company that is not a paid site is a trial (src/kind.js). A
+// paid site's floor keeps its own view of the tool. Remembered 15 seconds so a page load is not a query every time.
 const demoSeen = new Map();
 async function isDemoCompany(company) {
   const hit = demoSeen.get(company);
   if (hit && Date.now() - hit.at < 15000) return hit.demo;
-  let demo = false;
-  try { demo = Boolean(((await q("SELECT demo FROM platform.companies WHERE slug=$1", [company])).rows[0] || {}).demo); } catch (e) { return false; }
+  let demo = false;   // every company that is not a paid site, however it was made (src/kind.js, 2026-09-29)
+  try { demo = await require("./kind").isTrial(company); } catch (e) { return false; }
   if (demoSeen.size > 1000) demoSeen.clear();
   demoSeen.set(company, { demo, at: Date.now() });
   return demo;

@@ -194,6 +194,7 @@ async function backToDemo(siteId, why, by) {
     await c.query(`UPDATE platform.sites SET stage='back_to_demo', standing=NULL, cancel_at=NULL, attention=NULL, ending=NULL, welcome_enc=NULL,
                      stripe_subscription=NULL, returned_at=now(), updated_at=now(), updated_by=$2 WHERE id=$1`, [s.id, clean(by, 120) || "platform"]);
     await c.query("UPDATE platform.companies SET demo=true WHERE slug=$1", [s.company]);
+    require("./kind").forget(s.company);   // a trial again (src/kind.js)
     // the credit counts from now, both sides: the old ledger and the old spend are behind the line
     const had = (await c.query("SELECT 1 FROM platform.self_serve WHERE company=$1", [s.company])).rows[0];
     if (had) await c.query("UPDATE platform.self_serve SET credit_since=now() WHERE company=$1", [s.company]);

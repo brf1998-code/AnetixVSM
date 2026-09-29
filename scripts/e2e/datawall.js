@@ -85,6 +85,8 @@ const PAGE = "/c/demo/m/paperline/";
   await waitFor("the change live", async () => (await runOf(g2.id)).status === "deployed");
   const after = (await admin.get(`/api/c/demo/modules/${built.slug}/export`)).json.files;
   t("after the build the migration still carries its rows byte for byte (restored)", after["migrations/001.sql"] === seedFiles["migrations/001.sql"]);
+  // the Demo Company is a trial, so its diagrams are drawn when asked, not at deploy (src/kind.js, 2026-09-29)
+  mgr.post(`/api/c/demo/diagrams/${built.slug}/regenerate`, {}).catch(() => {});
   await waitFor("diagrams for the new version", async () => prompts().slice(mark).some((p) => /diagrams/.test(p.kind) && p.company === "demo" && JSON.stringify(p).includes(built.slug)), 30000).catch(() => {});
   // a fix round after a broken promise: the findings go back to the agent with no value quoted
   const fb3 = await file("group the travelers by fold type on the server BREAKPROMISE");

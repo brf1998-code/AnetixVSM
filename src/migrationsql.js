@@ -27,7 +27,7 @@ const TYPES = "TEXT|VARCHAR|CHAR|CHARACTER|INTEGER|INT|INT2|INT4|INT8|SMALLINT|B
 const FORBIDDEN_WORDS = new RegExp(`\\b(DROP|TRUNCATE|DELETE|UPDATE|GRANT|REVOKE|SECURITY|FUNCTION|PROCEDURE|TRIGGER|RULE|EXTENSION|COPY|VACUUM|REINDEX|CLUSTER|OWNER|RESET|DO|ROLE|USER|SET|EXECUTE|CALL|SELECT|LISTEN|NOTIFY|PREPARE|IMPORT)\\b(?!\\s+(?:${TYPES})\\b)`, "i");
 // never, not even as a column name: the server's catalogs and admin functions, and the functions that run a query
 // given as a string, read or write server files, or change a setting (a VALUES row or a DEFAULT could call them)
-const FORBIDDEN_ALWAYS = /\b(pg_\w*|information_schema|query_to_xml\w*|table_to_xml\w*|schema_to_xml\w*|database_to_xml\w*|cursor_to_xml\w*|lo_\w+|dblink\w*|set_config|current_setting)\b/i;
+const FORBIDDEN_ALWAYS = /\b(pg_\w*|information_schema|query_to_xml\w*|table_to_xml\w*|schema_to_xml\w*|database_to_xml\w*|cursor_to_xml\w*|lo_\w+(?=\s*\()|dblink\w*|set_config|current_setting)\b/i;
 const FORBIDDEN_PHRASES = /\b(ALTER\s+SCHEMA|CREATE\s+SCHEMA|SET\s+ROLE|ALTER\s+TABLE\s+\w+\s+(?:DROP|RENAME|ALTER)\b)/i;
 const SCHEMA_REF = /\bpublic\s*\.|\bplatform\s*\.|\bmod_|\bstg_|\bsnap_|\btst_/i;
 const ALLOWED = [

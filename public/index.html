@@ -840,7 +840,7 @@ function batchCard(run) {
   html += `<div class="bhead"><span class="n">${items.length}</span>${title}${review ? `<span class="chip review">REVIEW #${review.review_id}</span>` : ""}<span class="chip ${run.lane}">${run.lane === "ui" ? "UI" : "FUNCTIONALITY"}</span></div>`;
   html += `<div class="meta">run #${run.id} · ${esc(mod.title || run.module)} · ${st ? (st.live ? "v" + st.live : "not live yet") : "v" + run.from_version}${run.to_version ? " → v" + run.to_version : ""}</div>`;
   html += gateTopHtml(run, null);
-  if (st && !atGate(run) && !["deployed", "rolled_back"].includes(run.status)) html += `<div class="meta stacknote">Added to the preview: ${own.size === 1 ? "the newest change is" : "the newest changes are"} being built on top of the ones already in it, and one ${DEMO() ? "Make it live" : "deploy"} puts them all ${DEMO() ? "live" : "on the floor"}. <a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open the preview</a></div>`;
+  if (st && !atGate(run) && !["deployed", "rolled_back"].includes(run.status)) html += `<div class="meta stacknote">Added to the preview: ${own.size === 1 ? "the newest change is" : "the newest changes are"} being built on top of the ones already in it, and one ${TRIAL() ? "Make it live" : "deploy"} puts them all ${TRIAL() ? "live" : "on the floor"}. <a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open the preview</a></div>`;
   if (run.status === "deployed" || run.status === "rolled_back") {
     html += `<div class="${run.status === "deployed" ? "outcome" : "fail-note"}">${run.status === "deployed" ? "We did: " : "Rolled back: "}${esc(ev.what_changed || ev.build_summary || "").slice(0, 600)}</div>` + campaignLineHtml(run);
   }
@@ -877,8 +877,8 @@ function takeOutBtn(run, n) {
 // A queued change joins the preview being built as soon as that preview is ready (src/pipeline.js joinPreview).
 function queuedLine(tool) { return `Queued: it is added to the preview of ${esc(tool)} as soon as that preview is ready, and they go live together.`; }
 // The one button at the gate. A demo has no floor, so it says "Make it live" (the launch audit 1.8); a site keeps its words.
-function goLiveLabel(isModule, run) { return DEMO() ? "Make it live" : isModule || (run && run.evidence && run.evidence.stack && run.evidence.stack.live == null) ? "Put it on the floor" : `Deploy v${run.to_version} to floor`; }
-function goLiveNote() { return DEMO() ? "It goes live in your demo and you can open it from the Tools line at the top. Try it in the preview first." : "This goes live for your floor. Check it in the preview first."; }
+function goLiveLabel(isModule, run) { return TRIAL() ? "Make it live" : isModule || (run && run.evidence && run.evidence.stack && run.evidence.stack.live == null) ? "Put it on the floor" : `Deploy v${run.to_version} to floor`; }
+function goLiveNote() { return TRIAL() ? `It goes live${DEMO() ? " in your demo" : ""} and you can open it from the Tools line at the top. Try it in the preview first.` : "This goes live for your floor. Check it in the preview first."; }
 // A build waiting for the OK is the top of its card, and those cards are the top of In progress (Brendan, 2026-09-27:
 // people built a change and left the tile sitting there without ever putting it live). The button first, the preview
 // right under it; what changed, the checks and Discard stay further down the card. Managers only: the floor cannot deploy.
@@ -891,10 +891,10 @@ function gateTopHtml(run, fb) {
   if (!atGate(run) || !MGR()) return "";
   const isModule = run.lane === "module";
   const preview = isModule && fb ? `Open the preview of ${esc(toolName(fb))} (not live)` : `Open preview of v${run.to_version} (not live)`;
-  return `<div class="gatetop"><div class="gnext">Next step: ${DEMO() ? "make it live" : "put it on the floor"}</div>`
+  return `<div class="gatetop"><div class="gnext">Next step: ${TRIAL() ? "make it live" : "put it on the floor"}</div>`
     + `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(isModule, run)}</button><div class="approvenote">${goLiveNote()}</div>`
     + `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${preview}</a>`
-    + (DEMO() ? `<br><a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a>` : "")
+    + (TRIAL() ? `<br><a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a>` : "")
     + `</div>`;
 }
 // a tool request's name, whichever words the server used ("New tool: ..." now, "New module: ..." on older rows)
@@ -1220,6 +1220,8 @@ function closeVersions() { VMOD = null; document.getElementById("vpanel").innerH
 // out exactly those rows. Paid from the demo's credit, shown only as a percentage.
 let SMOD = null, STIMER = null;
 const DEMO = () => Boolean(DATA && DATA.company && DATA.company.demo);
+// every company that is not a paid site: sample data, the "make it live" words, however the company was made (src/kind.js)
+const TRIAL = () => Boolean(DATA && DATA.company && (DATA.company.trial || DATA.company.demo));
 async function openSample(mod, quiet) {
   if (!quiet) { VMOD = null; }
   SMOD = mod; clearTimeout(STIMER);
@@ -1446,7 +1448,7 @@ function render() {
     DATA.test_floor && m.live_version ? `<a class="violet" href="/c/${SLUG}/test/m/${m.name}/" title="The test floor: every tool together on data that is not the floor's. Nothing done there is real.">Test floor${m.test_version ? ` v${m.test_version}` : ""}</a>` : "",
     m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}">Diagrams</a>` : "",
     MGR() && m.live_version ? `<button class="vbtn" onclick="openVersions('${m.name}')">Versions</button>` : "",
-    MGR() && DEMO() && (m.live_version || m.staged_version) ? `<button class="vbtn" onclick="openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
+    MGR() && TRIAL() && (m.live_version || m.staged_version) ? `<button class="vbtn" onclick="openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>');
   // the phone's one-line summary of the strip: which modules the board is showing
   const summary = !many ? (DATA.modules[0] ? DATA.modules[0].title : "none yet")

@@ -96,6 +96,8 @@ t("a refused file runs nothing (no statements handed back)", V.validateMigration
 { const mb = require("../src/modulebuild");
   const sk = mb.skeleton({ slug: "crib-list", title: "Crib list", design: { bluf: "x" }, answers: { thing: "tool", stages: ["out", "back"] }, startingRows: [["Hammer"], ["O'Brien's wrench"], ["Drop saw; 10 inch"]] });
   t("the skeleton a new tool starts from passes, seed rows and all", ok(sk["migrations/001.sql"]), V.validateMigrationSql(sk["migrations/001.sql"])); }
+t("a column that only starts like a large object function passes (lo_alarm, a roving watch's low alarm)", ok("CREATE TABLE watch_logs (id SERIAL PRIMARY KEY, lo_alarm NUMERIC, hi_alarm NUMERIC);\nINSERT INTO watch_logs (lo_alarm) VALUES (2);"), V.validateMigrationSql("CREATE TABLE watch_logs (id SERIAL PRIMARY KEY, lo_alarm NUMERIC);"));
+t("but calling one is still refused, spaced or not", !ok("INSERT INTO x (a) VALUES (lo_export (1, '/tmp/x'));") && !ok("CREATE TABLE y (a OID DEFAULT lo_creat(-1));"));
 t("the fake agent's migration passes", ok("ALTER TABLE stations ADD COLUMN IF NOT EXISTS fake_note TEXT;\n"));
 
 // ---- 4. the index self-heal reads the same statements (src/migrate.js declaredIndexes)

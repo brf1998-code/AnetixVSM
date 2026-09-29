@@ -93,6 +93,9 @@ run chamber                node scripts/e2e/chamber.js
 # outside connections are off until Anetix turns them on per tool; "connect Epicor" goes to the integration team
 fresh; rm -f "$LOG/outside-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl"
 run outside                env SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl node scripts/e2e/outside.js
+# every company that is not a paid site gets the trial features, however it was made; a boot standardizes the rest
+fresh; start "SOS_BROWSER=off"
+run standardize            node scripts/e2e/standardize.js
 
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
 run selfserve              env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/selfserve.js

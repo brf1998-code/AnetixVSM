@@ -584,9 +584,11 @@ async function leftoverKeys(company, mod, exceptId) {
 }
 
 // ---- reads ---------------------------------------------------------------------------------------------------------------
+// Every company that is not a paid site has sample data, however it was made (src/kind.js, 2026-09-29: companies added
+// by hand and early anetix.ai ones never had it). A paid site never: its tables are the floor's.
 async function isDemo(company) {
-  const r = (await q("SELECT demo FROM platform.companies WHERE slug=$1", [company])).rows[0];
-  return Boolean(r && r.demo);
+  if (!(await q("SELECT 1 FROM platform.companies WHERE slug=$1", [company])).rows.length) return false;
+  return require("./kind").isTrial(company);
 }
 async function current(company, mod) {
   return (await q("SELECT * FROM platform.sample_fills WHERE company=$1 AND module=$2 AND status IN ('writing','in') ORDER BY id DESC LIMIT 1", [company, mod])).rows[0] || null;
@@ -619,7 +621,7 @@ async function view(company, mod) {
 
 // ---- fill and clear ---------------------------------------------------------------------------------------------------
 async function fill(company, mod, who, { replace = false } = {}) {
-  if (!(await isDemo(company))) throw fail(404, "sample data is for demo companies");
+  if (!(await isDemo(company))) throw fail(404, "sample data is not used on a live site: it would put made-up rows on the floor");
   const m = await registry.getModule(company, mod);
   if (!m) throw fail(404, "no such tool");
   if (m.live_version == null && m.staged_version == null) throw fail(409, "Nothing to fill yet: the tool has not been built.");
@@ -725,7 +727,7 @@ async function takeOut(schema, f) {
   return { deleted, kept };
 }
 async function clear(company, mod, who) {
-  if (!(await isDemo(company))) throw fail(404, "sample data is for demo companies");
+  if (!(await isDemo(company))) throw fail(404, "sample data is not used on a live site: it would put made-up rows on the floor");
   const f = await current(company, mod);
   if (!f || f.status !== "in") throw fail(409, "This tool has no sample data to clear.");
   const a = await takeOut(migrate.liveSchema(company, mod), f);
@@ -786,7 +788,7 @@ const guard = (fn) => async (req, res) => {
   try { await fn(req, res); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 };
-const demoOnly = async (req) => { if (!(await isDemo(req.params.slug))) throw fail(404, "sample data is for demo companies"); };
+const demoOnly = async (req) => { if (!(await isDemo(req.params.slug))) throw fail(404, "sample data is not used on a live site: it would put made-up rows on the floor"); };
 router.get("/api/c/:slug/modules/:mod/sample", requireManager, guard(async (req, res) => {
   await demoOnly(req);
   res.set("Cache-Control", "no-store").json(await view(req.params.slug, req.params.mod));

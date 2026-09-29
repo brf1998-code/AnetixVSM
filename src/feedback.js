@@ -400,7 +400,10 @@ router.get("/api/c/:slug/board", async (req, res) => {
   }
   const reviews = await review.listReviews(co.slug);
   const batches = (await q("SELECT * FROM platform.batches WHERE company=$1 AND run_id IS NULL ORDER BY id", [co.slug])).rows;
-  const { brand: b, ...coPublic } = co;
+  const { brand: b, ...rest } = co;
+  // trial: every company that is not a paid site gets the trial features (sample data, the wording, the board link on its
+  // tools), however it was made (src/kind.js, 2026-09-29); demo stays the anetix.ai demo (credit, Go live, the strip)
+  const coPublic = { ...rest, trial: await require("./kind").isTrial(co.slug) };
   const intakes = req.sosRole === "floor" ? {} : await intake.boardIntakes(co.slug);
   res.json({
     company: coPublic, brand: brandPublic(b), icon_v: iconVersion(b), feedback, runs, modules, screens, reviews, batches, intakes,
@@ -616,7 +619,7 @@ router.get("/api/c/:slug/diagrams/:module", async (req, res) => {
   // which model drew it and what it cost are Anetix's (CLAUDE.md: no model names or costs to a company)
   if (req.sosRole !== "admin" && d && d.current) { delete d.current.model; delete d.current.cost_usd; }
   const co = await company(req.params.slug);
-  res.json({ module: row, ...d, conventions: diagrams.conventions(), role: req.sosRole, demo: Boolean(co && co.demo) });
+  res.json({ module: row, ...d, conventions: diagrams.conventions(), role: req.sosRole, demo: Boolean(co && co.demo), trial: Boolean(co) && await require("./kind").isTrial(co.slug) });
 });
 router.post("/api/c/:slug/diagrams/:module/regenerate", requireManager, async (req, res) => {
   try {
@@ -651,7 +654,7 @@ router.get("/api/c/:slug/settings-view", requireManager, async (req, res) => {
     me = { login: req.sosAccount.login, role: req.sosAccount.role, app: Boolean(st && st.app), passkeys: st ? st.passkeys : 0 };
   }
   res.set("Cache-Control", "no-store").json({
-    company: { slug: co.slug, name: co.name, demo: Boolean(co.demo), auto_propose: co.auto_propose !== false, allow_photos: co.allow_photos !== false, ai_reads_data: co.ai_reads_data !== false },
+    company: { slug: co.slug, name: co.name, demo: Boolean(co.demo), trial: await require("./kind").isTrial(co.slug), auto_propose: co.auto_propose !== false, allow_photos: co.allow_photos !== false, ai_reads_data: co.ai_reads_data !== false },
     modules, me, role: req.sosRole,
   });
 });
@@ -664,7 +667,10 @@ router.get("/api/c/:slug/agents", requireAdmin, async (req, res) => {
   // docs the platform writes itself (ERP-FIELDS.md) are for the agents; only an admin sees them here
   const docs = (await q("SELECT id, module, name, content, source, updated_at FROM platform.agent_docs WHERE company=$1 AND ($2 OR source <> 'platform') ORDER BY module NULLS FIRST, name", [co.slug, req.sosRole === "admin"])).rows;
   const modules = (await q("SELECT name, title FROM platform.modules WHERE company=$1 ORDER BY name", [co.slug])).rows;
-  const { brand: b, ...coPublic } = co;
+  const { brand: b, ...rest } = co;
+  // trial: every company that is not a paid site gets the trial features (sample data, the wording, the board link on its
+  // tools), however it was made (src/kind.js, 2026-09-29); demo stays the anetix.ai demo (credit, Go live, the strip)
+  const coPublic = { ...rest, trial: await require("./kind").isTrial(co.slug) };
   res.json({
     company: coPublic, brand: brandPublic(b),
     models: {

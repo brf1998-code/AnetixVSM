@@ -24,7 +24,11 @@ const count = async (schema, table) => Number((await q(`SELECT count(*)::int AS 
   const url = `/api/c/${A}/modules/paperline/sample`;
 
   // ---- who has it
-  t("a company that is not a demo has no sample data", (await admin.get("/api/c/demo/modules/paperline/sample")).status === 404 && (await admin.post("/api/c/demo/modules/paperline/sample", {})).status === 404);
+  // a paid site has none (every other company is a trial and has it, src/kind.js)
+  await admin.post("/api/admin/companies", { slug: "paid-sample", name: "Paid Sample" });
+  await q("INSERT INTO platform.sites (id, company, stage, standing) VALUES ($1,'paid-sample','subscribed','good')", [require("crypto").randomUUID()]);
+  await admin.post("/api/admin/companies/paid-sample/modules", { module: "paperline" });
+  t("a paid site has no sample data", (await admin.get("/api/c/paid-sample/modules/paperline/sample")).status === 404 && (await admin.post("/api/c/paid-sample/modules/paperline/sample", {})).status === 404);
   const floor = await login(process.env.SOS_FLOOR_PASSWORD || "floorpw", "demo");
   t("a floor login cannot fill", (await floor.post(url, {})).status === 403);
   const s0 = await admin.get(url);

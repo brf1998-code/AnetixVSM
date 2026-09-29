@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-28)
+# Symbiotic OS: Workspace Guide (current as of 2026-09-29)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -157,6 +157,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Changes join the preview (2026-09-28)
 - Outside connections are off until Anetix turns them on, one tool at a time; integration requests (2026-09-28)
 - Migrations run exactly what was checked (2026-09-28)
+- Every company is the same, and a boot brings it up to date (2026-09-29)
 
 ## What this is
 
@@ -487,3 +488,9 @@ Passwords live only in Railway; never commit them.
   builder is told and the module gate refuses a new one that is not on. Never
   let a missing switch mean on, and a request to connect one goes to the
   integration team (`requests.handoff`), not the build loop.
+- Every company gets every feature its kind gets, whenever it was made. A feature gate reads what a company is NOW
+  (`src/kind.js`: a paid site or a trial), never a column fixed on the day the company was made; `companies.demo`
+  means only "came in from anetix.ai with credit". Anything the platform keeps per company (a flag, a seeded row, a
+  doc) that a new design changes is brought to the rule for the companies that already exist, at boot, in
+  `kind.standardize()` or a step beside it, idempotent and logged. A platform update that only reaches new
+  companies is not done.

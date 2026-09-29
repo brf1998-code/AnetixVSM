@@ -3116,7 +3116,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   SELECT, PROCEDURE, LISTEN, NOTIFY, PREPARE, IMPORT (whole words outside literals, still allowed as a column being
   defined, `role TEXT`), and a list that is refused even as a name: `pg_*`, `information_schema`, and the functions
   that run a query given as text or touch server files or settings (`query_to_xml`, `table_to_xml`,
-  `schema_to_xml`, `database_to_xml`, `cursor_to_xml` and their variants, `lo_*`, `dblink*`, `set_config`,
+  `schema_to_xml`, `database_to_xml`, `cursor_to_xml` and their variants, `lo_*(` as a call (a column named `lo_alarm` passes, since 2026-09-29), `dblink*`, `set_config`,
   `current_setting`), because a VALUES row or a DEFAULT could call them with the SQL hidden in a string. A double
   quote is now judged outside literals only (a JSON seed like `'{"k": 1}'::jsonb` passes; it used to be refused).
   Also closed: the index self-heal (`declaredIndexes`) ran a regex over the raw file, so a `CREATE INDEX ...` written
@@ -3136,3 +3136,26 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   order). **Next, not built:** run migrations under a per-company migrator role (owns only that company's
   `mod_`/`stg_`/`tst_` schemas, NOSUPERUSER NOCREATEROLE NOCREATEDB, no USAGE on `platform`), entered with `SET LOCAL
   ROLE` inside the migration transaction, so a validator miss cannot reach past the company.
+
+- **Every company is the same, and a boot brings it up to date (2026-09-29).** Brendan: "some of the older companies
+  are not updated to the new designs like sample data. They should all be the same and when a system wide update goes
+  it standardizes everything." They were not: sample data, the "Make it live" wording, the "Try the preview with
+  sample data" link, the link back to the board on a tool's pages and diagrams drawn on request all read
+  `companies.demo`, a column set once when a company is made, and only companies made on anetix.ai after the demo
+  workflow (2026-09-25) carry it. A company added by hand on /admin (the Demo Company among them) and the few made on
+  anetix.ai before that never got any of them. Now `src/kind.js` decides, at the moment it matters: a PAID SITE
+  (`platform.sites.stage = 'subscribed'`) or not. A paid site has a real floor, so no made-up rows go into its
+  tables, its tool pages keep the floor's own view and diagrams are drawn at deploy as before; every other company is
+  a trial and gets every trial feature, however and whenever it was made (`kind.isTrial`, memoized 15 s per company,
+  forgotten on activation, back-to-demo and delete). `companies.demo` keeps its narrower job: a company that came in
+  from anetix.ai with credit and one manager account (the credit line, Go live, the DEMO strip, Settings without the
+  floor's cards, the refund of a stopped build). The board, settings and diagrams answers carry `trial` beside `demo`.
+  At every boot, after every module's own init, `kind.standardize()` brings the companies that already exist to the
+  rule: an anetix.ai company (a `self_serve` row) that is neither a paid site nor being switched on is marked a demo
+  (the early ones were made before the flag existed), and a company still on the shared passwords is named in the
+  boot log until an admin gives it its own (passwords are shown once, so a boot cannot make them up); event
+  `companies_standardized`. Idempotent: a second boot finds nothing. Tests: `scripts/e2e/standardize.js` (18: the
+  Demo Company has sample data, the board link and diagrams on request; a paid site has none of them; a boot marks
+  an early demo and an early order, leaves one being switched on and a paid site alone, names a company with no
+  sign-in, and a second run changes nothing); `scripts/e2e/sample.js` now proves a paid site has no sample data (it
+  proved the Demo Company had none). The rule for what comes next is in CLAUDE.md's hard rules.

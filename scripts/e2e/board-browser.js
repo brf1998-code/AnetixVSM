@@ -72,14 +72,15 @@ const R = runner(), t = R.t;
     await tile.locator("button#reqgo-" + runId).click();
     await waitFor("the deploy gate", async () => { const r = (await board(mgr)).runs.find((x) => x.id === runId); return r && r.step === "await_deploy" && r.status === "waiting"; }, 90000);
   }
-  await b.waitForFunction((id) => /Deploy v\d+ to floor/.test((document.querySelector(`[data-key="run:${id}"]`) || {}).innerText || ""), runId, { timeout: 15000 });
+  // the Demo Company is a trial (not a paid site), so its one button says "Make it live" like every demo (src/kind.js, 2026-09-29)
+  await b.waitForFunction((id) => /Make it live/.test((document.querySelector(`[data-key="run:${id}"]`) || {}).innerText || ""), runId, { timeout: 15000 });
   const gate = await tile.innerText();
-  t("at the gate: the preview, one Deploy button, Discard under more", /Open preview of v\d+/.test(gate) && (await tile.locator("button.go", { hasText: /Deploy v\d+ to floor/ }).count()) === 1 && (await tile.locator("details.more button", { hasText: "Discard" }).count()) === 1 && !(await tile.locator("details.more button", { hasText: "Discard" }).isVisible()));
+  t("at the gate: the preview, one Deploy button, Discard under more", /Open preview of v\d+/.test(gate) && (await tile.locator("button.go", { hasText: /Make it live/ }).count()) === 1 && (await tile.locator("details.more button", { hasText: "Discard" }).count()) === 1 && !(await tile.locator("details.more button", { hasText: "Discard" }).isVisible()));
   // the plain line shows; the counts and the second review's words are folded under "What was checked" (the launch audit 1.8)
   const gateAll = await tile.evaluate((el) => el.textContent);
   t("the gate says what was checked in plain words, the counts folded, and no model", /Checked before it reached you/.test(gate) && /What was checked/.test(gate) && !/checks passed:/.test(gate) && /checks passed:/.test(gateAll) && !/cross-check \(/.test(gateAll) && noMoneyNoModel(gateAll), gate);
   t("the steps are in plain words", /Waiting for your OK to go live/.test(gate) && !/Manager deploy gate|Agent build/.test(gate), gate);
-  await tile.locator("button.go", { hasText: /Deploy v\d+ to floor/ }).click();
+  await tile.locator("button.go", { hasText: /Make it live/ }).click();
   await waitFor("the change live", async () => { const f = await fbRow(mgr, S1); return f && f.status === "done" && f.shipped_version; }, 30000);
   await b.locator("#col-done button", { hasText: "Show the other" }).click().catch(() => {});
   await b.waitForSelector(`#col-done [data-key="run:${runId}"]`, { timeout: 15000 });

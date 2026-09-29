@@ -27,7 +27,6 @@ errors.asyncRoutes();
 errors.guards();
 
 const PORT = process.env.PORT || 3000;
-const isDemo = async (slug) => Boolean(((await q("SELECT demo FROM platform.companies WHERE slug=$1", [slug])).rows[0] || {}).demo);
 const page = (name) => path.join(__dirname, "public", name);
 
 async function main() {
@@ -189,9 +188,10 @@ async function main() {
   registry.hooks.deployed = async (company, mod, version) => {
     await require("./src/testfloor").afterDeploy(company, mod, version).catch((e) => console.error(`[testfloor] ${company}/${mod}:`, e.message));
     await require("./src/sample").afterDeploy(company, mod).catch((e) => console.error(`[sample] ${company}/${mod}:`, e.message));   // sample rows that were only in the preview go live with the build
-    // a demo's diagrams are drawn when its manager asks (the Diagrams page), not after every deploy: they were most of
-    // what a demo spent on its own ($19.85 in six days, 2026-09-26) and few demos open them (the launch audit 1.19)
-    if (await isDemo(company)) return { skipped: true, reason: "a demo draws its diagrams when asked" };
+    // a trial's diagrams are drawn when its manager asks (the Diagrams page), not after every deploy: they were most of
+    // what a demo spent on its own ($19.85 in six days, 2026-09-26) and few demos open them (the launch audit 1.19).
+    // Every company that is not a paid site is a trial here, however it was made (src/kind.js, 2026-09-29).
+    if (await require("./src/kind").isTrial(company)) return { skipped: true, reason: "a trial draws its diagrams when asked" };
     return diagrams.generate(company, mod, version);
   };
   // can this instance run module code in a process of its own, with a database login of its own? find out before anything is mounted
@@ -206,6 +206,9 @@ async function main() {
   await require("./src/testfloor").boot();   // every company whose switch is on gets its test floor back
   // companies from before per-company passwords keep the shared ones until the admin sets their own
   await auth.ensureAccessRows();
+  // a platform update reaches the companies that already exist: what the platform keeps per company, brought to the
+  // rule as it is now (src/kind.js; after every module's init, so every table it reads is there)
+  await require("./src/kind").standardize().catch((e) => console.error("[standardize]", e.message));
   // builds that were running when the previous process died get a failed
   // status (retry/cancel on the board) instead of a spinner forever
   const orphaned = await pipeline.sweepOrphans();
@@ -223,7 +226,7 @@ async function main() {
   require("./src/dataexport").startSweeps();   // demo requests past 12 months go (the privacy notice)   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
   // (only ones never attempted: a failed drawing is not paid for again on every restart; Diagrams on the board redraws on demand)
-  for (const m of (await q("SELECT company, name, live_version FROM platform.modules m WHERE live_version IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform.diagrams d WHERE d.company=m.company AND d.module=m.name AND d.version=m.live_version) AND NOT EXISTS (SELECT 1 FROM platform.companies c WHERE c.slug=m.company AND c.demo)")).rows) {
+  for (const m of (await q("SELECT company, name, live_version FROM platform.modules m WHERE live_version IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform.diagrams d WHERE d.company=m.company AND d.module=m.name AND d.version=m.live_version) AND EXISTS (SELECT 1 FROM platform.sites s WHERE s.company=m.company AND s.stage='subscribed')")).rows) {   // paid sites only; a trial draws when asked
     diagrams.generate(m.company, m.name, m.live_version).catch((e) => console.error(`diagrams ${m.company}/${m.name}:`, e.message));
   }
 

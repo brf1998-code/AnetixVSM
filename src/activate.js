@@ -412,6 +412,7 @@ async function rolloverStepsLocked(slug) {
     const o = site.order_id ? (await q("SELECT facts FROM platform.orders WHERE id=$1", [site.order_id])).rows[0] : null;
     const name = o && o.facts && o.facts.site_name ? clean(o.facts.site_name, 80) : null;
     await q("UPDATE platform.companies SET demo=false, name=COALESCE($2, name) WHERE slug=$1", [slug, name]);
+    require("./kind").forget(slug);   // a paid site from now on: no trial features (src/kind.js)
     await mark("company_at");
   }
   await mark("done_at");

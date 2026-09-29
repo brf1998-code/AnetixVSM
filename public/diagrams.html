@@ -69,7 +69,7 @@ async function load(version) {
   document.getElementById("meta").innerHTML = D.running ? `<span class="pulse"></span>drawing version ${D.running}` : (c ? `drawn ${new Date(c.finished_at || c.created_at).toLocaleString()}${D.role === "admin" && c.model ? ` · ${esc(c.model)} · $${Number(c.cost_usd).toFixed(2)}` : ""}` : "");
   // a demo's diagrams are drawn when asked (the launch audit 1.19); a site's after every deploy
   document.getElementById("regen").textContent = c ? "Redraw for the live version" : "Draw them now";
-  if (!c) { document.getElementById("overview").textContent = D.running ? "Diagrams are being drawn for this version. This page refreshes on its own." : D.demo ? "No diagrams yet for this tool. They are drawn when you ask: Draw them now, above. It takes a minute or two." : "No diagrams yet for this tool. They are drawn after the next deploy, or use the redraw button."; document.getElementById("out").innerHTML = ""; if (D.running) setTimeout(() => load(version), 5000); return; }
+  if (!c) { document.getElementById("overview").textContent = D.running ? "Diagrams are being drawn for this version. This page refreshes on its own." : (D.trial || D.demo) ? "No diagrams yet for this tool. They are drawn when you ask: Draw them now, above. It takes a minute or two." : "No diagrams yet for this tool. They are drawn after the next deploy, or use the redraw button."; document.getElementById("out").innerHTML = ""; if (D.running) setTimeout(() => load(version), 5000); return; }
   document.getElementById("overview").textContent = c.content.overview || "";
   render();
   if (D.running) setTimeout(() => load(version), 5000);
