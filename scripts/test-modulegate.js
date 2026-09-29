@@ -191,5 +191,26 @@ t("ordinary headers are fine", gate.check({ files: mod(wrap(`  router.get("/x.cs
   t("the card says what a check is, in plain words, with no dashes", /promise an earlier change made/.test(text) && !/[\u2013\u2014]/.test(text), text);
   t("the library modules and their checks pass the gate", ["paperline", "kpis"].every((m) => gate.checkDir(path.join(__dirname, "..", "modules", m)).ok)); }
 
+// 16. outside connections are off until Anetix turns them on for the tool (src/connections.js, 2026-09-28)
+{ const withConn = (conns) => ({ ...from, "module.json": JSON.stringify({ ...JSON.parse(from["module.json"]), connections: conns }) });
+  const erp = { epicor: { kind: "erp", label: "Epicor", queries: { late_jobs: { params: [], fields: ["job", "due"] } } } };
+  const printer = { tags: { kind: "printer", label: "Zebra", templates: ["tag"] } };
+  const sheet = { starting: { kind: "files", label: "Starting list", table: "items", key: "name" } };
+  t("a new ERP connection that is not turned on is refused, in any lane that may touch module.json", has(gate.check({ files: withConn(erp), fromFiles: from, lane: "functionality", outside: { allowed: [] } }), "connection-not-on") && has(gate.check({ files: withConn(erp), lane: "module", outside: { allowed: [] } }), "connection-not-on"));
+  t("a new printer connection that is not turned on is refused", has(gate.check({ files: { ...withConn(printer), "labels/tag.zpl": "^XA^XZ" }, fromFiles: from, lane: "functionality", outside: { allowed: ["erp"] } }), "connection-not-on"));
+  t("turned on for the tool, it passes", gate.check({ files: withConn(erp), fromFiles: from, lane: "functionality", outside: { allowed: ["erp"] } }).ok);
+  t("a spreadsheet (files) connection reaches nothing outside and always passes", gate.check({ files: withConn(sheet), fromFiles: from, lane: "functionality", outside: { allowed: [] } }).ok);
+  t("a declaration the tool already had is left alone", gate.check({ files: withConn(erp), fromFiles: withConn(erp), lane: "functionality", outside: { allowed: [] } }).ok);
+  t("the same name turned into another kind is new", has(gate.check({ files: { ...withConn({ epicor: { kind: "printer", label: "x", templates: ["tag"] } }), "labels/tag.zpl": "^XA^XZ" }, fromFiles: withConn(erp), lane: "functionality", outside: { allowed: ["erp"] } }), "connection-not-on"));
+  t("without the outside option (the registry's backstop at stage and deploy) nothing is checked", gate.check({ files: withConn(erp), fromFiles: from, lane: "functionality" }).ok);
+  const text = gate.summarize(gate.check({ files: withConn(erp), fromFiles: from, lane: "functionality", outside: { allowed: [] } }));
+  t("the card says why in plain words, with no dashes", /outside system that is not connected for this tool/.test(text) && /Anetix's integration team turns outside connections on for each tool/.test(text) && !/[\u2013\u2014]/.test(text), text);
+  const cx = require("../src/connections");
+  const brief = cx.outsideBrief([], { connections: erp });
+  t("the builder's brief: nothing on, what not to build, and the old declaration left alone", /none is turned on for this tool/.test(brief) && /do NOT declare a connection of kind "erp" or "printer"/.test(brief) && /already declares "epicor" \(erp\)/.test(brief) && !/[\u2013\u2014]/.test(brief), brief);
+  t("the builder's brief when the ERP is on", /turned on for this tool: the company's ERP or scheduling system/.test(cx.outsideBrief(["erp"], null)) && /do NOT declare a connection of kind "printer",/.test(cx.outsideBrief(["erp"], null)));
+  const split = require("../src/intake").splitHandoffs({ connections: [{ kind: "erp", name: "Epicor", what_for: "late jobs" }, { kind: "scanners", name: "scanners" }, { kind: "printer", name: "Zebra" }], handoffs: [{ kind: "erp", system: "epicor", would_add: "x", until: "y" }] }, ["printer"]);
+  t("a design keeps what is on and hands off the rest, once per system", split.connections.map((c) => c.kind).join(",") === "scanners,printer" && split.handoffs.length === 1 && split.handoffs[0].kind === "erp", split); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

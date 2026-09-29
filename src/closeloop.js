@@ -143,12 +143,12 @@ function followUpContext(original) {
 const SELECT = `
   SELECT f.id, f.kind, f.module, f.page, f.screen, f.message, f.name, f.person_id, f.status, f.outcome, f.created_at, f.follow_up_of,
          f.shipped_version, f.shipped_at, f.floor_answer, f.floor_answer_at, f.floor_answer_by, f.manager_answer, f.manager_answer_at, f.manager_answer_by,
-         f.duplicate_of, f.question, f.anetix_stage, f.anetix_note, f.anetix_at, f.anetix_by,
+         f.duplicate_of, f.question, f.anetix_stage, f.anetix_note, f.anetix_at, f.anetix_by, f.anetix_kind, f.about_module, f.about_system,
          p.status AS proposal_status, p.data_check->>'status' AS data_status, r.status AS run_status, r.step AS run_step,
          (SELECT c.id FROM platform.feedback c WHERE c.follow_up_of = f.id ORDER BY c.id DESC LIMIT 1) AS follow_up_id
     FROM platform.feedback f
     LEFT JOIN LATERAL (SELECT id, status, data_check FROM platform.proposals WHERE feedback_id = COALESCE(f.duplicate_of, f.id) AND status <> 'superseded' ORDER BY id DESC LIMIT 1) p ON true
-    LEFT JOIN LATERAL (SELECT status, step FROM platform.build_runs WHERE p.id = ANY(COALESCE(proposal_ids, ARRAY[proposal_id])) AND status <> 'cancelled' ORDER BY id DESC LIMIT 1) r ON true`;
+    LEFT JOIN LATERAL (SELECT status, step FROM platform.build_runs WHERE p.id = ANY(COALESCE(proposal_ids, ARRAY[proposal_id])) AND status NOT IN ('cancelled','stacked') ORDER BY id DESC LIMIT 1) r ON true`;
 
 const publicRow = (r, personId) => ({
   id: r.id, module: r.module, screen: r.screen || null, words: clip(r.message, 280), created_at: r.created_at,
@@ -158,7 +158,7 @@ const publicRow = (r, personId) => ({
   shipped_at: r.shipped_at || null, follow_up_of: r.follow_up_of || null, follow_up_id: r.follow_up_id || null,
   can_answer: mayAnswer(r, personId),
   // a request to Anetix (module "platform"): the last word back and when Anetix last touched it, for the badge
-  ...(r.module === "platform" ? { to_anetix: true, built: null, note: r.anetix_note || null, answered_at: r.anetix_at || null, answered_by: r.anetix_by || null } : {}),
+  ...(r.module === "platform" ? { to_anetix: true, built: null, note: r.anetix_note || null, answered_at: r.anetix_at || null, answered_by: r.anetix_by || null, ...(r.anetix_kind === "integration" ? { integration: { system: r.about_system || null, module: r.about_module || null } } : {}) } : {}),
 });
 
 // The signed-in person's own requests, newest first, and how many are waiting on their answer.

@@ -135,8 +135,75 @@ CREATE TABLE IF NOT EXISTS platform.erp_cache (
   fetched_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (company, module, connection, query, params_hash)
 );
+CREATE TABLE IF NOT EXISTS platform.connection_allowances (
+  id          SERIAL PRIMARY KEY,
+  company     TEXT NOT NULL,
+  module      TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  system      TEXT,
+  note        TEXT,
+  by_name     TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (company, module, kind)
+);
 `;
 async function init() { await q(SCHEMA); }
+
+// ---- outside connections are off until Anetix turns them on, one tool at a time (2026-09-28) ----------------------
+// Brendan, after a PE partner's demo tool grew a "Refresh from Epicor" button that could only ever answer "could not
+// reach Epicor": "it should deny external connections unless we have turned it on for that use case; it shouldn't
+// build something that tries to connect to something that is not there." An ERP and a label printer reach a system
+// outside the platform, so a tool may declare one only once an Anetix admin has turned that kind on for that tool
+// (platform.connection_allowances, one row per company, tool and kind; decided per tool, not per company). A files
+// connection (a spreadsheet the manager loads) and a keyboard scanner reach nothing outside and are always fine.
+// Enforced three ways: the design of a new tool is told and anything else becomes a handoff to the integration team
+// (src/intake.js), every build is told (buildPrompt, the module build), and the module gate refuses a declaration a
+// build ADDS that is not turned on (src/modulegate.js, rule connection-not-on). A declaration a tool already had is
+// left alone: it was there before this rule, and stopping every later build would not take it away.
+const OUTSIDE = ["erp", "printer"];
+const OUTSIDE_WORDS = { erp: "the company's ERP or scheduling system", printer: "a label printer" };
+const KIND_SHORT = { erp: "ERP", printer: "Label printer" };
+async function allowances(company, mod = null) {
+  const rows = (await q(`SELECT company, module, kind, system, note, by_name, created_at FROM platform.connection_allowances WHERE company=$1 ${mod ? "AND module=$2" : ""} ORDER BY module, kind`, mod ? [company, mod] : [company])).rows;
+  return rows;
+}
+async function allowedKinds(company, mod) {
+  return (await allowances(company, mod)).map((r) => r.kind);
+}
+// Turn a kind on or off for one tool. by: the admin's name. A tool that does not exist yet (a new tool's slug from
+// its intake) may be turned on ahead of its build.
+async function setAllowed(company, mod, kind, on, { system, note } = {}, by = null) {
+  if (!OUTSIDE.includes(kind)) throw Object.assign(new Error(`only ${OUTSIDE.join(" and ")} are turned on per tool`), { status: 400 });
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(String(mod || ""))) throw Object.assign(new Error("which tool?"), { status: 400 });
+  const co = (await q("SELECT slug FROM platform.companies WHERE slug=$1", [company])).rows[0];
+  if (!co) throw Object.assign(new Error("unknown company"), { status: 404 });
+  const clean = (x, n) => (x == null ? null : String(x).replace(/\s+/g, " ").trim().slice(0, n) || null);
+  if (on) {
+    await q(`INSERT INTO platform.connection_allowances (company, module, kind, system, note, by_name) VALUES ($1,$2,$3,$4,$5,$6)
+             ON CONFLICT (company, module, kind) DO UPDATE SET system=COALESCE(EXCLUDED.system, platform.connection_allowances.system), note=COALESCE(EXCLUDED.note, platform.connection_allowances.note), by_name=EXCLUDED.by_name`,
+      [company, mod, kind, clean(system, 80), clean(note, 300), by]);
+  } else {
+    await q("DELETE FROM platform.connection_allowances WHERE company=$1 AND module=$2 AND kind=$3", [company, mod, kind]);
+  }
+  await record(on ? "connection_turned_on" : "connection_turned_off", { company, module: mod, actor: { role: "admin", name: by || "Anetix" }, after: `${KIND_SHORT[kind]}${system ? ` (${clean(system, 80)})` : ""}`, detail: { kind, system: clean(system, 80) } });
+  return allowances(company, mod);
+}
+// The declarations in a manifest that reach outside the platform: [{ name, kind, label }].
+function outsideDeclared(manifest) {
+  const { connections } = declared(manifest || {});
+  return Object.entries(connections).filter(([, d]) => OUTSIDE.includes(d.kind)).map(([name, d]) => ({ name, kind: d.kind, label: d.label }));
+}
+// What a build is told (src/pipeline.js buildPrompt, src/modulebuild.js). fromManifest: the version the build starts
+// from, whose declarations stay whatever this says.
+function outsideBrief(allowed, fromManifest) {
+  const on = (allowed || []).filter((k) => OUTSIDE.includes(k));
+  const kept = outsideDeclared(fromManifest).filter((d) => !on.includes(d.kind));
+  const off = OUTSIDE.filter((k) => !on.includes(k));
+  let s = `Outside connections: ${on.length ? `turned on for this tool: ${on.map((k) => OUTSIDE_WORDS[k]).join(" and ")}. You may declare ${on.length === 1 ? "that kind" : "those kinds"} in module.json "connections".` : "none is turned on for this tool."}`;
+  if (off.length) s += ` Not turned on: ${off.map((k) => OUTSIDE_WORDS[k]).join(" and ")}. Anetix's integration team turns those on for each tool; until then do NOT declare a connection of kind ${off.map((k) => `"${k}"`).join(" or ")}, and do not add a screen, button or message that reaches for one (no "refresh from the ERP", no "print label"). Where a value would come from one of them, people type it in, scan it, or the manager loads a spreadsheet (a "files" connection, always allowed). The platform refuses a build that adds a connection that is not turned on.`;
+  if (kept.length) s += ` This tool already declares ${kept.map((d) => `"${d.name}" (${d.kind})`).join(", ")} from before this rule: leave the declaration as it is, and build nothing new that depends on it.`;
+  return s;
+}
 
 // ---- secrets (unused by this push's kinds; ready for erp) ----------------------------
 function key() {
@@ -1016,7 +1083,7 @@ async function testLabel(company, mod, name, req) {
   return { job_id: job.id, zpl };
 }
 async function deleteCompany(company) {
-  for (const t of ["print_jobs", "connection_uploads", "erp_cache", "connections"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
+  for (const t of ["print_jobs", "connection_uploads", "erp_cache", "connections", "connection_allowances"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 
 module.exports = {
@@ -1026,4 +1093,5 @@ module.exports = {
   deviceCookie, deviceOf, cookies, encrypt, decrypt, deleteCompany, KIND_TEXT,
   erpSettings, fillPath, rowsOf, mapRows, authHeaders, erpFetch, erpQuery, setErp, testErp, itNote, httpGet, ERP_FLAVORS, ERP_TRANSPORTS, demoErp, DEMO_ROWS,
   nextLink, autoNames, columnsOf, resolveFields, fieldAudit, auditLine, writeFieldsDoc, draftLookups, ERP_PAGE, demoEpicor, DEMO_JOBS,
+  OUTSIDE, OUTSIDE_WORDS, KIND_SHORT, allowances, allowedKinds, setAllowed, outsideDeclared, outsideBrief,
 };

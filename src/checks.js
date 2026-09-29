@@ -30,6 +30,7 @@ function reasonFor(run) {
   if (run.status === "waiting" && run.step === "await_deploy") return reviewerFailed ? "at the gate over a reviewer stop" : "at the gate";
   if (run.status === "cancelled") return reviewerFailed ? "cancelled after a reviewer stop" : /aborted/.test(JSON.stringify(run.log || [])) ? "aborted" : "cancelled";
   if (run.status === "running" || run.status === "queued") return "in flight";
+  if (run.status === "stacked") return "at the gate, with a change being added on top";
   if (run.status === "waiting") return "waiting on the manager";
   if (cc.verdict === "fail" && cc.model === "platform checks" && ev.gate && ev.gate.ok === false) return "module gate";   // src/modulegate.js: server code or lane rules, before anything ran
   if (cc.verdict === "fail" && cc.model === "platform checks") return "platform checks";

@@ -3016,3 +3016,86 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   renamed button fails the test until the message follows. Tests: test-phase2 20, e2e phase2 21 (its comparison
   now matches the name as a whole word: "Sam" was also taking the "Sam" out of "Sample data"), demorequests-browser 33.
 
+
+- **Changes join the preview (2026-09-28, `src/pipeline.js` joinPreview, `registry.createDraftVersion(base)`).** From
+  the first PE partner who tried a demo: "Somewhat surprised that I could not update a preview build with new
+  functionality. Almost seemed I had to make it go live in order to add or modify functionality." He was right: a build
+  waiting at the deploy gate counted as the tool's active run, so every change approved after it queued until Make
+  it live, and on a tool that had never been live a queued change would have been built from an empty copy.
+  Brendan's calls: a change approved while a preview waits JOINS it by default (no new button), and Discard on a
+  stacked preview takes out only the newest change. How it works: `kickQueue` (now one kick at a time per module,
+  a promise chain in `KICKS`) finds the active run waiting at `await_deploy` whose `to_version` is the staged version
+  and calls `joinPreview`: every queued run that has not started (no draft, no fix round, not a new tool) is merged
+  into the oldest (the others `cancelled` with `evidence.merged_into`), the preview's run is claimed with one
+  conditional UPDATE to status `stacked` (`evidence.stacked_under`), and the lead gets `proposal_ids` = every change
+  in the preview plus its own, `from_version` = the preview's version, and `evidence.stack = { on, own, base, live,
+  carried }` (`carried`: each run below with its proposal ids, title and what_changed). `ownIds(run)` is what the run
+  builds itself: the requirement, its item count, `proposalsText` and the cap use it; the board, the deploy, the
+  close-out and "did it fix it?" use `proposal_ids`. The draft is a copy of the preview (`createDraftVersion(company,
+  mod, base)`), the build prompt says it is not the live version and lists what it already carries, the gate, the
+  cross-check diff, the checks and the data wall read `from_version` (the preview), so an earlier change's migration
+  and check in the preview are held like any other. `setRun` kicks the queue whenever a run lands at the gate
+  (status waiting at `await_deploy`, from the pipeline or from a test campaign's step), so changes approved while the
+  preview was still building go on top the moment it is ready; while the top of a stack is stopped, nothing starts
+  from the live version over it (`stackedRun` blocks the queue; `startRun`, `retry` and `fix` count it as busy
+  unless the run is that stack's own top). Deploy: `deployVersion(top)`, then every stacked run below is `deployed`
+  with `evidence.went_live_in` and logged as step `stack` (loop health counts one deploy), each request's outcome
+  keeps the words of the build that made it, a new tool's run below gets `modulebuild.afterDeploy`. `wasEverLive`
+  ignores runs with `went_live_in`, so a draft underneath stays "never approved" in Versions. Rollback of any of them
+  rolls back the top one and marks the rest. Cancel of the top (at the gate, failed, running or waiting on its
+  requirement) is the peel: its own proposals back to review, the run below re-staged (`stageVersion`) and back to
+  `waiting` at the gate, then the queue is kicked. Deploy or cancel of a stacked run is refused in words ("a change
+  is being added on top of this preview; take that one out first"). Board: `liveRun()` hides stacked runs, the top
+  run's card is "N changes in this preview", `live version → new version` (or "not live yet"), "added last" chips on
+  the changes Discard would take out, "Discard the newest change", a blue line while it builds ("Added to the
+  preview ... Open the preview"), and at the gate "In this preview:" with each build's summary. Queued cards say
+  "it is added to the preview of X as soon as that preview is ready, and they go live together". The staged bar's
+  "what changed?" panel lists the earlier changes in the preview (`staged-changes` answers `also`) and says a change
+  asked for on the preview is built on top of it. Record kind `preview_joined`; event `preview_joined`.
+  **Requests sent from a preview read the preview.** `registry.versionForPage(row, page)`: a page under `/staging/`
+  is the staged version, anything else the live one, and a tool never live has only its preview. The feedback route
+  resolves the screen label against it (a request from a new tool's preview showed its raw address, the #168 card),
+  the proposer reads that version's files (`moduleContext` falls back to the staged version; before this a tool never
+  live was proposed on with no source at all) and is told "Sent from the preview, version N, which is not live yet".
+  The board's Adjust screen list falls back to the staged manifest. Tests: `scripts/e2e/chamber.js` (63): stack,
+  peel, a stopped top holding the queue then a fix and a third change on top, one deploy for three, rollback from the
+  bottom run, three approvals merged into one run, two approvals in the same instant claiming the preview once, and a
+  new tool's first version changed from its preview and put live as v2 with its request closed.
+
+- **Outside connections are off until Anetix turns them on, one tool at a time; integration requests (2026-09-28,
+  `src/connections.js` allowances, `src/modulegate.js` connection-not-on, `src/requests.js` handoff, `src/intake.js`
+  handoffs).** The same demo: the tool Chris built grew a "Refresh from Epicor" button that could only ever answer
+  "Could not reach Epicor", and his "how do I connect Epicor to this?" had nowhere to go but Decline. Brendan: "it
+  should deny external connections unless we have turned it on for that use case; it shouldn't build something that
+  tries to connect to something that is not there", and these requests go to an integration team with a light
+  handoff for now. Decided per tool, not per company. `platform.connection_allowances (company, module, kind)`: `erp`
+  and `printer` are the kinds that reach outside; a `files` connection (a spreadsheet the manager loads) and a
+  keyboard scanner reach nothing and are always fine. Turned on by an admin on the Companies tab (an "Outside" column
+  per tool, `POST /api/admin/companies/:slug/outside { module, kind, on }`) or from the request itself (`POST
+  /api/admin/requests/:id/turn-on`); a tool that does not exist yet can be turned on by its slug. Held three ways:
+  (1) the builder is told (`connections.outsideBrief` in `buildPrompt` and the module build): what is on, what not to
+  declare or build a screen or button for, and that a declaration the tool already had stays; (2) the module gate
+  refuses a build that ADDS an `erp` or `printer` declaration not turned on (`checkOutside`, only when the caller
+  passes `outside`, which the pipeline and the module build do; the registry's backstop at stage and deploy does not,
+  so no preview built before this is refused at the gate), with the card's head "The build reached for an outside
+  system that is not connected for this tool" and the fix round's brief naming it; a declaration the version it
+  started from already had, same name and kind, is left alone; (3) a new tool's design is told what is on
+  (`outsideDesignBrief`), lists the rest under `handoffs` (kind, system, would_add, until), and `splitHandoffs` moves
+  anything it still put under connections; the popout says "Connected later by Anetix: Epicor (until then, ...)",
+  confirm makes one integration request per system (`requests.handoffNew`), and the build prompt names them as NOT
+  connected. **Integration requests:** the proposer's triage has a fifth outcome, `integration`, when a request asks
+  to connect the tool to an outside system that is not on for it (the prompt says what is on); `requests.handoff`
+  turns the row into a request to Anetix (`module='platform'`, `anetix_kind='integration'`, `about_module`,
+  `about_system`, `about_kind`), so the board's "Requests to Anetix" strip, My requests and the Requests tab carry it
+  with the integration team's own words ("Sent to Anetix's integration team, who connect outside systems like your
+  ERP or a label printer. Nobody has looked yet." ... "Connected by Anetix."). The tab shows the tool, the system and
+  whether the kind is on, with "Turn on ERP for this tool", and Fixed reads "Connected". The manager keeps "It is a
+  change to the tool" (`POST /api/feedback/:id/to-tool`, `requests.backToTool` then a forced proposal) for a request
+  the proposer misread. Phone alert "Integration request". Record kinds `connection_turned_on`/`_off`,
+  `handed_to_integration`, `integration_back_to_tool`. The table is in the backup and goes with a company's delete.
+  Fake mode: ADDERP / ADDERPALWAYS make a change declare an Epicor connection (the fix round takes it out, unless
+  ALWAYS), a new tool whose design lists an erp connection declares one, INTEGRATION in a request makes the proposer
+  hand it off. Not built: machine and scale kinds (a request for one lands with a word back only), and nothing
+  removes a connection an existing tool already declares (Chris's tracker keeps its Epicor button until a change takes
+  it out or the ERP is turned on and set up). Tests: `scripts/e2e/outside.js` (47), `scripts/test-modulegate.js`
+  section 16 (109 in all). With both: run-all 45 suites, 1,717 checks, and every unit suite.

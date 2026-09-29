@@ -53,10 +53,16 @@ router.post("/api/feedback", async (req, res) => {
   if (!co) return res.status(404).json({ error: "unknown company" });
   let screen = null, target = null;
   if (mod && mod !== "platform") {
+    // the screen is looked up in the version the person was looking at: the preview for a request sent from it (a
+    // new tool has nothing live at all), else the live one (2026-09-28: a request from a new tool's preview showed its
+    // raw address, because only the live version was read)
     const row = await registry.getModule(co.slug, mod);
-    if (row && row.live_version) {
-      const hit = registry.screenFor(registry.readManifest(co.slug, mod, row.live_version), page);
-      if (hit) { screen = hit.label; target = hit.file; }
+    const version = row ? registry.versionForPage(row, page) : null;
+    if (version) {
+      try {
+        const hit = registry.screenFor(registry.readManifest(co.slug, mod, version), page);
+        if (hit) { screen = hit.label; target = hit.file; }
+      } catch (e) { console.error(`[feedback] ${co.slug}/${mod} v${version}: no screen list (${e.message})`); }
     }
   } else if (page) {
     screen = /\/agents/.test(page) ? "Agent settings page" : /\/admin/.test(page) ? "Admin page" : "Improvement board";
@@ -305,6 +311,8 @@ router.get("/api/c/:slug/modules/:name/staged-changes", async (req, res) => {
   res.set("Cache-Control", "no-store").json({
     live_version: row.live_version, staged_version: row.staged_version, run_id: run ? run.id : null,
     title: ev.title || null, what_changed: ev.what_changed || null, build_summary: ev.build_summary || null, changed,
+    // a preview with changes added on top (src/pipeline.js): what the builds below it changed, oldest first
+    also: ev.stack ? (ev.stack.carried || []).map((c) => c.what_changed || c.title).filter(Boolean) : [],
   });
 });
 
@@ -387,7 +395,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
   // screens per module, so the adjust form can offer target files
   const screens = {};
   for (const m of modules) {
-    try { screens[m.name] = registry.pageEntries(registry.readManifest(co.slug, m.name, m.live_version)).concat([{ route: null, file: "routes.js", label: "Server logic (routes.js)" }]); }
+    try { screens[m.name] = registry.pageEntries(registry.readManifest(co.slug, m.name, m.live_version || m.staged_version)).concat([{ route: null, file: "routes.js", label: "Server logic (routes.js)" }]); }
     catch (e) { screens[m.name] = []; }
   }
   const reviews = await review.listReviews(co.slug);
@@ -431,6 +439,16 @@ router.post("/api/feedback/:id(\\d{1,9})/review", requireManager, async (req, re
     await credit.noteFailure(e.message, `the proposal for request #${req.params.id}`);
     res.status(e.code === "cap" ? 429 : 500).json({ error: kind ? credit.plain(kind) : e.message });
   }
+});
+
+// "It is a change to the tool": a request the proposer handed to Anetix's integration team goes back to its tool's
+// board and is proposed as a change (src/requests.js backToTool). Under /api/feedback/:id, which a module page's
+// policy does not open.
+router.post("/api/feedback/:id(\\d{1,9})/to-tool", requireManager, async (req, res) => {
+  try {
+    const fb = await require("./requests").backToTool(req.params.id, actor(req));
+    res.json(await generateProposal(fb.id, { force: true }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // The manager answers the proposer's one question for the person who asked (whoever answers first wins).
@@ -773,6 +791,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   const spend = await agent.spendSince(null);   // this month, one formula (agent.spendSince, the launch audit 2.2)
   const runs = (await q("SELECT company, count(*)::int AS n, count(*) FILTER (WHERE status='deployed')::int AS deployed FROM platform.build_runs GROUP BY company")).rows;
   const access = (await q("SELECT * FROM platform.company_access")).rows;
+  const outside = (await q("SELECT company, module, kind, system FROM platform.connection_allowances ORDER BY company, module, kind")).rows;   // turned on per tool (src/connections.js)
   const selfServe = {};   // the balance of every company that came in from anetix.ai (src/selfserve.js)
   for (const c of (await selfserve.adminView()).companies) selfServe[c.slug] = c;
   const managersBy = {};
@@ -781,7 +800,8 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
     companies: companies.map((c) => ({
       ...c,
       models: { propose: eff(c, "propose"), build: eff(c, "build"), review: eff(c, "review"), pinned: agent.COMPANY_JOBS.filter((j) => agent.inTier(c[`model_${j}`])) },
-      modules: modules.filter((m) => m.company === c.slug),
+      modules: modules.filter((m) => m.company === c.slug).map((m) => ({ ...m, outside_on: outside.filter((a) => a.company === c.slug && a.module === m.name).map((a) => a.kind) })),
+      outside_on: outside.filter((a) => a.company === c.slug),
       docs: docs.filter((d) => d.company === c.slug),
       feedback: counts.find((x) => x.company === c.slug) || { open: 0, total: 0 },
       runs: runs.find((x) => x.company === c.slug) || { n: 0, deployed: 0 },
@@ -945,6 +965,14 @@ router.post("/api/admin/connections/:slug/:mod/:name/erp", requireAdmin, async (
   try { res.json(await connections.setErp(req.params.slug, req.params.mod, req.params.name, req.body || {}, actor(req))); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
+// Outside connections are off until Anetix turns them on, one tool at a time (src/connections.js, 2026-09-28).
+router.post("/api/admin/companies/:slug/outside", requireAdmin, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const turned = await connections.setAllowed(req.params.slug, String(b.module || ""), String(b.kind || ""), b.on !== false, { system: b.system, note: b.note }, (req.sosAccount && (req.sosAccount.name || req.sosAccount.login)) || "Anetix");
+    res.json({ ok: true, turned_on: turned.map((a) => a.kind) });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
 // erp: have the model write what IT needs to build each lookup, wide on purpose
 router.post("/api/admin/connections/:slug/:mod/:name/draft", requireAdmin, async (req, res) => {
   try { res.json(await connections.draftLookups(req.params.slug, req.params.mod, req.params.name, actor(req))); }
@@ -1096,7 +1124,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
   if (String(confirm_slug || "") !== co.slug) return res.status(400).json({ error: "type the company slug exactly to confirm" });
   const gate = await auth.checkAdminCode(req, { code, password }, `delete_company:${co.slug}`);
   if (!gate.ok) { await logEvent("company_delete_refused", co.slug, { reason: gate.error, by: req.sosAccount ? req.sosAccount.login : null }); return res.status(403).json({ error: gate.error }); }
-  const busy = (await q("SELECT count(*)::int AS n FROM platform.build_runs WHERE company=$1 AND status IN ('running','queued','waiting')", [co.slug])).rows[0].n;
+  const busy = (await q("SELECT count(*)::int AS n FROM platform.build_runs WHERE company=$1 AND status IN ('running','queued','waiting','stacked')", [co.slug])).rows[0].n;
   if (busy) return res.status(409).json({ error: `${busy} build(s) still open on this company; cancel them first` });
   const paying = await require("./sites").deleteRefusal(co.slug);   // a subscribed site's card is still being billed (src/sites.js)
   if (paying) return res.status(409).json({ error: paying });

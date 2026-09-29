@@ -86,6 +86,14 @@ run campaign               node scripts/e2e/campaign.js
 fresh; rm -f "$LOG/prompts.jsonl"; start "SOS_BROWSER=off SOS_CAMPAIGN_WATCH_MS=1500 SOS_PROMPT_LOG=$LOG/prompts.jsonl"
 run datawall               env SOS_PROMPT_LOG=$LOG/prompts.jsonl node scripts/e2e/datawall.js
 
+# changes join the preview (2026-09-28): a change approved while a preview waits is built on top of it, Discard takes
+# out the newest, one deploy puts them all live, a new tool's preview takes changes before it has ever been live
+fresh; start "SOS_BROWSER=off"
+run chamber                node scripts/e2e/chamber.js
+# outside connections are off until Anetix turns them on per tool; "connect Epicor" goes to the integration team
+fresh; rm -f "$LOG/outside-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl"
+run outside                env SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl node scripts/e2e/outside.js
+
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
 run selfserve              env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/selfserve.js
 

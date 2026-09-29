@@ -153,6 +153,9 @@ Index of `docs/FEATURES.md`, in its order:
 - Built with Railpack (2026-09-28)
 - anetix.ai: the account first, and the principle only (2026-09-28, www repo)
 - The launch audit's Phase 3, first pass: the sign-in from setup, refills checked with Stripe, the quick fixes (2026-09-28)
+- The pin message is two short lists (2026-09-28)
+- Changes join the preview (2026-09-28)
+- Outside connections are off until Anetix turns them on, one tool at a time; integration requests (2026-09-28)
 
 ## What this is
 
@@ -177,6 +180,9 @@ the manager's view of the same line over eight weeks, with Jonah.
    database (`platform.module_versions.files`). Several proposals can be
    batched into one run (`POST /api/runs/batch`); one run is active per module
    and the rest queue (`build_runs.status = queued`, kicked by `kickQueue`).
+   A change approved while a preview waits at the gate is built on top of that
+   preview instead (status `stacked` for the run below; see "Changes join the
+   preview").
    The agent runs with `permissionMode: acceptEdits` and `IS_SANDBOX=1`
    because Railway containers run as root and Claude Code refuses
    `--dangerously-skip-permissions` as root. Its environment is an explicit
@@ -469,4 +475,9 @@ Passwords live only in Railway; never commit them.
   secrets in `platform.connections` (secrets encrypted), a page policy
   addition only if a device-side program must be reached, and gate rules for
   its declaration. Never let module code hold a credential, a printer address
-  or a file the platform did not hand it.
+  or a file the platform did not hand it. A connection that reaches outside
+  (`connections.OUTSIDE`: erp, printer) is declared only once an admin has
+  turned that kind on for that tool (`platform.connection_allowances`); the
+  builder is told and the module gate refuses a new one that is not on. Never
+  let a missing switch mean on, and a request to connect one goes to the
+  integration team (`requests.handoff`), not the build loop.

@@ -16,6 +16,17 @@
 // A batch = several approved proposals for the same module built together in
 // ONE agent run, one staged demo, one deploy. Only one run is active per
 // module at a time; further runs queue and start when the active one ends.
+//
+// Changes join the preview (2026-09-28, from a PE partner's demo: "I could not update a preview build with new
+// functionality; it seemed I had to make it go live to add or modify"). A change approved while a tool has a build
+// waiting at the deploy gate no longer waits for that build to go live: it is built ON TOP of the preview (the draft
+// is a copy of the staged version, not of the live one), the run below is set aside as "stacked", the new run's
+// proposal_ids carry every change in the preview, and the board shows one card with one deploy for all of them.
+// Several changes approved while the preview is still building are merged into one run and added together when it
+// reaches the gate. Discarding the top of the stack takes only that change out and puts the preview below back at
+// the gate (Brendan's call: peel off the last one). evidence.stack on the top run: { on, own, base, live, carried }.
+// A new tool that has never been live works the same way, which is how its first version gets changed before anyone
+// uses it.
 const { q, logEvent } = require("./db");
 const { runAgent, runStructured, haveKey, assertUnderCap, modelFor, buildModelFor, guidanceFor, runCapUsd, inTier, pickModel, keepArm, companyPins, summaryModel, AGENT_EFFORT } = require("./agent");
 const registry = require("./registry");
@@ -69,9 +80,13 @@ async function setRun(runId, fields) {
   if (fields.status === "running" && fields.fence === undefined) fields = { ...fields, fence: FENCE };
   const keys = Object.keys(fields);
   const sets = keys.map((k, i) => `${k}=$${i + 2}`).join(", ");
-  const r = await q(`UPDATE platform.build_runs SET ${sets}, updated_at=now() WHERE id=$1 AND (fence IS NULL OR fence <= $${keys.length + 2}) RETURNING id`,
+  const r = await q(`UPDATE platform.build_runs SET ${sets}, updated_at=now() WHERE id=$1 AND (fence IS NULL OR fence <= $${keys.length + 2}) RETURNING id, company, module, step, status`,
     [runId, ...keys.map((k) => (fields[k] !== null && typeof fields[k] === "object" ? JSON.stringify(fields[k]) : fields[k])), FENCE]);
   if (!r.rowCount) await fenced(runId);
+  // a build that just reached the deploy gate (here, or from the test campaign's steps): changes approved meanwhile
+  // are added on top of its preview now, not after it goes live
+  const row = r.rows[0];
+  if (fields.status === "waiting" && row && row.step === "await_deploy" && !SHUTDOWN) setImmediate(() => kickQueue(row.company, row.module));
 }
 // SIGTERM (src/restart.js): the process is going. Builds whose agent is talking are stopped and marked as cut off by the
 // restart (unless a newer process took them over already); nothing new starts from the queue here.
@@ -108,6 +123,29 @@ async function activeRun(company, mod) {
   return (await q(
     "SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status IN ('running','waiting') ORDER BY id LIMIT 1", [company, mod])).rows[0];
 }
+// A preview with a change being added on top: the run below waits as "stacked" until the top one goes live (and
+// takes it along) or is taken out (and puts it back at the gate).
+async function stackedRun(company, mod) {
+  return (await q("SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status='stacked' ORDER BY id DESC LIMIT 1", [company, mod])).rows[0];
+}
+// The proposals this run builds itself. A run added on top of a preview carries every change in that preview in
+// proposal_ids (so the board, the deploy and the floor's "did it fix it?" see them all) and builds only its own.
+function ownIds(run) {
+  const st = (run && run.evidence && run.evidence.stack) || null;
+  if (st && Array.isArray(st.own) && st.own.length) return st.own.map(Number);
+  return (run.proposal_ids && run.proposal_ids.length ? run.proposal_ids : [run.proposal_id]).map(Number);
+}
+// The runs a run's preview carries, nearest first (each stacked under the one above it).
+async function chainBelow(run) {
+  const out = []; const seen = new Set([run.id]);
+  let cur = run;
+  while (cur && cur.evidence && cur.evidence.stack && cur.evidence.stack.on && !seen.has(Number(cur.evidence.stack.on))) {
+    const below = await getRun(Number(cur.evidence.stack.on));
+    if (!below) break;
+    seen.add(below.id); out.push(below); cur = below;
+  }
+  return out;
+}
 
 // ---- entry point: start a run from one or more approved proposals ----------
 async function startRun(proposalIds, opts = {}) {
@@ -127,7 +165,7 @@ async function startRun(proposalIds, opts = {}) {
   let model, ab = null;
   if (opts.model && inTier(opts.model)) model = opts.model;
   else { const pick = await pickModel(company, "build", null); model = pick.model; if (pick.arm) ab = { arm: model, since: pick.since }; }
-  const busy = await activeRun(company, mod);
+  const busy = (await activeRun(company, mod)) || (await stackedRun(company, mod));
   const r = await q(
     `INSERT INTO platform.build_runs (proposal_id, proposal_ids, company, module, from_version, lane, step, status, model, evidence, fence)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
@@ -137,32 +175,88 @@ async function startRun(proposalIds, opts = {}) {
   await q("UPDATE platform.feedback SET status='in_progress', updated_at=now() WHERE id = ANY($1::int[])", [ps.map((p) => p.feedback_id)]);
   await logEvent("run_started", run.id, { lane, company, module: mod, batch: ids, model, queued: Boolean(busy) });
   if (busy) {
-    await log(run.id, { step, note: `queued behind run #${busy.id}` });
-    return run;
+    await log(run.id, { step, note: `queued behind run #${busy.id}; it is added to that preview as soon as the preview is ready` });
+    await kickQueue(company, mod);   // a preview already waiting at the gate takes it on top now
+    return (await getRun(run.id)) || run;
   }
   advance(run.id).catch((e) => failRun(run.id, e));
   return run;
 }
 
-// Start the oldest queued run for a module once the active one has ended.
-async function kickQueue(company, mod) {
-  if (SHUTDOWN) return;   // the process is going: the next one's boot starts the queue (sweepOrphans)
-  if (await activeRun(company, mod)) return;
-  const next = (await q(
-    "SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status='queued' ORDER BY id LIMIT 1", [company, mod])).rows[0];
-  if (!next) return;
-  // a queued run is a new start when it actually starts: a paying site past its fair-use line does not start it
-  try { await require("./selfserve").assertCredit(company, { started: true, fairUse: true }); }
-  catch (e) { await setRun(next.id, { status: "failed" }); await log(next.id, { step: next.step, note: String(e.message || e) }); return kickQueue(company, mod); }
+// Move a module's queue along: a preview waiting at the gate takes the queued changes on top of it (joinPreview);
+// with nothing active and no preview being added to, the oldest queued run starts from the live version.
+// One kick at a time per module (two approvals in the same instant must not both claim the same preview).
+const KICKS = new Map();
+function kickQueue(company, mod) {
+  if (SHUTDOWN) return Promise.resolve();   // the process is going: the next one's boot starts the queue (sweepOrphans)
+  const key = `${company}/${mod}`;
+  const next = (KICKS.get(key) || Promise.resolve()).then(() => kickOnce(company, mod)).catch((e) => console.error("queue kick failed:", e));
+  KICKS.set(key, next);
+  next.then(() => { if (KICKS.get(key) === next) KICKS.delete(key); });
+  return next;
+}
+async function kickOnce(company, mod) {
+  for (;;) {
+    if (SHUTDOWN) return;
+    const act = await activeRun(company, mod);
+    if (act) { if (act.status === "waiting" && act.step === "await_deploy") await joinPreview(act); return; }
+    if (await stackedRun(company, mod)) return;   // the change on top of a preview stopped: fixed, retried or taken out first
+    const next = (await q(
+      "SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status='queued' ORDER BY id LIMIT 1", [company, mod])).rows[0];
+    if (!next) return;
+    // a queued run is a new start when it actually starts: a paying site past its fair-use line does not start it
+    try { await require("./selfserve").assertCredit(company, { started: true, fairUse: true }); }
+    catch (e) { await setRun(next.id, { status: "failed" }); await log(next.id, { step: next.step, note: String(e.message || e) }); continue; }
+    const modRow = await registry.getModule(company, mod);
+    await setRun(next.id, { status: "running", from_version: modRow.live_version });
+    await log(next.id, { step: next.step, note: "started from the queue" });
+    advance(next.id).catch((e) => failRun(next.id, e));
+    return;
+  }
+}
+
+// The changes queued behind a preview go on top of it: merged into one run (the oldest), built from the staged
+// version, carrying every change already in the preview. The preview's run is set aside as "stacked".
+async function joinPreview(top) {
+  const { company, module: mod } = top;
   const modRow = await registry.getModule(company, mod);
-  await setRun(next.id, { status: "running", from_version: modRow.live_version });
-  await log(next.id, { step: next.step, note: "started from the queue" });
-  advance(next.id).catch((e) => failRun(next.id, e));
+  if (!modRow || !top.to_version || Number(modRow.staged_version) !== Number(top.to_version)) return;   // the preview is not this build's any more
+  const queued = (await q("SELECT * FROM platform.build_runs WHERE company=$1 AND module=$2 AND status='queued' ORDER BY id", [company, mod])).rows;
+  // a retried or fixed run keeps its own draft and waits its turn; only changes that have not started join
+  const fresh = queued.filter((r) => !r.to_version && !(r.evidence || {}).fix_round && !(r.evidence || {}).stack && r.lane !== "module");
+  if (!fresh.length) return;
+  try { await require("./selfserve").assertCredit(company, { started: true, fairUse: true }); }
+  catch (e) { for (const r of fresh) { await setRun(r.id, { status: "failed" }); await log(r.id, { step: r.step, note: String(e.message || e) }); } return; }
+  const lead = fresh[0], rest = fresh.slice(1);
+  const own = [...new Set(fresh.flatMap((r) => (r.proposal_ids && r.proposal_ids.length ? r.proposal_ids : [r.proposal_id]).map(Number)))];
+  const ps = await loadProposals(own);
+  const lane = ps.every((p) => p.class === "ui") ? "ui" : "functionality";
+  const step = lane === "ui" ? "build" : "confirm_requirement";
+  // claim the preview: one change at a time goes on top of it
+  const claimed = await q("UPDATE platform.build_runs SET status='stacked', updated_at=now() WHERE id=$1 AND status='waiting' AND step='await_deploy' AND (fence IS NULL OR fence <= $2) RETURNING *", [top.id, FENCE]);
+  if (!claimed.rowCount) return;
+  const tev = top.evidence || {};
+  const topIds = (top.proposal_ids && top.proposal_ids.length ? top.proposal_ids : [top.proposal_id]).map(Number);
+  const carried = [...(((tev.stack || {}).carried) || []), { run: top.id, proposal_ids: ownIds(top), title: tev.title || null, what_changed: String(tev.what_changed || tev.build_summary || "").slice(0, 600) || null, lane: top.lane }];
+  const stack = { on: top.id, own, base: Number(top.to_version), live: modRow.live_version == null ? null : Number(modRow.live_version), carried };
+  const all = [...topIds, ...own.filter((id) => !topIds.includes(id))];
+  await setRun(top.id, { evidence: { ...tev, stacked_under: lead.id } });
+  await log(top.id, { step: "stack", note: `run #${lead.id} adds ${own.length === 1 ? "a change" : `${own.length} changes`} on top of this preview; they go live together` });
+  await q("UPDATE platform.build_runs SET proposal_ids=$2::int[], updated_at=now() WHERE id=$1", [lead.id, all]);
+  await setRun(lead.id, { lane, step, status: "running", from_version: Number(top.to_version), evidence: { ...(lead.evidence || {}), stack } });
+  for (const r of rest) {
+    await setRun(r.id, { status: "cancelled", evidence: { ...(r.evidence || {}), merged_into: lead.id } });
+    await log(r.id, { step: r.step, note: `added to run #${lead.id}, which builds it on top of the preview with the other changes approved meanwhile` });
+  }
+  await log(lead.id, { step, note: `added to the preview of run #${top.id} (v${top.to_version}, not live yet): built on top of it, and one deploy puts every change in it live${rest.length ? `; runs #${rest.map((r) => r.id).join(", #")} were merged into this one` : ""}` });
+  await logEvent("preview_joined", lead.id, { company, module: mod, on: top.id, base: top.to_version, own, merged: rest.map((r) => r.id) });
+  await record("preview_joined", { company, module: mod, actor: "platform", run_id: lead.id, proposal_id: own[0], version: Number(top.to_version), detail: { on: top.id, own, carried: carried.map((c) => c.run), merged: rest.map((r) => r.id) } });
+  advance(lead.id).catch((e) => failRun(lead.id, e));
 }
 
 // Text block describing every proposal in the run, for prompts.
 async function proposalsText(run) {
-  const ps = await loadProposals(run.proposal_ids || [run.proposal_id]);
+  const ps = await loadProposals(ownIds(run));
   return ps.map((p, i) =>
     `${ps.length > 1 ? `Change ${i + 1} of ${ps.length}` : "Approved proposal"} (${p.class})\n` +
     `Target file: ${p.target_file || "unspecified"}${p.screen ? ` (the "${p.screen}" screen)` : ""}\n` +
@@ -250,7 +344,7 @@ async function advance(runId) {
   if (run.lane === "module") return require("./modulebuild").advance(runId);   // a brand-new module from a confirmed design
   const p = (await q("SELECT * FROM platform.proposals WHERE id=$1", [run.proposal_id])).rows[0];
   const batch = await proposalsText(run);
-  const isBatch = (run.proposal_ids || []).length > 1;
+  const isBatch = ownIds(run).length > 1;
   const { company, module: mod } = run;
 
   try {
@@ -262,7 +356,7 @@ async function advance(runId) {
       // text behind "see more" (editable before confirming).
       let requirement, bluf = "", items = [];
       let cost = 0;
-      const n = (run.proposal_ids || [run.proposal_id]).length;
+      const n = ownIds(run).length;
       if (haveKey()) {
         const out = await runStructured({
           model: await modelForRun(run, "propose"), company,
@@ -285,7 +379,7 @@ async function advance(runId) {
         bluf = "AI is not configured; read the proposals below and confirm by hand.";
       }
       // one line per change, whatever the model returned
-      const ps = await loadProposals(run.proposal_ids || [run.proposal_id]);
+      const ps = await loadProposals(ownIds(run));
       items = ps.map((p, i) => ({ change: i + 1, summary: String((items[i] && items[i].summary) || p.body.split(/(?<=[.!?])\s/)[0]).slice(0, 240) }));
       await addCost(runId, cost);
       const cur0 = await getRun(runId);
@@ -313,11 +407,13 @@ async function advance(runId) {
           ev0.findings = gate.forAgent(ev0.gate, restored);
         }
       } else {
-        draft = await registry.createDraftVersion(company, mod);
+        // added on top of a preview: the draft is a copy of the preview's version, not of the live one
+        const base = ev0.stack ? Number(ev0.stack.base) : null;
+        draft = await registry.createDraftVersion(company, mod, base);
         await setRun(runId, { to_version: draft.version });
-        await log(runId, { step: "build", note: `draft version v${draft.version} created` });
+        await log(runId, { step: "build", note: base != null ? `draft version v${draft.version} created from the preview v${base} (not live yet)` : `draft version v${draft.version} created` });
       }
-      const nChanges = (run.proposal_ids || [run.proposal_id]).length;
+      const nChanges = ownIds(run).length;
       const capUsd = runCapUsd(nChanges);
       const req = (run.requirement ? `\n\nConfirmed requirement:\n${run.requirement}` : "")
         + (ev0.fix_round && ev0.findings
@@ -327,6 +423,11 @@ async function advance(runId) {
             : `\n\nAn independent reviewer looked at your previous attempt in this directory and found these problems. Fix exactly these, keep everything else as it is:\n${ev0.findings}`)
           : "");
       const guidance = await guidanceFor(company, mod);
+      // outside connections: what is turned on for this tool (src/connections.js); the gate below holds the build to it
+      const cx = require("./connections");
+      const outsideOn = await cx.allowedKinds(company, mod);
+      const fromFilesO = run.from_version ? await registry.versionFiles(company, mod, run.from_version) : null;
+      const outside = cx.outsideBrief(outsideOn, fromFilesO ? JSON.parse(fromFilesO["module.json"] || "{}") : null);
       const { model, substituted } = await buildModelFor(company, run.model);
       if (substituted) await log(runId, { step: "build", note: `${substituted} cannot run as the build agent; building with ${model} instead` });
       // walled off from the data (src/datawall.js): the seed rows in the migrations that existed before this build
@@ -346,7 +447,7 @@ async function advance(runId) {
         signal: ctl.signal,
         system: guidance.text,
         dir: draft.dir,
-        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version, walled }),
+        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version, walled, outside, stack: ev0.stack || null }),
 
         });
       } finally { ACTIVE.delete(runId); if (withheld.length) datawall.restore(draft.dir, fromFilesW, withheld); }
@@ -371,7 +472,7 @@ async function advance(runId) {
       // (override does not). The draft's text is kept for the fix round.
       {
         const fromFiles = run.from_version ? await registry.versionFiles(company, mod, run.from_version) : null;
-        const verdict = gate.checkDir(draft.dir, { fromFiles, lane: run.lane });
+        const verdict = gate.checkDir(draft.dir, { fromFiles, lane: run.lane, outside: { allowed: outsideOn } });
         const c2 = await getRun(runId);
         await record("build_finished", { company, module: mod, actor: "agent", run_id: runId, proposal_id: run.proposal_id, version: draft.version, after: text, detail: { model, models_seen: seen, effort: AGENT_EFFORT, cost_usd: costUsd || 0, fix_round: ev0.fix_round || 0, gate_ok: verdict.ok } });
         if (!verdict.ok) {
@@ -394,7 +495,9 @@ async function advance(runId) {
         await addCost(runId, plain.costUsd);
         const c3 = await getRun(runId);
         await setRun(runId, { evidence: { ...c3.evidence, title: plain.title, what_changed: plain.what_changed } });
-        await q("UPDATE platform.module_versions SET notes=$4 WHERE company=$1 AND module=$2 AND version=$3", [company, mod, c3.to_version, plain.title]);
+        // a version built on top of a preview carries the changes below it too: the Versions panel names them all
+        const notes = ev0.stack ? [...(ev0.stack.carried || []).map((c) => c.title), plain.title].filter(Boolean).join("; ").slice(0, 200) : plain.title;
+        await q("UPDATE platform.module_versions SET notes=$4 WHERE company=$1 AND module=$2 AND version=$3", [company, mod, c3.to_version, notes]);
         await record("build_summarized", { company, module: mod, actor: "platform", run_id: runId, version: c3.to_version, after: plain.what_changed, detail: { title: plain.title, model: plain.model, cost_usd: plain.costUsd || 0 } });
       } catch (e) { await log(runId, { step: "build", note: `summary skipped: ${e.message}` }); }
       await registry.stageVersion(company, mod, (await getRun(runId)).to_version);
@@ -459,12 +562,13 @@ async function toGate(runId) {
 
 // The build agent's brief for a change (or a batch). A function of its own so the head-to-head assessment
 // (src/assess.js) hands both models exactly the prompt a real build gets.
-function buildPrompt({ mod, isBatch, batch, req, lane, version, walled = false }) {
-  return `You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the live module version and will become the next version.${walled ? `\n${require("./datawall").PROMPT_NOTE} Starting rows in the migrations are withheld here and are put back by the platform after you finish.` : ""}
+function buildPrompt({ mod, isBatch, batch, req, lane, version, walled = false, outside = "", stack = null }) {
+  const onTop = stack ? `\n\nThis directory is NOT the live version. It is a copy of the preview v${stack.base}, which the manager is looking at and has not put live yet. It already carries ${(stack.carried || []).length === 1 ? "this change" : "these changes"}, which go live together with yours:\n${(stack.carried || []).map((c) => `- ${c.what_changed || c.title || `run #${c.run}`}`).join("\n")}\nBuild your change on top of them and keep every one of them working. Its migrations and checks are part of this version: never edit one, add the next number.` : "";
+  return `You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the ${stack ? "preview" : "live"} module version and will become the next version.${walled ? `\n${require("./datawall").PROMPT_NOTE} Starting rows in the migrations are withheld here and are put back by the platform after you finish.` : ""}${onTop}
 
 ${batch}
 ${req}
-
+${outside ? `\n${outside}\n` : ""}
 Rules:
 - Each change names a Target file, which is the screen the feedback came from. Make the change in that file. Touch another file only if the change cannot work otherwise, and say so in your summary.
 - ${lane === "ui" ? "This is a UI-class change. Do NOT modify routes.js, the module.json smoke list or entry, or migrations. Touch pages/ and presentation only. The platform compares the files after you finish and stops a UI-class build that changed anything else; if the change cannot work without server logic, leave the server files alone and say so in your summary." : "This is a functionality-class change. If the data model must change, add a NEW migrations/NNN.sql file (additive only: CREATE TABLE / ALTER TABLE ADD COLUMN / CREATE INDEX / INSERT seed rows; bare table names, no schema prefixes). Never edit an existing migration file."}
@@ -649,8 +753,11 @@ async function runChecks(company, mod, run) {
     out.acceptance = await acceptance.runAll({ files, fromFiles, retired: await acceptance.retiredSet(company, mod), base: origin + mounts.staged, cookies, browser, hideValues });
   } finally {
     if (browser) await browser.close();
-    // checks may have written rows: the preview starts from the floor's data again, pass or fail
-    if (!out.acceptance || out.acceptance.wrote) await registry.resetStagedData(company, mod, version).catch((e) => console.error("[checks] could not reset the staged data:", e.message));
+    // checks may have written rows: the preview starts from the floor's data again, pass or fail; not when the build was
+    // taken out meanwhile and another version is the preview now (a discard during the checks, or the preview below
+    // put back by a peel), which would mount this version over it
+    const still = await registry.getModule(company, mod).catch(() => null);
+    if ((!out.acceptance || out.acceptance.wrote) && still && Number(still.staged_version) === Number(version)) await registry.resetStagedData(company, mod, version).catch((e) => console.error("[checks] could not reset the staged data:", e.message));
   }
   for (const r of out.acceptance.failed.filter((x) => !x.new)) r.origin = await acceptance.originOf(company, mod, r.file).catch(() => null);
   out.checked = [...out.smoke.checked, ...Array.from({ length: out.acceptance.total }, (_, i) => ({ check: i + 1 })), ...Array.from({ length: out.pages.screens }, (_, i) => ({ screen: i + 1 }))];
@@ -690,30 +797,50 @@ async function confirmRequirement(runId, edited) {
 
 async function deploy(runId) {
   const run = await getRun(runId);
+  if (run.status === "stacked") throw new Error(`a change is being added on top of this preview (run #${(run.evidence || {}).stacked_under}); it goes live with that one`);
   if (run.step !== "await_deploy" || run.status !== "waiting") throw new Error("run is not awaiting deploy");
+  const chain = (await chainBelow(run)).filter((r) => r.status === "stacked");   // the changes this preview carries
   const result = await registry.deployVersion(run.company, run.module, run.to_version);
   await setRun(runId, { status: "deployed" });
   await require("./campaign").afterRunEnds(run, "deployed").catch((e) => console.error("[campaign] after deploy:", e.message));
   await log(runId, { step: "deploy", note: result.from ? `v${result.from} -> v${result.to} live` : `v${result.to} live: the module is on the floor` });
+  // every run below goes live with it (logged as "stack", so loop health counts one deploy, not one per run)
+  for (const s of chain) {
+    await setRun(s.id, { status: "deployed", evidence: { ...(s.evidence || {}), went_live_in: run.id, went_live_version: result.to } });
+    await log(s.id, { step: "stack", note: `went live inside run #${run.id} as v${result.to}, together with the change added on top` });
+    await require("./campaign").afterRunEnds(s, "deployed").catch((e) => console.error("[campaign] after deploy:", e.message));
+  }
   const ps = await loadProposals(run.proposal_ids || [run.proposal_id]);
   const ev = run.evidence || {};
   const summary = (ev.what_changed || ev.build_summary || "").slice(0, 600);
+  // a change that came in with a preview below keeps the words of the build that made it
+  const said = new Map();
+  for (const c of ((ev.stack || {}).carried) || []) for (const pid of c.proposal_ids || []) if (c.what_changed) said.set(Number(pid), c.what_changed);
   for (const p of ps) {
     await q("UPDATE platform.feedback SET status='done', outcome=$2, batch_id=NULL, updated_at=now() WHERE id=$1",
-      [p.feedback_id, `Deployed v${result.to}${ps.length > 1 ? ` (batch of ${ps.length})` : ""}: ${summary || p.body.slice(0, 500)}`]);
+      [p.feedback_id, `Deployed v${result.to}${ps.length > 1 ? ` (batch of ${ps.length})` : ""}: ${said.get(Number(p.id)) || summary || p.body.slice(0, 500)}`]);
   }
   // close the loop: the floor sees what went live and who asked, and the asker is asked whether it fixed it
   await require("./closeloop").markShipped(ps.map((p) => p.feedback_id), result.to).catch((e) => console.error("[closeloop] markShipped:", e.message));
   if (run.lane === "module") await require("./modulebuild").afterDeploy(await getRun(runId), result);
+  // a brand-new tool whose first version was changed before it went live: its request closes now
+  for (const s of chain) if (s.lane === "module") await require("./modulebuild").afterDeploy(await getRun(s.id), result);
   kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
   return result;
 }
 
 async function rollbackRun(runId) {
-  const run = await getRun(runId);
+  let run = await getRun(runId);
+  // a change that went live inside a later one is rolled back with it (the floor has one version, not two)
+  if (run && run.evidence && run.evidence.went_live_in) run = (await getRun(Number(run.evidence.went_live_in))) || run;
+  runId = run.id;
   const result = await registry.rollback(run.company, run.module);
   await setRun(runId, { status: "rolled_back" });
   await log(runId, { step: "rollback", note: `restored v${result.to}` });
+  for (const s of (await q("SELECT * FROM platform.build_runs WHERE evidence->>'went_live_in' = $1 AND status='deployed'", [String(runId)])).rows) {
+    await setRun(s.id, { status: "rolled_back" });
+    await log(s.id, { step: "stack", note: `rolled back with run #${runId} to v${result.to}` });
+  }
   const ps = await loadProposals(run.proposal_ids || [run.proposal_id]);
   for (const p of ps) {
     await q("UPDATE platform.feedback SET outcome=$2, updated_at=now() WHERE id=$1", [p.feedback_id, `Rolled back to v${result.to}.`]);
@@ -730,10 +857,21 @@ async function retry(runId, opts = {}) {
   // a manager's retry starts the build over from scratch, so it needs credit like a new build; the platform's own
   // restart of an orphaned run (opts.auto) is the same build carrying on. Fix rounds (below) are part of the build.
   if (!opts.auto) await require("./selfserve").assertCredit(run.company);
-  const busy = await activeRun(run.company, run.module);
+  // added on top of a preview: it starts again from that preview, as long as the preview is still set aside for it
+  let st = (run.evidence || {}).stack || null;
+  if (st) {
+    const under = await getRun(Number(st.on));
+    if (!under || under.status !== "stacked") {
+      await q("UPDATE platform.build_runs SET proposal_ids=$2::int[] WHERE id=$1", [runId, ownIds(run)]);
+      await setRun(runId, { evidence: { ...(run.evidence || {}), stack: undefined } });
+      await log(runId, { step, note: "the preview this was added to is gone; it starts again from the live version" });
+      st = null;
+    }
+  }
+  const busy = (await activeRun(run.company, run.module)) || (st ? null : await stackedRun(run.company, run.module));
   const modRow = await registry.getModule(run.company, run.module);
   if (run.step === "campaign") await require("./campaign").afterRunEnds(run, "retried").catch((e) => console.error("[campaign] after retry:", e.message));
-  await setRun(runId, { step, status: busy ? "queued" : "running", from_version: modRow.live_version });
+  await setRun(runId, { step, status: busy ? "queued" : "running", from_version: st ? Number(st.base) : modRow.live_version });
   const who = opts.auto ? "the platform started the run again" : "manager retried the run";
   await log(runId, { step, note: busy ? `${opts.auto ? "started again by the platform" : "manager retried"}; queued behind run #${busy.id}` : who });
   if (!busy) advance(runId).catch((e) => failRun(runId, e));
@@ -755,7 +893,7 @@ async function fix(runId, opts = {}) {
   const fromCampaign = run.step === "campaign" ? require("./campaign").forAgent(await require("./campaign").forRun(runId)) : "";
   const fromChecks = ev.checks && ev.checks.ok === false && run.step !== "campaign" ? checksForAgent(ev.checks) : "";
   const findings = fromCampaign || (ev.cross_check && ev.cross_check.verdict === "fail" && ev.cross_check.summary) || fromChecks || (lastErr ? lastErr.note : "the previous attempt failed its checks");
-  const busy = await activeRun(run.company, run.module);
+  const busy = (await activeRun(run.company, run.module)) || (ev.stack ? null : await stackedRun(run.company, run.module));
   await setRun(runId, { step: "build", status: busy ? "queued" : "running", evidence: { ...ev, fix_round: round, findings, findings_from: fromCampaign ? "campaign" : fromChecks && !(ev.cross_check && ev.cross_check.verdict === "fail") ? "checks" : "reviewer", cross_check: undefined, test_run: undefined, visual_check: undefined, checks: undefined, campaign: undefined } });
   const who = opts.auto ? "the platform sent the findings back to the agent on its own" : "manager sent the reviewer's findings back to the agent";
   await log(runId, { step: "build", note: busy ? `fix round ${round} queued behind run #${busy.id}` : `${who} (fix round ${round} of ${MAX_FIX_ROUNDS})` });
@@ -798,8 +936,13 @@ async function retirePromise(runId, file, reason, actor) {
 // Proposals go back to reviewing; the items leave whatever batch they were in.
 async function cancel(runId) {
   const run = await getRun(runId);
+  if (run.status === "stacked") throw new Error(`a change is being added on top of this preview (run #${(run.evidence || {}).stacked_under}); take that one out first`);
   if (!["queued", "failed", "waiting", "running"].includes(run.status)) throw new Error("this run has already ended");
   const wasRunning = run.status === "running";
+  // the top of a preview's stack: taking it out puts the preview below back at the gate (Brendan: peel off the last one)
+  const st = (run.evidence || {}).stack || null;
+  const under = st ? await getRun(Number(st.on)) : null;
+  const peel = Boolean(under && under.status === "stacked");
   await setRun(runId, { status: "cancelled" });
   if (wasRunning) {
     const ctl = ACTIVE.get(runId);
@@ -808,15 +951,26 @@ async function cancel(runId) {
   }
   const modRow = await registry.getModule(run.company, run.module);
   await require("./campaign").afterRunEnds(run, "cancelled").catch((e) => console.error("[campaign] after cancel:", e.message));
-  if (run.to_version && modRow && modRow.staged_version === run.to_version) await registry.unstage(run.company, run.module);
+  if (run.to_version && modRow && modRow.staged_version === run.to_version && !peel) await registry.unstage(run.company, run.module);
   // a draft that was never staged is a dead version; drop it so the Versions panel stays honest
   if (run.to_version && modRow && modRow.live_version !== run.to_version && modRow.staged_version !== run.to_version) {
     await registry.dropDraftVersion(run.company, run.module, run.to_version).catch((e) => console.error("drop draft failed:", e.message));
   }
-  const ps = await loadProposals(run.proposal_ids || [run.proposal_id]);
+  // only this run's own changes go back to review; the ones it carried stay in the preview below
+  const ps = await loadProposals(ownIds(run));
   await q("UPDATE platform.proposals SET status='draft' WHERE id = ANY($1::int[])", [ps.map((p) => p.id)]);
   await q("UPDATE platform.feedback SET status='reviewing', batch_id=NULL, updated_at=now() WHERE id = ANY($1::int[])", [ps.map((p) => p.feedback_id)]);
-  if (!wasRunning) await log(runId, { step: run.step, note: "cancelled by manager; proposals back to review" });
+  if (!wasRunning) await log(runId, { step: run.step, note: peel ? `taken out of the preview by the manager; the preview of run #${under.id} is back as it was, and this change goes back to review` : "cancelled by manager; proposals back to review" });
+  if (peel) {
+    try {
+      await registry.stageVersion(run.company, run.module, under.to_version);
+      await log(under.id, { step: "stack", note: `the change added on top (run #${run.id}) was taken out; this preview is back at the gate as it was` });
+      await setRun(under.id, { status: "waiting", evidence: { ...(under.evidence || {}), stacked_under: undefined } });
+    } catch (e) {
+      await setRun(under.id, { status: "failed", evidence: { ...(under.evidence || {}), stacked_under: undefined } });
+      await log(under.id, { step: "error", note: `the preview could not be put back after the change on top was taken out: ${e.message}. Retry or cancel.` });
+    }
+  }
   if (run.lane === "module") await require("./modulebuild").afterCancel(run);
   kickQueue(run.company, run.module).catch((e) => console.error("queue kick failed:", e));
 }
@@ -852,6 +1006,7 @@ async function sweepOrphans() {
 
 module.exports = {
   startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, AUTO_FIX_ROUNDS, autoFix, toGate,
+  ownIds, chainBelow, stackedRun, joinPreview,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
   setRun, log, addCost, failRun, activeRun, shutdown, FENCE, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
   // the cross-check brief, for the replay harness

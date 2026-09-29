@@ -14,9 +14,10 @@ function proposalSchema(files, erpLookups, { triage = false, ask = false } = {})
     type: "object",
     properties: {
       ...(triage ? {
-        triage: { type: "string", enum: ["change", "duplicate", "not_this_tool", "new_tool"], description: "What this request is. change = a change to this tool (the ordinary case). duplicate = it asks for the same thing as ONE of the open requests listed, so the same change would satisfy both. not_this_tool = it is not about this tool at all. new_tool = it asks for a whole new tool, not a change to this one. When unsure, choose change." },
+        triage: { type: "string", enum: ["change", "duplicate", "not_this_tool", "new_tool", "integration"], description: "What this request is. change = a change to this tool (the ordinary case). duplicate = it asks for the same thing as ONE of the open requests listed, so the same change would satisfy both. not_this_tool = it is not about this tool at all. new_tool = it asks for a whole new tool, not a change to this one. integration = it asks to connect this tool to an outside system (the ERP, a label printer, a machine, a scale) that is not turned on for it. When unsure, choose change." },
         duplicate_of: { type: "integer", description: "When triage is duplicate: the number of the open request this one repeats. Otherwise 0." },
-        triage_note: { type: "string", description: "For duplicate, not_this_tool and new_tool: one plain sentence telling the manager why. Empty for change." },
+        triage_note: { type: "string", description: "For duplicate, not_this_tool, new_tool and integration: one plain sentence telling the manager why. Empty for change." },
+        integration: { type: "object", description: "When triage is integration: the outside system, as the person calls it, and what connecting it would give this tool. Otherwise empty strings.", properties: { kind: { type: "string", enum: ["erp", "printer", "machine", "scale", "other", ""] }, system: { type: "string", description: "What the company calls it, e.g. Epicor, SAP, the Zebra printer. Empty when not an integration." }, would_give: { type: "string", description: "One plain sentence: what the tool would do once it is connected." } }, required: ["kind", "system", "would_give"] },
       } : {}),
       ...(ask ? {
         question: {
@@ -46,10 +47,12 @@ function proposalSchema(files, erpLookups, { triage = false, ask = false } = {})
 // was cut so the caller can put it on the record.
 // `version`: read that version instead of the live one (the head-to-head assessment, src/assess.js, re-drafts an
 // old request against the module as it was when the request came in).
+// A tool that has never been live is read from its preview (a request sent from a new tool's preview was drafted
+// from no source at all until 2026-09-28).
 async function moduleContext(company, mod, { first = [], version = null } = {}) {
   const row = await registry.getModule(company, mod);
   if (!row) return { text: "(unknown module)", files: [], screens: [], cut: [] };
-  const v = version || row.live_version;
+  const v = version || row.live_version || row.staged_version;
   const walled = await require("./datawall").isWalled(company);
   const files = require("./datawall").filesForModel((await registry.versionFiles(company, mod, v)) || {}, walled);   // seed rows withheld for a walled company
   const manifest = JSON.parse(files["module.json"] || "{}");
@@ -57,10 +60,25 @@ async function moduleContext(company, mod, { first = [], version = null } = {}) 
   const src = sourceText(files, { first: first.filter(Boolean) });
   const screenList = screens.map((s) => `- ${s.label}: ${s.file} (route ${s.route})`).join("\n");
   return {
-    text: `Module "${row.title}" (${mod}), ${v === row.live_version ? "live version" : "version"} ${v}.${walled ? `\n${require("./datawall").PROMPT_NOTE}` : ""}\nScreens in this module:\n${screenList}\n- server logic: routes.js\nSource:\n${src.text}`,
+    text: `Module "${row.title}" (${mod}), ${v === row.live_version ? "live version" : v === row.staged_version ? "the preview (not live yet), version" : "version"} ${v}.${walled ? `\n${require("./datawall").PROMPT_NOTE}` : ""}\nScreens in this module:\n${screenList}\n- server logic: routes.js\nSource:\n${src.text}`,
     files: Object.keys(files).filter((f) => f.startsWith("pages/") || f === "routes.js"),
     screens, cut: src.cut, chars: src.chars, walled,
   };
+}
+
+// The version a request was looking at: the preview for one sent from it, else the live one (registry.versionForPage).
+async function pageVersion(fb) {
+  const row = await registry.getModule(fb.company, fb.module);
+  return row ? registry.versionForPage(row, fb.page) : null;
+}
+// The screen line of the prompt, and a word when the person was looking at a preview that is not live yet: the change
+// is built on top of that preview (src/pipeline.js, changes join the preview).
+async function screenLineFor(fb) {
+  const line = fb.screen ? `Screen: ${fb.screen} (${fb.target_file})` : `Screen: unknown (page ${fb.page || "?"})`;
+  const row = await registry.getModule(fb.company, fb.module);
+  const v = row ? registry.versionForPage(row, fb.page) : null;
+  if (!row || !v || Number(v) === Number(row.live_version)) return line;
+  return `${line}\nSent from the preview, version ${v}, which is not live yet${row.live_version ? "" : " (this tool has never been live)"}. The source below is that preview; the change is built on top of it.`;
 }
 
 // What the proposer is told when it may sort the request before proposing (src/arrival.js).
@@ -71,6 +89,7 @@ First decide what this request is (triage):
 - duplicate: it asks for the same thing as ONE of the open requests listed above, so the same change would satisfy both. Give that request's number in duplicate_of. A request about the same screen that wants something different is NOT a duplicate. When unsure, it is a change.
 - not_this_tool: it is not about this tool at all (the building, a machine, a person, another system).
 - new_tool: it asks for a whole new tool, not a change to this one.
+- integration: it asks to connect this tool to an outside system (the company's ERP or scheduling system, a label printer, a machine, a scale), or it only works once one is connected, and that kind is not turned on for this tool (see "Outside connections" below). Anetix's integration team sets those up; the tool is not changed. Fill integration with the system as they call it and what it would give. A change to how the tool shows or uses a connection that IS turned on is an ordinary change.
 For anything but change, write one plain sentence in triage_note for the manager, and keep proposal and rationale to one short sentence each (they are not shown).`;
 const ASK_BRIEF = `
 
@@ -85,8 +104,12 @@ async function proposalRequest(fb, opts = {}) {
   const answered = opts.answered != null ? opts.answered : Boolean(fb.question && fb.question.answer);
   const mayTriage = opts.mayTriage != null ? opts.mayTriage : !opts.force && !opts.answered && !answered && !fb.triage;
   const mayAsk = opts.mayAsk != null ? opts.mayAsk : mayTriage && !fb.question;
-  const ctx = opts.ctx || await moduleContext(fb.company, fb.module, { first: [fb.target_file], version: opts.version || null });
-  const screenLine = opts.screenLine || (fb.screen ? `Screen: ${fb.screen} (${fb.target_file})` : `Screen: unknown (page ${fb.page || "?"})`);
+  const ctx = opts.ctx || await moduleContext(fb.company, fb.module, { first: [fb.target_file], version: opts.version || await pageVersion(fb) });
+  const screenLine = opts.screenLine || await screenLineFor(fb);
+  // outside connections (src/connections.js): what is turned on for this tool decides whether "connect it to Epicor" is a change or a handoff
+  const cx = require("./connections");
+  const outsideOn = await cx.allowedKinds(fb.company, fb.module);
+  const outsideLine = mayTriage ? `\n\nOutside connections turned on for this tool: ${outsideOn.length ? outsideOn.map((k) => cx.OUTSIDE_WORDS[k]).join(", ") : "none"}.` : "";
   const guidance = await guidanceFor(fb.company, fb.module);
   // the data check: a module with an ERP connection is asked what ERP data the change needs
   const erpLookups = Object.keys(await datacheck.erpState(fb.company, fb.module).catch(() => ({})));
@@ -103,7 +126,7 @@ async function proposalRequest(fb, opts = {}) {
   const extras = [followUp, pointed, blocks.length ? "\nThe person also took a photo; it is attached above." : "", qa].map((x) => String(x || "").trim()).filter(Boolean).join("\n");
   return {
     system: "You draft improvement proposals for a factory operations platform. The reader is a production manager with no software background. Be concrete and short. Never mention code internals in the proposal text. Prefer the smallest change that removes the reported friction. The feedback was filed from a specific screen; the change belongs on that screen unless the feedback clearly says otherwise.\n\n" + guidance.text,
-    prompt: `Floor feedback (reported by ${fb.name || "anonymous"}, reported ${fb.recurrence} time(s))\n${screenLine}\n\n"${fb.message}"${extras ? `\n\n${extras}` : ""}${arrival.candidatesBlock(open)}${mayTriage ? TRIAGE_BRIEF : ""}${mayAsk ? ASK_BRIEF : ""}\n\nCurrent module for context:\n${ctx.text}\n\nDraft the proposal, classify it, and name the target file.${erpAsk}`,
+    prompt: `Floor feedback (reported by ${fb.name || "anonymous"}, reported ${fb.recurrence} time(s))\n${screenLine}\n\n"${fb.message}"${extras ? `\n\n${extras}` : ""}${arrival.candidatesBlock(open)}${mayTriage ? TRIAGE_BRIEF : ""}${outsideLine}${mayAsk ? ASK_BRIEF : ""}\n\nCurrent module for context:\n${ctx.text}\n\nDraft the proposal, classify it, and name the target file.${erpAsk}`,
     schema: proposalSchema(ctx.files.length ? ctx.files : ["routes.js"], erpLookups, { triage: mayTriage, ask: mayAsk }),
     blocks, erpLookups, ctx, mayTriage, mayAsk,
   };
@@ -123,8 +146,8 @@ async function generateProposal(feedbackId, opts = {}) {
   const mayTriage = !opts.force && !opts.answered && !answered && !fb.triage;
   const mayAsk = mayTriage && !fb.question;
 
-  const ctx = await moduleContext(fb.company, fb.module, { first: [fb.target_file] });
-  const screenLine = fb.screen ? `Screen: ${fb.screen} (${fb.target_file})` : `Screen: unknown (page ${fb.page || "?"})`;
+  const ctx = await moduleContext(fb.company, fb.module, { first: [fb.target_file], version: await pageVersion(fb) });
+  const screenLine = await screenLineFor(fb);
 
   if (!haveKey()) {
     // graceful degradation so the loop is walkable without a key
@@ -149,6 +172,15 @@ async function generateProposal(feedbackId, opts = {}) {
     const root = await arrival.linkDuplicate(fb, data.duplicate_of, data.triage_note, "agent");
     if (root) { await spent("duplicate"); return { feedback_id: fb.id, triage: "duplicate", duplicate_of: root.id, note: data.triage_note || null }; }
     console.error(`[arrival] #${fb.id}: the proposer called it a duplicate of #${data.duplicate_of}, which is not an open request of this tool; proposing instead`);
+  }
+  // a connection to an outside system that is not turned on for this tool: handed to Anetix's integration team
+  // (src/requests.js), not built and not left for the manager to decline (2026-09-28)
+  if (mayTriage && data.triage === "integration") {
+    const ig = data.integration || {};
+    const note = arrival.clip(data.triage_note, 300) || null;
+    const handed = await require("./requests").handoff(fb, { kind: ig.kind, system: ig.system, would_give: ig.would_give, note, by: "agent", model });
+    await spent("integration");
+    return { feedback_id: fb.id, triage: "integration", note, system: handed.anetix_system || null };
   }
   // not a change to this tool: a flag and one sentence for the manager, who can still ask for a proposal
   if (mayTriage && (data.triage === "not_this_tool" || data.triage === "new_tool")) {

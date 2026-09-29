@@ -226,6 +226,11 @@ async function confirm(id) {
   await setFeedback(it, { status: "reviewing" });
   await logEvent("intake_confirmed", id, { company: it.company, slug: it.slug, estimate: it.design.estimate_usd });
   await record("intake_confirmed", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, after: it.design.reference_md, detail: { estimate_usd: it.design.estimate_usd, adjustments: (it.design.adjustments || []).length } });
+  // each outside system the design could not connect goes to Anetix's integration team now (src/requests.js)
+  for (const h of (it.design.handoffs || []).filter((x) => x && x.system)) {
+    await require("./requests").handoffNew({ company: it.company, module: it.slug, title: it.name, kind: h.kind, system: h.system, would_give: h.would_add, intake_id: id })
+      .catch((e) => console.error(`[intake] ${id}: integration handoff for ${h.system} failed:`, e.message));
+  }
   // confirmed means building: the first version goes straight to the agent,
   // then the same gates as any change (Brendan, 2026-09-17)
   try {
@@ -366,12 +371,31 @@ const DESIGN_SCHEMA = {
     reference_md: { type: "string", description: "The module reference in markdown with exactly these headings, in this order: Purpose; Who uses it and where; The thing and its stages; Screens; Rules; Numbers on the board; Connections; Starting data; What Rev 1 leaves out; Change guidance. Plain words throughout. Screens: one per role, each with its single prominent action. Change guidance: which kinds of later change are look-and-feel and which change how it works." },
     screens: { type: "array", items: { type: "object", properties: { role: { type: "string" }, title: { type: "string" }, device: { type: "string" }, prominent_action: { type: "string" } }, required: ["role", "title", "device", "prominent_action"] } },
     connections: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["files", "scanners", "printer", "erp", "spreadsheet", "machine", "scale", "other", "peer"] }, name: { type: "string", description: "What the company calls it." }, what_for: { type: "string" }, tool_does: { type: "string", description: "What the tool connects on its own." }, person_does: { type: "string", description: "What a person has to do, or 'nothing'." } }, required: ["kind", "name", "what_for", "tool_does", "person_does"] } },
+    handoffs: { type: "array", description: "Each outside system the manager named (an ERP, a label printer, a machine, a scale) that is NOT turned on for this tool: Anetix's integration team connects it later. Empty when none.", items: { type: "object", properties: { kind: { type: "string", enum: ["erp", "printer", "machine", "scale", "other"] }, system: { type: "string", description: "What the company calls it." }, would_add: { type: "string", description: "One plain sentence: what the tool will do once it is connected." }, until: { type: "string", description: "One plain sentence: how the first version works without it (typed in, scanned, a spreadsheet the manager loads)." } }, required: ["kind", "system", "would_add", "until"] } },
     starting_data: { type: "string", description: "What gets loaded from the attachments at first deploy, or 'none'." },
     leaves_out: { type: "array", items: { type: "string" }, description: "What Rev 1 deliberately leaves for later feedback." },
     change_guidance: { type: "string" },
   },
-  required: ["bluf", "items", "reference_md", "screens", "connections", "starting_data", "leaves_out", "change_guidance"],
+  required: ["bluf", "items", "reference_md", "screens", "connections", "handoffs", "starting_data", "leaves_out", "change_guidance"],
 };
+// Outside connections are off until Anetix turns them on for the tool (src/connections.js, 2026-09-28). The design is
+// told which are on, and whatever it still lists that is not on moves to handoffs here: the first version is built
+// without it, and confirm hands each one to Anetix's integration team (src/requests.js handoffNew).
+const OUTSIDE_DESIGN = ["erp", "printer", "machine", "scale", "other"];
+function outsideDesignBrief(on) {
+  const words = require("./connections").OUTSIDE_WORDS;
+  return `Outside systems: ${on.length ? `turned on for this tool: ${on.map((k) => words[k]).join(" and ")}.` : "none is turned on for this tool yet."} An ERP, a label printer, a machine or a scale is connected only after Anetix's integration team sets it up for this tool. Design the first version to work without any that is not turned on: people type the value in, scan it, or the manager loads a spreadsheet (files and scanners are always fine). List each such system the manager named under handoffs, with what it will add once connected and how the first version works until then, and leave it out of connections. The reference's Connections section says the same in plain words (for example: "Epicor: Anetix's integration team connects it later; until then the due date is typed in").`;
+}
+function splitHandoffs(design, on) {
+  const keep = [], moved = [];
+  for (const c of design.connections || []) {
+    if (!c || !OUTSIDE_DESIGN.includes(c.kind) || on.includes(c.kind)) { keep.push(c); continue; }
+    moved.push({ kind: c.kind, system: String(c.name || c.kind).slice(0, 80), would_add: String(c.what_for || c.tool_does || "").slice(0, 300), until: "people type it in for now" });
+  }
+  const handoffs = [...(design.handoffs || []).filter((h) => h && h.system), ...moved];
+  const seen = new Set();
+  return { connections: keep, handoffs: handoffs.filter((h) => { const k = `${h.kind}:${String(h.system).toLowerCase()}`; if (seen.has(k)) return false; seen.add(k); return true; }) };
+}
 function estimateUsd(d) {
   const screens = (d.screens || []).length, conns = (d.connections || []).filter((c) => c.kind !== "files").length;
   const usd = 4 + 2 * screens + 1.5 * conns + (d.starting_data && !/^none/i.test(d.starting_data) ? 1 : 0);
@@ -384,15 +408,17 @@ async function generateDesign(it, adjustedText, opts = {}) {
   if (agent.fakeMode()) {
     const ctx = await contextFor(it);
     await agent.atWall("structured:module_design", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText + (adjustedText ? `\n\n${adjustedText}` : ""), blocks: ctx.blocks });
-    return fakeDesign(it, adjustedText);
+    const d = fakeDesign(it, adjustedText);
+    return { ...d, ...splitHandoffs(d, it.slug ? await require("./connections").allowedKinds(it.company, it.slug) : []) };
   }
   await agent.assertUnderCap(it.company, { started: true, fairUse: true });   // the credit was checked when the intake began; a paying site's fair-use line is checked at each round (src/selfserve.js)
   const ctx = await contextFor(it);
   const model = await intakeModel(it);
+  const outsideOn = it.slug ? await require("./connections").allowedKinds(it.company, it.slug) : [];
   const { data, costUsd } = await agent.runStructured({
     model, company: it.company, blocks: ctx.blocks, schema: DESIGN_SCHEMA, toolName: "module_design", maxTokens: 12000,
     system: ctx.system,
-    prompt: `Write the design summary for this new module, deliberately small: the thing and its stages, one screen per role with its single prominent action, the few rules that must hold, the numbers on the board, the connections it needs, the starting data, and what the first version leaves for later. It will be built as plain screens on top of a list of the thing; nothing here should describe how it is built. The module is called "${it.name}".\n\nThe manager's answers, and any files they attached are above:\n\n${ctx.answersText}\n\n${ctx.modulesText}\n\nWhat the tool can connect to: ${CONNECTION_KINDS}.${adjustedText ? `\n\nThe manager edited an earlier version of the reference text. Their edit is the authority; keep every change they made and re-issue the whole design to match it:\n\n${adjustedText}` : ""}`,
+    prompt: `Write the design summary for this new module, deliberately small: the thing and its stages, one screen per role with its single prominent action, the few rules that must hold, the numbers on the board, the connections it needs, the starting data, and what the first version leaves for later. It will be built as plain screens on top of a list of the thing; nothing here should describe how it is built. The module is called "${it.name}".\n\nThe manager's answers, and any files they attached are above:\n\n${ctx.answersText}\n\n${ctx.modulesText}\n\nWhat the tool can connect to: ${CONNECTION_KINDS}.\n\n${outsideDesignBrief(outsideOn)}${adjustedText ? `\n\nThe manager edited an earlier version of the reference text. Their edit is the authority; keep every change they made and re-issue the whole design to match it:\n\n${adjustedText}` : ""}`,
   });
   cost.usd += costUsd || 0;
   const rewrite = await rewriteWith(cost);
@@ -406,7 +432,7 @@ async function generateDesign(it, adjustedText, opts = {}) {
   if (ref.hits.length) flags.push({ where: "the full reference", words: ref.hits });
   const design = {
     name: it.name, slug: it.slug, bluf: bluf.text.trim(), items: items.map((s) => ({ summary: s.summary })), reference_md: ref.text.trim(),
-    screens: data.screens || [], connections: data.connections || [], starting_data: data.starting_data || "none", leaves_out: data.leaves_out || [], change_guidance: data.change_guidance || "",
+    screens: data.screens || [], ...splitHandoffs({ connections: data.connections || [], handoffs: data.handoffs || [] }, outsideOn), starting_data: data.starting_data || "none", leaves_out: data.leaves_out || [], change_guidance: data.change_guidance || "",
     flags, model, cost_usd: cost.usd, at: new Date().toISOString(),
   };
   design.estimate_usd = estimateUsd(design);
@@ -548,4 +574,4 @@ router.get("/api/attachments/:id(\\d{1,9})", requireManager, async (req, res) =>
   res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
 });
 
-module.exports = { router, create, answer, next, think, adjust, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd };
+module.exports = { router, create, answer, next, think, adjust, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief };

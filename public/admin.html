@@ -505,12 +505,26 @@ async function loadRequests() {
   document.getElementById("req-closed-sub").textContent = closed.length ? `(${closed.length})` : "";
   const one = (x) => `<div class="req" data-request="${x.id}" style="${x.status === "new" && !x.anetix_stage ? "border-left:4px solid var(--amber)" : ""}">
     <b>${esc(x.company_name || x.company)}</b> · ${esc(x.screen || x.page || "")} · ${x.name ? `<b>${esc(x.name)}</b>` : "no name"} · ${new Date(x.created_at).toLocaleString()}${x.recurrence > 1 ? ` · x${x.recurrence}` : ""}${x.status === "new" && !x.anetix_stage ? ' <span class="warn" style="font-weight:700">NEW</span>' : ""}<br>
+    ${x.anetix_kind === "integration" ? integrationLine(x) : ""}
     <div style="font-size:15px;margin:4px 0">"${esc(x.message)}"</div>
-    <div class="sub" data-line>${x.status === "new" ? `<b>${STAGE_WORD[x.stage]}</b>` : x.status === "done" ? '<b class="ok">Fixed</b>' : `<b class="fail">${x.anetix_by ? "Not doing this" : "Declined by the manager"}</b>`}${x.outcome ? `: ${esc(x.outcome)}` : ""}${x.anetix_note ? ` · word back: "${esc(x.anetix_note)}"` : ""}${x.anetix_at ? ` <small>(${esc(x.anetix_by || "")} ${new Date(x.anetix_at).toLocaleString()})</small>` : ""}</div>
-    <div style="margin-top:6px">${x.status === "new" ? `${x.stage !== "looking" ? `<button class="quiet" onclick="reqStage(${x.id},'looking')">Looking at it</button>` : ""}${x.stage !== "working" ? `<button class="quiet" onclick="reqStage(${x.id},'working')">Working on it</button>` : ""}<button class="quiet" onclick="reqNote(${x.id})">A word back</button><button class="go" onclick="reqClose(${x.id},'fixed')">Fixed</button><button class="danger" onclick="reqClose(${x.id},'not_doing')">Not doing this</button>` : `<button class="quiet" onclick="reqStage(${x.id},'looking')">Reopen</button>`} <a href="/c/${esc(x.company)}/" class="sub">open the board</a></div></div>`;
+    <div class="sub" data-line>${x.status === "new" ? `<b>${STAGE_WORD[x.stage]}</b>` : x.status === "done" ? `<b class="ok">${x.anetix_kind === "integration" ? "Connected" : "Fixed"}</b>` : `<b class="fail">${x.anetix_by ? "Not doing this" : "Declined by the manager"}</b>`}${x.outcome ? `: ${esc(x.outcome)}` : ""}${x.anetix_note ? ` · word back: "${esc(x.anetix_note)}"` : ""}${x.anetix_at ? ` <small>(${esc(x.anetix_by || "")} ${new Date(x.anetix_at).toLocaleString()})</small>` : ""}</div>
+    <div style="margin-top:6px">${x.status === "new" ? `${x.stage !== "looking" ? `<button class="quiet" onclick="reqStage(${x.id},'looking')">Looking at it</button>` : ""}${x.stage !== "working" ? `<button class="quiet" onclick="reqStage(${x.id},'working')">Working on it</button>` : ""}<button class="quiet" onclick="reqNote(${x.id})">A word back</button><button class="go" onclick="reqClose(${x.id},'fixed')">${x.anetix_kind === "integration" ? "Connected" : "Fixed"}</button><button class="danger" onclick="reqClose(${x.id},'not_doing')">Not doing this</button>` : `<button class="quiet" onclick="reqStage(${x.id},'looking')">Reopen</button>`} <a href="/c/${esc(x.company)}/" class="sub">open the board</a></div></div>`;
   document.getElementById("req-open").innerHTML = open.length ? open.map(one).join("") : '<p class="sub">Nothing open. Feedback sent from a board or a settings page about the software itself shows up here.</p>';
   document.getElementById("req-closed").innerHTML = closed.length ? closed.map(one).join("") : '<p class="sub">Nothing closed yet.</p>';
 }
+// An integration request (src/requests.js): the tool, the system, and the switch that lets the tool connect to it
+// (src/connections.js: outside connections are off until Anetix turns them on, one tool at a time).
+const OUTSIDE_WORD = { erp: "ERP", printer: "label printer" };
+function integrationLine(x) {
+  const on = (x.turned_on || []).includes(x.about_kind);
+  const can = OUTSIDE_WORD[x.about_kind];
+  return `<div data-integration style="margin:4px 0;padding:6px 8px;border-radius:8px;background:#e7f4f1;color:#0f4d43"><b>Integration:</b> connect ${esc(x.about_system || "an outside system")}${can ? ` (${OUTSIDE_WORD[x.about_kind]})` : x.about_kind ? ` (${esc(x.about_kind)})` : ""} to ${esc(x.about_title || x.about_module || "a tool")}${x.triage_note ? `. <span class="sub">${esc(x.triage_note)}</span>` : ""}<br>`
+    + (can ? (on ? `<b class="ok">${OUTSIDE_WORD[x.about_kind]} is turned on for this tool.</b> Its builds may declare it; set it up on the company's connections page. <button class="quiet" onclick="reqTurn(${x.id},'${x.about_kind}',false)">Turn it off</button>`
+      : `The ${OUTSIDE_WORD[x.about_kind]} is off for this tool, so no build can reach for it. <button class="primary" onclick="reqTurn(${x.id},'${x.about_kind}',true)">Turn on ${OUTSIDE_WORD[x.about_kind]} for this tool</button>`)
+      : `<span class="sub">The platform has no ${esc(x.about_kind || "such")} connection yet; answer with a word back.</span>`) + `</div>`;
+}
+async function reqTurn(id, kind, on) { await post(`/api/admin/requests/${id}/turn-on`, { kind, on }); loadRequests(); }
+async function setOutside(slug, mod, kind, on) { await post(`/api/admin/companies/${slug}/outside`, { module: mod, kind, on }); }
 async function reqStage(id, stage) { await post(`/api/admin/requests/${id}`, { stage }); loadRequests(); }
 function reqNote(id) {
   const x = (REQ.requests || []).find(r => r.id === id) || {};
@@ -794,8 +808,9 @@ function companyCard(c) {
     <div class="links"><a href="/c/${c.slug}/">Improvement board</a><a href="/c/${c.slug}/settings" title="What the manager sees: people, printers and spreadsheets, the wall sign, what happens when a request arrives">Settings</a><a href="/c/${c.slug}/agents">Agent settings and docs</a><a href="/c/${c.slug}/checks" title="Every build the platform's checks stopped, labeled right, wrong or unsure">Checks log</a><a href="/c/${c.slug}/people">People</a><a href="/c/${c.slug}/connections">Connections</a><a href="/api/c/${c.slug}/record/export" download title="The interaction record: everything said and decided, word for word, insert-only">Download the record</a></div>
     <div class="secs">
       <div class="sec wide"><h3>Modules</h3>
-        ${c.modules.length ? `<table class="list"><tr><th>Module</th><th>On the floor</th><th></th></tr>${c.modules.map(m => `<tr><td><b>${esc(m.title)}</b> <small class="sub">(${esc(m.name)})</small></td>
+        ${c.modules.length ? `<table class="list"><tr><th>Module</th><th>On the floor</th><th title="Outside connections are off until Anetix turns them on for the tool">Outside</th><th></th></tr>${c.modules.map(m => `<tr><td><b>${esc(m.title)}</b> <small class="sub">(${esc(m.name)})</small></td>
           <td>${m.live_version ? `v${m.live_version}` : '<span class="warn">not live yet</span>'}${m.staged_version ? ` <small class="sub">v${m.staged_version} staged</small>` : ""}</td>
+          <td style="white-space:nowrap" data-outside="${esc(m.name)}">${["erp", "printer"].map(k => { const on = (m.outside_on || []).includes(k); return `<label style="margin-right:8px;font-size:12px" title="${on ? "Turned on: builds of this tool may connect to it" : "Off: no build of this tool may connect to it"}"><input type="checkbox" ${on ? "checked" : ""} onchange="setOutside('${c.slug}','${m.name}','${k}',this.checked)"> ${k === "erp" ? "ERP" : "Printer"}</label>`; }).join("")}</td>
           <td style="white-space:nowrap">${m.live_version ? `<a href="/c/${c.slug}/m/${m.name}/">Open</a>${hasTour(m.name) ? ` <a class="tourlink" style="margin-left:6px" href="/c/${c.slug}/m/${m.name}/?tour=1">Start tour</a>` : ""}` : ""}</td></tr>`).join("")}</table>` : '<div class="sub">None yet.</div>'}
       </div>
       <div class="sec"><h3>Sign-in</h3>${accessText(c)}${c.demo ? "" : `<br><button class="quiet" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button>`}

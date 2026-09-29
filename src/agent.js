@@ -239,9 +239,24 @@ function fakeGateLine(dir, prompt, leak) {
   if (routes !== before) fs.writeFileSync(routesPath, routes);
 }
 
+// ADDERP in the feedback makes a functionality build declare an ERP connection ("epicor") on its first attempt, the
+// way a real agent reaches for Epicor when a request names it; the fix round takes it out again, ADDERPALWAYS keeps
+// it. A new module whose design lists an erp connection declares one too. The module gate holds both to what is
+// turned on for the tool (src/connections.js, rule connection-not-on).
+function fakeErp(dir, add) {
+  const mf = path.join(dir, "module.json");
+  let m; try { m = JSON.parse(fs.readFileSync(mf, "utf8")); } catch (e) { return; }
+  const had = Boolean(m.connections && m.connections.epicor);
+  if (add && !had) m.connections = { ...(m.connections || {}), epicor: { kind: "erp", label: "Epicor", queries: { late_jobs: { params: [], fields: ["job", "due"], about: "late jobs" } } } };
+  else if (!add && had) { delete m.connections.epicor; if (!Object.keys(m.connections).length) delete m.connections; }
+  else return;
+  fs.writeFileSync(mf, JSON.stringify(m, null, 2) + "\n");
+}
+
 function fakeRunAgent({ dir, prompt }) {
   if (/^NEW MODULE BUILD/m.test(prompt)) {
     fakeGateLine(dir, prompt, true);
+    if (/^- Connections: .*\(erp\)/m.test(prompt)) fakeErp(dir, !/own checks refused the previous attempt/.test(prompt));
     // the skeleton the platform wrote is already a working module; the fake
     // agent only proves the loop by stamping the first page
     const pages = path.join(dir, "pages");
@@ -294,6 +309,7 @@ function fakeRunAgent({ dir, prompt }) {
     if (/BREAKPROMISE/.test(prompt) && !fixRound) js = js.replace(/(const router = express\.Router\(\);\n)/, `$1${brokenLine}`);
     fs.writeFileSync(routesFile, js);
   }
+  if (FUNC && /ADDERP/.test(prompt)) { fakeErp(dir, !fixRound || /ADDERPALWAYS/.test(prompt)); try { manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")); } catch (e) { /* as it was */ } }
   if (FUNC && Array.isArray(manifest.smoke)) {
     manifest.smoke = manifest.smoke.filter((x) => x !== "/api/fake-not-there");
     if (/BADSMOKE/.test(prompt) && !fixRound) manifest.smoke.push("/api/fake-not-there");
@@ -330,6 +346,7 @@ function fakeTriage(quoted, prompt, blocks) {
     if (/DUPE/.test(quoted) && first) { out.triage = "duplicate"; out.duplicate_of = Number(first); out.triage_note = `Fake mode: this asks for the same thing as request #${first}.`; }
     else if (/NOTTHISTOOL/.test(quoted)) { out.triage = "not_this_tool"; out.triage_note = "Fake mode: this is about the building, not about this tool."; }
     else if (/NEWTOOL/.test(quoted)) { out.triage = "new_tool"; out.triage_note = "Fake mode: this asks for a whole new tool, not a change to this one."; }
+    else if (/INTEGRATION/.test(quoted) && /- integration: /.test(prompt)) { out.triage = "integration"; out.triage_note = "Fake mode: this asks to connect the tool to Epicor, which Anetix's integration team sets up."; out.integration = { kind: "erp", system: "Epicor", would_give: "The late jobs would come from Epicor instead of being typed in." }; }
   }
   if (mayAsk) out.question = /ASKME/.test(quoted) ? (/ASKMEBADLY/.test(quoted) ? { text: "Which API endpoint should the frontend call?", options: ["The database", "The backend"] } : { text: "Which one do you mean?", options: ["The count on the left", "The list on the right"] }) : { text: "", options: [] };
   const ans = /The answer(?:, from [^:]+)?: "([^"]*)"/.exec(prompt);

@@ -141,6 +141,7 @@
     const files = changes.changed || [];
     let h = "<b>" + esc(changes.title || ("Version " + changes.staged_version + " against version " + changes.live_version)) + "</b>";
     h += "<div>" + esc(changes.what_changed || changes.build_summary || "No summary recorded for this build.").replace(/\n/g, "<br>") + "</div>";
+    if ((changes.also || []).length) h += '<div style="margin-top:6px"><span style="color:#51606f;font-size:12px">Also in this preview, from earlier changes:</span>' + changes.also.map((x) => "<div>" + esc(x) + "</div>").join("") + "</div>";
     const here = rel.replace(/\/$/, "") || "/";
     const isHere = (route) => route && new RegExp("^" + route.replace(/\/$/, "").replace(/:[^/]+/g, "[^/]+") + "/?$").test(here);
     let onThis = false;
@@ -156,6 +157,8 @@
     h += '<div style="color:#51606f;font-size:12px;margin-top:6px">' + (onThis
       ? (marked ? (marked === 1 ? "1 element on this screen carries" : marked + " elements on this screen carry") + " a yellow outline and a NEW tag." : "This screen changed; the agent did not tag which elements, so compare against the live page.")
       : "This screen is the same as on the floor. The change is on the screens above.") + "</div>";
+    // changes join the preview (src/pipeline.js): what is asked for here is built on top of it, and it all goes live together
+    h += '<div style="color:#51606f;font-size:12px;margin-top:6px">Want something else changed? Ask with the feedback button on this preview. It is built on top of what is here, and everything goes live together.</div>';
     box.innerHTML = h;
   }
 
@@ -521,7 +524,7 @@
         row.setAttribute("data-request", r.id);
         row.style.cssText = "border:1px solid #d5dbe3;border-radius:10px;padding:10px 12px;margin:8px 0";
         row.innerHTML = "<div style=\"font-weight:700\">“" + esc(r.words) + "”</div>" +
-          "<div style=\"color:#51606f;font-size:12px;margin:2px 0 6px\">#" + r.id + " · " + (r.to_anetix ? "the software itself, to Anetix" : esc(r.module || "")) + (r.screen ? " · " + esc(r.screen) : "") + " · " + new Date(r.created_at).toLocaleDateString() + (r.follow_up_of ? " · follow-up to #" + r.follow_up_of : "") + "</div>" +
+          "<div style=\"color:#51606f;font-size:12px;margin:2px 0 6px\">#" + r.id + " · " + (r.to_anetix ? (r.integration ? "connecting " + esc(r.integration.system || "an outside system") + ", to Anetix's integration team" : "the software itself, to Anetix") : esc(r.module || "")) + (r.screen ? " · " + esc(r.screen) : "") + " · " + new Date(r.created_at).toLocaleDateString() + (r.follow_up_of ? " · follow-up to #" + r.follow_up_of : "") + "</div>" +
           "<div data-line style=\"color:" + (STATE_COLOR[r.state] || "#1c242e") + ";font-weight:" + (r.state === "live" || r.state === "thanked" || r.state === "question" || r.state === "anetix_fixed" ? 700 : 400) + "\">" + (r.state === "thanked" || r.state === "anetix_fixed" ? TICK : "") + esc(r.line) + (r.follow_up_id && (r.state === "not_quite" || r.state === "little_left") ? " (#" + r.follow_up_id + ")" : "") + "</div>" +
           (r.built ? "<div style=\"color:#51606f;font-size:12.5px;margin-top:4px\">What was built: " + esc(r.built) + "</div>" : "");
         if (r.can_answer) row.appendChild(answerButtons(r, async () => { await loadMine(); draw(); }));

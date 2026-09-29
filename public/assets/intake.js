@@ -300,6 +300,9 @@ window.Intake = (() => {
     if ((d.flags || []).length) h += `<div class="ik-flag">A few lines use words we try to avoid (${esc(d.flags.map((f) => `${f.where}: ${f.words.join(", ")}`).join("; "))}). Adjust the text if you want them changed.</div>`;
     // what it costs is not shown here (Brendan, 2026-09-20: no cost on the board); the estimate stays on the intake record and the admin page
     h += `<div class="ik-est">The first version: ${(d.screens || []).length} screen${(d.screens || []).length === 1 ? "" : "s"}, ${(d.connections || []).length} connection${(d.connections || []).length === 1 ? "" : "s"}.</div>`;
+    // outside systems that are not turned on for this tool go to Anetix's integration team when this is approved (src/intake.js)
+    const ho = (d.handoffs || []).filter((x) => x && x.system);
+    if (ho.length) h += `<div class="ik-est" data-handoffs="${ho.length}"><b>Connected later by Anetix:</b> ${ho.map((x) => `${esc(x.system)}${x.until ? ` (until then, ${esc(String(x.until).replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase()))})` : ""}`).join("; ")}. Approving sends ${ho.length === 1 ? "it" : "them"} to Anetix's integration team, who set up the connection with you.</div>`;
     h += `<details><summary style="cursor:pointer;font-weight:700;color:var(--navy)">Read the full reference</summary><div class="ik-ref" style="margin-top:8px">${esc(d.reference_md || "")}</div></details>`;
     return h;
   }

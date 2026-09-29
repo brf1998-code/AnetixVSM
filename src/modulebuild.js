@@ -338,6 +338,10 @@ async function advance(runId) {
         await P.log(runId, { step: "build", note: "skeleton written from the design; the agent builds the first version on top of it" });
       }
       const guidance = await agent.guidanceFor(company, slug);
+      // outside connections: what Anetix has turned on for this tool (src/connections.js); the gate below holds the build to it
+      const cx = require("./connections");
+      const outsideOn = await cx.allowedKinds(company, slug);
+      const handoffs = (design.handoffs || []).filter((h) => h && h.system);
       const answersText = intake ? Object.entries(intake.answers || {}).filter(([k]) => !/^r\d+q\d+$/.test(k)).map(([k, v]) => { const qn = Q.FIXED.find((x) => x.id === k); return qn ? `${qn.text}\n${Q.describe(qn, v)}` : ""; }).filter(Boolean).join("\n\n") : "";
       const files = await attachments.list(ev.intake_id || 0);
       const sheet = (await Promise.all(files.filter((a) => a.kind === "sheet").map((a) => attachments.get(a.id)))).find((a) => a && a.parsed && a.parsed.rows && a.parsed.rows.length);
@@ -370,7 +374,7 @@ ${design.reference_md || run.requirement || ""}
 
 Design details:
 - Screens: ${(design.screens || []).map((s) => `${s.title} for ${s.role} on a ${s.device}: prominent action "${s.prominent_action}"`).join("; ") || "one board"}
-- Connections: ${(design.connections || []).map((c) => `${c.name} (${c.kind}): ${c.what_for}. Tool does: ${c.tool_does}. Person does: ${c.person_does}`).join("; ") || "none"}
+- Connections: ${(design.connections || []).map((c) => `${c.name} (${c.kind}): ${c.what_for}. Tool does: ${c.tool_does}. Person does: ${c.person_does}`).join("; ") || "none"}${handoffs.length ? `\n- Handed to Anetix's integration team, NOT connected in this version (build nothing that reaches for them; the value is typed in, scanned or loaded from a spreadsheet): ${handoffs.map((h) => `${h.system} (${h.kind})${h.until ? `: until then ${h.until}` : ""}`).join("; ")}` : ""}
 - Starting data: ${design.starting_data || "none"}
 - Left out of Rev 1 on purpose: ${(design.leaves_out || []).join("; ") || "nothing named"}
 
@@ -388,6 +392,7 @@ Rules for this build:
 - The numbers on the board come from /api/stats or your own endpoint and show at the top of the lead's or manager's screen.
 - ${walled ? "Seed NO rows of the company's data (you have none); the platform loads the starting list after the first deploy through the \"starting\" connection." : "Seed the starting data as INSERT rows in migrations/001.sql (mind the validator: no quoted identifiers, no schema prefixes, additive statements only)."}
 - Plain words on every visible string (PLAIN-WORDS.md). No em or en dashes anywhere.
+- ${cx.outsideBrief(outsideOn, null)}
 - Keep it small and working. What the design leaves out stays out.
 - Put data-changed="v1" on the main container of every screen.
 - Your final message must be ONLY a short bullet list of what the module does now, one bullet per screen, in plain language for a production manager. No preamble, no headings, no code talk.`,
@@ -403,7 +408,7 @@ Rules for this build:
       // The module gate first (src/modulegate.js): validateModule below loads
       // routes.js into this process to see that it returns a router, so the
       // text has to pass the gate before that happens.
-      const verdict = gate.checkDir(dir, { lane: "module" });
+      const verdict = gate.checkDir(dir, { lane: "module", outside: { allowed: outsideOn } });
       if (!verdict.ok) {
         await registry.persistVersion(company, slug, 1).catch(() => {});
         const c1 = await P.getRun(runId);

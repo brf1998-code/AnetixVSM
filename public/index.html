@@ -122,7 +122,8 @@
   .meta { color:var(--steel); font-size:11.5px; margin-top:4px; line-height:1.5; }
   .chip { display:inline-block; font-size:10.5px; font-weight:700; border-radius:10px; padding:2px 8px; color:#fff; margin-right:4px; vertical-align:middle; }
   .chip.ui { background:var(--teal); } .chip.functionality { background:var(--amber); }
-  .chip.rec { background:var(--steel); } .chip.platform { background:var(--navy); }
+  .chip.rec { background:var(--steel); } .chip.platform { background:var(--navy); } .chip.integration { background:#0f6b5c; margin-left:4px; }
+  .stacknote { background:#eef4fb; border-radius:8px; padding:8px; color:#1f3a5f; margin:6px 0; }
   .chip.screen { background:#e5e9ee; color:var(--ink); } .chip.review { background:var(--purple); }
   .prop { background:var(--fog); border-radius:8px; padding:8px; margin-top:8px; font-size:12.5px; white-space:pre-wrap; line-height:1.45; }
   .req { background:var(--amberSoft); border-radius:8px; padding:8px; margin-top:8px; font-size:12.5px; white-space:pre-wrap; }
@@ -327,7 +328,7 @@ function attentionCol(buckets, tiles) {
   if (MGR()) {
     const waitsOnMe = (fb) => {
       if (fb.kind === "module_request") { const it = (DATA.intakes || {})[fb.intake_id] || {}; if (["answering", "design", "confirmed", "failed"].includes(it.status)) return `i${fb.intake_id}:${it.status}`; }
-      const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
+      const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && liveRun(r));
       return run && (run.status === "waiting" || run.status === "failed") ? `r${run.id}:${run.step}:${run.status}` : "";
     };
     for (const k of ["in_progress", "reviewing", "new"]) {
@@ -833,15 +834,19 @@ function batchCard(run) {
   const mod = DATA.modules.find(m => m.name === run.module) || {};
   const pk = "run:" + run.id;
   let html = `<div class="card batch ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
-  html += `<div class="bhead"><span class="n">${items.length}</span>${ev.title ? esc(ev.title) : `${items.length} changes built as one`}${review ? `<span class="chip review">REVIEW #${review.review_id}</span>` : ""}<span class="chip ${run.lane}">${run.lane === "ui" ? "UI" : "FUNCTIONALITY"}</span></div>`;
-  html += `<div class="meta">run #${run.id} · ${esc(mod.title || run.module)} · v${run.from_version}${run.to_version ? " → v" + run.to_version : ""}</div>`;
+  const st = ev.stack || null;   // added on top of a preview (src/pipeline.js): this card is the whole preview
+  const own = new Set(st ? DATA.feedback.filter(f => (f.proposal_id && (st.own || []).includes(f.proposal_id))).map(f => f.id) : []);
+  const title = st ? `${items.length} changes in this preview` : ev.title ? esc(ev.title) : `${items.length} changes built as one`;
+  html += `<div class="bhead"><span class="n">${items.length}</span>${title}${review ? `<span class="chip review">REVIEW #${review.review_id}</span>` : ""}<span class="chip ${run.lane}">${run.lane === "ui" ? "UI" : "FUNCTIONALITY"}</span></div>`;
+  html += `<div class="meta">run #${run.id} · ${esc(mod.title || run.module)} · ${st ? (st.live ? "v" + st.live : "not live yet") : "v" + run.from_version}${run.to_version ? " → v" + run.to_version : ""}</div>`;
   html += gateTopHtml(run, null);
+  if (st && !atGate(run) && !["deployed", "rolled_back"].includes(run.status)) html += `<div class="meta stacknote">Added to the preview: ${own.size === 1 ? "the newest change is" : "the newest changes are"} being built on top of the ones already in it, and one ${DEMO() ? "Make it live" : "deploy"} puts them all ${DEMO() ? "live" : "on the floor"}. <a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open the preview</a></div>`;
   if (run.status === "deployed" || run.status === "rolled_back") {
     html += `<div class="${run.status === "deployed" ? "outcome" : "fail-note"}">${run.status === "deployed" ? "We did: " : "Rolled back: "}${esc(ev.what_changed || ev.build_summary || "").slice(0, 600)}</div>` + campaignLineHtml(run);
   }
-  html += `<details ${OPEN_BATCH.has(run.id) || items.some(f => EDITING === "left:" + f.id) ? "open" : ""} ontoggle="this.open?OPEN_BATCH.add(${run.id}):OPEN_BATCH.delete(${run.id})"><summary>See the ${items.length} changes</summary>` + items.map((f, i) => `<div class="chg"><span class="k">${i + 1}.</span><span class="chip screen">${esc(screenLabel(f.module, f.proposal_target) || f.screen || "")}</span> ${esc(f.proposal_body || "")}<div class="orig">"${esc(f.message)}" · ${esc(f.name || "anonymous")}${f.recurrence > 1 ? ` · x${f.recurrence}` : ""}</div>${floorSaid(f)}</div>`).join("") + `</details>`;
+  html += `<details ${OPEN_BATCH.has(run.id) || items.some(f => EDITING === "left:" + f.id) ? "open" : ""} ontoggle="this.open?OPEN_BATCH.add(${run.id}):OPEN_BATCH.delete(${run.id})"><summary>See the ${items.length} changes</summary>` + items.map((f, i) => `<div class="chg"><span class="k">${i + 1}.</span><span class="chip screen">${esc(screenLabel(f.module, f.proposal_target) || f.screen || "")}</span>${own.has(f.id) && !["deployed", "rolled_back"].includes(run.status) ? '<span class="chip rec" title="Discard takes out only this, and the preview goes back to how it was before it">added last</span>' : ""} ${esc(f.proposal_body || "")}<div class="orig">"${esc(f.message)}" · ${esc(f.name || "anonymous")}${f.recurrence > 1 ? ` · x${f.recurrence}` : ""}</div>${floorSaid(f)}</div>`).join("") + `</details>`;
   if (run.status === "queued") {
-    html += `<div class="meta"><span class="pulse"></span>Queued: waiting for the current build on ${esc(mod.title || run.module)} to finish.</div>`;
+    html += `<div class="meta"><span class="pulse"></span>${queuedLine(mod.title || run.module)}</div>`;
     if (MGR()) html += actions(pk, "", [`<button class="quiet" onclick="act('/api/runs/${run.id}/cancel')">Cancel</button>`]);
     return html + "</div>";
   }
@@ -850,24 +855,37 @@ function batchCard(run) {
   if (run.step === "campaign" && run.status !== "failed") html += campaignHtml(run);
   else if (run.status === "running" && MGR()) html += actions(pk, "", [abortBtn(run)]);
   if (run.step === "await_deploy" && run.status === "waiting") {
-    if (ev.what_changed || ev.build_summary) html += `<div class="prop">${esc(ev.what_changed || ev.build_summary)}</div>`;
+    // a stacked preview says what each build in it changed, oldest first, so the newest summary does not read as all of it
+    const said = st ? (st.carried || []).map(c => c.what_changed || c.title).concat([ev.what_changed || ev.build_summary]).filter(Boolean) : [];
+    if (said.length > 1) html += `<div class="prop"><b>In this preview:</b><ul style="margin:4px 0 0 18px;padding:0">${said.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+    else if (ev.what_changed || ev.build_summary) html += `<div class="prop">${esc(ev.what_changed || ev.build_summary)}</div>`;
     html += checksLineHtml(ev, run.id) + campaignLineHtml(run);
     if (!MGR()) html += `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">Open preview of v${run.to_version} (not live)</a><br>`;   // a manager has it at the top (gateTopHtml)
-    if (MGR()) html += actions(pk, "", [`<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
+    if (MGR()) html += actions(pk, "", [st ? takeOutBtn(run, own.size) : `<button class="no" onclick="if(confirm('Discard this build? The ${items.length} proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard</button>`]);
   }
-  if (run.status === "failed") html += failedHtml(run, `The ${items.length} proposals go back to Reviewing.`);
+  if (run.status === "failed") html += failedHtml(run, st ? `Taking it out puts the preview back to how it was before ${own.size === 1 ? "this change" : "these changes"}, which go back to Reviewing.` : `The ${items.length} proposals go back to Reviewing.`);
   const open = run.status === "deployed" ? items.filter(canCloseOut) : [];
   const doneAll = open.length > 1 ? `<button class="go small" data-closeout-all="${run.id}" title="Close out the ${open.length} requests in this change that nobody has spoken about yet. Each person who asked sees a check mark and a thank-you. To say a little is left on one of them, open the changes above." onclick="closeOutAll(${run.id}, [${open.map(f => f.id).join(",")}])">&#10003; Done, all ${open.length}</button>` : "";
   html += actions(pk, doneAll, [run.status === "deployed" && MGR() && mod.live_version === run.to_version ? rollbackBtn(run) : ""]);
   return html + "</div>";
 }
+// A preview with a change added on top: Discard takes out only the newest change and puts the preview back to how it
+// was before it (Brendan, 2026-09-28: peel off the last one).
+function takeOutBtn(run, n) {
+  return `<button class="no" onclick="if(confirm('Take the newest ${n === 1 ? "change" : n + " changes"} out of this preview? The preview goes back to how it was before ${n === 1 ? "it" : "them"}, and ${n === 1 ? "it goes" : "they go"} back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Discard the newest change${n === 1 ? "" : "s"}</button>`;
+}
+// A queued change joins the preview being built as soon as that preview is ready (src/pipeline.js joinPreview).
+function queuedLine(tool) { return `Queued: it is added to the preview of ${esc(tool)} as soon as that preview is ready, and they go live together.`; }
 // The one button at the gate. A demo has no floor, so it says "Make it live" (the launch audit 1.8); a site keeps its words.
-function goLiveLabel(isModule, run) { return DEMO() ? "Make it live" : isModule ? "Put it on the floor" : `Deploy v${run.to_version} to floor`; }
+function goLiveLabel(isModule, run) { return DEMO() ? "Make it live" : isModule || (run && run.evidence && run.evidence.stack && run.evidence.stack.live == null) ? "Put it on the floor" : `Deploy v${run.to_version} to floor`; }
 function goLiveNote() { return DEMO() ? "It goes live in your demo and you can open it from the Tools line at the top. Try it in the preview first." : "This goes live for your floor. Check it in the preview first."; }
 // A build waiting for the OK is the top of its card, and those cards are the top of In progress (Brendan, 2026-09-27:
 // people built a change and left the tile sitting there without ever putting it live). The button first, the preview
 // right under it; what changed, the checks and Discard stay further down the card. Managers only: the floor cannot deploy.
-const runOf = (fb) => DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
+// A run the board shows: not cancelled, and not a preview that has a newer change being added on top of it (that one's
+// card carries it: src/pipeline.js, changes join the preview).
+function liveRun(r) { return r.status !== "cancelled" && r.status !== "stacked"; }
+const runOf = (fb) => DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && liveRun(r));
 function atGate(run) { return Boolean(run && run.step === "await_deploy" && run.status === "waiting"); }
 function gateTopHtml(run, fb) {
   if (!atGate(run) || !MGR()) return "";
@@ -903,7 +921,7 @@ function requestCard(fb) {
   const openBtn = (label, cls) => (MGR() ? `<button class="${cls || "primary"}" onclick="Intake.open(${fb.intake_id})">${label}</button>` : "");
   const withdraw = MGR() && !["building", "done"].includes(it.status) ? `<button class="no" onclick="if(confirm('Withdraw this tool request? The answers are kept on the record but nothing is built.'))act('/api/intakes/${fb.intake_id}/abandon')">Withdraw</button>` : "";
   if (fb.status === "declined") { html += `<div class="fail-note">${esc(fb.outcome || "Withdrawn.")}</div>`; return html + "</div>"; }
-  const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
+  const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && liveRun(r));
   if (["building", "done"].includes(it.status) || (fb.status === "in_progress" && run)) {
     if (it.status === "done" || fb.status === "done") {
       html += `<div class="outcome">${esc(fb.outcome || "Built and live.")}</div>`;
@@ -950,7 +968,7 @@ function runBlock(fb, run) {
   const pk = "run:" + run.id;
   html += `<div class="meta" style="margin-top:6px"><span class="chip ${run.lane === "module" ? "functionality" : run.lane}">${run.lane === "ui" ? "UI LANE" : run.lane === "module" ? "NEW TOOL" : "FUNCTIONALITY LANE"}</span> run #${run.id} · ${run.from_version ? "v" + run.from_version : "nothing yet"}${run.to_version ? " → v" + run.to_version : ""}${others.length ? ` · <span class="chip rec">built with #${others.join(", #")}</span>` : ""}</div>`;
   if (run.status === "queued") {
-    html += `<div class="meta"><span class="pulse"></span>Queued: waiting for the current build on ${esc(run.module)} to finish.</div>`;
+    html += `<div class="meta"><span class="pulse"></span>${queuedLine((DATA.modules.find(m => m.name === run.module) || {}).title || run.module)}</div>`;
     if (MGR()) html += actions(pk, "", [`<button class="quiet" onclick="act('/api/runs/${run.id}/cancel')">Cancel</button>`]);
     return html;
   }
@@ -1066,23 +1084,28 @@ function answerQuestion(id, i) {
 const FLAG_WORDS = { not_this_tool: "NOT ABOUT THIS TOOL", new_tool: "A NEW TOOL" };
 // A request to Anetix (about the software itself): where it is, in the words src/requests.js stateOf uses.
 const ANETIX_LINE = { received: "Sent to Anetix, the people who make this software. Nobody has looked yet.", looking: "Anetix is looking at it.", working: "Anetix is working on it." };
+// an integration request (a tool to connect to an outside system): the same stages, the integration team's words
+const INTEGRATION_LINE = { received: "Sent to Anetix's integration team, who connect outside systems like your ERP or a label printer. Nobody has looked yet.", looking: "Anetix's integration team is looking at it.", working: "Anetix's integration team is setting it up." };
 function anetixState(fb) {
   const note = fb.anetix_note ? ` ${fb.anetix_by || "Anetix"} says: "${String(fb.anetix_note).trim()}"` : "";
-  if (fb.status === "done") return { state: "anetix_fixed", line: `Fixed by Anetix.${fb.outcome ? ` ${fb.outcome}` : ""}` };
-  if (fb.status === "declined") return fb.anetix_by ? { state: "anetix_not_doing", line: `Anetix is not doing this one.${fb.outcome ? ` ${fb.outcome}` : ""}` } : { state: "declined", line: `Declined by the manager.${fb.outcome && !/^declined$/i.test(fb.outcome) ? ` ${fb.outcome}` : ""}` };
+  const ig = fb.anetix_kind === "integration";
+  if (fb.status === "done") return { state: "anetix_fixed", line: `${ig ? "Connected by Anetix." : "Fixed by Anetix."}${fb.outcome ? ` ${fb.outcome}` : ""}` };
+  if (fb.status === "declined") return fb.anetix_by ? { state: "anetix_not_doing", line: `${ig ? "Anetix is not connecting this one." : "Anetix is not doing this one."}${fb.outcome ? ` ${fb.outcome}` : ""}` } : { state: "declined", line: `Declined by the manager.${fb.outcome && !/^declined$/i.test(fb.outcome) ? ` ${fb.outcome}` : ""}` };
   const stage = ANETIX_LINE[fb.anetix_stage] ? fb.anetix_stage : "received";
-  return { state: "anetix_" + stage, line: ANETIX_LINE[stage] + note };
+  return { state: "anetix_" + stage, line: (ig ? INTEGRATION_LINE : ANETIX_LINE)[stage] + note };
 }
 
 function card(fb) {
   if (fb.kind === "module_request") return requestCard(fb);
-  const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && r.status !== "cancelled");
+  const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && liveRun(r));
   const isPlatform = !fb.module || fb.module === "platform";
   const pk = run && fb.status === "in_progress" ? "run:" + run.id : "fb:" + fb.id;
   let html = `<div class="card ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
   if (fb.status === "in_progress" && run) html += gateTopHtml(run, fb);
-  html += `<div class="meta">#${fb.id} · ${isPlatform ? '<span class="chip platform">TO ANETIX</span>' : esc(fb.module)} · ${esc(fb.name || "anonymous")}`
+  const ig = isPlatform && fb.anetix_kind === "integration";
+  const igTool = ig ? ((DATA.modules.find(m => m.name === fb.about_module) || {}).title || fb.about_module || "") : "";
+  html += `<div class="meta">#${fb.id} · ${isPlatform ? `<span class="chip platform">TO ANETIX</span>${ig ? `<span class="chip integration" title="Connecting a tool to an outside system is set up by Anetix's integration team, not built by the AI">INTEGRATION${fb.about_system ? ": " + esc(fb.about_system) : ""}</span>` : ""}` : esc(fb.module)} · ${ig && igTool ? `${esc(igTool)} · ` : ""}${esc(fb.name || "anonymous")}`
        + (fb.recurrence > 1 && !(fb.dupes && fb.dupes.length) ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "") + `</div>`;
   html += `<div class="meta"><span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>${/^\/c\/[^/]+\/test\/m\//.test(fb.page || "") ? `<span class="chip testfloor" title="Sent from the test floor, where nothing is real; the screen is the same as on the floor">from the test floor</span>` : ""}${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
   html += pointedHtml(fb) + askedHtml(fb);
@@ -1094,7 +1117,10 @@ function card(fb) {
     // where it is with Anetix (src/requests.js): the same line the person reads under My requests
     const st = anetixState(fb);
     html += `<div class="${st.state === "anetix_fixed" ? "outcome" : st.state === "anetix_not_doing" || st.state === "declined" ? "fail-note" : "meta"}" data-anetix="${st.state}" style="${st.state.startsWith("anetix_") && fb.status === "new" ? "background:#eef4fb;border-radius:8px;padding:8px;color:#1f3a5f" : ""}">${st.state === "anetix_fixed" ? "✓ " : ""}${esc(st.line)}${fb.anetix_at ? ` <small style="opacity:.7">(${new Date(fb.anetix_at).toLocaleDateString()})</small>` : ""}</div>`;
-    if (fb.status === "new" && MGR()) html += actions(pk, "", [`<button class="no" onclick="closeItem(${fb.id}, true)">Decline</button>`]);
+    if (ig && fb.triage_note && fb.status === "new") html += `<div class="meta">${esc(fb.triage_note)}</div>`;
+    // the proposer read it as a connection to set up; the manager can say it is a change to the tool after all
+    const toTool = ig && fb.about_module && DATA.modules.some(m => m.name === fb.about_module) ? `<button class="quiet" title="Send it back to the tool's board and have a change proposed" onclick="act('/api/feedback/${fb.id}/to-tool')">It is a change to the tool</button>` : "";
+    if (fb.status === "new" && MGR()) html += actions(pk, "", [toTool, `<button class="no" onclick="closeItem(${fb.id}, true)">Decline</button>`]);
     return html + "</div>";
   }
 
@@ -1443,7 +1469,7 @@ function render() {
   // the counts on the column headers are the board's only numbers; spend and the loop's health are on the admin page
   const buckets = { new: [], reviewing: [], in_progress: [], done: [], platform: [] };
   // batch runs render as one tile; their feedback items are folded into it
-  const batchRuns = runs.filter(r => (r.proposal_ids || []).length > 1 && !["cancelled"].includes(r.status));
+  const batchRuns = runs.filter(r => (r.proposal_ids || []).length > 1 && liveRun(r));
   const folded = new Set();
   const tiles = { in_progress: [], done: [] };
   for (const r of batchRuns) {

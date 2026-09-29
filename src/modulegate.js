@@ -336,10 +336,32 @@ function checkLane(files, fromFiles, lane) {
   return found;
 }
 
+// ---- outside connections (2026-09-28) ----------------------------------------------------
+// An ERP or a label printer is declared only once Anetix has turned that kind on for the tool
+// (src/connections.js, platform.connection_allowances). outside.allowed: the kinds turned on. A declaration the
+// version the build started from already had, with the same kind, is left alone (it predates the rule).
+function checkOutside(files, fromFiles, outside) {
+  const found = [];
+  if (!outside) return found;
+  const cx = require("./connections");
+  const parse = (set) => { try { return JSON.parse((set && set["module.json"]) || "{}"); } catch (e) { return {}; } };
+  const before = new Map(cx.outsideDeclared(parse(fromFiles)).map((d) => [d.name, d.kind]));
+  const on = new Set(outside.allowed || []);
+  for (const d of cx.outsideDeclared(parse(files))) {
+    if (on.has(d.kind) || before.get(d.name) === d.kind) continue;
+    found.push({ rule: "connection-not-on", file: "module.json", label: "module.json (what the tool connects to)", line: 0,
+      what: `declares "${d.name}", a connection to ${cx.OUTSIDE_WORDS[d.kind]}, which is not turned on for this tool`,
+      why: "Anetix's integration team turns outside connections on for each tool; until then take the connection out, and have people type the value in, scan it, or load a spreadsheet (a files connection) instead", evidence: "" });
+  }
+  return found;
+}
+
 // ---- entry points ---------------------------------------------------------------------
 // files / fromFiles: { "routes.js": "text", "pages/board.html": "text", ... }
 // lane: "ui" | "functionality" | "module" | null (null = server and layout rules only)
-function check({ files, fromFiles = null, lane = null }) {
+// outside: { allowed: ["erp"] } to hold new outside connections to what is turned on; absent = not checked (the
+// registry's backstop at stage and deploy, which never refuses what a build already passed)
+function check({ files, fromFiles = null, lane = null, outside = null }) {
   files = files || {};
   const read = (set) => {
     const out = [];
@@ -352,7 +374,7 @@ function check({ files, fromFiles = null, lane = null }) {
   const server = read(files);
   const inheritedKeys = new Set(fromFiles ? read(fromFiles).map(keyOf) : []);
   const inherited = server.filter((f) => inheritedKeys.has(keyOf(f)));
-  const violations = [...checkLayout(files), ...server.filter((f) => !inheritedKeys.has(keyOf(f))), ...checkLane(files, fromFiles, lane)];
+  const violations = [...checkLayout(files), ...server.filter((f) => !inheritedKeys.has(keyOf(f))), ...checkLane(files, fromFiles, lane), ...checkOutside(files, fromFiles, outside)];
   return { ok: violations.length === 0, violations, inherited, lane, checked: Object.keys(files).filter((r) => SERVER_FILE.test(r)) };
 }
 
@@ -372,7 +394,7 @@ function checkDir(dir, opts = {}) {
     }
   };
   walk("");
-  const v = check({ files, fromFiles: opts.fromFiles || null, lane: opts.lane || null });
+  const v = check({ files, fromFiles: opts.fromFiles || null, lane: opts.lane || null, outside: opts.outside || null });
   if (extra.length) { v.violations.unshift(...extra); v.ok = false; }
   return v;
 }
@@ -387,7 +409,9 @@ function summarize(v) {
     ? "It was approved as a look-and-feel change, but the build changed more than the screens. Send it back to be fixed, or cancel and approve it again as a functionality change so it gets the full review."
     : v.violations.every((f) => f.rule === "check-format" || f.rule === "lane-check-edited")
       ? "A check is a promise an earlier change made to the floor. A build adds its own check and never changes an older one."
-      : "Module code may only work with its own tables and the services the platform lends it.";
+      : v.violations.every((f) => f.rule === "connection-not-on")
+        ? "The build reached for an outside system that is not connected for this tool. Anetix turns those on one tool at a time; until then the tool works without it."
+        : "Module code may only work with its own tables and the services the platform lends it.";
   return `${head}\n${v.violations.map((f) => `- ${line(f)}`).join("\n")}`;
 }
 

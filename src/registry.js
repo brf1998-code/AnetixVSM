@@ -127,6 +127,14 @@ function routeMatches(route, rel) {
 
 // pagePath is what the browser reported (location.pathname). Strip the mount
 // prefix, then match the manifest routes.
+// Which version a page belongs to: a page under /staging/ is the preview (when there is one), anything else the live
+// version, and a tool that has never been live has only its preview.
+function versionForPage(row, pagePath) {
+  if (!row) return null;
+  const fromPreview = /^\/c\/[^/]+\/staging\/m\//.test(String(pagePath || ""));
+  if (fromPreview && row.staged_version) return row.staged_version;
+  return row.live_version || row.staged_version || null;
+}
 function screenFor(manifest, pagePath) {
   const rel = String(pagePath || "").replace(/^\/c\/[^/]+\/(staging\/|test\/)?m\/[^/]+/, "") || "/";
   const entries = pageEntries(manifest);
@@ -495,13 +503,16 @@ async function bootNet() {
   }
 }
 
-// Create the next version directory as a copy of the current live version.
+// Create the next version directory as a copy of the current live version, or of `base` when the change is added
+// on top of a preview that has not gone live yet (pipeline.js, "Changes join the preview").
 // The build agent's write surface is exactly this directory.
-async function createDraftVersion(company, mod) {
+async function createDraftVersion(company, mod, base = null) {
   const row = await getModule(company, mod);
   if (!row) throw new Error(`unknown module ${company}/${mod}`);
   const next = await nextVersionNumber(company, mod);
-  const files = await versionFiles(company, mod, row.live_version);
+  const from = base != null ? base : row.live_version;
+  const files = await versionFiles(company, mod, from);
+  if (base != null && !files) throw new Error(`version ${base} of ${company}/${mod} is not there to build on`);
   await insertVersion(company, mod, next, "build", null, files);
   return { version: next, dir: versionDir(company, mod, next) };
 }
@@ -544,7 +555,7 @@ async function wasEverLive(company, mod, version) {
     `SELECT 1 WHERE EXISTS (SELECT 1 FROM platform.events WHERE ref IN ($1, $4) AND (
                 (kind IN ('version_deployed','version_switched') AND detail->>'to' = $2)
              OR (kind = 'module_imported' AND detail->>'version' = $2)))
-        OR EXISTS (SELECT 1 FROM platform.build_runs WHERE company=$3 AND module=$4 AND to_version=$5 AND status IN ('deployed','rolled_back'))
+        OR EXISTS (SELECT 1 FROM platform.build_runs WHERE company=$3 AND module=$4 AND to_version=$5 AND status IN ('deployed','rolled_back') AND NOT (evidence ? 'went_live_in'))
         OR EXISTS (SELECT 1 FROM platform.schema_snapshots WHERE company=$3 AND module=$4 AND version=$5)`,
     [`${company}/${mod}`, String(version), company, mod, Number(version)]);
   return r.rows.length > 0;
@@ -789,7 +800,7 @@ function attach(app) {
 module.exports = {
   LENT_MODELS,
   locationOk, lockDown,
-  MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, loadAll, attach,
+  MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, versionForPage, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,
   unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany, moduleServices,
   mountTest, unmountTest, testMounted, testVersionMounted, wasEverLive,
