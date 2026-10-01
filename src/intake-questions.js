@@ -11,7 +11,8 @@
 //   order    [string...]                                    (stages, in order)
 //   items    [string...]                                    (up to `max` short items)
 //   attach   { note: string }                               (files live in platform.attachments)
-// A question with attach: true takes files as well as its own answer.
+// A question with attach: true takes files as well as its own answer. `why` (2026-10-01): one short line on what the
+// answer is used for, shown beside "Needed" or "Optional" above the question, so the point of each one is clear.
 
 const GROUPS = [
   { id: "floor", label: "People on the floor" },
@@ -29,45 +30,45 @@ const DEVICES = [
 ];
 
 const FIXED = [
-  { id: "name", kind: "text", required: true, multiline: false, max: 80,
+  { id: "name", why: "Shows on the board and on the tool's screens.", kind: "text", required: true, multiline: false, max: 80,
     text: "What should we call it?",
     hint: "A short name people on the floor would use. It can change later." },
-  { id: "purpose", kind: "text", required: true, multiline: true, max: 8000,
+  { id: "purpose", why: "The agent builds the tool around this day.", kind: "text", required: true, multiline: true, max: 8000,
     text: "In a sentence or two, what is it for? Walk me through a normal day with it.",
     hint: "Who picks it up first in the morning, what they do with it, what it looks like at the end of the shift." },
-  { id: "who", kind: "roles", required: true, options: GROUPS,
+  { id: "who", why: "Each group gets a screen of its own.", kind: "roles", required: true, options: GROUPS,
     text: "Who will use it?",
     hint: "Tick each group and give a rough headcount. This decides how many kinds of screen it needs." },
-  { id: "devices", kind: "devices", required: true, options: DEVICES, depends_on: "who",
+  { id: "devices", why: "Sets how big the buttons and words are on each screen.", kind: "devices", required: true, options: DEVICES, depends_on: "who",
     text: "What does each of those people have in hand when they use it?",
     hint: "A phone in a pocket, a tablet on a cart, a screen on the wall, a computer at a desk. Pick every one that applies." },
-  { id: "thing", kind: "text", required: true, multiline: false, max: 120,
+  { id: "thing", why: "The tool is a list of these.", kind: "text", required: true, multiline: false, max: 120,
     text: "What is the thing being tracked? Give it a name in your own words.",
     hint: "One word or two: the thing that moves through the stages, the thing people ask about." },
-  { id: "today", kind: "choice", required: true, multi: true, other: true, attach: true,
+  { id: "today", why: "Your names, columns and stages carry over.", kind: "choice", required: true, multi: true, other: true, attach: true,
     options: [
       { id: "whiteboard", label: "A whiteboard" }, { id: "paper", label: "A clipboard or paper" }, { id: "spreadsheet", label: "A spreadsheet" },
       { id: "program", label: "Another program" }, { id: "head", label: "In someone's head" }, { id: "none", label: "Not tracked at all" },
     ],
     text: "How is it kept track of today? Show me if you can.",
     hint: "A photo of the whiteboard or the paper, or the spreadsheet itself, tells the agent a lot: the names you use, the columns, the stages." },
-  { id: "stages", kind: "order", required: true, min: 2, max: 16, item_max: 200,
+  { id: "stages", why: "These become the steps the thing moves through.", kind: "order", required: true, min: 2, max: 16, item_max: 200,
     text: "What happens to it from start to finish? List the stages in order.",
     hint: "From the moment it first exists to the moment nobody needs to look at it again. Drag or use the arrows to put them in order." },
-  { id: "wrong", kind: "items", required: true, min: 1, max: 5, item_max: 500,
+  { id: "wrong", why: "The first version is checked against these.", kind: "items", required: true, min: 1, max: 5, item_max: 500,
     text: "What goes wrong today that this should stop?",
     hint: "Up to five things. The ones that cost time, cause arguments, or get somebody a call at home." },
-  { id: "never", kind: "text", required: true, multiline: true, max: 8000,
+  { id: "never", why: "These become rules the tool holds to.", kind: "text", required: true, multiline: true, max: 8000,
     text: "What must never happen?",
     hint: "Two people on the same thing, a stage skipped, something leaving before it is checked. These become rules." },
-  { id: "numbers", kind: "choice", required: true, multi: true, other: true, note: true,
+  { id: "numbers", why: "These go on the tool's main screen.", kind: "choice", required: true, multi: true, other: true, note: true,
     options: [
       { id: "how_many", label: "How many" }, { id: "how_long", label: "How long" }, { id: "how_late", label: "How late" },
       { id: "how_often", label: "How often" }, { id: "how_full", label: "How full" },
     ],
     text: "Which numbers would tell you it is working?",
     hint: "What you would check at the end of the week. Say it in your words in the box if the chips do not fit." },
-  { id: "works_with", kind: "choice", required: true, multi: true, other: true, names_for: ["erp", "machine", "program"],
+  { id: "works_with", why: "Decides what the tool connects to.", kind: "choice", required: true, multi: true, other: true, names_for: ["erp", "machine", "program"],
     options: [
       { id: "scanners", label: "Barcode or QR scanners" }, { id: "printer", label: "A label printer" }, { id: "spreadsheet", label: "A spreadsheet you keep" },
       { id: "erp", label: "Your ERP or scheduling system" }, { id: "machine", label: "A machine or a PLC" }, { id: "scale", label: "A scale" },
@@ -75,10 +76,10 @@ const FIXED = [
     ],
     text: "What does this need to work with that you already use?",
     hint: "The agent asks a short follow-up for each one you tick. For a system, tell me what you call it." },
-  { id: "starting_list", kind: "attach", required: false,
+  { id: "starting_list", why: "Loaded in so the tool starts full, after you see it.", kind: "attach", required: false,
     text: "Do you have a list to start from?",
     hint: "A spreadsheet of parts, locations, people, equipment, whatever the thing is. It becomes the starting data, after you see it." },
-  { id: "peers", kind: "choice", required: false, multi: true, other: false, conditional: "other_modules",
+  { id: "peers", why: "Lets it read another tool without changing it.", kind: "choice", required: false, multi: true, other: false, conditional: "other_modules",
     options: [],  // filled in per company: the live modules plus "no"
     text: "Does it need to know anything from a tool you already have?",
     hint: "It can read what another tool keeps, for example which orders are open, without changing it." },

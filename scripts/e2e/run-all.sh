@@ -46,7 +46,8 @@ stop; ( env -u SOS_ADMIN_PASSWORD SOS_BROWSER=off nohup node server.js > "$LOG/s
 run accounts-noadminvar    env -u SOS_ADMIN_PASSWORD node scripts/e2e/accounts.js noadminvar
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run accounts-browser node scripts/e2e/accounts-browser.js; }
 
-fresh; start "SOS_BROWSER=off"
+# requests, models and chamber walk the requirement gate, which is off by default since 2026-10-01: they turn it on
+fresh; start "SOS_BROWSER=off SOS_REQUIREMENT_GATE=on"
 run requests               node scripts/e2e/requests.js
 [ -z "$QUICK" ] && run requests-browser node scripts/e2e/requests-browser.js
 
@@ -72,7 +73,7 @@ run checks-nobrowser-off   env SOS_E2E_EXPECT=off node scripts/e2e/checks-nobrow
 fresh; start "SOS_CHROMIUM_PATH=$CHROME SOS_AUTO_FIX_ROUNDS=2"
 run autofix                node scripts/e2e/autofix.js
 
-fresh; start "SOS_BROWSER=off SOS_MODEL_PROPOSE=claude-sonnet-5"
+fresh; start "SOS_BROWSER=off SOS_MODEL_PROPOSE=claude-sonnet-5 SOS_REQUIREMENT_GATE=on"
 run models                 node scripts/e2e/models.js
 [ -z "$QUICK" ] && run models-browser node scripts/e2e/models-browser.js
 
@@ -88,7 +89,7 @@ run datawall               env SOS_PROMPT_LOG=$LOG/prompts.jsonl node scripts/e2
 
 # changes join the preview (2026-09-28): a change approved while a preview waits is built on top of it, Discard takes
 # out the newest, one deploy puts them all live, a new tool's preview takes changes before it has ever been live
-fresh; start "SOS_BROWSER=off"
+fresh; start "SOS_BROWSER=off SOS_REQUIREMENT_GATE=on"
 run chamber                node scripts/e2e/chamber.js
 # outside connections are off until Anetix turns them on per tool; "connect Epicor" goes to the integration team
 fresh; rm -f "$LOG/outside-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl"
@@ -155,6 +156,12 @@ run phase2                 node scripts/e2e/phase2.js
 P3="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test STRIPE_READ_KEY=rk_test_phase3 STRIPE_API_BASE=http://127.0.0.1:4555"
 fresh; start "SOS_BROWSER=off $P3"
 run phase3                 env $P3 node scripts/e2e/phase3.js
+
+# the first-time user round (2026-10-01): the requirements screen and its changes, no second stop for a requirement,
+# Review all with AI, 402 when the credit is out, "still signed in" for anetix.ai, every screen of a tool
+fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
+run firstrun               env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/firstrun.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run firstrun-browser node scripts/e2e/firstrun-browser.js; }
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js

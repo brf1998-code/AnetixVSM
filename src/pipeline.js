@@ -147,6 +147,11 @@ async function chainBelow(run) {
   return out;
 }
 
+// The requirement gate: a functionality change stopped after its requirement was written until the manager confirmed
+// it. Off since 2026-10-01 (the approval a moment before is the confirmation; the requirement still guides the build
+// and the review, and the card shows it). SOS_REQUIREMENT_GATE=on brings the stop back.
+const requirementGate = () => /^(on|1|true|yes)$/i.test(String(process.env.SOS_REQUIREMENT_GATE || ""));
+
 // ---- entry point: start a run from one or more approved proposals ----------
 async function startRun(proposalIds, opts = {}) {
   const ids = (Array.isArray(proposalIds) ? proposalIds : [proposalIds]).map(Number);
@@ -383,6 +388,15 @@ async function advance(runId) {
       items = ps.map((p, i) => ({ change: i + 1, summary: String((items[i] && items[i].summary) || p.body.split(/(?<=[.!?])\s/)[0]).slice(0, 240) }));
       await addCost(runId, cost);
       const cur0 = await getRun(runId);
+      if (!requirementGate()) {
+        // no second stop (Brendan, 2026-10-01: "nothing really changed since the requirements were just confirmed"):
+        // the manager approved the change a moment ago, so the requirement is written down for the builder and the
+        // review and the build goes straight on. The board shows it on the card as what the build follows.
+        await setRun(runId, { requirement, step: "build", status: "running", evidence: { ...cur0.evidence, req_bluf: bluf.slice(0, 400), req_items: items } });
+        await log(runId, { step: "confirm_requirement", note: "requirement written down; the build follows it (the approval was the manager's confirmation)" });
+        await record("requirement_drafted", { company, module: mod, actor: "agent", run_id: runId, proposal_id: run.proposal_id, after: requirement, detail: { bluf, items, cost_usd: cost, gate: false } });
+        return advance(runId);
+      }
       await setRun(runId, { requirement, status: "waiting", evidence: { ...cur0.evidence, req_bluf: bluf.slice(0, 400), req_items: items } });
       await log(runId, { step: "confirm_requirement", note: "requirement drafted, waiting on manager confirmation" });
       await record("requirement_drafted", { company, module: mod, actor: "agent", run_id: runId, proposal_id: run.proposal_id, after: requirement, detail: { bluf, items, cost_usd: cost } });
@@ -1004,7 +1018,7 @@ async function sweepOrphans() {
   return rows.length;
 }
 
-module.exports = {
+module.exports = { requirementGate,
   startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, AUTO_FIX_ROUNDS, autoFix, toGate,
   ownIds, chainBelow, stackedRun, joinPreview,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)

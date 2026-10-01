@@ -398,6 +398,14 @@ router.get("/api/c/:slug/board", async (req, res) => {
     try { screens[m.name] = registry.pageEntries(registry.readManifest(co.slug, m.name, m.live_version || m.staged_version)).concat([{ route: null, file: "routes.js", label: "Server logic (routes.js)" }]); }
     catch (e) { screens[m.name] = []; }
   }
+  // every screen of each tool, live and in a waiting preview, with an address to open it at: the board's "Screens"
+  // popout shows them side by side (2026-10-01). A route with a parameter gets its value from a smoke path, as the
+  // page check does (src/pageload.js screenPaths).
+  const pages = {};
+  for (const m of modules) {
+    const at = (v) => { if (v == null) return []; try { return require("./pageload").screenPaths(registry.readManifest(co.slug, m.name, v)).map((x) => ({ path: x.path, label: x.label })); } catch (e) { return []; } };
+    pages[m.name] = { live: at(m.live_version), staged: m.staged_version != null && m.staged_version !== m.live_version ? at(m.staged_version) : [] };
+  }
   const reviews = await review.listReviews(co.slug);
   const batches = (await q("SELECT * FROM platform.batches WHERE company=$1 AND run_id IS NULL ORDER BY id", [co.slug])).rows;
   const { brand: b, ...rest } = co;
@@ -406,7 +414,8 @@ router.get("/api/c/:slug/board", async (req, res) => {
   const coPublic = { ...rest, trial: await require("./kind").isTrial(co.slug) };
   const intakes = req.sosRole === "floor" ? {} : await intake.boardIntakes(co.slug);
   res.json({
-    company: coPublic, brand: brandPublic(b), icon_v: iconVersion(b), feedback, runs, modules, screens, reviews, batches, intakes,
+    company: coPublic, brand: brandPublic(b), icon_v: iconVersion(b), feedback, runs, modules, screens, pages, reviews, batches, intakes,
+    requirement_gate: pipeline.requirementGate(),   // off by default since 2026-10-01: a functionality change writes its requirement and builds
     test_floor: Boolean(co.test_floor),   // the strip shows a "Test floor" link per tool only while the company's switch is on
     campaigns: co.test_floor || runs.some((r) => r.step === "campaign" || (r.evidence && r.evidence.campaign_id)) ? await campaign.forBoard(co.slug) : {},
     boardUrl: boardUrl(req, co.slug),
@@ -440,8 +449,49 @@ router.post("/api/feedback/:id(\\d{1,9})/review", requireManager, async (req, re
     // the AI service itself refusing (no credit, a bad key, too busy) is said in plain words and marked for the admin page
     const credit = require("./credit"), kind = credit.classify(e.message);
     await credit.noteFailure(e.message, `the proposal for request #${req.params.id}`);
-    res.status(e.code === "cap" ? 429 : 500).json({ error: kind ? credit.plain(kind) : e.message });
+    res.status(e.code === "cap" ? 429 : e.status === 402 ? 402 : 500).json({ error: kind ? credit.plain(kind) : e.message });
   }
+});
+
+// "Review all with AI" (2026-10-01): the board sends the requests it shows waiting on the manager's button, for the
+// tools its filter shows. Each is checked again here: this company's, a tool's request (not one to Anetix, not a
+// new-tool request), still new, not folded into another, not being read right now, no question out and no flag
+// (those wait on their own card). The ones that pass are marked as being read at once, so their cards say so on
+// the next refresh, and drafted in the background two at a time, the same call as each card's own button. Under
+// /api/c/:slug/feedback/, which a module page's policy does not open.
+const REVIEW_ALL_MAX = 40, REVIEW_ALL_AT_ONCE = 2;
+router.post("/api/c/:slug/feedback/review-all", requireManager, express.json({ limit: "16kb" }), async (req, res) => {
+  const slug = req.params.slug;
+  const ids = [...new Set((Array.isArray((req.body || {}).ids) ? req.body.ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, REVIEW_ALL_MAX);
+  if (!ids.length) return res.status(400).json({ error: "nothing to review" });
+  try { await require("./selfserve").assertCredit(slug); }
+  catch (e) { return res.status(e.status || 402).json({ error: e.message }); }
+  const rows = (await q("SELECT id, kind, module, status, duplicate_of, arrival, question, triage FROM platform.feedback WHERE company=$1 AND id = ANY($2::int[])", [slug, ids])).rows;
+  const ok = rows.filter((f) => f.kind !== "module_request" && f.module && f.module !== "platform" && f.status === "new" && !f.duplicate_of
+    && f.arrival !== "proposing" && !(f.question && !f.question.answer) && !f.triage);
+  const claimed = [];
+  for (const f of ok) {
+    const got = (await q("UPDATE platform.feedback SET arrival='proposing' WHERE id=$1 AND status='new' AND (arrival IS NULL OR arrival <> 'proposing') RETURNING id, arrival", [f.id])).rows[0];
+    if (got) claimed.push({ id: f.id, force: Boolean(f.question || f.triage || f.arrival === "done") });
+  }
+  const who = actor(req);
+  await logEvent("review_all", slug, { asked: ids.length, started: claimed.length, by: who.name || who.role });
+  await record("review_all", { company: slug, module: null, actor: who, detail: { asked: ids, started: claimed.map((c) => c.id) } });
+  (async () => {
+    const queue = claimed.slice();
+    const one = async () => {
+      for (let f = queue.shift(); f; f = queue.shift()) {
+        try { await generateProposal(f.id, { force: f.force }); await q("UPDATE platform.feedback SET arrival='done' WHERE id=$1", [f.id]); }
+        catch (e) {
+          await q("UPDATE platform.feedback SET arrival='failed' WHERE id=$1", [f.id]).catch(() => {});
+          await require("./credit").noteFailure(e.message, `the proposal for request #${f.id}`).catch(() => {});
+          console.error(`[review-all] #${f.id}: ${e.message}`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(REVIEW_ALL_AT_ONCE, queue.length) }, one));
+  })().catch((e) => console.error("[review-all]", e.message));
+  res.json({ started: claimed.length, skipped: ids.length - claimed.length });
 });
 
 // "It is a change to the tool": a request the proposer handed to Anetix's integration team goes back to its tool's

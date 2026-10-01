@@ -89,7 +89,7 @@ async function view(intake) {
   const lastRound = (intake.rounds || [])[roundsDone - 1];
   return {
     id: intake.id, company: intake.company, feedback_id: intake.feedback_id, status: intake.status, name: intake.name, slug: intake.slug,
-    answers: intake.answers || {}, questions, attachments: files, design: intake.design || null, model: intake.model || null,
+    answers: intake.answers || {}, questions, attachments: files, design: intake.design ? { ...intake.design, items: withIds(intake.design.items || []) } : null, model: intake.model || null,
     cost_usd: Number(intake.cost_usd || 0), error: intake.error || null,
     round: state.round, round_answered: state.answered, round_total: state.total, round_done: state.done, missing: state.missing.map((m) => m.id),
     round_why: ((intake.rounds || []).find((r) => r.round === state.round) || {}).why || "",
@@ -363,11 +363,14 @@ async function generateRound(it) {
   return { round: roundNo, questions, enough: Boolean(data.enough) || !questions.length, why: why.hits.length ? "" : why.text.trim(), model, cost_usd: cost.usd, at: new Date().toISOString() };
 }
 
+// What a point of the design is about: a short tag beside it on the confirm screen, so the manager sees what each
+// point is for before reading it (2026-10-01).
+const POINT_KINDS = ["stages", "people", "screen", "rule", "number", "connection", "data", "later", "other"];
 const DESIGN_SCHEMA = {
   type: "object",
   properties: {
     bluf: { type: "string", description: "One sentence: what this module is and who it is for." },
-    items: { type: "array", minItems: 3, maxItems: 8, items: { type: "object", properties: { summary: { type: "string", description: "One sentence the manager ticks to confirm: a screen, a rule, a number, a connection, or what is left out." } }, required: ["summary"] }, description: "The points the manager must read and confirm, one sentence each." },
+    items: { type: "array", minItems: 3, maxItems: 8, items: { type: "object", properties: { summary: { type: "string", description: "One sentence the manager reads and confirms: a screen, a rule, a number, a connection, or what is left out." }, kind: { type: "string", enum: POINT_KINDS, description: "What the point is about: stages (how the thing moves), people (who uses it), screen, rule, number (a number it shows), connection, data (starting data), later (left for a later version), other." } }, required: ["summary", "kind"] }, description: "The points the manager must read and confirm, one sentence each. Together they are the requirements of the first version." },
     reference_md: { type: "string", description: "The module reference in markdown with exactly these headings, in this order: Purpose; Who uses it and where; The thing and its stages; Screens; Rules; Numbers on the board; Connections; Starting data; What Rev 1 leaves out; Change guidance. Plain words throughout. Screens: one per role, each with its single prominent action. Change guidance: which kinds of later change are look-and-feel and which change how it works." },
     screens: { type: "array", items: { type: "object", properties: { role: { type: "string" }, title: { type: "string" }, device: { type: "string" }, prominent_action: { type: "string" } }, required: ["role", "title", "device", "prominent_action"] } },
     connections: { type: "array", items: { type: "object", properties: { kind: { type: "string", enum: ["files", "scanners", "printer", "erp", "spreadsheet", "machine", "scale", "other", "peer"] }, name: { type: "string", description: "What the company calls it." }, what_for: { type: "string" }, tool_does: { type: "string", description: "What the tool connects on its own." }, person_does: { type: "string", description: "What a person has to do, or 'nothing'." } }, required: ["kind", "name", "what_for", "tool_does", "person_does"] } },
@@ -401,14 +404,119 @@ function estimateUsd(d) {
   const usd = 4 + 2 * screens + 1.5 * conns + (d.starting_data && !/^none/i.test(d.starting_data) ? 1 : 0);
   return Math.round(usd * 2) / 2;
 }
+// ---- the confirm screen's changes (2026-10-01) ------------------------------------------------------------------
+// Brendan: adjusting goes through the agent, not the raw text, and a change to one point must not reset the others.
+// Every point carries an id (p1, p2...). The manager asks for changes to named points and for things to add; the agent
+// re-issues the design, saying for each point which old one it is and whether it changed; mergeRevision then keeps
+// every point nobody asked about word for word, puts back one the agent dropped, and marks what is different
+// (changed: asked for; fit: changed to fit an asked-for change; new: added) so the manager knows what to read again.
+const withIds = (items) => items.map((p, i) => ({ id: p.id || `p${i + 1}`, ...p }));
+const REVISE_SCHEMA = (() => {
+  const d = JSON.parse(JSON.stringify(DESIGN_SCHEMA));
+  d.properties.items.maxItems = 12;
+  d.properties.items.items.properties.id = { type: "string", description: "The point's id from the current design (p1, p2, ...) when this is that point, changed or not; \"new\" for a point that was not there." };
+  d.properties.items.items.properties.changed = { type: "boolean", description: "true only when this point's wording changed." };
+  d.properties.items.items.required = ["id", "summary", "kind", "changed"];
+  return d;
+})();
+const MAX_CHANGES = 12;
+function cleanChanges(raw, items) {
+  const ids = new Set((items || []).map((p) => p.id));
+  const out = [];
+  for (const c of Array.isArray(raw) ? raw : []) {
+    const text = String((c && c.text) || "").trim().slice(0, 2000);
+    if (!text) continue;
+    const point = c && c.point != null && ids.has(String(c.point)) ? String(c.point) : null;
+    out.push({ point, text });
+  }
+  return out.slice(0, MAX_CHANGES);
+}
+function revisionText({ current, changes }) {
+  const pts = withIds(current.items || []).map((p) => `${p.id}: ${p.summary}`).join("\n");
+  const asks = changes.map((c) => {
+    if (!c.point) return `- Add: ${c.text}`;
+    const p = (current.items || []).find((x) => x.id === c.point);
+    return `- Change ${c.point} ("${p ? p.summary : ""}"): ${c.text}`;
+  }).join("\n");
+  return `The manager read the design below and asked for these changes. Make exactly these and nothing else.\n\nThe current design:\nSummary: ${current.bluf || ""}\nPoints:\n${pts}\n\nThe current reference:\n${current.reference_md || ""}\n\nThe changes:\n${asks}\n\nRules for this revision: every point the changes do not name keeps its id and its exact wording, with changed false. A named point keeps its id and gets new wording. Something to add becomes a new point (id "new") unless it plainly belongs inside a named or existing point; then change that point and mark it changed. Change a point nobody named only when a requested change cannot hold without it, and mark it changed. Remove a point only when a change asks for that. Keep the reference word for word except where a change reaches it, and keep the summary unless a change makes it wrong.`;
+}
+function mergeRevision(prevItems, outItems, changes) {
+  const prev = withIds(prevItems || []);
+  const byId = new Map(prev.map((p) => [p.id, p]));
+  const asked = new Set((changes || []).filter((c) => c.point).map((c) => c.point));
+  let n = prev.reduce((m, p) => Math.max(m, Number(String(p.id).replace(/^p/, "")) || 0), 0);
+  const used = new Set(), items = [];
+  for (const o of outItems || []) {
+    const old = byId.get(o.id);
+    if (old && !used.has(o.id)) {
+      used.add(o.id);
+      const differs = String(o.summary).trim() !== String(old.summary).trim();
+      if (differs && (asked.has(o.id) || o.changed)) items.push({ id: old.id, kind: o.kind || old.kind || "other", summary: o.summary, mark: asked.has(o.id) ? "changed" : "fit", flagged: o.flagged });
+      else items.push({ id: old.id, kind: old.kind || o.kind || "other", summary: old.summary });   // nobody asked: word for word
+    } else items.push({ id: `p${++n}`, kind: o.kind || "other", summary: o.summary, mark: "new", flagged: o.flagged });
+  }
+  // a point nobody asked about that the agent left out goes back where it was; one the manager named may go
+  const removed = [];
+  prev.forEach((p, i) => {
+    if (used.has(p.id)) return;
+    if (asked.has(p.id)) { removed.push(p.summary); return; }
+    let at = 0;
+    for (let k = i - 1; k >= 0; k--) { const j = items.findIndex((x) => x.id === prev[k].id); if (j >= 0) { at = j + 1; break; } }
+    items.splice(at, 0, { id: p.id, kind: p.kind || "other", summary: p.summary });
+  });
+  return { items: items.slice(0, 14), removed };
+}
+// fake mode: each named point says what was asked, each addition becomes a point; the rest stays as it was
+function fakeRevision({ current, changes }) {
+  const out = withIds(current.items || []).map((p) => {
+    const c = changes.find((x) => x.point === p.id);
+    return { id: p.id, kind: p.kind || "other", summary: c ? `${p.summary.replace(/\s*\(changed:.*\)$/, "")} (changed: ${c.text})` : p.summary, changed: Boolean(c) };
+  });
+  for (const c of changes.filter((x) => !x.point)) out.push({ id: "new", kind: "other", summary: c.text, changed: true });
+  const merged = mergeRevision(current.items || [], out, changes);
+  const design = { ...current, items: merged.items.map(({ flagged, ...p }) => p), removed: merged.removed, model: "fake", cost_usd: 0, at: new Date().toISOString(),
+    reference_md: `${current.reference_md || ""}\n\n**Changes asked for.** ${changes.map((c) => (c.point ? `${c.point}: ${c.text}` : `add: ${c.text}`)).join("; ")}` };
+  delete design.revising;
+  return design;
+}
+// The manager's changes from the confirm screen: one agent pass for all of them, the rest of the design kept.
+async function revise(id, rawChanges) {
+  const it = await getIntake(id);
+  if (!it || it.status !== "design" || !it.design) throw new Error("there is no design to change right now");
+  const current = { ...it.design, items: withIds(it.design.items || []) };
+  const changes = cleanChanges(rawChanges, current.items);
+  if (!changes.length) throw new Error("say what should be different first");
+  await setIntake(id, { status: "thinking", error: null, design: { ...current, revising: { count: changes.length, at: new Date().toISOString() } } });
+  (async () => {
+    try {
+      const design = await generateDesign(it, null, { revise: { current, changes } });
+      design.adjustments = current.adjustments || [];
+      design.revisions = [...(current.revisions || []), { at: new Date().toISOString(), changes }];
+      delete design.revising;
+      const cur = await getIntake(id);
+      await setIntake(id, { design, status: "design", cost_usd: Number(cur.cost_usd || 0) + Number(design.cost_usd || 0) });
+      await logEvent("intake_revised", id, { changes: changes.length, model: design.model, costUsd: design.cost_usd });
+      await record("intake_revised", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, before: JSON.stringify(current.items.map((p) => p.summary)), after: JSON.stringify(design.items.map((p) => p.summary)), detail: { changes, removed: design.removed || [], model: design.model, cost_usd: design.cost_usd } });
+    } catch (e) {
+      console.error(`intake ${id} revise failed:`, e);
+      await setIntake(id, { status: "design", design: current, error: String(e.message || e).slice(0, 500) });
+    }
+  })();
+  return getIntake(id);
+}
+
 // opts.usageKind: what the spend is filed as; false = not filed here (the head-to-head assessment, src/assess.js,
 // files its own re-runs as "assess"). The design is returned, never written: think() and adjust() write it.
+// opts.revise: { current: the design on screen, changes: [{ point: "p2" | null, text }] }: the manager's changes to
+// named points and the things to add (the confirm screen, 2026-10-01). The model re-issues the design; mergeRevision
+// keeps every point nobody asked about exactly as it was.
 async function generateDesign(it, adjustedText, opts = {}) {
   const cost = { usd: 0 };
+  const rev = opts.revise || null;
   if (agent.fakeMode()) {
     const ctx = await contextFor(it);
-    await agent.atWall("structured:module_design", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText + (adjustedText ? `\n\n${adjustedText}` : ""), blocks: ctx.blocks });
-    const d = fakeDesign(it, adjustedText);
+    await agent.atWall("structured:module_design", { company: it.company, model: it.model, system: ctx.system, prompt: ctx.answersText + (adjustedText ? `\n\n${adjustedText}` : "") + (rev ? `\n\n${revisionText(rev)}` : ""), blocks: ctx.blocks });
+    const d = rev ? fakeRevision(rev) : fakeDesign(it, adjustedText);
     return { ...d, ...splitHandoffs(d, it.slug ? await require("./connections").allowedKinds(it.company, it.slug) : []) };
   }
   await agent.assertUnderCap(it.company, { started: true, fairUse: true });   // the credit was checked when the intake began; a paying site's fair-use line is checked at each round (src/selfserve.js)
@@ -416,22 +524,25 @@ async function generateDesign(it, adjustedText, opts = {}) {
   const model = await intakeModel(it);
   const outsideOn = it.slug ? await require("./connections").allowedKinds(it.company, it.slug) : [];
   const { data, costUsd } = await agent.runStructured({
-    model, company: it.company, blocks: ctx.blocks, schema: DESIGN_SCHEMA, toolName: "module_design", maxTokens: 12000,
+    model, company: it.company, blocks: ctx.blocks, schema: rev ? REVISE_SCHEMA : DESIGN_SCHEMA, toolName: "module_design", maxTokens: 12000,
     system: ctx.system,
-    prompt: `Write the design summary for this new module, deliberately small: the thing and its stages, one screen per role with its single prominent action, the few rules that must hold, the numbers on the board, the connections it needs, the starting data, and what the first version leaves for later. It will be built as plain screens on top of a list of the thing; nothing here should describe how it is built. The module is called "${it.name}".\n\nThe manager's answers, and any files they attached are above:\n\n${ctx.answersText}\n\n${ctx.modulesText}\n\nWhat the tool can connect to: ${CONNECTION_KINDS}.\n\n${outsideDesignBrief(outsideOn)}${adjustedText ? `\n\nThe manager edited an earlier version of the reference text. Their edit is the authority; keep every change they made and re-issue the whole design to match it:\n\n${adjustedText}` : ""}`,
+    prompt: `Write the design summary for this new module, deliberately small: the thing and its stages, one screen per role with its single prominent action, the few rules that must hold, the numbers on the board, the connections it needs, the starting data, and what the first version leaves for later. It will be built as plain screens on top of a list of the thing; nothing here should describe how it is built. The module is called "${it.name}".\n\nThe manager's answers, and any files they attached are above:\n\n${ctx.answersText}\n\n${ctx.modulesText}\n\nWhat the tool can connect to: ${CONNECTION_KINDS}.\n\n${outsideDesignBrief(outsideOn)}${adjustedText ? `\n\nThe manager edited an earlier version of the reference text. Their edit is the authority; keep every change they made and re-issue the whole design to match it:\n\n${adjustedText}` : ""}${rev ? `\n\n${revisionText(rev)}` : ""}`,
   });
   cost.usd += costUsd || 0;
   const rewrite = await rewriteWith(cost);
   const bluf = await plain.scrub(String(data.bluf || ""), { allow: ctx.allow, rewrite });
-  const items = [];
-  for (const i of (data.items || []).slice(0, 8)) { const s = await plain.scrub(String(i.summary || ""), { allow: ctx.allow, rewrite }); if (s.text.trim()) items.push({ summary: s.text.trim(), flagged: s.hits }); }
+  let items = [];
+  for (const i of (data.items || []).slice(0, rev ? 12 : 8)) { const s = await plain.scrub(String(i.summary || ""), { allow: ctx.allow, rewrite }); if (s.text.trim()) items.push({ id: rev ? String(i.id || "new") : null, changed: Boolean(i.changed), kind: POINT_KINDS.includes(i.kind) ? i.kind : "other", summary: s.text.trim(), flagged: s.hits }); }
+  const merged = rev ? mergeRevision(rev.current.items || [], items, rev.changes) : null;
+  if (merged) items = merged.items;
   const ref = await plain.scrub(String(data.reference_md || ""), { allow: ctx.allow, rewrite });
   const flags = [];
   if (bluf.hits.length) flags.push({ where: "the one-line summary", words: bluf.hits });
   for (const [i, s] of items.entries()) if (s.flagged && s.flagged.length) flags.push({ where: `point ${i + 1}`, words: s.flagged });
   if (ref.hits.length) flags.push({ where: "the full reference", words: ref.hits });
   const design = {
-    name: it.name, slug: it.slug, bluf: bluf.text.trim(), items: items.map((s) => ({ summary: s.summary })), reference_md: ref.text.trim(),
+    name: it.name, slug: it.slug, bluf: bluf.text.trim(), items: merged ? items.map(({ flagged, changed, ...p }) => p) : withIds(items.map((s) => ({ summary: s.summary, kind: s.kind }))), reference_md: ref.text.trim(),
+    ...(merged ? { removed: merged.removed } : {}),
     screens: data.screens || [], ...splitHandoffs({ connections: data.connections || [], handoffs: data.handoffs || [] }, outsideOn), starting_data: data.starting_data || "none", leaves_out: data.leaves_out || [], change_guidance: data.change_guidance || "",
     flags, model, cost_usd: cost.usd, at: new Date().toISOString(),
   };
@@ -465,11 +576,11 @@ function fakeDesign(it, adjustedText) {
   const design = {
     name: it.name, slug: it.slug, bluf: `${it.name} tracks ${thing} through ${stages.length} stages for ${roles.join(", ") || "the floor"}. (fake mode)`,
     items: [
-      { summary: `${thing} moves through: ${stages.join(", ")}.` },
-      { summary: `One screen per role: ${screens.map((s) => s.role).join(", ")}.` },
-      { summary: `Rule: ${String(a.never || "none").slice(0, 120)}` },
-      { summary: `Connections: ${connections.map((c) => c.name).join(", ") || "none"}.` },
-      { summary: "Rev 1 leaves out reports and long history; those come through feedback." },
+      { id: "p1", kind: "stages", summary: `${thing} moves through: ${stages.join(", ")}.` },
+      { id: "p2", kind: "screen", summary: `One screen per role: ${screens.map((s) => s.role).join(", ")}.` },
+      { id: "p3", kind: "rule", summary: `Rule: ${String(a.never || "none").slice(0, 120)}` },
+      { id: "p4", kind: "connection", summary: `Connections: ${connections.map((c) => c.name).join(", ") || "none"}.` },
+      { id: "p5", kind: "later", summary: "Rev 1 leaves out reports and long history; those come through feedback." },
     ],
     reference_md, screens, connections, starting_data: "none", leaves_out: ["reports", "long history"], change_guidance: "Look-and-feel versus how it works.",
     flags: [], model: "fake", cost_usd: 0, at: new Date().toISOString(), adjustments: [],
@@ -489,7 +600,7 @@ async function boardIntakes(company) {
     out[it.id] = {
       id: it.id, feedback_id: it.feedback_id, status: it.status, name: it.name, slug: it.slug, cost_usd: Number(it.cost_usd || 0), error: it.error,
       round: st.round, round_answered: st.answered, round_total: st.total, round_done: st.done, rounds_generated: (it.rounds || []).length,
-      why: last ? last.why : "", bluf: it.design ? it.design.bluf : null, estimate_usd: it.design ? it.design.estimate_usd : null, flags: it.design ? (it.design.flags || []).length : 0,
+      why: last ? last.why : "", bluf: it.design ? it.design.bluf : null, points: it.design ? (it.design.items || []).length : 0, estimate_usd: it.design ? it.design.estimate_usd : null, flags: it.design ? (it.design.flags || []).length : 0,
       run_id: (it.run_ids || []).slice(-1)[0] || null,
       updated_at: it.updated_at,
     };
@@ -501,7 +612,7 @@ async function boardIntakes(company) {
 const router = express.Router();
 const json = express.json({ limit: "1mb" });
 const bigJson = express.json({ limit: `${Math.ceil(attachments.MAX_BYTES * 1.4 / 1048576) + 1}mb` });
-const fail = (res, e, code = 400) => res.status(e.missing ? 409 : code).json({ error: e.message, missing: e.missing });
+const fail = (res, e, code = 400) => res.status(e.missing ? 409 : e.status === 402 ? 402 : code).json({ error: e.message, missing: e.missing, ...(e.code === "credit_out" ? { code: e.code } : {}) });
 
 router.post("/api/c/:slug/intakes", requireManager, json, async (req, res) => {
   try {
@@ -527,6 +638,9 @@ router.post("/api/intakes/:id(\\d{1,9})/next", requireManager, json, async (req,
 router.post("/api/intakes/:id(\\d{1,9})/adjust", requireManager, json, async (req, res) => {
   try { res.json(await view(await adjust(Number(req.params.id), (req.body || {}).text))); }
   catch (e) { fail(res, e); }
+});
+router.post("/api/intakes/:id(\\d{1,9})/revise", requireManager, json, async (req, res) => {
+  try { res.json(await view(await revise(Number(req.params.id), (req.body || {}).changes))); } catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/confirm", requireManager, freshPin, json, async (req, res) => {
   try { res.json(await view(await confirm(Number(req.params.id)))); }
@@ -574,4 +688,4 @@ router.get("/api/attachments/:id(\\d{1,9})", requireManager, async (req, res) =>
   res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
 });
 
-module.exports = { router, create, answer, next, think, adjust, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief };
+module.exports = { router, create, answer, next, think, adjust, revise, mergeRevision, cleanChanges, withIds, POINT_KINDS, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief };

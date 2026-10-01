@@ -102,6 +102,21 @@ async function main() {
   // addresses and nothing else; any other origin gets no CORS headers and the browser refuses to read the answer.
   app.options("/login", selfserve.loginCors);
   app.post("/login", selfserve.loginCors, express.json(), auth.loginHandler);
+  // Is this browser still signed in here? anetix.ai's pages ask it (src/auth.js currentSession), so a person who wanders
+  // back to the front door is offered their board, not a sign-in box. Same site, so the cookie rides along; the same
+  // CORS as /login, so only anetix.ai can read the answer. Says the company's name and where the board is, nothing else.
+  app.options("/login/session", selfserve.loginCors);
+  app.get("/login/session", selfserve.loginCors, async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    try {
+      const s = await auth.currentSession(req);
+      if (!s) return res.json({ signed_in: false });
+      if (s.role === "admin") return res.json({ signed_in: true, role: "admin", board: "/admin", name: "Anetix admin" });
+      const co = (await q("SELECT name FROM platform.companies WHERE slug=$1", [s.company])).rows[0];
+      if (!co) return res.json({ signed_in: false });
+      res.json({ signed_in: true, role: s.role, board: s.enroll ? `/c/${s.company}/enroll` : `/c/${s.company}/`, name: co.name });
+    } catch (e) { res.json({ signed_in: false }); }
+  });
   // a new demo's one sign-in straight from anetix.ai's set-up form, on to the authenticator setup (src/tickets.js, 3.8)
   app.get("/login/ticket", auth.ticketHandler);
   // a passkey sign-in (src/passkeys.js): the same CORS as /login, since anetix.ai's wall offers it too

@@ -23,11 +23,13 @@
 //   feedback_filed, feedback_closed
 //   proposal_drafted (agent), proposal_edited (before/after), proposal_approved, proposal_declined
 //   requirement_drafted (agent), requirement_confirmed (before = drafted, after = confirmed)
+//   review_all (the manager sent every waiting request to the proposer: detail.asked, detail.started)
 //   build_finished (agent summary), build_summarized (platform plain summary), check_verdict (gate or reviewer)
 //   run_fixed, run_overridden, run_retried, run_cancelled
 //   deployed, rolled_back, version_switched
 //   review_started, review_findings (a system review)
-//   intake_answered, intake_round, intake_design, intake_adjusted (before/after), intake_confirmed, intake_abandoned
+//   intake_answered, intake_round, intake_design, intake_adjusted (before/after), intake_revised (the points before/after,
+//   the changes asked for in detail), intake_confirmed, intake_abandoned
 //   doc_saved (before/after an agent doc), doc_deleted, models_changed
 //   label_set (the checks log), chat_question, chat_answer (a module's chat persona)
 const { q, pool } = require("./db");

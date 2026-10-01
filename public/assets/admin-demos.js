@@ -23,11 +23,11 @@
   // the record's kinds in plain words, for the process view
   const KIND = {
     feedback_filed: "Filed a request", feedback_closed: "Closed a request", proposal_drafted: "AI drafted a proposal", proposal_edited: "Edited the proposal",
-    proposal_approved: "Approved the build", proposal_declined: "Declined", requirement_drafted: "AI wrote the requirement", requirement_confirmed: "Confirmed the requirement",
+    proposal_approved: "Approved the build", proposal_declined: "Declined", requirement_drafted: "AI wrote the requirement", requirement_confirmed: "Confirmed the requirement", review_all: "Sent every waiting request to the AI",
     build_finished: "Build finished", build_summarized: "Build summarized", check_verdict: "Checks said", run_fixed: "Sent findings back", run_overridden: "Overrode a check",
     run_retried: "Retried the build", run_cancelled: "Cancelled the build", deployed: "Put it live", rolled_back: "Rolled back", version_switched: "Switched version",
     review_started: "Started a system review", review_findings: "System review findings", intake_answered: "Answered a new-tool question", intake_round: "AI asked more questions",
-    intake_design: "AI wrote the design", intake_adjusted: "Adjusted the design", intake_confirmed: "Approved the new tool", intake_abandoned: "Withdrew the new tool",
+    intake_design: "AI wrote the design", intake_adjusted: "Adjusted the design", intake_revised: "Asked for changes to the design", intake_confirmed: "Approved the new tool", intake_abandoned: "Withdrew the new tool",
     manager_done: "Marked done", manager_little_left: "Said a little is left", question_asked: "AI asked a question", question_answered: "Answered the AI's question",
     duplicate_linked: "Folded into an earlier request", chat_question: "Asked the chat", chat_answer: "Chat answered", doc_saved: "Edited an agent doc",
   };

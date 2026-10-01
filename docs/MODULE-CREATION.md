@@ -72,6 +72,11 @@ The tile is the status and the way in; the popout is where the real input happen
 - Opens from Continue on the tile. Full screen on a phone or tablet, a large centered dialog on a desk, the board dimmed behind it.
 - One question per screen: the question, a one-line hint, the suggested answers as chips, a free-text box, an Attach button where the question allows one. Next and Back, a progress line ("7 of 12"), and the round named at the top ("Your answers", "Fable's questions", "The design").
 - Every answer saves the moment it is given. Close (X or Escape) at any point; the tile shows where it left off and Continue reopens at that screen. Two people in the same intake: last save wins, and the tile names who saved last.
+- **Since 2026-10-01 (docs/FEATURES.md, "The first-time user round"):** the design gate is "Confirm the requirements":
+  numbered points with a tag each, "Change this" under each point and "+ Add something missing" (sent to the agent in
+  one pass that keeps every other point word for word), and one "I've read all N points" tick, shown once the end of
+  the list has been on screen, in place of a box per point. "Adjust the text" is gone from the screen. The paragraph
+  below is how it was first built.
 - The design gate is the last screens of the same popout: the BLUF with the check boxes, then the full text (with Adjust turning it into an editor), then the estimate and Approve build. Confirm stays disabled until every box is ticked, as on the requirement gate. This is a deliberate exception (Brendan, 2026-09-17) to the rule that gates live on the tile: change builds keep their requirement gate on the tile, module creation puts it in the popout because the summary is long and the person is already in there. Do not move it back for consistency.
 - The setup walkthrough at the deploy gate opens in the same popout style from the In Progress tile: the checklist, Test buttons, the IT note with Copy.
 - New UI piece in `public/assets/`, platform code. The existing board panels (Adjust, Versions, the QR card) stay as they are for now; if the popout proves better for the requirement gate too, that is a separate change.

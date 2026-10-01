@@ -45,6 +45,7 @@
   /* module filter: the title of each module card is a toggle; "All modules" resets */
   .modcard .tog, .modall { background:none; border:none; color:#fff; border-radius:6px; padding:3px 6px; font-weight:800; font-size:12.5px; cursor:pointer; font-family:inherit; margin:0; min-height:0; display:inline-flex; align-items:center; gap:6px; }
   .modcard .tog::before, .modall::before { content:""; width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.35); flex:none; }
+  .modcard .tog.solo::before { display:none; } .modcard .tog.solo { text-decoration:underline; text-underline-offset:3px; padding-left:0; }
   .modcard.on .tog::before, .modall.on::before { background:#7ed39a; }
   .modcard.off { opacity:.5; }
   .modcard.off:hover { opacity:.85; }
@@ -64,6 +65,39 @@
   .vpanel h3 .x { margin-left:auto; cursor:pointer; color:var(--steel); font-weight:400; }
   .vpanel p.hint { color:var(--steel); font-size:12.5px; margin:0 0 8px; line-height:1.45; }
   .vrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:7px 0; border-top:1px solid var(--line); }
+  /* every screen of a tool at once (2026-10-01, first cut): small live copies side by side, tap one to go there */
+  .scr-back { position:fixed; inset:0; background:rgba(28,36,46,.6); z-index:19000; display:flex; align-items:center; justify-content:center; padding:18px; }
+  .scr-box { background:#fff; border-radius:14px; width:100%; max-width:1180px; max-height:calc(100vh - 36px); display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,.35); }
+  .scr-head { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid var(--line); }
+  .scr-head b { font-size:15px; flex:1 1 auto; }
+  .scr-head .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .scr-head .seg button { border:none; border-radius:0; margin:0; min-height:32px; padding:5px 12px; background:#fff; color:var(--ink); font-weight:700; font-size:12.5px; }
+  .scr-head .seg button.on { background:var(--navy); color:#fff; }
+  .scr-head .seg button.on.amber { background:var(--amber); }
+  .scr-head .x { margin:0; min-height:32px; }
+  .scr-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:14px; padding:16px; overflow:auto; align-items:start; }
+  .scr-tile { display:block; text-decoration:none; color:var(--ink); border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--fog); transition:box-shadow .15s, border-color .15s; }
+  .scr-tile:hover, .scr-tile:focus { border-color:var(--navy); box-shadow:0 4px 14px rgba(31,58,95,.18); outline:none; }
+  .scr-tile .lab { display:block; padding:8px 10px; font-weight:700; font-size:13px; background:#fff; border-top:1px solid var(--line); line-height:1.3; }
+  .scr-tile .lab small { display:block; color:var(--steel); font-weight:400; font-size:11.5px; margin-top:2px; }
+  .scr-frame { position:relative; overflow:hidden; background:#fff; }
+  .scr-frame iframe { position:absolute; top:0; left:0; border:0; transform-origin:0 0; pointer-events:none; background:#fff; }
+  .scr-frame.phone { background:var(--fog); }
+  .scr-frame.phone .shell { position:absolute; top:8px; bottom:0; left:50%; transform:translateX(-50%); overflow:hidden; border-radius:10px 10px 0 0; box-shadow:0 0 0 1px var(--line); background:#fff; }
+  .scr-empty { padding:30px 16px; color:var(--steel); text-align:center; }
+  @media (max-width: 640px) {
+    .scr-back { padding:0; } .scr-box { max-height:none; height:100%; border-radius:0; }
+    .scr-grid { grid-template-columns:1fr 1fr; gap:10px; padding:12px; }
+    .scr-tile .lab { font-size:12px; }
+  }
+  /* sample data being written (2026-10-01): a turning wheel the moment Fill is pressed, a bar that moves, the time so far */
+  .swait { display:flex; gap:12px; align-items:flex-start; background:var(--amberSoft); border-radius:10px; padding:12px 14px; margin:2px 0 10px; color:var(--ink); }
+  .swait .wheel { width:22px; height:22px; flex:none; border:3px solid var(--amber); border-right-color:transparent; border-radius:50%; animation:spin .8s linear infinite; margin-top:1px; }
+  .swait b { display:block; font-size:14px; margin-bottom:3px; } .swait .hint { margin:0 !important; }
+  .sbar { height:6px; background:#fff; border-radius:4px; overflow:hidden; margin-top:8px; position:relative; }
+  .sbar i { position:absolute; top:0; bottom:0; left:0; background:var(--amber); border-radius:4px; transition:width .9s linear; }
+  .sbar.loose i { width:35%; animation:sbar 1.4s ease-in-out infinite; }
+  @keyframes sbar { from { left:-35%; } to { left:100%; } }
   .vrow .vn { font-weight:800; min-width:44px; } .vrow .vs { color:var(--steel); flex:1 1 260px; font-size:12.5px; }
   .vrow .live { background:var(--green); color:#fff; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; }
   .vrow button { border:1px solid var(--line); background:#f6f8fa; color:var(--ink); border-radius:7px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
@@ -191,6 +225,8 @@
   .req details { margin-top:6px; white-space:normal; } .req details summary { cursor:pointer; font-weight:700; color:var(--navy); font-size:12px; }
   .req details .full { white-space:pre-wrap; margin-top:6px; font-size:12.5px; }
   .req .gate { font-size:11.5px; color:var(--steel); margin-top:6px; white-space:normal; }
+  .req .full { white-space:pre-wrap; margin-top:6px; font-size:12.5px; }
+  .req .item.readall { border:2px solid var(--green); border-radius:8px; padding:7px 9px; margin-top:8px; cursor:pointer; background:#eef6ec; }
   select, textarea { font-family:inherit; font-size:12.5px; border:1px solid var(--line); border-radius:7px; padding:6px; }
   textarea { width:100%; min-height:90px; }
   .edit { margin-top:8px; display:grid; gap:6px; }
@@ -272,7 +308,7 @@
     <div id="reviews"></div>
     <div class="coltabs" id="coltabs" aria-label="Which column to show"></div>
     <div class="cols">
-      <div class="col c-new"><h2>Feedback <span class="n" id="n-new">0</span></h2><div id="col-new"></div></div>
+      <div class="col c-new"><h2>Feedback <span class="n" id="n-new">0</span></h2><div id="reviewall"></div><div id="col-new"></div></div>
       <div class="col c-reviewing"><h2>Reviewing <span class="n" id="n-reviewing">0</span></h2><div id="together"></div><div id="col-reviewing"></div></div>
       <div class="col c-in_progress"><h2>In progress <span class="n" id="n-in_progress">0</span></h2><div id="col-in_progress"></div></div>
       <div class="col c-done"><h2>Done and declined <span class="n" id="n-done">0</span></h2><div id="col-done"></div></div>
@@ -309,7 +345,7 @@ let EDITING = null;            // proposal id being adjusted, "req:<runId>" whil
 const OPEN_STOPS = new Set();   // stopped builds whose "and N more" is open; kept across the 4 s redraw
 const OPEN_ASKED = new Set();   // cards whose "asked N times" list is open; kept across the 4 s redraw
 const OPEN_BATCH = new Set();   // batch tiles whose "See the N changes" is open; kept across the 4 s redraw
-const CHECKED = new Set();     // "runId:i" boxes the manager has ticked at the requirement gate (survives the 4s reload)
+const CHECKED = new Set();     // "runId:all": the manager ticked "I've read it" at the requirement gate (survives the 4s reload)
 const OPEN_MORE = new Set();    // cards whose "more" is open; kept across the 4 s redraw
 const OPEN_FOLDS = new Set();   // every other fold on a card (the full requirement, what a check saw); kept across the 4 s redraw
 let MODOPEN = false;           // phone: the Modules list in the band is unfolded (kept across the 4 s redraw)
@@ -488,6 +524,16 @@ function renderBusy() {
   el.style.display = PENDING.size ? "inline-block" : "none";
   document.getElementById("global-busy-text").textContent = PENDING.size ? [...PENDING.values()][0] : "";
 }
+// The way back from the refill page (2026-10-01): this board's address, and the open new-tool popout if there is one,
+// so anetix.ai's "Back to your board" lands where the manager left off, still signed in. anetix.ai takes only a path
+// under this company's board (www/server.js backPath), never an address of its own choosing.
+function refillUrl(url) {
+  if (!url) return url;
+  const u = new URL(location.href);
+  const open = window.Intake && Intake.current && Intake.current();
+  if (open) u.searchParams.set("intake", open);
+  return url + (url.includes("?") ? "&" : "?") + "back=" + encodeURIComponent(u.pathname + u.search);
+}
 // A run refused because the credit is used up comes back as an error naming the top-up page (selfserve.assertCredit).
 // Wherever this page (or the new-module popout, same window) reports an error with alert(), that one is turned into
 // a question that takes a manager straight to anetix.ai to add more.
@@ -495,7 +541,7 @@ function renderBusy() {
   const plain = window.alert.bind(window);
   window.alert = function (msg) {
     const m = /credit is used up[\s\S]*?(https?:\/\/\S+\/credit(?:\?t=[\w.-]+)?)/.exec(String(msg || ""));
-    if (m && MGR()) { if (confirm("Your AI credit is used up, so this cannot run. Everything built so far stays.\n\nAdd credit on anetix.ai now?")) location.href = m[1]; return; }
+    if (m && MGR()) { if (confirm("Your AI credit is used up, so this cannot run. Everything you built and answered stays, and you come back to this same spot after adding credit.\n\nAdd credit on anetix.ai now?")) location.href = refillUrl(m[1]); return; }
     if (m) return plain("The AI credit is used up, so this cannot run. Ask your manager to add credit.");
     return plain(msg);
   };
@@ -537,7 +583,38 @@ function renderFirstTool() {
   const el = document.getElementById("firsttool"); if (!el) return;
   const open = (DATA.feedback || []).some(f => f.kind === "module_request" && !["declined", "done"].includes(f.status));
   if (!MGR() || DATA.modules.length || open) { el.innerHTML = ""; return; }
-  el.innerHTML = `<div class="firsttool" id="firsttool-card"><div class="grow"><b>Build your first tool</b><p>Say in plain words what your floor needs. You answer 12 questions about how the work runs, the AI designs the tool, and you check the design. Then it is built and tested, and you try it in a preview before it goes live.</p></div><button class="go big" onclick="Intake.start()">Build your first tool</button></div>`;
+  el.innerHTML = `<div class="firsttool" id="firsttool-card"><div class="grow"><b>Build your first tool</b><p>Say in plain words what your floor needs. You answer 12 questions about how the work runs, the AI writes down what it understood, and you confirm it. Then it is built and tested, and you try it in a preview before it goes live.</p></div><button class="go big" onclick="Intake.start()">Build your first tool</button></div>`;
+}
+// Review all with AI (2026-10-01, a first-time user: "I wish there was a button to review all feedbacks with AI at
+// once"): one panel at the top of the Feedback column for the tools the filter shows. It sends every request there
+// that is waiting on the manager's button; a request the proposer is reading right now, one with a question out or
+// one it flagged waits on that and is left alone (its own card has Propose anyway).
+function reviewable() {
+  return DATA.feedback.filter(f => f.kind !== "module_request" && f.status === "new" && f.module && f.module !== "platform" && visible(f.module)
+    && f.arrival !== "proposing" && !(f.question && !f.question.answer) && !FLAG_WORDS[f.triage] && !f.duplicate_of);
+}
+function renderReviewAll() {
+  const box = document.getElementById("reviewall"); if (!box) return;
+  const list = MGR() ? reviewable() : [];
+  if (list.length < 2) { box.innerHTML = ""; return; }
+  const busy = PENDING.has("reviewall") ? "busy" : "";
+  const tools = [...new Set(list.map(f => f.module))];
+  const where = tools.length === 1 ? ((DATA.modules.find(m => m.name === tools[0]) || {}).title || tools[0]) : `${tools.length} tools`;
+  box.innerHTML = `<div class="together reviewall ${busy}" data-key="reviewall">${pendingHtml("reviewall")}<b>${list.length} requests waiting on review${SEL ? ` (${esc(where)})` : ""}</b>
+    <button class="primary" id="reviewall-go" onclick="reviewAll()">Review all ${list.length} with AI</button>
+    <div class="meta">The AI drafts a proposal for each, a few at a time; each lands in Reviewing for you to approve or decline. Requests it is already reading, or waiting on an answer, are left as they are.</div></div>`;
+}
+async function reviewAll() {
+  const ids = reviewable().map(f => f.id);
+  if (!ids.length) return;
+  PENDING.set("reviewall", "Sending them to the AI"); renderBusy(); renderReviewAll();
+  try {
+    const r = await fetch(`/api/c/${SLUG}/feedback/review-all`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) alert(j.error || "could not start the reviews");
+  } catch (e) { alert("Could not reach the server: " + e.message); }
+  PENDING.delete("reviewall"); renderBusy();
+  await load();
 }
 function renderTogether() {
   const box = document.getElementById("together");
@@ -566,40 +643,45 @@ function stepsHtml(run) {
     if (i < idx || run.status === "deployed") cls = "done";
     else if (i === idx) cls = run.status === "failed" ? "fail" : "now";
     const spin = (i === idx && run.status === "running") ? '<span class="pulse"></span>' : "";
-    return `<div class="step"><span class="dot ${cls}"></span>${spin}${STEP_LABEL[s] || s}</div>`;
+    const label = s === "confirm_requirement" && !(DATA && DATA.requirement_gate) ? "Writing down what it should do" : (STEP_LABEL[s] || s);
+    return `<div class="step"><span class="dot ${cls}"></span>${spin}${label}</div>`;
   }).join("") + "</div>";
 }
 
-// The requirement gate. Three layers so it actually gets read: one BLUF line,
-// one short line per change with a check box, and the full text behind "See
-// the full requirement". Confirm stays greyed until every box is ticked.
-// Adjust opens the full text for editing before confirming.
+// The requirement gate, only while SOS_REQUIREMENT_GATE is on (off since 2026-10-01: the approval is the
+// confirmation, and the card shows the requirement the build follows, reqShownHtml). Three layers so it gets read:
+// one BLUF line, one short numbered line per change, the full text behind "See the full requirement"; one "I've read
+// all N" tick opens Confirm (the same as the new-tool screen). Adjust opens the full text for editing before confirming.
 function reqHtml(run, single) {
   const ev = run.evidence || {};
   const items = (ev.req_items && ev.req_items.length) ? ev.req_items : [{ change: 1, summary: String(run.requirement || "").split(/(?<=[.!?])\s/)[0] }];
   const bluf = ev.req_bluf || (single ? items[0].summary : `${items.length} changes built as one.`);
   const editing = EDITING === "req:" + run.id;
-  const all = items.every((_, i) => CHECKED.has(run.id + ":" + i));
+  const all = CHECKED.has(run.id + ":all");
   let h = `<div class="req" id="req-${run.id}"><div class="bluf">${esc(bluf)}</div>`;
-  h += items.map((it, i) => `<label class="item"><input type="checkbox" ${CHECKED.has(run.id + ":" + i) ? "checked" : ""} onchange="tickReq(${run.id}, ${i}, this.checked)"><span><b>${items.length > 1 ? (it.change || i + 1) + ". " : ""}</b>${esc(it.summary)}</span></label>`).join("");
+  h += items.map((it, i) => `<div class="item"><span><b>${items.length > 1 ? (it.change || i + 1) + ". " : ""}</b>${esc(it.summary)}</span></div>`).join("");
   if (editing) h += `<textarea id="reqedit-${run.id}" style="margin-top:8px;min-height:160px">${esc(run.requirement)}</textarea>`;
   else h += fold("req:" + run.id, "See the full requirement", `<div class="full">${esc(run.requirement)}</div>`);
-  h += `<div class="gate">${all ? "Every change checked." : "Tick each change to confirm you read it; then the build can start."}</div></div>`;
+  h += `<label class="item readall"><input type="checkbox" ${all ? "checked" : ""} onchange="tickReq(${run.id}, this.checked)"><span><b>I've read ${items.length === 1 ? "it" : `all ${items.length}`}</b></span></label></div>`;
   if (MGR()) {
     if (editing) h += `<button class="go" ${all ? "" : "disabled"} onclick="confirmReq(${run.id}, true)">Save and build</button><button class="quiet" onclick="EDITING=null;load()">Cancel edit</button>`;
-    else h += actions("req:" + run.id, `<button class="go" id="reqgo-${run.id}" ${all ? "" : "disabled"} title="${all ? "" : "tick every change first"}" onclick="confirmReq(${run.id}, false)">Confirm requirement and build</button>`,
+    else h += actions("req:" + run.id, `<button class="go" id="reqgo-${run.id}" ${all ? "" : "disabled"} title="${all ? "" : "tick I've read it first"}" onclick="confirmReq(${run.id}, false)">Confirm requirement and build</button>`,
       [`<button class="quiet" onclick="EDITING='req:${run.id}';load()">Adjust the requirement</button>`, `<button class="no" onclick="if(confirm('Cancel this build? The proposals go back to Reviewing.'))act('/api/runs/${run.id}/cancel')">Cancel</button>`]);
   }
   return h;
 }
-function tickReq(runId, i, on) {
-  if (on) CHECKED.add(runId + ":" + i); else CHECKED.delete(runId + ":" + i);
-  const run = DATA.runs.find(r => r.id === runId); const ev = (run && run.evidence) || {};
-  const n = (ev.req_items && ev.req_items.length) || 1;
-  const all = [...Array(n).keys()].every(k => CHECKED.has(runId + ":" + k));
-  const go = document.getElementById("reqgo-" + runId); if (go) go.disabled = !all;
-  const box = document.getElementById("req-" + runId); const gate = box && box.querySelector(".gate");
-  if (gate) gate.textContent = all ? "Every change checked." : "Tick each change to confirm you read it; then the build can start.";
+function tickReq(runId, on) {
+  if (on) CHECKED.add(runId + ":all"); else CHECKED.delete(runId + ":all");
+  const go = document.getElementById("reqgo-" + runId); if (go) go.disabled = !on;
+}
+// What a functionality build follows, on its card while it builds and waits (2026-10-01, the gate off): the same three
+// layers, read only, folded so the card stays short.
+function reqShownHtml(run) {
+  const ev = run.evidence || {};
+  if (!run.requirement || run.lane !== "functionality") return "";
+  const items = ev.req_items || [];
+  const body = `${ev.req_bluf ? `<div class="bluf">${esc(ev.req_bluf)}</div>` : ""}${items.length > 1 ? items.map((it, i) => `<div class="item"><span><b>${it.change || i + 1}.</b> ${esc(it.summary)}</span></div>`).join("") : ""}<div class="full">${esc(run.requirement)}</div>`;
+  return fold("reqshown:" + run.id, "What the build follows", `<div class="req">${body}</div>`, "margin-top:6px");
 }
 function confirmReq(runId, edited) {
   const body = {};
@@ -613,7 +695,7 @@ function editForm(fb) {
   return `<div class="edit">
     <label>Proposal text (what the agent builds from)</label>
     <textarea id="eb-${fb.proposal_id}">${esc(fb.proposal_body)}</textarea>
-    <label>Kind</label><select id="ec-${fb.proposal_id}"><option value="ui" ${fb.proposal_class === "ui" ? "selected" : ""}>UI change (build straight away)</option><option value="functionality" ${fb.proposal_class === "functionality" ? "selected" : ""}>Functionality change (confirm requirement first)</option></select>
+    <label>Kind</label><select id="ec-${fb.proposal_id}"><option value="ui" ${fb.proposal_class === "ui" ? "selected" : ""}>UI change (build straight away)</option><option value="functionality" ${fb.proposal_class === "functionality" ? "selected" : ""}>Functionality change (${DATA.requirement_gate ? "confirm requirement first" : "a requirement is written first"})</option></select>
     <label>Screen this change lands on</label><select id="et-${fb.proposal_id}">${opts}</select>
     <div><button class="go" onclick="submitEdit(${fb.proposal_id}, 'approve')">Approve build</button><button class="quiet" onclick="submitEdit(${fb.proposal_id}, 'save')">Save</button><button class="quiet" onclick="EDITING=null;load()">Cancel</button></div>
   </div>`;
@@ -852,6 +934,7 @@ function batchCard(run) {
   }
   if (["running", "waiting", "failed"].includes(run.status)) html += stepsHtml(run);
   if (run.step === "confirm_requirement" && run.status === "waiting") html += reqHtml(run, false);
+  else if (!["deployed", "rolled_back", "cancelled"].includes(run.status)) html += reqShownHtml(run);
   if (run.step === "campaign" && run.status !== "failed") html += campaignHtml(run);
   else if (run.status === "running" && MGR()) html += actions(pk, "", [abortBtn(run)]);
   if (run.step === "await_deploy" && run.status === "waiting") {
@@ -894,6 +977,7 @@ function gateTopHtml(run, fb) {
   return `<div class="gatetop"><div class="gnext">Next step: ${TRIAL() ? "make it live" : "put it on the floor"}</div>`
     + `<button class="go" onclick="deployRun(${run.id})">${goLiveLabel(isModule, run)}</button><div class="approvenote">${goLiveNote()}</div>`
     + `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${preview}</a>`
+    + ((((DATA.pages || {})[run.module] || {}).staged || []).length > 1 ? `<br><a class="demo" href="#" onclick="openScreens('${esc(run.module)}','staged');return false">See every screen of the preview</a>` : "")
     + (TRIAL() ? `<br><a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a>` : "")
     + `</div>`;
 }
@@ -927,7 +1011,7 @@ function requestCard(fb) {
       html += `<div class="outcome">${esc(fb.outcome || "Built and live.")}</div>`;
       const modRow = DATA.modules.find(m => m.name === fb.module);
       if (modRow && modRow.live_version) html += `<a class="demo" href="/c/${SLUG}/m/${esc(fb.module)}/" target="_blank">Open ${esc(toolName(fb))}</a>`;
-      html += actions(pk, "", [openBtn("The design", "quiet")]);
+      html += actions(pk, "", [openBtn("The requirements", "quiet")]);
       return html + "</div>";
     }
     if (run) html += runBlock(fb, run);
@@ -943,11 +1027,11 @@ function requestCard(fb) {
       html += `<div class="stat"><span class="pulse"></span>The agent is reading the answers${it.rounds_generated ? " and writing the design" : ""}. A minute or two.</div>` + actions(pk, "", [openBtn("Open", "quiet"), withdraw]);
       break;
     case "design":
-      html += `<div class="stat"><b>Design ready to review.</b> ${esc(it.bluf || "")}${it.flags ? ` (${it.flags} line${it.flags === 1 ? "" : "s"} flagged for wording)` : ""}</div>`;
-      html += actions(pk, openBtn("Review the design", "go"), [withdraw]);
+      html += `<div class="stat"><b>Requirements ready to confirm${it.points ? `: ${it.points} points to read` : ""}.</b> ${esc(it.bluf || "")}${it.flags ? ` (${it.flags} line${it.flags === 1 ? "" : "s"} flagged for wording)` : ""}</div>`;
+      html += actions(pk, openBtn("Confirm the requirements", "go"), [withdraw]);
       break;
     case "confirmed":
-      html += `<div class="stat"><b>Design confirmed.</b> ${esc(it.bluf || "")}${it.error ? ` <span style="color:var(--red)">${esc(it.error)}</span>` : " The build has not started."}</div>` + actions(pk, MGR() ? `<button class="go" onclick="act('/api/intakes/${fb.intake_id}/build')">Build it now</button>` : "", [openBtn("Open the design", "quiet"), withdraw]);
+      html += `<div class="stat"><b>Requirements confirmed.</b> ${esc(it.bluf || "")}${it.error ? ` <span style="color:var(--red)">${esc(it.error)}</span>` : " The build has not started."}</div>` + actions(pk, MGR() ? `<button class="go" onclick="act('/api/intakes/${fb.intake_id}/build')">Build it now</button>` : "", [openBtn("Open the requirements", "quiet"), withdraw]);
       break;
     case "failed":
       html += `<div class="fail-note">The agent did not finish: ${esc(it.error || "unknown problem")}. Open it and try again.</div>` + actions(pk, openBtn("Open and try again"), [withdraw]);
@@ -974,6 +1058,7 @@ function runBlock(fb, run) {
   }
   html += stepsHtml(run);
   if (run.step === "confirm_requirement" && run.status === "waiting") html += reqHtml(run, true);
+  else if (!["deployed", "rolled_back", "cancelled"].includes(run.status)) html += reqShownHtml(run);
   if (run.step === "campaign" && run.status !== "failed") html += campaignHtml(run);
   else if (run.status === "running" && MGR()) html += actions(pk, "", [abortBtn(run)]);
   if (run.step === "await_deploy" && run.status === "waiting") {
@@ -1215,6 +1300,54 @@ async function openVersions(mod) {
 }
 function closeVersions() { VMOD = null; document.getElementById("vpanel").innerHTML = ""; }
 
+// ---- every screen at once (2026-10-01, first cut) ---------------------------
+// From two first-time users: a tool's screens were hard to understand one link at a time. "Screens" (and a lone
+// tool's name) opens a popout with a small live copy of every screen side by side, live or in the waiting preview;
+// tapping one goes to that screen. The copies are the real pages in frames (same site; module pages allow being
+// framed by the board), shrunk to fit, not clickable themselves. A screen whose label says phone, operator, station
+// or tablet is shown at phone width. Brendan expects to try a few layouts here.
+let SCR = null;   // { mod, which: "live" | "staged" }
+function pagesOf(mod) { const p = (DATA.pages || {})[mod] || {}; return (p.live && p.live.length ? p.live : p.staged) || []; }
+function openScreens(mod, which) {
+  const p = (DATA.pages || {})[mod] || {};
+  const m = DATA.modules.find(x => x.name === mod) || {};
+  const can = { live: Boolean(m.live_version && (p.live || []).length), staged: Boolean(m.staged_version && (p.staged || []).length) };
+  which = which && can[which] ? which : can.live ? "live" : "staged";
+  SCR = { mod, which };   // the popout sits outside the board's columns, so the 4 s refresh never redraws it
+  const list = (which === "live" ? p.live : p.staged) || [];
+  const base = which === "live" ? `/c/${SLUG}/m/${mod}` : `/c/${SLUG}/staging/m/${mod}`;
+  const href = (path) => `${base}/${String(path || "/").replace(/^\//, "")}`;
+  const phoneish = (label) => /phone|operator|station|tablet|floor/i.test(label || "");
+  const seg = can.live && can.staged ? `<span class="seg"><button class="${which === "live" ? "on" : ""}" onclick="openScreens('${esc(mod)}','live')">Live v${m.live_version}</button><button class="${which === "staged" ? "on amber" : ""}" onclick="openScreens('${esc(mod)}','staged')">Preview v${m.staged_version}</button></span>` : which === "staged" ? `<span class="chip" style="background:var(--amber);color:#fff">Preview, not live</span>` : "";
+  const tiles = list.map((x, i) => `<a class="scr-tile" href="${esc(href(x.path))}" data-screen="${i}"><div class="scr-frame ${phoneish(x.label) ? "phone" : ""}" data-w="${phoneish(x.label) ? 400 : 1280}" data-h="${phoneish(x.label) ? 760 : 820}">${phoneish(x.label) ? `<div class="shell"><iframe loading="lazy" tabindex="-1" aria-hidden="true" src="${esc(href(x.path))}"></iframe></div>` : `<iframe loading="lazy" tabindex="-1" aria-hidden="true" src="${esc(href(x.path))}"></iframe>`}</div><span class="lab">${esc(x.label)}<small>${esc(x.path)}</small></span></a>`).join("");
+  let root = document.getElementById("scr-root");
+  if (!root) { root = document.createElement("div"); root.id = "scr-root"; document.body.appendChild(root); }
+  root.innerHTML = `<div class="scr-back" onclick="if(event.target===this)closeScreens()"><div class="scr-box" role="dialog" aria-modal="true" aria-label="Every screen of ${esc(m.title || mod)}">
+    <div class="scr-head"><b>${esc(m.title || mod)}: ${list.length} screens</b>${seg}<button class="quiet x" onclick="closeScreens()">Close</button></div>
+    ${list.length ? `<div class="scr-grid">${tiles}</div>` : `<div class="scr-empty">No screens to show yet.</div>`}</div></div>`;
+  fitScreens();
+  document.addEventListener("keydown", screensKey);
+}
+// each copy is drawn at its real size and shrunk to the tile's width
+function fitScreens() {
+  for (const f of document.querySelectorAll("#scr-root .scr-frame")) {
+    const w = Number(f.dataset.w), h = Number(f.dataset.h), tile = f.clientWidth || 260;
+    const phone = f.classList.contains("phone");
+    const scale = phone ? Math.min(1, (tile * 0.62) / w) : tile / w;
+    f.style.height = Math.round((phone ? h * scale + 8 : h * scale)) + "px";
+    const fr = f.querySelector("iframe");
+    fr.style.width = w + "px"; fr.style.height = h + "px"; fr.style.transform = `scale(${scale})`;
+    const shell = f.querySelector(".shell"); if (shell) { shell.style.width = Math.round(w * scale) + "px"; }
+  }
+}
+window.addEventListener("resize", () => { if (SCR) fitScreens(); });
+function screensKey(e) { if (e.key === "Escape") closeScreens(); }
+function closeScreens() {
+  SCR = null;
+  const root = document.getElementById("scr-root"); if (root) root.innerHTML = "";
+  document.removeEventListener("keydown", screensKey);
+}
+
 // ---- sample data (a demo company's tools, src/sample.js) -------------------
 // The agent fills a tool with a made-up week of work, in the live tool and in a waiting build's preview; Clear takes
 // out exactly those rows. Paid from the demo's credit, shown only as a percentage.
@@ -1242,9 +1375,19 @@ function drawSample(j) {
   ].filter(Boolean).join(" &nbsp; ");
   const btn = (label, fn, cls = "") => `<button class="${cls}" onclick="${fn}">${label}</button>`;
   let body;
-  if (f && f.status === "writing") {
-    body = `<p><b>Writing sample data for ${esc(title)}...</b></p><p class="hint">The agent is reading the tool and making up a week of work for it. This usually takes about a minute. You can leave this open or come back to it.</p>`;
-    STIMER = setTimeout(() => SMOD === j.module && openSample(j.module, true), 3000);
+  if (j.starting || (f && f.status === "writing")) {
+    // the wait is shown, not described (2026-10-01): a wheel, a bar that fills over the usual minute and then keeps
+    // moving, and the seconds so far. Nothing on the panel can be pressed twice while it runs.
+    const secs = j.starting ? 0 : Math.max(0, Math.round((Date.now() - new Date(f.created_at).getTime()) / 1000));
+    const pct = Math.max(4, Math.min(92, Math.round(secs / 75 * 100)));
+    const clock = secs < 60 ? `${secs} s` : `${Math.floor(secs / 60)} min ${secs % 60} s`;
+    body = `<div class="swait" data-sample="writing"><span class="wheel" aria-hidden="true"></span><div style="flex:1">
+        <b>${j.starting ? "Starting the agent..." : `Writing sample data for ${esc(title)}...`}</b>
+        <p class="hint">${j.starting ? "One moment." : `The agent is reading the tool and making up a week of work for it. Usually about a minute; ${clock} so far. You can close this and come back, it keeps going.`}</p>
+        <div class="sbar ${j.starting || secs > 75 ? "loose" : ""}"><i style="width:${j.starting || secs > 75 ? "" : pct + "%"}"></i></div>
+      </div></div>
+      <div class="vrow"><button disabled>Fill with sample data</button></div>`;
+    if (!j.starting) STIMER = setTimeout(() => SMOD === j.module && openSample(j.module, true), 2000);
   } else if (f && f.status === "in") {
     const where = f.in_live && f.in_preview ? "in the live tool and the preview" : f.in_preview ? "in the preview (they go live with the build)" : "in the live tool";
     body = `<p style="margin:0 0 8px">${esc(f.story || "")}</p>
@@ -1264,9 +1407,12 @@ function drawSample(j) {
 async function fillSample(replace) {
   const mod = SMOD; if (!mod) return;
   if (replace && !confirm("Replace the sample data with a fresh set? The sample rows there now are taken out first. Anything you added stays.")) return;
-  const r = await fetch(`/api/c/${SLUG}/modules/${mod}/sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ replace: Boolean(replace) }) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) { alert(j.error || "failed"); return; }
+  clearTimeout(STIMER);
+  drawSample({ module: mod, starting: true });   // the wheel turns before the round trip, so the press is seen at once
+  const r = await fetch(`/api/c/${SLUG}/modules/${mod}/sample`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ replace: Boolean(replace) }) }).catch(() => null);
+  const j = r ? await r.json().catch(() => ({})) : { error: "Could not reach the server." };
+  if (SMOD !== mod) return;
+  if (!r || !r.ok) { await openSample(mod, true); alert(j.error || "failed"); return; }
   drawSample(j);
 }
 async function clearSample() {
@@ -1408,8 +1554,8 @@ async function load() {
   const goOffer = gl && gl.url && !gl.line;
   if (DATA.credit && (DATA.credit.out || DATA.credit.balance_usd <= 0)) {   // a manager reads out, an admin the dollars (src/companyview.js)   // nothing runs any more: say so plainly, with the one way on
     cl.style.display = "flex"; cl.className = "creditout";
-    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? " A refill pays for the AI your builds use and keeps free demos going for other plants." : " Ask your manager to add credit."}${goOffer ? ` Or go live: one price for the site, set by its size, with no credit to run out of.${gl.from ? ` ${esc(gl.from.line)}` : ""}` : ""} Questions: <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</p></div>${MGR() ? `<div class="acts"><a class="go" href="${esc(DATA.credit.topup_url)}">Add credit on anetix.ai</a>${goOffer ? `<a class="go alt" id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}</div>` : ""}`;
-  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(DATA.credit.topup_url)}" title="A refill pays for the AI your builds use and keeps free demos going for other plants">Add credit</a>` : ""}${goOffer ? `<span style="margin-left:6px">·</span><a id="golive-go" href="${esc(gl.url)}" title="${esc(gl.from ? gl.from.line : "")}">${esc(goText)}</a>${gl.from ? `<span class="glfrom">${esc(gl.from.short)}</span>` : ""}` : ""}`; }
+    cl.innerHTML = `<div class="grow"><b>${DATA.company && DATA.company.demo ? "Your demo's" : "This company's"} AI credit is used up.</b><p>Everything you built stays and keeps working on the floor. Nothing new is proposed or built until more credit is added.${MGR() ? " A refill pays for the AI your builds use and keeps free demos going for other plants." : " Ask your manager to add credit."}${goOffer ? ` Or go live: one price for the site, set by its size, with no credit to run out of.${gl.from ? ` ${esc(gl.from.line)}` : ""}` : ""} Questions: <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</p></div>${MGR() ? `<div class="acts"><a class="go" href="${esc(refillUrl(DATA.credit.topup_url))}">Add credit on anetix.ai</a>${goOffer ? `<a class="go alt" id="golive-go" href="${esc(gl.url)}">${esc(goText)}</a>` : ""}</div>` : ""}`;
+  } else if (DATA.credit) { cl.style.display = "block"; cl.className = "creditline " + DATA.credit.level; cl.innerHTML = `AI credit: ${esc(DATA.credit.line)}${MGR() ? `<a href="${esc(refillUrl(DATA.credit.topup_url))}" title="A refill pays for the AI your builds use and keeps free demos going for other plants">Add credit</a>` : ""}${goOffer ? `<span style="margin-left:6px">·</span><a id="golive-go" href="${esc(gl.url)}" title="${esc(gl.from ? gl.from.line : "")}">${esc(goText)}</a>${gl.from ? `<span class="glfrom">${esc(gl.from.short)}</span>` : ""}` : ""}`; }
   else cl.style.display = "none";
   const gline = document.getElementById("goliveline");
   if (gl && gl.line) { gline.style.display = "block"; gline.classList.toggle("warn", Boolean(gl.declined)); gline.innerHTML = `${esc(gl.line)}${gl.url ? `<a href="${esc(gl.url)}">${esc(goText)}</a>` : ""}`; }
@@ -1446,6 +1592,7 @@ function render() {
     m.live_version ? `<a href="/c/${SLUG}/m/${m.name}/">Open live</a>` : `<span class="v">being built</span>`,
     m.staged_version ? `<a class="amber" href="/c/${SLUG}/staging/m/${m.name}/">Preview v${m.staged_version}</a>` : "",
     DATA.test_floor && m.live_version ? `<a class="violet" href="/c/${SLUG}/test/m/${m.name}/" title="The test floor: every tool together on data that is not the floor's. Nothing done there is real.">Test floor${m.test_version ? ` v${m.test_version}` : ""}</a>` : "",
+    (m.live_version || m.staged_version) && pagesOf(m.name).length > 1 ? `<button class="vbtn" onclick="openScreens('${m.name}')" title="Every screen of this tool at once; tap one to go there">Screens</button>` : "",
     m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}">Diagrams</a>` : "",
     MGR() && m.live_version ? `<button class="vbtn" onclick="openVersions('${m.name}')">Versions</button>` : "",
     MGR() && TRIAL() && (m.live_version || m.staged_version) ? `<button class="vbtn" onclick="openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
@@ -1463,7 +1610,7 @@ function render() {
     DATA.modules.map(m => {
       const on = visible(m.name);
       return `<span class="modcard ${many ? (on ? "on" : "off") : ""}">
-      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this tool's feedback" : "Show only this tool's feedback") : "Show this tool's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span><span class="links">${links(m)}</span></span>`;
+      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this tool's feedback" : "Show only this tool's feedback") : "Show this tool's feedback too"}">${esc(m.title)}</button>` : pagesOf(m.name).length > 1 ? `<button class="tog solo" onclick="openScreens('${m.name}')" title="Every screen of this tool at once">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span><span class="links">${links(m)}</span></span>`;
     }).join("") +
     (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new tool in plain words; the AI designs it, you confirm, then it is built">+ New tool</button>` : "") +
     (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one tool" : SEL.size + " tools"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "");
@@ -1495,6 +1642,7 @@ function render() {
   }
   renderReviews();
   renderTogether();
+  renderReviewAll();
   renderFirstTool();
   const empty = SEL ? '<div class="empty">Nothing here for the tools shown.</div>' : '<div class="empty">Nothing here.</div>';
   const counts = {};

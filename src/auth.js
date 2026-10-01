@@ -352,6 +352,27 @@ function middleware(req, res, next) {
   // a company's password changed since this cookie was signed: sign in again
   generationOf(session.company).then((gen) => (gen && gen === session.gen ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
 }
+// Who this browser is signed in as, without sending it anywhere: the same checks the middleware makes, answered as data
+// (null for nobody). anetix.ai asks it (GET /login/session, server.js) so its front door can say "you are still signed
+// in" instead of showing a sign-in box to someone whose session here is alive (2026-10-01: a demo manager left the
+// refill page for anetix.ai's front page, met its sign-in and took it for being signed out).
+async function currentSession(req) {
+  if (OPEN) return { role: "admin", company: null };
+  const s = verify(parseCookies(req)[COOKIE]);
+  if (!s) return null;
+  if (s.role === "admin") {
+    if (!s.account) return (await accounts.legacyOpen()) ? { role: "admin", company: null } : null;   // the shared admin password, while it still opens admin
+    const st = await accounts.sessionState(s.account);
+    return st && st.role === "admin" && st.status === "active" && st.generation === s.gen ? { role: "admin", company: null } : null;
+  }
+  if (s.role === "manager" && s.account) {
+    const st = await accounts.sessionState(s.account);
+    if (!st || st.role !== "manager" || st.company !== s.company || st.status !== "active" || st.generation !== s.gen) return null;
+    return { role: "manager", company: s.company, enroll: !st.enrolled && !accounts.twoFaOff() };
+  }
+  const gen = await generationOf(s.company);
+  return gen && gen === s.gen ? { role: s.role, company: s.company } : null;
+}
 // All a manager account may reach before its authenticator is set up: its company's enrollment page, who-am-I, the
 // two setup calls, and the way out.
 // The two passkey calls are here since 2026-09-27 (the launch audit 1.3): a manager may set up a passkey as the first
@@ -561,7 +582,7 @@ async function loginMode(slug) {
 }
 
 module.exports = { startAccountSession,
-  middleware, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
+  middleware, currentSession, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
   setPasswords, accountsOnly, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, ticketHandler, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

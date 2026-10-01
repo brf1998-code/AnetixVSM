@@ -317,7 +317,9 @@ async function assertCredit(company, opts = {}) {
   if (opts.started) return;
   if (await require("./agreements").needsAcceptance(company)) throw new Error("Anetix's Terms of Service need the manager's agreement first: tick the box at the top of the board to keep building.");
   const c = await credit(company); if (!c) return;
-  if (c.balance_usd <= 0) throw new Error(`this company's AI credit is used up. Add credit at ${c.topup_url} to keep going.`);
+  // 402 with the refill page on it (2026-10-01): a refused start says so in words a person reads, never as a 500, and
+  // the board sends the manager to the refill page with the way back to the exact spot they were on
+  if (c.balance_usd <= 0) throw Object.assign(new Error(`this company's AI credit is used up. Add credit at ${c.topup_url} to keep going.`), { status: 402, code: "credit_out", topup_url: c.topup_url });
 }
 
 // The message a person gets with their pin (Brendan sends it; nothing here sends mail), the same whichever way the pin

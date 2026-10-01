@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-09-29)
+# Symbiotic OS: Workspace Guide (current as of 2026-10-01)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -158,6 +158,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Outside connections are off until Anetix turns them on, one tool at a time; integration requests (2026-09-28)
 - Migrations run exactly what was checked (2026-09-28)
 - Every company is the same, and a boot brings it up to date (2026-09-29)
+- The first-time user round (2026-10-01)
 
 ## What this is
 
@@ -177,7 +178,8 @@ the manager's view of the same line over eight weeks, with Jonah.
 1. **In-app loop (costs API money, runs on the live instance).** Floor feedback
    on a module page → the proposer reads it on arrival (or, with that
    switched off, the manager clicks Review with AI) → proposal → approve →
-   agent builds a new module version into staging → manager deploys. This is
+   agent builds a new module version into staging → manager deploys (a functionality change writes its
+   requirement on the way and builds to it, with no second stop unless `SOS_REQUIREMENT_GATE=on`). This is
    what participants exercise. It only touches module files stored in the
    database (`platform.module_versions.files`). Several proposals can be
    batched into one run (`POST /api/runs/batch`); one run is active per module
@@ -363,6 +365,9 @@ judged), `SOS_CHECK_TIMEOUT_MS` (default 10000, per check step),
 `SOS_AUTO_PROPOSE_PER_HOUR` (default 40: how many requests a company's
 proposer reads on arrival in an hour; past it they wait for the manager's
 button),
+`SOS_REQUIREMENT_GATE` (default off since 2026-10-01: a functionality change writes its requirement and builds
+straight on, the approval being the confirmation; `on` brings back the stop where the manager confirms the
+requirement first, see "The first-time user round"),
 `SOS_MODULE_RUNNER` (default `auto`; `process` = module code in its own
 process or not mounted; `inline` = the old in-platform way),
 `SOS_MODULE_TIMEOUT_MS` (30000, one module request),

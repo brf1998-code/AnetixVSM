@@ -2809,7 +2809,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the full requirement", and Confirm stays disabled until every box is
   ticked (ticks live in the page's `CHECKED` set so the 4s reload keeps
   them). "Adjust the requirement" opens the full text for editing before
-  confirming (`POST /api/runs/:id/confirm {requirement}`).
+  confirming (`POST /api/runs/:id/confirm {requirement}`). **Off by default since 2026-10-01** (see "The first-time
+  user round"): the requirement is still written and the build follows it, but there is no stop; `SOS_REQUIREMENT_GATE=on`
+  brings the stop back, now with one "I've read all N" tick instead of a box per change.
 - **Abort and orphans**: `POST /api/runs/:id/cancel` now also works on a
   `running` run: the build agent's AbortController (`pipeline.ACTIVE`) is
   fired, the run is marked cancelled before the agent error lands
@@ -3159,3 +3161,85 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   an early demo and an early order, leaves one being switched on and a paid site alone, names a company with no
   sign-in, and a second run changes nothing); `scripts/e2e/sample.js` now proves a paid site has no sample data (it
   proved the Demo Company had none). The rule for what comes next is in CLAUDE.md's hard rules.
+
+- **The first-time user round (2026-10-01).** Two LGO classmates tried a demo for the first time and Brendan brought
+  back their notes, broken into eight changes with him. In the order they were asked for:
+  1. *The requirements screen says what it is.* The end of "+ New tool" was "The design" with a box per point. It is
+     now "Confirm the requirements": a short line on what to do (read each point, say what is wrong under it, then
+     confirm), the points numbered, each with a tag for what it is about (How it moves, Who uses it, A screen, A rule,
+     A number it shows, What it works with, Starting data, Left for later), and "N points to read" in the head. The
+     design schema asks the model for each point's `kind` (`intake.POINT_KINDS`); every point carries an id (`p1`...,
+     `intake.withIds`, applied on read so designs from before have them). The board's card reads "Requirements ready
+     to confirm: N points to read" and its button "Confirm the requirements".
+  2. *Changes go through the agent, not the text* (Adal; Morgan doubled down). "Adjust the text", the raw editor of the
+     whole reference that did not match the points on screen, is gone from the screen (`POST /api/intakes/:id/adjust`
+     still answers). Under each point "Change this" takes a sentence ("What should be different?"); "+ Add something
+     missing" takes one more; they collect on the screen (kept in the browser per request until sent, so a locked
+     phone loses nothing) and "Send N changes to the agent" sends them in ONE pass: `POST /api/intakes/:id/revise
+     {changes: [{point: "p2" | null, text}]}` (at most 12, blank ones dropped, an unknown point read as an addition).
+     Brendan's rule: it must not reset the other requirements. The model gets the current points with their ids and
+     the changes, and answers each point with its old id and whether it changed (`REVISE_SCHEMA`); then
+     `intake.mergeRevision` keeps every point nobody named WORD FOR WORD (an unasked rewording is undone, a dropped
+     point put back where it was), lets a named point go only when it was named, gives additions new ids, and marks
+     what is different: "Changed as you asked", "Changed to fit" (the model said a requested change needed it), "New".
+     A point named for removal is listed under "Taken out as you asked". The revision is kept on the design
+     (`design.revisions`) and on the record (`intake_revised`: the points before and after, the changes). While it
+     works the screen says every other point stays as it was. On a failure the design on screen is put back.
+  3. *One tick, after the end.* "Lets go confirm all until it starts to become a problem", with the middle option:
+     instead of a box per point, one "I've read all N points" tick shows once the end of the list has been on screen
+     (at once when the list fits), and only it opens Approve build. A new version (after changes) is read again: the
+     tick starts unticked. With changes waiting, Approve is replaced by "Send N changes".
+     **The board's requirement gate, reassessed** (Brendan: "nothing really changed since the requirements were just
+     confirmed"): a functionality change no longer stops after its requirement is written. The approval a moment
+     before is the confirmation; the requirement is still written (it guides the builder and the cross-check, and
+     its "how we will know it works" becomes the change's check) and the card shows it under "What the build follows".
+     The step reads "Writing down what it should do". `SOS_REQUIREMENT_GATE=on` restores the stop (`pipeline.
+     requirementGate`), with the one-tick treatment; the board's answer carries `requirement_gate`. The record marks
+     such a requirement `gate: false`.
+  4. *The fixed questions explain themselves* (the agent's rounds left as they are, "we will see if we need to expand
+     that"). Each fixed question has a `why` (`src/intake-questions.js`): one short line on what the answer is used
+     for, beside a "Needed" or "Optional" chip above the question. A dot per question under the head (green answered,
+     a red ring for a needed one left behind, a ring on the current one; tap to go there), and the head counts what is
+     still needed ("4 of 13 answered · 9 needed").
+  5. *Review all with AI*, for the tools the filter shows, skipping cards still under review: one panel at the top of
+     the Feedback column ("Review all N with AI") when two or more requests wait on the manager's button. `POST
+     /api/c/:slug/feedback/review-all {ids}` checks each again (this company's, a tool's request, still new, not folded,
+     not being read, no question out, no flag), marks the ones that pass as being read at once (their cards say so) and
+     drafts them in the background two at a time with the same call as the card's own button; a failure marks the card
+     as the arrival reader does. Out of credit: 402 and nothing marked. Event and record `review_all`. Under
+     `/api/c/:slug/feedback/`, which a module page's policy does not open.
+  6. *Sample data shows the wait.* Pressing Fill draws a turning wheel and "Starting the agent..." before the round trip
+     and locks the button; then "Writing sample data...", a bar that fills over the usual minute and then keeps moving,
+     and the seconds so far, refreshed every 2 s.
+  7. *Running out of credit no longer looks like being signed out.* What happened (Railway logs, 2026-09-30 16:41 UTC):
+     the demo's sample data fill was refused for credit (a 500, as it happened), the manager went to the refill page,
+     12 s later left it for anetix.ai's front page (the ANETIX mark, or a second Back), met the welcome page's sign-in
+     and signed in again. The product session was alive the whole time; anetix.ai cannot see it, so it showed a
+     sign-in. Now: a credit refusal is 402 with `code: credit_out` and the refill page named, never a 500
+     (`selfserve.assertCredit`; the intake, Review with AI and sample routes pass the 402 on). The board's refill links
+     and its credit question carry `?back=` (the board's own address, plus `?intake=<id>` when a new-tool popout is
+     open, `refillUrl`). On anetix.ai (www repo) the refill page leads with "&larr; Back to your board. You are still
+     signed in there. Nothing you built or answered is lost.", its ANETIX mark goes there too, and the spot rides
+     through Stripe (success and cancel) to the thanks ("Back to your board"); `backPath` takes only a path under that
+     company's board (no host, no `//`, no backslash, no spaces, 300 characters). And the front door asks: `GET
+     /login/session` (before the sign-in middleware, the same CORS as `/login`: only anetix.ai can read it; same site,
+     so the cookie rides along) answers `{signed_in, board, name}` from `auth.currentSession` (the middleware's checks
+     as data, no redirect). The wall, the welcome page and the page about the product ask it; signed in, a box says
+     "You are still signed in to <company>. Nothing was lost." with Go to your board, the header's sign-in link
+     becomes Go to your board and the page's sign-in lines hide (`.still-in .signin-only`). The admin's preview does
+     not ask.
+  8. *Every screen at once* (first cut; Brendan expects to experiment with the layout). "Screens" on a tool with two or
+     more screens (and a lone tool's name) opens a popout of small live copies of every screen side by side, live or
+     the waiting preview (a Live / Preview switch when both), each labeled with its name and address; tapping one goes
+     to that screen. A waiting build's card has "See every screen of the preview". The copies are the real pages in
+     frames (module pages allow framing by the board: `frame-ancestors 'self'`), drawn at their size (1280 wide, or 400
+     for a screen whose label says phone, operator, station, tablet or floor) and shrunk to the tile; not clickable
+     themselves. The board's answer carries `pages[module] = {live, staged}` with the address of each screen, a route's
+     parameter filled from the tool's checks as the page check does (`pageload.screenPaths`).
+  Tests: `scripts/e2e/firstrun.js` (46: the points, a revision that keeps the rest word for word, the merge on its own,
+  the gate off, Review all and what it skips, 402 for a new tool, sample data, Review with AI and Review all, `/login/
+  session` for anetix.ai only, the screens on the board's answer); `scripts/e2e/firstrun-browser.js` (31: the dots and
+  chips, the requirements screen end to end on a desk and a phone, the wheel before the round trip, Review all, the
+  Screens popout and the tap); www `test-www.js` (+8) and `e2e.js` (+11: the way back, a bad back dropped, the spot
+  through Stripe). Every other suite runs with the gate off as it ships, except requests, models and chamber, which walk the gate
+  and turn it on in run-all.sh.
