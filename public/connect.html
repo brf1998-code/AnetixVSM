@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anetix · Connect an app</title>
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/anetix-touch-180.png">
+<style>
+  /* The consent page of the connector sign-in (2026-10-05, src/mcpauth.js, docs/MCP.md): an AI app asked to be let
+     in to an MCP address, and the person signed in here says yes or no. Same card as the account setup page. */
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --green:#2e7d4f; --red:#b3261e; --amber:#a15c00; }
+  body { font-family:system-ui,sans-serif; background:var(--fog); color:var(--ink); margin:0; padding:24px 16px 64px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:20px; max-width:560px; margin:0 auto; font-size:14.5px; line-height:1.5; }
+  h1 { font-size:20px; margin:0 0 6px; }
+  .sub { color:var(--steel); }
+  ul { margin:6px 0 0; padding-left:20px; } li { margin:3px 0; }
+  button { border:none; border-radius:7px; padding:10px 16px; font-size:14px; font-weight:700; cursor:pointer; margin:10px 6px 0 0; min-height:40px; font-family:inherit; }
+  .go { background:var(--green); color:#fff; } .primary { background:var(--navy); color:#fff; } .quiet { background:#e5e9ee; color:var(--ink); }
+  button:disabled { opacity:.55; cursor:default; }
+  input { font-family:inherit; font-size:16px; border:1px solid var(--line); border-radius:7px; padding:9px; width:100%; max-width:320px; box-sizing:border-box; }
+  .note { margin-top:12px; padding:9px 12px; border-radius:9px; background:var(--fog); font-size:13.5px; border-left:4px solid var(--steel); }
+  .note.bad { border-left-color:var(--red); } .note.warn { border-left-color:var(--amber); }
+  .fail { color:var(--red); font-weight:700; margin-top:10px; display:none; }
+  .who { margin:10px 0 0; padding:10px 12px; border:1px solid var(--line); border-radius:9px; }
+  .who b { font-size:15.5px; }
+  a { color:var(--navy); }
+</style>
+<script src="/assets/passkey.js"></script>
+</head>
+<body>
+  <div class="card" id="card"><p class="sub">One moment.</p></div>
+<script>
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const card = document.getElementById("card");
+const REQ = new URLSearchParams(location.search).get("req") || "";
+const HEAD = `<h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:9px">Connect an app</h1>`;
+// what each address lets an app do, in the words the person agreeing reads
+const CAN = {
+  admin: ["Read demos, sites, loop health, AI spend, requests to Anetix and build runs, across every company.", "It cannot change anything.", "It never gets a record from a company's tools."],
+};
+let INFO = null, busy = false;
+function stop(message) { card.innerHTML = `${HEAD}<div class="note bad">${esc(message)}</div><p class="sub" style="margin-top:12px">You can close this page.</p>`; }
+async function load() {
+  if (!REQ) return stop("This page opens from an app that is connecting to Anetix. Start from the app.");
+  const r = await fetch(`/oauth/consent/info?req=${encodeURIComponent(REQ)}`, { cache: "no-store" });
+  if (r.status === 401) { location.href = `/login?staff=1&next=${encodeURIComponent(location.pathname + location.search)}`; return; }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return stop(j.error || "This sign-in request could not be read. Go back to the app and connect again.");
+  INFO = j; draw();
+}
+function draw() {
+  const i = INFO, can = CAN[i.surface] || [];
+  const lasts = i.lasts ? `It stays connected while it is used, ${i.lasts.cap_days ? `for up to ${i.lasts.cap_days} days` : "until you disconnect it"}, and ends by itself after ${i.lasts.idle_days} days unused. You can disconnect it any time on the admin page, under Accounts.` : "";
+  let html = `${HEAD}
+    <div class="who"><b>${esc(i.app.name)}</b> is asking to connect to <b>${esc(i.surface_name || "Anetix")}</b><br><span class="sub">${esc(i.address || "")}</span></div>
+    <p class="sub" style="margin:10px 0 0">You are signed in as <b>${esc(i.account.login)}</b>. The app will act as you.</p>`;
+  if (!i.allowed) {
+    card.innerHTML = html + `<div class="note bad">This account cannot connect an app here: ${esc(i.why)}.</div><div><button class="quiet" id="no">Go back to the app</button></div><div class="fail" id="err"></div>`;
+    document.getElementById("no").onclick = () => decide(false, {});
+    return;
+  }
+  html += `<p style="margin:14px 0 0"><b>What it will be able to do</b></p><ul>${can.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
+    <div class="note${i.app.this_computer ? " warn" : ""}">${i.app.this_computer
+      ? `If you allow it, the answer goes to <b>a program on this computer</b> (${esc(i.app.sends_to)}). Allow it only if you started connecting an app on this computer just now.`
+      : `If you allow it, this browser goes back to <b>${esc(i.app.sends_to)}</b>. Allow it only if you started connecting an app there just now.`}</div>
+    <p class="sub" style="margin:10px 0 0">What the app reads is in front of the AI model it runs on. ${esc(lasts)}</p>
+    <p style="margin:14px 0 4px"><b>Confirm it is you</b></p>`;
+  const pk = i.step_up === "code" && i.account.passkeys > 0 && window.Passkey && Passkey.supported();
+  html += i.step_up === "password"
+    ? `<input id="pw" type="password" placeholder="your own password" autocomplete="current-password">`
+    : `<input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="a fresh 6 digit code">${pk ? `<p class="sub" style="margin:4px 0 0">Or leave it empty and use your passkey.</p>` : `<p class="sub" style="margin:4px 0 0">From your authenticator app. The code you signed in with does not count.</p>`}`;
+  html += `<div>${pk ? `<button class="go" id="pk">Allow with my passkey</button>` : ""}<button class="${pk ? "primary" : "go"}" id="yes">${pk ? "Allow with the code" : "Allow"}</button><button class="quiet" id="no">Cancel</button></div><div class="fail" id="err"></div>`;
+  card.innerHTML = html;
+  document.getElementById("no").onclick = () => decide(false, {});
+  document.getElementById("yes").onclick = () => {
+    const c = document.getElementById("code"), p = document.getElementById("pw");
+    if (c && !c.value.trim() && !pk) return say("Type the code from your authenticator app.");
+    if (c && !c.value.trim() && pk) return withPasskey();
+    decide(true, c ? { code: c.value.trim() } : { password: p.value });
+  };
+  if (pk) document.getElementById("pk").onclick = withPasskey;
+  const el = document.getElementById("code") || document.getElementById("pw"); if (el && !pk) el.focus();
+}
+function say(message) { const e = document.getElementById("err"); if (!e) return stop(message); e.textContent = message.charAt(0).toUpperCase() + message.slice(1) + (/[.!?]$/.test(message) ? "" : "."); e.style.display = "block"; }
+async function withPasskey() {
+  const out = await Passkey.stepUp();
+  if (out.passkey) return decide(true, { passkey: out.passkey });
+  if (!out.cancelled) say(out.error || "the passkey did not work");
+}
+async function decide(allow, step) {
+  if (busy) return; busy = true;
+  for (const b of card.querySelectorAll("button")) b.disabled = true;
+  try {
+    const r = await fetch("/oauth/consent/decide", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ req: REQ, allow, ...step }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { location.href = `/login?staff=1&next=${encodeURIComponent(location.pathname + location.search)}`; return; }
+    if (r.ok && j.redirect) { card.innerHTML = `${HEAD}<p class="sub">${allow ? "Connected. Going back to the app." : "Not connected. Going back to the app."}</p>`; location.href = j.redirect; return; }
+    if (j.step_up) { say(j.error || "that did not match"); const c = document.getElementById("code"); if (c) { c.value = ""; c.focus(); } }
+    else stop(j.error || "That did not work. Go back to the app and connect again.");
+  } finally { busy = false; for (const b of card.querySelectorAll("button")) b.disabled = false; }
+}
+load().catch(() => stop("This page could not load. Go back to the app and connect again."));
+</script>
+</body>
+</html>

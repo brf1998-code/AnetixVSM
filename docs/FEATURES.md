@@ -3243,3 +3243,79 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   Screens popout and the tap); www `test-www.js` (+8) and `e2e.js` (+11: the way back, a bad back dropped, the spot
   through Stripe). Every other suite runs with the gate off as it ships, except requests, models and chamber, which walk the gate
   and turn it on in run-all.sh.
+
+- **Connector sign-in and the admin MCP (2026-10-05).** Brendan: "adding MCP functionality, so each company can have
+  an MCP to their own data and processes then I can also have an admin MCP." Customers asked for it, for Claude. The
+  design and his decisions are `docs/MCP.md`; this is its phase 1: the sign-in both MCPs share, and the admin one.
+  The company MCP is phase 2 and is not built.
+  - *The address.* `POST https://app.anetix.ai/mcp/admin` (`src/mcp.js`): Streamable HTTP, stateless, a JSON answer
+    per call, so a redeploy costs a connected app nothing. GET and DELETE are a 405. It is mounted after `edge.gate`
+    and BEFORE `auth.middleware`: an app carries a bearer token, a cookie is never read there and none is set, and the
+    internal token does not open it.
+  - *Off until `SOS_PUBLIC_URL` is set* to the instance's own address (https, no path; http only for this computer).
+    Unset, every connector path (`/mcp*`, `/oauth/*`, `/.well-known/oauth-*`) is a 404 and the Accounts tab says
+    Off. The issuer is that variable, never a request's Host header.
+  - *Sign-in is OAuth 2.1 on the named accounts* (`src/mcpauth.js` is the provider behind the MCP SDK's own
+    handlers, mounted one by one under `/oauth/` because the SDK's ready-made router puts them at the site's root).
+    The app gets a 401 pointing at `/.well-known/oauth-protected-resource/mcp/admin`, registers itself
+    (`/oauth/register`), and sends the browser to `/oauth/authorize`, which checks the app and its redirect address
+    and hands the browser to the consent page (`/oauth/consent`, `public/connect.html`) with the request sealed in
+    the address (an HMAC under the session secret, 15 minutes). Not signed in: the page goes to the account sign-in
+    and back. The page names the app, the address, who is signed in, where the answer goes (with a warning when
+    that is a program on this computer), what the app can do, and how long it lasts. **Allow takes a fresh passkey
+    or code** (`accounts.stepUp`, password under break glass): the session alone never connects an app, and an
+    answer posted from another origin is refused. Then a one-time code (2 minutes, only its hash kept) goes back to
+    the app, which trades it with its PKCE proof at `/oauth/token`.
+  - *Who can.* A named ADMIN account, switched on, with its second factor, and only for the admin address. A floor
+    session, a shared company password, the shared admin password and a manager account cannot (`mcpauth.refusal`;
+    a manager is told the company side is not open yet).
+  - *Tokens.* Random, only sha256 kept (`platform.mcp_tokens`). Access 60 minutes (`SOS_MCP_ACCESS_MIN`). Refresh
+    tokens are one use each and rotate; a connection (`platform.mcp_grants`) lives by the admin cookie's own
+    windows: 7 days idle, 30 days whatever its use (`auth.WINDOWS.admin`), so Brendan allows his app again about
+    once a month. A refresh token used a second time after 60 seconds ends the connection (inside 60 seconds it is
+    only refused: an app whose first try was cut off tries once more). A code used twice ends the connection it
+    made. Every call re-checks the account: switched off, removed, or Sign out everywhere (the generation) ends its
+    apps. A token made for another address of the instance is a 401 here.
+  - *Where an answer may go* is an allow-list (`SOS_MCP_REDIRECTS`): by default exactly
+    `https://claude.ai/api/mcp/auth_callback` (Claude on the web, Desktop, mobile and Cowork, from Anthropic's docs)
+    and `loopback` (http on localhost or 127.0.0.1, any port: Claude Code). An app is registered only for
+    the addresses on the list: any other it names is left out, an app with none left is refused, and what was
+    left out is logged, which is how the list grows on purpose.
+  - *The nine tools* (`src/mcp-admin.js`), each a wrapper over what a tab of /admin reads: `list_companies`,
+    `list_demos`, `get_demo`, `list_sites`, `loop_health`, `ai_spend`, `list_requests_to_anetix`,
+    `list_stopped_builds`, `list_runs`. All read only. **What never leaves:** a row from a company's tool, an
+    upload, a photo, a diff, a tool's code; an access pin, a Stripe id, a card, a billing contact, a street
+    address; and the WORDS of a failed check or a stopped build (a failed check can quote the record it choked
+    on), which leave as the kind of stop only (`health.stopKind`: gate, reviewer, tests, campaign, ai, other). A
+    demo's chat persona lines stay out of `get_demo` for the same reason. What does leave: words people typed to
+    Anetix or into the loop during a demo, as the Demos and Requests tabs show them; a site that went live without
+    the learning opt-in stops at that day, by the rule `src/demos.js` already keeps.
+  - *The call log.* `platform.mcp_calls`: who, which app, which tool, what was asked (clipped), whether it worked,
+    how long, how many characters went back; never the answer. Kept `SOS_MCP_CALL_DAYS` (400). Connecting, a no,
+    a disconnect and a token used twice are on the sign-in log (`mcp_consent_yes`, `mcp_consent_no`,
+    `mcp_connected`, `mcp_disconnected`, `mcp_code_reuse`, `mcp_refresh_reuse`).
+  - *The Accounts tab* has Connected apps: the address to give the app, each connection (app, whose, connected, last
+    used, calls, ends) with Disconnect (asks for nothing, like removing a trusted computer), and the last 40 calls
+    (`GET /api/admin/mcp`, `POST /api/admin/mcp/grants/:id/disconnect`).
+  - *Backup.* None of the five tables is ever in a backup file; a restore clears connections, tokens and codes with
+    the accounts they point at (`backup.js`), so every app is connected again after one.
+  - *Found while building:* the SDK (1.30.0 in the lock; 1.32.1 has the same server side) does dynamic registration
+    and does not fetch client ID documents, and Claude falls back to dynamic registration when the server does not
+    advertise them, so the first build uses that. Claude registers a new client on every fresh connection, so a
+    daily sweep drops the ones with no live connection. The SDK's handlers throttle by address themselves; they are
+    given `edge.clientIp` and room for a sender that is many people (every hosted Claude app's calls come from
+    Anthropic's range, 160.79.104.0/21).
+  - *Known limits.* Not tried against the real Claude yet: the first connection on the live instance is the test,
+    and Cloudflare's bot rules may need a skip for `/mcp`, `/oauth/*` and `/.well-known/*` (calls come from
+    Anthropic's cloud, not a browser). ChatGPT and Copilot are not on the redirect list and were not read from a
+    first-party page. Why a build stopped is a kind, not the words. No record tool for a paying site. Passkey
+    step-up on the consent page is the same call /admin uses but has no browser test (the suites have no
+    authenticator device).
+  - *Tests:* `scripts/test-mcp.js` (34: the switch, the redirect list, the sealed request, who may connect, what
+    leaves each tool, the backup rules); `scripts/e2e/mcp.js` (91: discovery, registration, the consent page's two
+    calls for every kind of session, the trade and its wrong turns, all nine tools with a canary row and a canary
+    failure line that no answer may carry, the MCP SDK's own OAuth client connecting from the address alone and
+    refreshing by itself, the call log, refresh rotation, and everything that ends a connection) and its `off` mode
+    (2: every path a 404 without the variable); `scripts/e2e/mcp-browser.js` (27: the consent page signed out and
+    in, a wrong code, Allow, Cancel, the this-computer warning, a changed request, a phone, the Accounts tab and
+    Disconnect, a manager account). All 51 suites of `run-all.sh` and every unit suite pass with it.

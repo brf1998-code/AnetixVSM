@@ -212,6 +212,8 @@
           <input id="a-name" placeholder="Their name" autocomplete="off" style="width:180px;max-width:100%"><br>
           <button class="quiet" onclick="addAccount()">Add, and make up a first password</button></div>
       </div>
+      <h3 style="margin-top:16px">Connected apps</h3>
+      <div id="acc-mcp" class="sub">Loading…</div>
       <details style="margin-top:14px"><summary>Sign-in log <span class="sub">(the last 60 things: who tried what, from where)</span></summary><div class="hwrap"><table class="health" id="acc-events"></table></div></details>
     </div>
   </section>
@@ -1094,6 +1096,7 @@ async function loadAccounts() {
     : `<tr><td class="sub">No accounts yet.</td></tr>`;
   document.getElementById("acc-me").innerHTML = ME.me ? `<button class="quiet" onclick="changePassword()">Change my password</button>${ME.me.enrolled ? "" : `<button class="go" onclick="enrollStart(false)">Set up my authenticator</button>`}` : "";
   loadDevices(A.trusted_days).catch((e) => console.error("devices:", e));
+  loadMcp().catch((e) => console.error("connected apps:", e));
   if (window.Passkey && ME.me && ME.me.enrolled) Passkey.panel(document.getElementById("acc-passkeys"), { onChange: () => loadAccounts() }).catch((e) => console.error("passkeys:", e));
   else document.getElementById("acc-passkeys").textContent = ME.me ? "Set up your authenticator first; a passkey comes after it." : "Sign in with your own account to add one.";
   document.getElementById("acc-events").innerHTML = `<tr><th>When</th><th>What</th><th>Who</th><th>From</th><th>Detail</th></tr>` + A.events.map(e => `<tr><td style="text-align:left;white-space:nowrap">${when(e.at)}</td><td style="text-align:left" class="${/bad_|fail|refused|locked|replayed|break_glass|unreadable/.test(e.event) ? "warn" : ""}">${esc(e.event)}</td><td style="text-align:left">${esc(e.login || "")}</td><td style="text-align:left">${esc(e.ip || "")}</td><td style="text-align:left"><small>${esc(e.detail ? JSON.stringify(e.detail) : "")}</small></td></tr>`).join("");
@@ -1105,6 +1108,24 @@ async function loadAccounts() {
   edgeEl.innerHTML = `<b>Edge check</b>: ` + (g.mode === "off" ? `<span class="warn">off</span>. SOS_EDGE_SECRET is not set, so a request sent straight to Railway is answered.`
     : `${g.mode === "report" ? '<span class="warn">report only</span>, nothing is refused yet' : '<span class="ok">enforced</span>'}. This request ${g.this_request_carried_it ? '<span class="ok">carried the edge header</span>' : '<span class="fail">did NOT carry the edge header</span> (do not enforce until it does)'}. Since ${when(g.since)}: ${g.with_secret} with it, ${g.without_secret} without${g.refused ? `, ${g.refused} refused` : ""}${g.last_without ? `; last without: ${esc(g.last_without.path)} from ${esc(g.last_without.ip)} at ${when(g.last_without.at)}` : ""}.`)
     + ` <span class="sub">You appear to come from ${esc(g.client_ip || "")}.</span>`;
+}
+// Connected apps (src/mcpauth.js, docs/MCP.md): each AI app an admin account let in to the admin MCP address, with
+// Disconnect. Connecting happens from the app: it is given the address, and sends the person here to allow it.
+async function loadMcp() {
+  const el = document.getElementById("acc-mcp"); if (!el) return;
+  const r = await fetch("/api/admin/mcp", { cache: "no-store" }); if (!r.ok) { el.textContent = ""; return; }
+  const j = await r.json();
+  if (!j.enabled) { el.innerHTML = `<div class="note amber"><b>Off.</b> The MCP address does not exist until <code>SOS_PUBLIC_URL</code> is set in Railway to this instance's own address (https://app.anetix.ai). Until then every connector path answers 404.</div>`; return; }
+  const rows = j.grants.map(g => `<tr data-grant="${g.id}"><td><b>${esc(g.client_name)}</b> <small class="sub">answers go to ${esc(g.redirect_host)}</small></td><td>${esc(g.login)}</td><td>${day(g.created_at)}</td><td>${g.last_used_at ? when(g.last_used_at) : "not yet"}</td><td>${g.calls}</td><td>${g.expires_at ? day(g.expires_at) : ""}</td><td><button class="quiet" onclick="disconnectApp(${g.id}, '${esc(g.client_name).replace(/'/g, "")}')">Disconnect</button></td></tr>`).join("");
+  const calls = j.calls.map(c => `<tr><td style="text-align:left;white-space:nowrap">${when(c.at)}</td><td style="text-align:left">${esc(c.login || "")}</td><td style="text-align:left">${esc(c.client_name || "")}</td><td style="text-align:left" class="${c.ok ? "" : "warn"}">${esc(c.tool)}${c.ok ? "" : " (did not work)"}</td><td>${c.ms == null ? "" : c.ms + " ms"}</td><td>${c.chars == null ? "" : c.chars.toLocaleString()}</td></tr>`).join("");
+  el.innerHTML = `<p style="margin:0 0 8px">AI apps let in to the admin MCP: read only, across every company, never a record from a company's tools. The address to give the app: <code id="mcp-address">${esc(j.address)}</code> <button class="quiet" style="padding:3px 9px;min-height:0;font-size:12px" onclick="navigator.clipboard.writeText('${esc(j.address)}').then(() => { this.textContent = 'Copied'; })">Copy</button><br>
+      <span class="sub">In Claude, add a custom connector and paste it. Claude sends you back here to allow it with a fresh passkey or code. A connection stays while it is used, ends after ${Math.round(j.idle_hours / 24)} days unused${j.cap_hours ? ` and after ${Math.round(j.cap_hours / 24)} days whatever its use` : ""}, and ends at once with Disconnect, Sign out everywhere or switching the account off. Answers may be sent to: ${j.redirects.map(x => esc(x === "loopback" ? "an app on your own computer" : x)).join(", ")}.</span></p>`
+    + (j.grants.length ? `<table class="acc" id="mcp-grants"><tr><th>App</th><th>Whose</th><th>Connected</th><th>Last used</th><th>Calls</th><th>Ends</th><th></th></tr>${rows}</table>` : `<p class="sub" id="mcp-none">No app is connected.</p>`)
+    + (j.calls.length ? `<details style="margin-top:8px"><summary>What the apps asked <span class="sub">(${j.calls.length === 1 ? "the last call" : `the last ${j.calls.length} calls`}: who, which app, which tool; never the answer)</span></summary><div class="hwrap"><table class="health" id="mcp-calls"><tr><th style="text-align:left">When</th><th style="text-align:left">Who</th><th style="text-align:left">App</th><th style="text-align:left">Tool</th><th>Took</th><th>Characters back</th></tr>${calls}</table></div></details>` : "");
+}
+async function disconnectApp(id, name) {
+  if (!confirm(`Disconnect ${name}? It stops reading at once. Connecting it again takes a fresh passkey or code.`)) return;
+  if (await accPost(`/api/admin/mcp/grants/${id}/disconnect`, {})) loadMcp();
 }
 // The person's own trusted computers (src/devices.js): "Remember this computer" ticked on the code step at sign-in.
 // Remove asks for nothing; Sign out everywhere and Reset authenticator clear them all.

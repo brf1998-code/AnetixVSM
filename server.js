@@ -60,6 +60,8 @@ async function main() {
   await require("./src/activate").init();    // paid sites, stage 3: Activate, the rollover, Stripe's events, the sweep (src/activate.js; after golive and sites)
   await require("./src/billing").init();     // paid sites, stage 4: Manage billing, the standings acted on, back to a demo (src/billing.js; after selfserve and sites)
   await require("./src/demostops").init();   // a demo's build that stopped before a preview: its spend handed back, listed on /admin until addressed (the launch audit 1.20)
+  await require("./src/mcpauth").init();     // connector sign-in: the apps, connections and tokens behind an MCP address (src/mcpauth.js, docs/MCP.md)
+  await require("./src/mcp").init();         // the MCP addresses' call log (src/mcp.js)
 
   const app = express();
   app.disable("x-powered-by");
@@ -139,6 +141,12 @@ async function main() {
   app.use(require("./src/activate").wwwRouter);       // POST /api/www/billing-events: a Stripe event anetix.ai re-read, the shared key (src/activate.js)
   app.use(require("./src/billing").wwwRouter);        // POST /api/www/billing/portal: whose Stripe Customer a Manage billing link is for, the shared key (src/billing.js)
 
+  // The MCP addresses and the sign-in an AI app goes through to reach one (src/mcp.js, src/mcpauth.js, docs/MCP.md).
+  // Here on purpose: after the edge check, before the sign-in middleware. An app's calls carry a token, never a
+  // cookie; the consent page's two calls check the account themselves. Off (every path a 404) until SOS_PUBLIC_URL
+  // names this instance's own address.
+  require("./src/mcp").mount(app, { admin: require("./src/mcp-admin") });
+
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
   app.use(require("./src/companyview").middleware);   // what a manager or floor reads of /api/: no model names, no AI costs (src/companyview.js)
@@ -174,6 +182,7 @@ async function main() {
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
   app.use(accounts.router);  // /api/admin/accounts*: the admin accounts, authenticator setup, sign out everywhere
+  app.use(require("./src/mcpauth").router);   // /api/admin/mcp*: the connected apps on the Accounts tab, Disconnect (src/mcpauth.js)
   app.use(require("./src/passkeys").router);   // /api/me/passkeys*: a named account's own passkeys (src/passkeys.js)
   app.use(intake.router);    // /api/c/:slug/intakes, /api/intakes/*, /api/attachments/* (before platformApi: the attach route parses a bigger body)
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label

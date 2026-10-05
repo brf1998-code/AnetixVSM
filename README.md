@@ -39,6 +39,7 @@ no password variables at all no longer means open.
 | `SOS_FLOOR_PASSWORD`, `SOS_MANAGER_PASSWORD`, `SOS_ADMIN_PASSWORD` | the old shared passwords: floor and manager only for a company still on `legacy_login`; admin only until the first named admin account has set up its authenticator (`src/accounts.js`), then take `SOS_ADMIN_PASSWORD` out |
 | `SOS_CONNECTION_KEY` | REQUIRED: the key stored secrets are encrypted under (ERP logins, every authenticator secret, the per-company database passwords); an authenticator cannot be set up without it; never change it |
 | `SOS_EDGE_SECRET`, `SOS_EDGE_MODE` | the value Cloudflare's Transform Rule puts in `X-SOS-Edge`; requests without it are refused (`report` = count only) (`src/edge.js`) |
+| `SOS_PUBLIC_URL` | the instance's own address (https://app.anetix.ai); switches on the MCP addresses and the connector sign-in. Unset = every connector path is a 404 (`src/mcpauth.js`, `docs/MCP.md`) |
 | `SESSION_SECRET` | signs the session cookie |
 | `SOS_OPEN` | `1` = no sign-in, every request an admin; local only, a hosted instance ignores it |
 | `SOS_MAX_RUN_USD`, `SOS_MAX_BATCH_USD` | per build run and per batch caps; unset or 0 = no cap (the default) |
@@ -71,6 +72,7 @@ through the repo, not the in-app agent.
 - `src/agent.js` — Claude Agent SDK runner (cwd = draft version dir, file tools only), model roles and prices, guidance docs, cost caps, fake mode
 - `src/review.js` — whole-module system review by a frontier model, filed as held proposals
 - `src/diagrams.js` — Mermaid data-flow and workflow diagrams drawn after every deploy, per version
+- `src/mcpauth.js`, `src/mcp.js`, `src/mcp-admin.js`: connector sign-in (OAuth on the named accounts), the MCP address, and the admin tools (`docs/MCP.md`)
 - `public/index.html` — the improvement board (module strip, KPIs, four columns, platform requests)
 - `public/agents.html`, `public/admin.html`, `public/diagrams.html` — per-company agent settings, instance admin, diagram viewer
 - `principles/` — PRINCIPLES, GUARDRAILS, STYLE, DIAGRAMS + per-module reference formats (fed to every agent run)

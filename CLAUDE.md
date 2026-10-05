@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-10-01)
+# Symbiotic OS: Workspace Guide (current as of 2026-10-05)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -51,6 +51,10 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   seeded, module `reference.md` seeded from `principles/module-formats/`).
   Every run records which docs it was guided by (`evidence.docs`).
 - Old URLs `/m/<module>` redirect to `/c/demo/m/<module>`.
+- `/mcp/admin` is the admin MCP address (a connected AI app's calls, bearer token only) and `/oauth/*` the sign-in
+  an app goes through to reach it, both mounted BEFORE the sign-in middleware and both a 404 until `SOS_PUBLIC_URL`
+  is set (see "Connector sign-in and the admin MCP"; the design, and the company MCP that is not built, are
+  `docs/MCP.md`).
 
 Index of `docs/FEATURES.md`, in its order:
 
@@ -159,6 +163,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Migrations run exactly what was checked (2026-09-28)
 - Every company is the same, and a boot brings it up to date (2026-09-29)
 - The first-time user round (2026-10-01)
+- Connector sign-in and the admin MCP (2026-10-05)
 
 ## What this is
 
@@ -318,6 +323,14 @@ tool list, 401 from the API) proves the CLI itself starts.
   `X-SOS-WWW-Key` on `/api/www/*` (any long random string, the same value on
   both services; unset = those routes answer 401). `SOS_WWW_URL`: the front
   door's address (default https://anetix.ai), used in the top-up link.
+- `SOS_PUBLIC_URL` (https://app.anetix.ai): the instance's own address, and the switch for the MCP addresses and
+  the connector sign-in (`src/mcpauth.js`). Unset, or anything but an https address with no path: every `/mcp*`,
+  `/oauth/*` and `/.well-known/oauth-*` path is a 404. `SOS_MCP_REDIRECTS` (comma separated; default
+  `https://claude.ai/api/mcp/auth_callback,loopback`): where a sign-in answer may be sent; `loopback` is an app on
+  the person's own computer (Claude Code). An address an app asks for that is not on the list is left out (an app
+  with none left is refused) and named in the log. `SOS_MCP_ACCESS_MIN` (60), `SOS_MCP_MAX_CHARS` (120000: the most text one tool answer carries),
+  `SOS_MCP_CALL_DAYS` (400: how long the call log is kept). A connection's idle and cap windows are the admin
+  cookie's (`SOS_ADMIN_IDLE_HOURS`, `SOS_ADMIN_CAP_HOURS`).
 - `SOS_CONNECTION_KEY` (REQUIRED; any long random string, `openssl rand -hex
   32`): the key every admin's and manager's authenticator secret, every ERP
   login, every company's welcome handout and the per-company database passwords
@@ -493,6 +506,14 @@ Passwords live only in Railway; never commit them.
   builder is told and the module gate refuses a new one that is not on. Never
   let a missing switch mean on, and a request to connect one goes to the
   integration team (`requests.handoff`), not the build loop.
+- The MCP addresses and `/oauth/*` sit before the sign-in middleware, so nothing mounted there may trust a cookie,
+  apart from the consent page's two calls, which check the account themselves (`mcpauth.accountOf`) and take a fresh
+  passkey or code before anything is allowed. An MCP address reads a bearer token and nothing else, and never sets a
+  cookie. A connector is never on by a missing variable. An admin MCP tool is read only and never returns a row
+  from a company's tool, an upload, a diff, a tool's code, a secret (a pin, a Stripe id, a card, a token), or the
+  words of a failed check (its kind only): a new tool gets its case in `scripts/test-mcp.js` and its call in
+  `scripts/e2e/mcp.js`, where a canary row and a canary failure line must be in no answer. A new table that points
+  at `platform.accounts` goes in `backup.js` restore's TRUNCATE list, or a restore fails.
 - Every company gets every feature its kind gets, whenever it was made. A feature gate reads what a company is NOW
   (`src/kind.js`: a paid site or a trial), never a column fixed on the day the company was made; `companies.demo`
   means only "came in from anetix.ai with credit". Anything the platform keeps per company (a flag, a seeded row, a

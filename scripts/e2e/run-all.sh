@@ -163,6 +163,15 @@ fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_U
 run firstrun               env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/firstrun.js
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run firstrun-browser node scripts/e2e/firstrun-browser.js; }
 
+# connector sign-in and the admin MCP (2026-10-05, docs/MCP.md): an app registers, the admin allows it with a fresh code,
+# the tools answer and never carry a tool's record; what ends a connection; then the same instance with the switch off
+MCP="SOS_PUBLIC_URL=http://127.0.0.1:3999"
+fresh; start "SOS_BROWSER=off $MCP"
+run mcp                    env $MCP node scripts/e2e/mcp.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off $MCP"; run mcp-browser env $MCP node scripts/e2e/mcp-browser.js; }
+fresh; start "SOS_BROWSER=off"
+run mcp-off                node scripts/e2e/mcp.js off
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop
