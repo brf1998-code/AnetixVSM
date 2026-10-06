@@ -88,7 +88,11 @@
     return { ok: r.ok, status: r.status, json: j };
   }
   const range = (b) => (b.max == null ? `${num(b.min)} and up` : `${num(b.min)} to ${num(b.max)}`);
-  const bandLine = (band) => band
+  // price book 2 (2026-10-05): $300 a tool live on the floor, and the band's price is the cap
+  const bandLine = (band) => band && band.per_tool_usd
+    ? `<b>${esc(band.name)} site: ${usd(band.per_tool_usd)} a month for each tool live, never more than ${usd(band.monthly_usd)}</b> (the cap, reached at ${Math.ceil(band.monthly_usd / band.per_tool_usd)} tools)${band.proposed ? ' <span class="chip prop">CAP PROPOSED</span>' : ""}.
+       <span class="sub">${esc(band.why)}. The fair-use line is 80% of the month's fee: ${usd(band.per_tool_usd * 0.8)} at one tool, ${usd(band.fair_use_usd)} at the cap.</span>${band.flags.map((f) => `<br><small class="sub" style="color:#b26a00">${esc(f.text)}.</small>`).join("")}`
+    : band
     ? `<b>${esc(band.name)} site: ${usd(band.monthly_usd)} a month</b>, ${usd(band.annual_usd)} a year${band.proposed ? ' <span class="chip prop">PRICE PROPOSED</span>' : ""}.
        <span class="sub">Fair-use line ${usd(band.fair_use_usd)}. ${esc(band.why)}.</span>${band.flags.map((f) => `<br><small class="sub" style="color:#b26a00">${esc(f.text)}.</small>`).join("")}`
     : "";
@@ -164,7 +168,7 @@
   // ---- the tab --------------------------------------------------------------------------------------------------------
   function draw() {
     const D = DATA, B = D.book;
-    const bands = B.bands.map((b) => `<tr><td><b>${esc(b.name)}</b>${b.proposed ? '<span class="chip prop">PROPOSED</span>' : ""}</td><td>${esc(range(b))}</td><td>${usd(b.monthly_usd)}</td><td>${usd(b.annual_usd)}</td><td>${usd(b.fair_use_usd)}</td><td>${b.sqft_min ? `${num(b.sqft_min)} sq ft` : '<span class="sub">none</span>'}</td></tr>`).join("");
+    const bands = B.bands.map((b) => `<tr><td><b>${esc(b.name)}</b>${b.proposed ? '<span class="chip prop">PROPOSED</span>' : ""}</td><td>${esc(range(b))}</td><td>${usd(b.monthly_usd)}</td><td>${B.per_tool_usd ? `${esc(b.tools_at_cap)} tools` : usd(b.annual_usd)}</td><td>${usd(b.fair_use_usd)}</td><td>${b.sqft_min ? `${num(b.sqft_min)} sq ft` : '<span class="sub">none</span>'}</td></tr>`).join("");
     const st = D.stages || {};
     const chip = (key, label, n, cls) => `<span class="${n ? cls || "on" : ""}">${esc(label)}<b>${n || 0}</b></span>`;
     const stages = [
@@ -183,16 +187,16 @@
         <td>${r.site_name ? `<b>${esc(r.site_name)}</b>` : '<span class="none">not given</span>'}${r.address_line ? `<small>${esc(r.address_line)}</small>` : ""}</td>
         <td>${pm.name ? `<b>${esc(pm.name)}</b>` : '<span class="none">not given</span>'}${pm.title ? `<small>${esc(pm.title)}</small>` : ""}${pm.email ? `<small>${esc(pm.email)}</small>` : ""}</td>
         <td>${r.headcount ? `<b>${num(r.headcount)} people</b>` : '<span class="none">not known</span>'}${r.sqft ? `<small>${num(r.sqft)} sq ft</small>` : ""}</td>
-        <td class="price">${r.band ? `<b>${esc(r.band.name)} · ${usd(r.band.monthly_usd)}/mo</b>${r.band.moved_up ? "<small>moved up for floor space</small>" : ""}${r.band.proposed ? "<small>price proposed</small>" : ""}${r.band.flags.map((f) => `<small class="flag">${esc(f.text)}</small>`).join("")}` : '<span class="none">needs a headcount</span>'}</td>
+        <td class="price">${r.pilot ? `<b>Pilot · ${usd(r.pilot.monthly_usd)}/mo</b><small>${esc(r.pilot.line)}${r.pilot.ends_at ? `, ends ${esc(day(r.pilot.ends_at))}` : ""}</small>` : ""}${r.offer ? `<small class="flag">pilot offered: ${esc(r.offer.line)}</small>` : ""}${r.pilot ? "" : r.band && r.band.per_tool_usd && r.fee ? `<b>${usd(r.fee.usd)}/mo${r.stage === "subscribed" ? "" : " today"}</b><small>${r.tools_live} live at ${usd(r.band.per_tool_usd)} a tool · ${esc(r.band.name)} cap ${usd(r.band.monthly_usd)}</small>${r.fee.due_usd != null && r.fee.due_usd !== r.fee.usd ? `<small class="flag">the tools live come to ${usd(r.fee.due_usd)}: the bill catches up within 15 minutes</small>` : ""}${r.band.moved_up ? "<small>moved up for floor space</small>" : ""}${r.band.proposed ? "<small>cap proposed</small>" : ""}${(r.band.flags || []).map((f) => `<small class="flag">${esc(f.text)}</small>`).join("")}` : r.band ? `<b>${esc(r.band.name)} · ${usd(r.band.monthly_usd)}/mo</b>${r.band.moved_up ? "<small>moved up for floor space</small>" : ""}${r.band.proposed ? "<small>price proposed</small>" : ""}${r.band.flags.map((f) => `<small class="flag">${esc(f.text)}</small>`).join("")}` : '<span class="none">needs a headcount</span>'}</td>
         <td>${r.demo_holder ? `<b>${esc(r.demo_holder)}</b>` : '<span class="none">no demo</span>'}${r.demo_since ? `<small>since ${esc(day(r.demo_since))}, ${r.last_activity ? `active ${esc(ago(r.last_activity))}` : "no activity yet"}</small>` : ""}${r.ai_spent_usd != null ? `<small>AI spent ${usd(r.ai_spent_usd)}${r.credit_percent != null ? `, ${esc(r.credit_percent)}% credit left` : ""}</small>` : ""}</td>
         <td>${r.tools_live ? `<b>${r.tools_live} live</b>` : '<span class="none">none live</span>'}${r.tools.length ? `<small>${r.tools.map((t) => esc(t.title || t.name)).join(", ")}</small>` : ""}</td>
         <td>${dealBits.length ? dealBits.map((x) => `<small>${x}</small>`).join("") : '<span class="none">nothing yet</span>'}</td>
         <td><b>${esc(r.stage_label)}</b>${r.standing_label ? `<small>${esc(r.standing_label)}</small>` : ""}${r.stage !== "subscribed" && orderLine(r.order) ? `<small>${esc(orderLine(r.order))}</small>` : ""}${fairLine(r)}</td></tr>`;
     }).join("");
     root().innerHTML = `
-      <div class="card"><h2>Price book <small>version ${esc(B.version)} · full price from month one</small></h2>
-        <div style="overflow-x:auto"><table class="list"><tr><th>Band</th><th>People at the site, all shifts</th><th>Monthly</th><th>Annual</th><th>Fair-use line</th><th>Floor space that moves a site into it</th></tr>${bands}</table></div>
-        <p class="sub" style="margin:8px 0 0">Floor space moves a site up one band at most.${B.sqft_proposed ? " The floor-space thresholds are proposed: 1,500 square feet a person at each edge." : ""} The fair-use line is ${Math.round(B.fair_use_share * 100)}% of the fee: past it, new AI work waits for the next billing month and the floor's tools keep working. You hear at ${Math.round(B.alert_share * 100)}% of the fee; the customer never sees a meter.</p>
+      <div class="card"><h2>Price book <small>version ${esc(B.version)} · ${B.per_tool_usd ? `${usd(B.per_tool_usd)} a month for each tool live on the floor, up to the site's cap` : "full price from month one"}</small></h2>
+        <div style="overflow-x:auto"><table class="list"><tr><th>Band</th><th>People at the site, all shifts</th><th>${B.per_tool_usd ? "Cap, a month" : "Monthly"}</th><th>${B.per_tool_usd ? "Reached at" : "Annual"}</th><th>Fair-use line${B.per_tool_usd ? " at the cap" : ""}</th><th>Floor space that moves a site into it</th></tr>${bands}</table></div>
+        <p class="sub" style="margin:8px 0 0">${B.per_tool_usd ? `A site pays ${usd(B.per_tool_usd)} a month for each tool live on its floor, for ${esc(B.min_tools)} at least, and never more than its band's cap. A tool counts from the bill after it is first made live; drafts and previews are free. A pilot offered from a site's row is its own fee and ignores this book. ` : ""}Floor space moves a site up one band at most.${B.sqft_proposed ? " The floor-space thresholds are proposed: 1,500 square feet a person at each edge." : ""} The fair-use line is ${Math.round(B.fair_use_share * 100)}% of the fee: past it, new AI work waits for the next billing month and the floor's tools keep working. You hear at ${Math.round(B.alert_share * 100)}% of the fee; the customer never sees a meter.</p>
         <div class="quote"><label>People at the site, all shifts<input id="sq-head" inputmode="numeric" placeholder="e.g. 120" autocomplete="off"></label><label>Floor space, square feet<input id="sq-sqft" inputmode="numeric" placeholder="optional" autocomplete="off"></label><span class="sub" style="padding-bottom:9px">Quick quote for a call</span></div>
         <div class="qline" id="sq-line"></div></div>
       <div class="card"><h2>Pipeline <small>from a demo to a paying site</small></h2>
@@ -249,6 +253,7 @@
         <div class="foot" style="margin-top:8px">${o && o.state !== "draft" ? '<button class="quiet" id="sf-text" onclick="AdminSites.orders()">Show the signed order form</button>' : ""}<button class="quiet" id="sf-golive" onclick="AdminSites.openGoLive()">${r.order_open && o.kind !== "preview" ? "Look at their order on anetix.ai" : "Open go-live as their manager"}</button>${r.order_open && ["draft", "signed"].includes(o.state) ? `<button class="quiet" id="sf-void" onclick="AdminSites.voidOrder()">${o.kind === "preview" ? "Void your preview" : "Withdraw this order"}</button>` : ""}</div>
         <div id="sf-orders"></div></div>
       <div id="sf-act"></div>
+      <div id="sf-offer"></div>
       <h3>The site</h3><div class="fgrid">
         ${field("sf-site", "Site name (what their people call it)", r.site_name)}${field("sf-legal", "Company's legal name", r.legal_name)}
         ${field("sf-l1", "Address", a.line1, { wide: true })}${field("sf-l2", "Address, second line", a.line2, { wide: true })}
@@ -274,6 +279,46 @@
     document.getElementById("sf-save").onclick = save;
     (factsLocked ? document.getElementById("sf-note") : document.getElementById("sf-site")).focus();
     actPanel(r);
+    offerPanel(r);
+  }
+  // ---- a pilot offer (src/pilot.js, 2026-10-05): a fixed fee for a fixed number of months that ends on its own, with
+  // lines of its own, offered to this one company. Its manager sees "Start your pilot" on the board; the rest is the
+  // same signature, card and Activate. One line of the box is one line of the order form: "Label: words".
+  const linesText = (lines) => (lines || []).map((l) => `${l.label}: ${l.text}`).join("\n");
+  function linesFrom(text) {
+    return String(text || "").split("\n").map((x) => x.trim()).filter(Boolean).map((x) => { const i = x.indexOf(":"); return i < 0 ? { label: "", text: x } : { label: x.slice(0, i).trim(), text: x.slice(i + 1).trim() }; });
+  }
+  async function offerPanel(r) {
+    const into = document.getElementById("sf-offer"); if (!into) return;
+    if (r.stage === "subscribed" || r.stage === "activating") { into.innerHTML = ""; return; }
+    let j;
+    try { j = await get(`/api/admin/sites/${encodeURIComponent(r.slug)}/offer`); }
+    catch (e) { into.innerHTML = ""; return; }
+    if (EDIT !== r.slug) return;
+    const of = j.offer, d = of || j.defaults;
+    const signed = r.order && r.order.kind !== "preview" && ["signed"].includes(r.order.state);
+    into.innerHTML = `<h3>Pilot offer</h3><div class="act${of ? "" : " stop"}" id="sf-offerbox">
+      ${of ? `<b>Offered:</b> ${esc(r.offer ? r.offer.line : "")}${of.made_by ? ` <span class="sub">by ${esc(of.made_by)}, ${esc(day(of.made_at))}</span>` : ""}. Their manager sees <b>Start your pilot</b> on the board and in Settings, whether or not Go live is on for everyone. Activate charges the first month and Stripe ends it on its own after the last.`
+        : `<span class="sub">A fixed fee for a fixed number of months that ends on its own, for this one company (an onsite pilot, say). It replaces the price book for them until it is signed, withdrawn or over. Nothing is charged until you press Activate on their signed order.</span>`}
+      ${signed ? '<br><span class="bad">Their order is signed, so the offer cannot change.</span> Send the order back or withdraw it first.' : ""}</div>
+      <div class="fgrid" style="margin-top:8px">${field("sf-of-usd", "Fee a month ($)", d.monthly_usd, { mode: "decimal" })}${field("sf-of-months", "Months (it ends on its own after the last)", d.months, { mode: "numeric" })}
+        <label class="wide">The pilot's own lines on the order form, one a line, as Label: words<textarea id="sf-of-lines" style="min-height:150px">${esc(linesText(d.lines))}</textarea></label></div>
+      <p class="sub" style="margin:6px 0 0">The order form adds the rest itself: what the fee is (a pilot fee, not a license or a subscription), the dates it is charged, that it ends on its own, cancelling, fair use, data, and the Terms. The site's facts below (legal name, address, plant manager) fill its top lines; the customer can correct them when they sign.</p>
+      <div class="foot"><button class="go" id="sf-of-save" onclick="AdminSites.saveOffer()"${signed ? " disabled" : ""}>${of ? "Save the offer" : "Offer this pilot"}</button>${of ? `<button class="quiet" id="sf-of-clear" onclick="AdminSites.clearOffer()"${signed ? " disabled" : ""}>Withdraw the offer</button>` : ""}</div>
+      <div class="err" id="sf-of-err"></div>
+      ${j.preview ? `<details style="margin-top:8px"><summary class="sub" style="cursor:pointer">The order form they will sign</summary><div class="order" style="margin-top:6px"><pre id="sf-of-text">${esc(j.preview)}</pre></div></details>` : ""}`;
+  }
+  async function saveOffer() {
+    const err = document.getElementById("sf-of-err"); err.textContent = "";
+    const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/offer`, { monthly_usd: val("sf-of-usd"), months: Number(val("sf-of-months")), lines: linesFrom(val("sf-of-lines")) });
+    if (!r.ok) { err.textContent = r.json.error || "that did not save"; return; }
+    const slug = EDIT; await show(); edit(slug);
+  }
+  async function clearOffer() {
+    if (!confirm("Withdraw the pilot offer? Their manager stops seeing Start your pilot, and an order they had started under it is asked to look again at the price book's terms.")) return;
+    const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/offer`, { clear: true });
+    if (!r.ok) { document.getElementById("sf-of-err").textContent = r.json.error || "that did not change"; return; }
+    const slug = EDIT; await show(); edit(slug);
   }
   // ---- stage 3: switch it on, decline, send back; a paying site's line ------------------------------------------------
   async function actPanel(r) {
@@ -284,7 +329,7 @@
       into.innerHTML = `<div class="act"><b>Subscribed</b> since ${esc(day(sub.activated_at))}${sub.id ? ` · <span class="sub">${esc(sub.id)}</span>` : ""}${sub.period_end ? ` · this period ends ${esc(day(sub.period_end))}` : ""}.
         ${f ? `<br>AI this period: ${usd(f.spend_usd)} of a ${usd(f.line_usd)} fair-use line (${Math.round((f.share_of_line || 0) * 100)}%)${f.lifted ? `, <b>lifted</b> until ${esc(day(f.lift.until))} (${esc(f.lift.note)})` : f.over ? ', <span class="bad">reached: new AI work is paused</span>' : ""}.` : ""}
         <br>Learning: ${sub.learning_opt_in ? "opted in" : "not opted in (the Demos tab shows the demo period only)"}.${sub.tenancy_note ? `<br>Tenancy: ${esc(sub.tenancy_note)}` : ""}
-        <br>Payment: ${sub.standing === "past_due" ? '<span class="bad">past due</span> (Stripe is retrying; the manager sees a line)' : sub.standing === "unpaid" ? '<span class="bad">unpaid</span> (retries ran out; new AI work is paused, the tools run)' : sub.standing === "canceled_at_stripe" ? '<span class="bad">Stripe cancelled the subscription</span> (the floor still works until you End it)' : "good"}.${sub.cancel_at ? ` <b>Cancelled by the customer</b>: ends ${esc(day(sub.cancel_at))}, then back to a demo.` : ""}
+        <br>Payment: ${sub.standing === "past_due" ? '<span class="bad">past due</span> (Stripe is retrying; the manager sees a line)' : sub.standing === "unpaid" ? '<span class="bad">unpaid</span> (retries ran out; new AI work is paused, the tools run)' : sub.standing === "canceled_at_stripe" ? '<span class="bad">Stripe cancelled the subscription</span> (the floor still works until you End it)' : "good"}.${r.pilot ? ` <b>A pilot</b>: ${esc(r.pilot.line)}. Stripe ends it on its own ${r.pilot.ends_at ? `on ${esc(day(r.pilot.ends_at))}` : "after the last month"}, and the site goes back to a demo that day.${sub.cancel_at && r.pilot.ends_at && Math.abs(new Date(sub.cancel_at) - new Date(r.pilot.ends_at)) > 36 * 3600e3 ? ` <b>Cancelled early by the customer</b>: ends ${esc(day(sub.cancel_at))}.` : ""}` : sub.cancel_at ? ` <b>Cancelled by the customer</b>: ends ${esc(day(sub.cancel_at))}, then back to a demo.` : ""}${!r.pilot && r.band && r.band.per_tool_usd && r.fee ? `<br>Fee: ${usd(r.fee.usd)} a month (${esc(r.tools_live)} live at ${usd(r.band.per_tool_usd)} a tool, cap ${usd(r.band.monthly_usd)}). It follows the tools live from each next bill.` : ""}
         ${f && !f.lifted ? `<div class="foot"><input type="text" id="sf-lift" placeholder="why lift the line (a big first month, say)" style="flex:1;min-width:200px"><button class="quiet" id="sf-liftgo" onclick="AdminSites.lift()">Lift the line for this period</button></div>` : ""}
         ${["unpaid", "canceled_at_stripe"].includes(sub.standing) ? `<div class="foot"><input type="text" id="sf-endnote" placeholder="why end it (the manager reads this)" style="flex:1;min-width:200px"><input inputmode="numeric" id="sf-endcode" placeholder="authenticator code, or empty for your passkey" autocomplete="one-time-code" maxlength="10"><button class="quiet" id="sf-end" onclick="AdminSites.endSite()">End: back to a demo</button></div><div class="err" id="sf-enderr"></div>` : ""}</div>`;
       return;
@@ -458,5 +503,5 @@
       if (n && window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("sites", { n, level: "amber" });
     } catch (e) {}
   }
-  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder, termsToggle, activate, decline, sendBack, stopActivating, lift, sweep, endSite };
+  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder, termsToggle, activate, decline, sendBack, stopActivating, lift, sweep, endSite, saveOffer, clearOffer };
 })();

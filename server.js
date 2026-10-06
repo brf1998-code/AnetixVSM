@@ -59,6 +59,7 @@ async function main() {
   await require("./src/notices").init();     // notices for a company's managers: a tool Anetix changed, a declined card, an order sent back (src/notices.js)
   await require("./src/activate").init();    // paid sites, stage 3: Activate, the rollover, Stripe's events, the sweep (src/activate.js; after golive and sites)
   await require("./src/billing").init();     // paid sites, stage 4: Manage billing, the standings acted on, back to a demo (src/billing.js; after selfserve and sites)
+  require("./src/modprice").init();          // price book 2: a paying site's fee follows the tools live on its floor; a pilot's last week (src/modprice.js)
   await require("./src/demostops").init();   // a demo's build that stopped before a preview: its spend handed back, listed on /admin until addressed (the launch audit 1.20)
   await require("./src/mcpauth").init();     // connector sign-in: the apps, connections and tokens behind an MCP address (src/mcpauth.js, docs/MCP.md)
   await require("./src/mcp").init();         // the MCP addresses' call log (src/mcp.js)
@@ -197,6 +198,7 @@ async function main() {
   app.use(require("./src/notices").router);      // /api/c/:slug/notices/:id/seen
   app.use(require("./src/dataexport").router);   // /api/c/:slug/export: the company's own data as one JSON file (the Terms, 10.6)
   app.use(require("./src/billing").router);      // /api/c/:slug/billing (the portal link), /api/admin/sites/:slug/end (src/billing.js)
+  app.use(require("./src/pilot").router);        // /api/admin/sites/:slug/offer: a pilot Anetix offers one company (src/pilot.js)
   app.use(require("./src/notify").router);       // /api/admin/notify*: alerts to Anetix's phones through ntfy (src/notify.js)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab

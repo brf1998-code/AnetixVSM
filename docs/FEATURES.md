@@ -3319,3 +3319,58 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     (2: every path a 404 without the variable); `scripts/e2e/mcp-browser.js` (27: the consent page signed out and
     in, a wrong code, Allow, Cancel, the this-computer warning, a changed request, a phone, the Accounts tab and
     Disconnect, a manager account). All 51 suites of `run-all.sh` and every unit suite pass with it.
+
+- **Price book 2 (by the tool live on the floor), the pilot offer, and the board link on every page** (2026-10-05;
+  `src/sites.js` BOOK_V2, `src/modprice.js`, `src/pilot.js`; www `internal.js`). Brendan: "a total overhaul of the
+  payment plan ... $300 per month per module ... it stacks on until they reach the maxed out price they would normally
+  have with the current plan. So it makes entry much easier and it would also cap out their price for maximum
+  expansion within their plant. This is very heavily under iteration." And: "some method to sign Chelsea Clock onto
+  their paid pilot plan tomorrow ... from within their board ... $1,000 then another $1,000 at the start of the
+  second month." And: "every preview page needs to link back to the improvement board and every page needs to link
+  back to the improvement board otherwise."
+  - *Price book 2.* `per_tool_usd` 300, `min_tools` 1, and the same five bands, whose `monthly_usd` is now the CAP.
+    `sites.feeFor(plan, liveTools)` is the one place the fee is worked out: 300 times the tools live (rows of
+    `platform.modules` with a `live_version`), never under one tool, never over the cap. Brendan's choice of unit: a
+    tool counts once it is live on the floor; drafts and previews are free. Version 1 stays in `platform.price_books`
+    and an order signed under it keeps its flat price (`feeFor` answers `flat`). A new plan is version 3.
+  - *The order form* (`sites.orderText`) has three shapes: by the tool (the cap, $300 a tool, today's figure, "a tool
+    made live raises the fee from the next bill", the lock on both prices, and a line that the order form controls
+    where the Terms' section 5 says a band price), the pilot's own, and version 1's unchanged. The figure a signer
+    reads is today's count, so a tool going live between the page and the signature is a changed hash: look again.
+    The Terms (5.1, 5.5) still describe band pricing; the order form controls (1.5), and the Terms want a new version
+    with counsel.
+  - *Activate* charges the tools live THAT day (`activate.amountFor`), frozen per card on `orders.stripe.amount` like
+    the credit, on a Price per amount (`anetix_tools_v2_<cents>`). `sites.price_usd` is what the site is on.
+  - *The bill follows the tools* (`src/modprice.js`): when a tool is first made live (`registry.deployVersion`, a
+    library import), on every Stripe event for the site, and every 15 minutes, the fee is worked out again from the
+    plan the site signed; if it moved, anetix.ai's `/internal/reprice` moves the subscription's one item to the Price
+    for the new amount with `proration_behavior=none`, so the next bill is the first at it. The manager gets a notice
+    (the count, the amount, the date, "nothing is charged before then"), the phone an alert, the record a line. The
+    sweep asks anetix.ai even when nothing moved here, so Stripe itself is reconciled (a timed-out request that lands
+    late cannot leave it on another amount). The fair-use line is 80% of what the site is on: $240 at one tool.
+  - *A pilot offer* (`src/pilot.js`, `platform.sites.offer`): from a site's form on the Sites tab, a fee a month, a
+    number of months, and lines of its own ("Label: words"; the order form's own labels are refused). While it stands
+    the company's manager sees Start your pilot on the board and in Settings even with Go live off (`golive.forBoard`,
+    `resolve`, `invited`), the price screen and the order form are the pilot's ("not a software license or
+    subscription fee", "ends on its own", any continuing arrangement a separate conversation), and the signed order
+    keeps the offer as a band of its own (`key: "pilot"`). Changing or withdrawing it re-quotes an open draft and is
+    refused once an order is signed.
+  - *A pilot ends on its own.* anetix.ai makes the subscription WITH Stripe's `cancel_at` (its start plus the months,
+    then set to the second on the subscription's own anchor), so no charge is made after the last payment. Activate
+    refuses a pilot unless anetix.ai's ping says it can (`can: ["pilot"]`), and anetix.ai refuses a pilot with no
+    months. The end date is the site's `cancel_at` and `band.pilot.ends_at` from the start and is not a cancellation
+    (`billing.isPlannedEnd`): no "site cancelled" alert, a late last payment is retried instead of ending it, the
+    board says nothing until the last two weeks. If the date is cleared at Stripe (Renew in the portal) the product
+    puts it back through `/internal/pilot-end` (anetix.ai works the date out itself), at the event (a failure answers
+    503 so Stripe sends it again) and at every sweep; a pilot still running an hour past its date is ended. A week
+    before the end the phone is told. At the end the site goes back to a demo ("the pilot reached its end date").
+  - *The board link.* The feedback widget draws "Improvement board" on every tool page of every company (it was a
+    trial's only), and the preview's amber bar and the test floor's bar carry "back to the improvement board".
+  - *Known limits.* Nothing here has run against the real Stripe: the fake has no invoices, proration or clock. Before
+    relying on it, one pilot in Stripe test mode with a test clock (two paid invoices, then canceled, no third). No
+    way yet to take a tool off the floor, so a fee only goes up (the order form says it can go down; the sweep would
+    follow). The Terms' text is version 1's pricing. The Sites tab's quick quote does not ask how many tools.
+  - *Tests:* `scripts/test-pricing.js` (66), `scripts/e2e/pricing.js` (74, a stub for anetix.ai and ntfy; in
+    `run-all.sh`), the Sites tab's offer form in `sites-browser.js`, the board link in `board-browser.js` and
+    `campaign-browser.js`; www `test-www.js` (141) and `e2e-activate.js` (74: a pilot and a second tool through both
+    services and the fake Stripe).

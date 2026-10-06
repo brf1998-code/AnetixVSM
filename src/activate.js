@@ -127,7 +127,7 @@ async function channel({ fresh = false } = {}) {
   const why = channelProblem(); if (why) return { ok: false, why };
   if (!fresh && pingCache && Date.now() - pingCache.at < 30000) return pingCache.v;
   let v;
-  try { const p = await www("/internal/ping", undefined, { timeoutMs: 5000 }); v = { ok: true, stripe: p.stripe || null, tax: Boolean(p.tax), webhook: Boolean(p.webhook) }; }
+  try { const p = await www("/internal/ping", undefined, { timeoutMs: 5000 }); v = { ok: true, stripe: p.stripe || null, tax: Boolean(p.tax), webhook: Boolean(p.webhook), can: Array.isArray(p.can) ? p.can : [] }; }
   catch (e) { v = { ok: false, why: e.message }; }
   pingCache = { at: Date.now(), v };
   return v;
@@ -165,6 +165,16 @@ async function refundableCents(slug) {
   const r = sites.refundableCredit(ledger, await selfserve.spentSince(slug, since));
   return Math.max(0, Math.round(Number(r.refund_usd || 0) * 100));
 }
+// What the first month is, worked out when Activate runs (2026-10-05): a pilot's own fee, a flat band's price (price
+// book 1), or, by the tool (price book 2), the tools live on the floor today. The order form says so: "billed on the
+// day Anetix switches the Site on, for the tools live that day". -> { cents, tools, plan }
+async function amountFor(slug, o) {
+  const band = o.band || {};
+  if (require("./pilot").isPilot(band)) return { cents: Math.round(Number(band.monthly_usd) * 100), tools: null, plan: "pilot" };
+  if (!band.per_tool_usd) return { cents: Math.round(Number(o.price_usd) * 100), tools: null, plan: "flat" };
+  const tools = await sites.liveTools(slug);
+  return { cents: Math.round(sites.feeFor(band, tools).usd * 100), tools, plan: "tools" };
+}
 async function sampleFillsIn(slug) {
   return (await q("SELECT DISTINCT ON (module) module, status FROM platform.sample_fills WHERE company=$1 ORDER BY module, id DESC", [slug]).catch(() => ({ rows: [] }))).rows.filter((f) => f.status === "in").map((f) => f.module);
 }
@@ -173,12 +183,16 @@ async function rolloverPlan(slug, o, { clear_sample = true } = {}) {
   const co = (await q("SELECT slug, name FROM platform.companies WHERE slug=$1", [slug])).rows[0] || { slug, name: slug };
   const f = o.facts || {}, band = o.band || {}, cents = await refundableCents(slug), fills = await sampleFillsIn(slug);
   const book = await sites.bookFor(o.price_book);
+  const amt = await amountFor(slug, o), fee = amt.cents / 100, P = require("./pilot");
+  const pilot = P.isPilot(band) ? band.pilot : null;
   return [
-    `The DEMO strip and the credit line come off the board, and new AI work has no credit to run out of: the fair-use line is ${usd(Number(o.price_usd || 0) * book.fair_use_share)} a month.`,
+    `The DEMO strip and the credit line come off the board, and new AI work has no credit to run out of: the fair-use line is ${usd(fee * book.fair_use_share)} a month.`,
     f.site_name && f.site_name !== co.name ? `The company shows as ${f.site_name} instead of ${co.name} (its address stays /c/${co.slug}/).` : null,
     "The floor gets its own password, shown once to the manager on the board.",
     fills.length ? (clear_sample ? `The sample data comes out of ${fills.length} tool${fills.length === 1 ? "" : "s"} (${fills.join(", ")}).` : `The sample data stays in ${fills.join(", ")}, as you chose.`) : "No tool has sample data in it.",
-    `${band.name || "The"} band at ${usd(o.price_usd)} a month on price book ${o.price_book}, locked while the subscription runs. The first month is charged now.`,
+    pilot ? `A pilot: ${sites.pilotLine({ monthly_usd: band.monthly_usd, months: pilot.months })}. ${usd(fee)} is charged now${pilot.months > 1 ? `, and ${usd(fee)} on the same day of ${pilot.months === 2 ? "next month" : `each of the next ${pilot.months - 1} months`}` : ""}. Stripe ends it on its own ${pilot.months} month${pilot.months === 1 ? "" : "s"} from today and nothing is charged after that. On that day the site goes back to a demo and the floor's sign-in closes, unless you have agreed what comes next and activated it.`
+      : amt.plan === "tools" ? `${band.name} site on price book ${o.price_book}: ${usd(band.per_tool_usd)} a tool, ${amt.tools} live today, so ${usd(fee)} is charged now. From each next bill the fee follows the tools live on the floor, never above the ${usd(band.monthly_usd)} cap. Both prices are locked while the subscription runs.`
+        : `${band.name || "The"} band at ${usd(o.price_usd)} a month on price book ${o.price_book}, locked while the subscription runs. The first month is charged now.`,
     cents > 0 ? `${usd(cents / 100)} of unused demo credit they bought comes off the first bill.` : "No bought demo credit is left to come off the first bill.",
     o.learning_opt_in ? "Learning: opted in. The Demos tab keeps showing everything." : "Learning: not opted in. The Demos tab shows the demo period only from now on.",
   ].filter(Boolean);
@@ -205,6 +219,7 @@ async function checks(slug) {
     size: band ? band.flags : [],
     refund_usd: (await refundableCents(slug)) / 100,
     plan: o ? await rolloverPlan(slug, o) : [],
+    charge: o ? await amountFor(slug, o).then((a) => ({ usd: a.cents / 100, tools: a.tools, plan: a.plan })) : null,
     preview,
   };
 }
@@ -224,6 +239,9 @@ async function activate(slug, { tenancy_note, clear_sample = true, test_mode_ok 
   const o0 = await golive().openOrder(site0.id);
   if (!o0) throw fail(409, "this site has no open order");
   const preview = o0.kind === "preview";
+  // a pilot is switched on only by an anetix.ai that makes it with its end date (found by the review of 2026-10-05: an
+  // older one would take the pilot's fee on a subscription with no end, and charge it month after month)
+  if (require("./pilot").isPilot(o0.band) && !(ch.can || []).includes("pilot")) throw fail(409, "anetix.ai is on a version that cannot end a pilot on its own, so nothing was charged. Push the www repo first, then Activate again.", { code: "www_old" });
   if (preview && ch.stripe === "live") throw fail(409, "A preview can be switched on only while Stripe is in test mode: in live mode it would charge a real card.", { code: "live" });
   // a customer's order while Stripe is not live switches a real company on with no real charge and test ids that mean
   // nothing once the live keys are in: only with it said out loud (your own test company, say)
@@ -269,15 +287,29 @@ async function run(siteId, orderId, by) {
     bal = { pm: o.payment_method, cents: await refundableCents(co.slug), at: new Date().toISOString() };
     await q("UPDATE platform.orders SET stripe = stripe || jsonb_build_object('balance', $2::jsonb) WHERE id=$1", [o.id, JSON.stringify(bal)]);
   }
-  const band = o.band || {}, cents = Math.round(Number(o.price_usd) * 100);
+  // the amount, like the credit, is worked out once per card and kept before Stripe hears of it, so a retry sends the same
+  let amt = st.amount && st.amount.pm === o.payment_method ? st.amount : null;
+  if (!amt) {
+    amt = { pm: o.payment_method, ...(await amountFor(co.slug, o)), at: new Date().toISOString() };
+    await q("UPDATE platform.orders SET stripe = stripe || jsonb_build_object('amount', $2::jsonb) WHERE id=$1", [o.id, JSON.stringify(amt)]);
+  }
+  const band = o.band || {}, cents = amt.cents;
+  const pilot = require("./pilot").isPilot(band) ? band.pilot : null;
+  // one monthly Price per amount: a pilot's, a flat band's (price book 1), or the fee by the tools live (price book 2)
+  const price = pilot ? { lookup_key: `anetix_pilot_${cents}`, unit_amount: cents, name: "Anetix pilot", band: "pilot", book: o.price_book }
+    : amt.plan === "tools" ? { lookup_key: `anetix_tools_v${o.price_book}_${cents}`, unit_amount: cents, name: "Anetix: tools live on the floor", band: "tools", book: o.price_book }
+      : { lookup_key: `anetix_site_${band.key}_v${o.price_book}_${cents}`, unit_amount: cents, name: `Anetix site: ${band.name}`, band: band.key, book: o.price_book };
   const body = {
     order: o.id, site: site.id, slug: co.slug, preview,
     customer: preview ? st.customer : site.stripe_customer,
     payment_method: o.payment_method,
-    price: { lookup_key: `anetix_site_${band.key}_v${o.price_book}_${cents}`, unit_amount: cents, name: `Anetix site: ${band.name}`, band: band.key, book: o.price_book },
+    price,
+    // a pilot ends on its own: anetix.ai makes the subscription with Stripe's cancel_at set to its start plus the months,
+    // so no charge is ever made after the last payment, whatever happens to this service afterwards
+    ...(pilot ? { cancel_after_months: pilot.months } : {}),
     balance: { cents: bal.cents, description: "Unused AI credit bought for the demo, at the price paid" },
     site_name: (o.facts || {}).site_name || co.name,
-    metadata: { site: site.id, order: o.id, price_book: String(o.price_book), band: String(band.key || ""), company: co.slug, ...(preview ? { preview: "yes" } : {}) },
+    metadata: { site: site.id, order: o.id, price_book: String(o.price_book), band: String(band.key || ""), company: co.slug, plan: amt.plan, ...(amt.tools != null ? { tools: String(amt.tools) } : {}), ...(pilot ? { pilot_months: String(pilot.months) } : {}), ...(preview ? { preview: "yes" } : {}) },
     // after a Stripe server error (kept under its idempotency key for 24 hours) the subscription's key moves on; anetix.ai
     // looks for this order's subscription before making one, so a fresh key never charges twice
     key_try: st.last_error && st.last_error.stripe_error ? Number(st.attempts || 0) : 0,
@@ -292,13 +324,20 @@ async function run(siteId, orderId, by) {
     await logEvent("site_activate_stopped", co.slug, { order: o.id, error: clean(e.message, 300) });
     throw fail(502, `Stripe did not finish (${e.message}). Nothing is lost: the order stays Switching on, and Activate again carries on from where it stopped without charging twice.`, { code: "stopped" });
   }
-  const sub = ans.subscription || {};
+  let sub = ans.subscription || {};
+  // A pilot's subscription always has its end date. One that came back without it (it should never: anetix.ai makes it
+  // with one) gets it now, and if that fails Anetix is told at once: the sweep keeps trying every 15 minutes.
+  if (pilot && !preview && sub.id && !sub.cancel_at) {
+    try { sub = (await www("/internal/pilot-end", { subscription: sub.id, site: site.id }, { timeoutMs: 30000 })).subscription || sub; }
+    catch (e) { console.error(`[activate] ${co.slug}: the pilot was charged but has no end date at Stripe: ${e.message}`); }
+    if (!sub.cancel_at) require("./notify").notify("A pilot has no end date at Stripe", `${co.name}: the pilot's first month was charged, but its subscription has no cancel date. Set "cancel at" on it in the Stripe dashboard now (${pilot.months} month${pilot.months === 1 ? "" : "s"} from today), or it will keep charging.`, { priority: 5, tags: ["rotating_light"], ref: co.slug });
+  }
   // every Stripe id is kept the moment it exists
   await q(`UPDATE platform.orders SET stripe = stripe - 'last_error' || jsonb_build_object('subscription', $2::text, 'price', $3::text) || jsonb_build_object('balance', (stripe->'balance') || jsonb_build_object('txn', $4::text)), updated_at=now() WHERE id=$1`,
     [o.id, sub.id || null, ans.price_id || null, ans.balance_txn || null]);
   if (preview) return previewDone(site, o, co, ans);
   const out = await finish(o.id, sub, "activate");
-  return { ok: true, activated: true, ...out, subscription: sub.id, refund_usd: bal.cents / 100 };
+  return { ok: true, activated: true, ...out, subscription: sub.id, refund_usd: bal.cents / 100, charged_usd: cents / 100, ends_at: sub.cancel_at ? new Date(Number(sub.cancel_at) * 1000).toISOString() : null };
 }
 
 // A preview's subscription was made in Stripe's test mode and cancelled at once by anetix.ai; the company is untouched.
@@ -352,19 +391,28 @@ async function finish(orderId, sub, via) {
     if (!step.ok) throw fail(409, step.why);
     const ps = sub.current_period_start ? new Date(Number(sub.current_period_start) * 1000) : new Date();
     const pe = sub.current_period_end ? new Date(Number(sub.current_period_end) * 1000) : require("./fairuse").addMonths(ps, 1);
+    // what was charged (worked out when Activate ran: the tools live that day, or the pilot's fee), and for a pilot the
+    // day Stripe ends it, kept on the site's band and as its cancel date from the start: it is the plan, not a cancellation
+    const charged = (o.stripe || {}).amount && Number.isInteger((o.stripe || {}).amount.cents) ? (o.stripe || {}).amount.cents / 100 : Number(o.price_usd);
+    const P = require("./pilot");
+    let band = o.band || null, endsAt = null;
+    if (P.isPilot(band)) {
+      endsAt = sub.cancel_at ? new Date(Number(sub.cancel_at) * 1000) : require("./fairuse").addMonths(ps, band.pilot.months);
+      band = { ...band, pilot: { ...band.pilot, started_at: ps.toISOString(), ends_at: endsAt.toISOString() } };
+    }
     await c.query(`UPDATE platform.orders SET state='activated', updated_at=now(),
                      stripe = stripe || jsonb_build_object('subscription', $2::text, 'activated_at', now(), 'activated_by', $3::text) WHERE id=$1`, [o.id, sub.id || null, via || null]);
-    await c.query(`UPDATE platform.sites SET stage='subscribed', standing='good', cancel_at=NULL, attention=NULL, stripe_subscription=$2, order_id=$3,
+    await c.query(`UPDATE platform.sites SET stage='subscribed', standing='good', cancel_at=$11, attention=NULL, stripe_subscription=$2, order_id=$3,
                      period_start=$4, period_end=$5, activated_at=now(), converted_at=COALESCE(converted_at, now()), returned_at=NULL,
-                     band=$6, price_usd=$7, price_book=$8, learning_opt_in=$9, fair_use_lift=NULL,
+                     band=$6, price_usd=$7, price_book=$8, learning_opt_in=$9, fair_use_lift=NULL, offer=NULL,
                      rollover=jsonb_build_object('clear_sample', $10::boolean, 'started_at', now()), updated_at=now(), updated_by='platform' WHERE id=$1`,
-    [site.id, sub.id || null, o.id, ps, pe, o.band ? JSON.stringify(o.band) : null, o.price_usd, o.price_book, o.learning_opt_in === true,
-      ((o.stripe || {}).activate || {}).clear_sample !== false]);
-    return { fresh: true, slug: site.company, order: o };
+    [site.id, sub.id || null, o.id, ps, pe, band ? JSON.stringify(band) : null, charged, o.price_book, o.learning_opt_in === true,
+      ((o.stripe || {}).activate || {}).clear_sample !== false, endsAt]);
+    return { fresh: true, slug: site.company, order: o, charged, band, ends_at: endsAt };
   });
   if (r.fresh) {
     await logEvent("site_activated", r.slug, { order: orderId, subscription: sub.id || null, via: via || null });
-    await require("./record").record("site_subscribed", { company: r.slug, actor: { role: "platform", name: "Anetix" }, after: `Subscribed: ${(r.order.band || {}).name || ""} site, ${usd(r.order.price_usd)} a month. The demo's data is before this line; the plant's is after it.`, detail: { order: orderId, subscription: sub.id || null } }).catch((e) => console.error("[activate] record:", e.message));
+    await require("./record").record("site_subscribed", { company: r.slug, actor: { role: "platform", name: "Anetix" }, after: `${r.ends_at ? `Pilot started: ${sites.pilotLine({ monthly_usd: r.band.monthly_usd, months: r.band.pilot.months })}. It ends on its own on ${new Date(r.ends_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/New_York" })}` : `Subscribed: ${(r.order.band || {}).name || ""} site, ${sites.feeLine(r.band, ((r.order.stripe || {}).amount || {}).tools || 0)}`}. The demo's data is before this line; the plant's is after it.`, detail: { order: orderId, subscription: sub.id || null } }).catch((e) => console.error("[activate] record:", e.message));
   }
   let rollover_error = null;
   try { await rolloverSteps(r.slug); }
@@ -570,7 +618,7 @@ async function billingEvent(b = {}) {
     await finish(o.id, sub, ev.type);
     applied.activated = true;
   }
-  const site = md.site && UUID.test(md.site) ? (await q("SELECT id, company, stage, standing, cancel_at, ending, stripe_subscription, period_end FROM platform.sites WHERE id=$1", [md.site])).rows[0] : null;
+  const site = md.site && UUID.test(md.site) ? (await q("SELECT id, company, stage, standing, cancel_at, ending, stripe_subscription, period_end, band, price_usd FROM platform.sites WHERE id=$1", [md.site])).rows[0] : null;
   if (sub && site && site.stage === "subscribed" && site.stripe_subscription === sub.id) {
     if (sub.current_period_end) {
       const ps = new Date(Number(sub.current_period_start) * 1000), pe = new Date(Number(sub.current_period_end) * 1000);
@@ -584,6 +632,8 @@ async function billingEvent(b = {}) {
     // Stripe ended it for a payment)
     Object.assign(applied, await require("./billing").onSubscription(site, sub, ev));
     if (ev.type === "invoice.finalization_failed") Object.assign(applied, await require("./billing").onFinalizationFailed(site, ev));
+    // price book 2: the fee follows the tools live on the floor (src/modprice.js); every event is a chance to catch up
+    if (!applied.returned && !applied.ended_now) require("./modprice").changed(site.company);
   }
   await q("INSERT INTO platform.billing_events (stripe_event, type, site_id, subscription, applied) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (stripe_event) DO NOTHING",
     [ev.id, clean(ev.type, 80), site ? site.id : md.site && UUID.test(md.site) ? md.site : null, sub ? clean(sub.id, 80) : null, JSON.stringify(applied)]);
@@ -634,7 +684,7 @@ async function siteForSettings(slug) {
   if (!s || s.stage !== "subscribed") return { subscribed: false, billing: Boolean(s && s.stage === "back_to_demo" && s.stripe_customer), returned_at: s && s.stage === "back_to_demo" ? s.returned_at : null,
     learning_opt_in: s && s.stage === "back_to_demo" ? Boolean(s.learning_opt_in) : undefined, terms_link: s && s.stage === "back_to_demo" ? require("./agreements").termsLink() : undefined };
   const B = require("./billing");
-  return { subscribed: true, band: s.band ? s.band.name : null, price_usd: s.price_usd == null ? null : Number(s.price_usd), since: s.activated_at, learning_opt_in: Boolean(s.learning_opt_in), terms_link: require("./agreements").termsLink(),
+  return { subscribed: true, summary: await require("./modprice").summaryFor(s), pilot: require("./pilot").isPilot(s.band), band: s.band ? s.band.name : null, price_usd: s.price_usd == null ? null : Number(s.price_usd), since: s.activated_at, learning_opt_in: Boolean(s.learning_opt_in), terms_link: require("./agreements").termsLink(),
     next_bill: s.cancel_at ? null : s.period_end || null, ends_on: s.cancel_at || null, standing: s.standing || "good", line: B.lineFor(s), billing: Boolean(s.stripe_customer) };
 }
 async function setLearning(req, slug, on) {
@@ -698,6 +748,6 @@ wwwRouter.use("/api/www/billing-events", (req, res, next) => (require("./selfser
 wwwRouter.post("/api/www/billing-events", json, guard((b) => billingEvent(b)));
 
 module.exports = {
-  init, SCHEMA, channelProblem, channel, www, checks, activate, run, finish, rolloverSteps, finishPending, rolloverPlan, refundableCents,
+  init, SCHEMA, channelProblem, channel, www, checks, activate, run, finish, amountFor, rolloverSteps, finishPending, rolloverPlan, refundableCents,
   decline, sendBack, stopActivating, tidy, billingEvent, forBoard, collectWelcome, siteForSettings, setLearning, router, wwwRouter,
 };

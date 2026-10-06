@@ -38,7 +38,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   await p.fill("#sq-head", "40"); await p.fill("#sq-sqft", "110000");
   await p.waitForFunction(() => /Mid site/.test(document.getElementById("sq-line").innerText), null, { timeout: 5000 }).catch(() => {});
   const ql = await p.locator("#sq-line").innerText();
-  t("the quick quote: 40 people on 110,000 square feet is a Mid site at $1,750 a month, moved up for floor space", /Mid site: \$1,750 a month/.test(ql) && /moves it up one band/.test(ql), ql);
+  t("the quick quote: 40 people on 110,000 square feet is a Mid site, $300 a tool up to a $1,750 cap, moved up for floor space", /Mid site: \$300 a month for each tool live, never more than \$1,750/.test(ql) && /moves it up one band/.test(ql), ql);
   await p.fill("#sq-head", "lots");
   await p.waitForFunction(() => /whole number/.test(document.getElementById("sq-line").innerText), null, { timeout: 5000 }).catch(() => {});
   t("words in the headcount say why", /whole number/.test(await p.locator("#sq-line").innerText()));
@@ -54,7 +54,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   await p.fill("#sf-head", "48");
   await p.waitForFunction(() => /Small site/.test(document.getElementById("sf-band").innerText), null, { timeout: 5000 }).catch(() => {});
   const bl = await p.locator("#sf-band").innerText();
-  t("the band line follows the headcount typed, with the edge flag", /Small site: \$1,000 a month/.test(bl) && /within five of Mid/.test(bl), bl);
+  t("the band line follows the headcount typed, with the edge flag", /Small site: \$300 a month for each tool live, never more than \$1,000/.test(bl) && /reached at 4 tools/.test(bl) && /within five of Mid/.test(bl), bl);
   if (SHOTS) await p.screenshot({ path: `${SHOTS}/sites-form.png` });
   await p.click("#sf-save");
   await p.waitForFunction(() => document.getElementById("sf-err").innerText.length > 0, null, { timeout: 5000 }).catch(() => {});
@@ -64,10 +64,28 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   await p.waitForSelector("#sites-modal.on", { state: "detached", timeout: 5000 }).catch(() => {});
   await p.waitForFunction((s) => { const r = document.querySelector(`tr.row[data-slug="${s}"]`); return r && /Small/.test(r.innerText); }, slug, { timeout: 5000 }).catch(() => {});
   const row = await p.locator(`tr.row[data-slug="${slug}"]`).innerText();
-  t("saved: the row shows the site, the plant manager, the size, the band and its flag", /Acme Wire, Worcester/.test(row) && /40 Foundry Street, Worcester, MA 01608/.test(row) && /Sam Ortiz/.test(row) && /48 people/.test(row) && /Small · \$1,000\/mo/.test(row) && /within five of Mid/.test(row), row);
+  t("saved: the row shows the site, the plant manager, the size, the band and its flag", /Acme Wire, Worcester/.test(row) && /40 Foundry Street, Worcester, MA 01608/.test(row) && /Sam Ortiz/.test(row) && /48 people/.test(row) && /\$300\/mo today/.test(row) && /0 live at \$300 a tool · Small cap \$1,000/.test(row) && /within five of Mid/.test(row), row);
   t("the form is closed", await p.locator("#sites-modal.on").count() === 0);
   await p.locator(`tr.row[data-slug="${slug}"]`).click(); await p.waitForSelector("#sites-modal.on");
   t("opening it again shows what was saved", (await p.inputValue("#sf-head")) === "48" && (await p.inputValue("#sf-state")) === "MA" && (await p.inputValue("#sf-pmemail")) === "sam@acmewire.test");
+  // ---- a pilot offer from the site's form (src/pilot.js, 2026-10-05)
+  await p.waitForSelector("#sf-of-save", { timeout: 5000 });
+  t("the form offers a pilot: $1,000 a month for 2 months to start from, with the usual lines", (await p.inputValue("#sf-of-usd")) === "1000" && (await p.inputValue("#sf-of-months")) === "2" && /^On site: /.test(await p.inputValue("#sf-of-lines")) && /Offer this pilot/.test(await p.locator("#sf-of-save").innerText()));
+  await p.fill("#sf-of-lines", "On site: Anetix will be at the Site about 4 hours a week.\nFee: nothing");
+  await p.click("#sf-of-save");
+  await p.waitForFunction(() => document.getElementById("sf-of-err") && document.getElementById("sf-of-err").innerText.length > 0, null, { timeout: 5000 }).catch(() => {});
+  t("a line that takes the order form's own label is refused in words, and nothing is offered", /its own "Fee" line/.test(await p.locator("#sf-of-err").innerText()), await p.locator("#sf-of-err").innerText());
+  await p.fill("#sf-of-lines", "On site: Anetix will be at the Site about 4 hours a week.\nIntegrations: QuickBooks at no additional charge");
+  await p.click("#sf-of-save");
+  await p.waitForSelector("#sf-of-clear", { timeout: 8000 });
+  const box = await p.locator("#sf-offerbox").innerText();
+  t("offered: the form says what their manager now sees, and shows the order form they will sign", /Offered: \$1,000 a month for 2 months, \$2,000 in all/.test(box) && /Start your pilot/.test(box) && /ANETIX PILOT ORDER FORM/.test(await p.locator("#sf-of-text").textContent()) && /Integrations: QuickBooks at no additional charge\./.test(await p.locator("#sf-of-text").textContent()), box);
+  if (SHOTS) await p.screenshot({ path: `${SHOTS}/sites-offer.png`, fullPage: true });
+  t("the row behind says a pilot is offered", /pilot offered: \$1,000 a month for 2 months/.test(await p.locator(`tr.row[data-slug="${slug}"]`).innerText()));
+  p.once("dialog", (d) => d.accept());
+  await p.click("#sf-of-clear");
+  await p.waitForSelector("#sf-of-clear", { state: "detached", timeout: 8000 }).catch(() => {});
+  t("withdrawn: the offer is gone from the form and the row", await p.locator("#sf-of-clear").count() === 0 && !/pilot offered/.test(await p.locator(`tr.row[data-slug="${slug}"]`).innerText()));
   await p.keyboard.press("Escape");
   t("Escape closes it", await p.locator("#sites-modal.on").count() === 0);
 

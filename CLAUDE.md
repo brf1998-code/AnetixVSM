@@ -164,6 +164,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Every company is the same, and a boot brings it up to date (2026-09-29)
 - The first-time user round (2026-10-01)
 - Connector sign-in and the admin MCP (2026-10-05)
+- Price book 2 (by the tool live on the floor), the pilot offer, and the board link on every page (2026-10-05)
 
 ## What this is
 
@@ -307,6 +308,7 @@ tool list, 401 from the API) proves the CLI itself starts.
   off watching anetix.ai, `src/uptime.js`), `SOS_UPTIME_MS` (60 s). The same
   `NTFY_TOPIC` on anetix-www sends its alerts (`www/notify.js`) and its watch of
   this product (`UPTIME_WATCH`, `UPTIME_MS` there).
+- `SOS_REPRICE_DELAY_MS` (1500): how long after a tool goes live the site's fee is looked at again (`src/modprice.js`).
 - `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
   (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
   second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts

@@ -51,6 +51,7 @@ const PAGE = "/c/demo/m/paperline/";
   // ---- the test page: the step for this screen, then a person ticks it there
   const p = await ctxF.newPage(); watch(p, "test page");
   await p.goto(BASE + "/c/demo/test/m/paperline/"); await p.waitForSelector("#sos-test-bar");
+  t("the test floor's bar links back to the improvement board (2026-10-05)", (await p.locator("#sos-test-bar #sos-bar-board").getAttribute("href")) === "/c/demo/");
   await p.waitForFunction(() => { const el = document.getElementById("sos-test-step"); return el && /Test step/.test(el.textContent); }, null, { timeout: 20000 });
   const stepText = await p.locator("#sos-test-step").innerText();
   t("the test page shows the steps for this screen, with what to do and whether it is watched", /Test step 1:/.test(stepText) && /Open the first screen|stockroom/.test(stepText) && (await p.locator("#sos-test-step button", { hasText: "Done" }).count()) >= 1, stepText);

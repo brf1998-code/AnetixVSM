@@ -20,7 +20,7 @@ const R = runner(), t = R.t;
   const s = await admin.get("/api/c/demo/modules/paperline/sample");
   t("it has sample data like every demo", s.status === 200 && s.json.can_fill !== undefined, s.status);
   const page = await floor.get("/c/demo/m/paperline/");
-  t("its tool pages carry the link back to the improvement board", page.status === 200 && /data-demo="1"/.test(page.text));
+  t("its tool pages carry the link back to the improvement board", page.status === 200 && /data-board="1"/.test(page.text));
   const dg = (await admin.get("/api/c/demo/diagrams/paperline")).json;
   t("its diagrams are drawn when asked, like a demo's", dg.trial === true);
   const sv = (await login(PW.manager, "demo")).get("/api/c/demo/settings-view");
@@ -35,7 +35,9 @@ const R = runner(), t = R.t;
   t("it has no sample data", (await admin.get("/api/c/paid-site/modules/paperline/sample")).status === 404);
   const pfloor = await login(made.json.passwords.floor, "paid-site");
   const pp = await pfloor.get("/c/paid-site/m/paperline/");
-  t("its tool pages keep the floor's own view (no board link)", pp.status === 200 && !/data-demo="1"/.test(pp.text));
+  t("its tool pages carry the link back to the board too (every page, since 2026-10-05)", pp.status === 200 && /data-board="1"/.test(pp.text));
+  const widget = (await pfloor.get("/assets/feedback-widget.js")).text;
+  t("the widget draws the board link on every page and in the preview's bar", /sos-board-link/.test(widget) && /sos-bar-board/.test(widget) && !/data-demo/.test(widget));
 
   // ---- 3. a boot brings existing companies to the rule
   const mk = async (slug, stage) => {

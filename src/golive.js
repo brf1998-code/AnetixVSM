@@ -161,7 +161,25 @@ function missingFacts(f = {}) {
   return out;
 }
 // The band as an order keeps it: what the customer is shown and what Activate bills. Brendan's flags stay off it.
-function bandSnap(b) { return b ? { key: b.key, name: b.name, min: b.min, max: b.max, monthly_usd: b.monthly_usd, moved_up: b.moved_up, by_headcount: b.by_headcount, why: b.why, book: b.book } : null; }
+function bandSnap(b) {
+  if (!b) return null;
+  if (b.key === "pilot") return b;   // a pilot's own band (src/pilot.js bandSnap): kept whole, its lines included
+  return { key: b.key, name: b.name, min: b.min, max: b.max, monthly_usd: b.monthly_usd, moved_up: b.moved_up, by_headcount: b.by_headcount, why: b.why, book: b.book,
+    // price book 2: the fee follows the tools live on the floor, and monthly_usd is the cap (src/sites.js feeFor)
+    ...(b.per_tool_usd ? { per_tool_usd: b.per_tool_usd, min_tools: b.min_tools, cap_usd: b.cap_usd != null ? b.cap_usd : b.monthly_usd } : {}) };
+}
+// What an order is priced at right now (2026-10-05): a pilot Anetix offered this company (its own fee, whatever the
+// size or the tools), or the price book: by the tools live on the floor (version 2) or the band (version 1).
+// -> { band (the snapshot the order keeps), price_usd (the first month as it stands today), live_tools, offer }
+// db: a transaction's client or { query: q }. band is null until the answers hold a headcount (a pilot needs none).
+async function quoteFor(db, site, facts, book) {
+  const offer = require("./pilot").standing(site);
+  if (offer) return { band: require("./pilot").bandSnap(offer), price_usd: Number(offer.monthly_usd), live_tools: null, offer };
+  const band = Number.isInteger((facts || {}).headcount) ? sites.bandOf(facts, book) : null;
+  if (!band) return { band: null, price_usd: null, live_tools: null, offer: null };
+  const live = band.per_tool_usd ? await sites.liveTools(site.company, db) : null;
+  return { band: bandSnap(band), price_usd: sites.feeFor(band, live || 0).usd, live_tools: live, offer: null };
+}
 // Who the Stripe Customer is (the www service makes or updates it at signing): the legal name, the billing email and
 // address, and the site's own address as its shipping address, so tax can follow where the software is used. A
 // preview's Customer is its own, never the site's. line2 goes as "" when empty, so an update clears an old one.
@@ -311,20 +329,29 @@ async function resolve(a = {}) {
     const order = (await q("SELECT * FROM platform.orders WHERE id=$1", [id])).rows[0];
     const ap = order && order.approver;
     if (!ap || !same(ap.nonce, tok.nonce) || Number(ap.exp) !== tok.exp) throw fail(404, "not found");
-    if (ap.kind !== "a" && !open) throw fail(404, "not found");
     if (["void", "declined"].includes(order.state)) throw approverGone();
     const site = (await q("SELECT * FROM platform.sites WHERE id=$1", [order.site_id])).rows[0];
+    // Go live is off for customers, unless Anetix made this company an offer (src/pilot.js): the offer is the invitation
+    if (ap.kind !== "a" && !open && !(site && require("./pilot").standing(site)) && !(site && order.state !== "draft" && require("./pilot").isPilot(order.band))) throw fail(404, "not found");
     const co = site && (await q("SELECT slug, name, demo FROM platform.companies WHERE slug=$1", [site.company])).rows[0];
     if (!site || !co) throw fail(404, "not found");
     return { who: "approver", kind: ap.kind === "a" ? "a" : "m", site, co, order_id: id, nonce: tok.nonce, exp: tok.exp };
   }
   const slug = String((a && a.slug) || "").toLowerCase();
   const tok = readGoliveToken(slug, a && a.t);
-  if (!tok || (tok.kind === "m" && !open)) throw fail(404, "not found");
+  if (!tok) throw fail(404, "not found");
   const site = (await q("SELECT * FROM platform.sites WHERE id=$1 AND company=$2", [tok.site, slug])).rows[0];
+  if (tok.kind === "m" && !open && !(site && (await invited(site)))) throw fail(404, "not found");
   const co = site && (await q("SELECT slug, name, demo FROM platform.companies WHERE slug=$1", [slug])).rows[0];
   if (!site || !co) throw fail(404, "not found");
   return { who: "manager", kind: tok.kind, site, co };
+}
+// Go live being off does not shut out a company Anetix made an offer to, nor one whose order under an offer is already
+// in (it must still be able to see it, add a card after a decline, or withdraw).
+async function invited(site) {
+  if (require("./pilot").standing(site)) return true;
+  const o = await openOrder(site.id);
+  return Boolean(o && o.kind === "customer" && o.state !== "draft" && require("./pilot").isPilot(o.band));   // a draft counts only while the offer stands
 }
 function approverGone() { return fail(410, "This link no longer works: the order it was for was started over or withdrawn, or someone else was asked to approve it. Ask the person who sent it to you for a new one.", { code: "gone" }); }
 const readOnly = () => fail(409, "This order is the customer's. Your preview link can look at it but not change it; start your own preview on a site with no order open, or void theirs from the Sites tab.", { code: "readonly" });
@@ -357,11 +384,12 @@ function approverUrl(o) {
   const t = approverToken(o.id, ap.nonce, Number(ap.exp));
   return t ? `${WWW()}/order/${o.id}?t=${t}` : null;
 }
-function draftText(facts, book) {
-  const text = sites.orderText({ facts, book, terms_version: terms.TERMS_VERSION, terms_url: termsUrl() });
+function draftText(facts, book, quote = {}) {
+  const text = sites.orderText({ facts, book, terms_version: terms.TERMS_VERSION, terms_url: termsUrl(), live_tools: quote.live_tools || 0, offer: quote.offer || null });
   return { text, sha: sites.textHash(text) };
 }
-function orderView(o, { acc, book, site, co }) {
+const rangeOf = (b) => (!b || b.min == null ? "" : b.max == null ? `${Number(b.min).toLocaleString("en-US")} people or more` : `${Number(b.min).toLocaleString("en-US")} to ${Number(b.max).toLocaleString("en-US")} people`);
+function orderView(o, { acc, book, site, co, quote }) {
   const f = o.facts || {};
   const missing = missingFacts(f);
   const ap = o.approver;
@@ -374,13 +402,19 @@ function orderView(o, { acc, book, site, co }) {
     card: o.card || null, card_saved: Boolean(o.payment_method), setup_session: o.setup_session || null,
     terms_version: o.terms_version || terms.TERMS_VERSION, price_book: o.price_book || book.version, note: o.note || null,
   };
+  const P = require("./pilot");
   if (o.state === "draft") {
-    const band = Number.isInteger(f.headcount) ? sites.bandOf(f, book) : null;
-    out.band = bandSnap(band); out.price_usd = band ? band.monthly_usd : null;
-    if (out.complete && band) Object.assign(out, draftText(f, book));
+    const qt = quote || { band: null, price_usd: null };
+    out.band = qt.band; out.price_usd = qt.price_usd;
+    if (out.complete && qt.band) Object.assign(out, draftText(f, book, qt));
+    out.pricing = qt.band ? sites.pricingView({ band: qt.band, live_tools: qt.live_tools || 0, offer: qt.offer, site_name: f.site_name || co.name, range: rangeOf(qt.band) }) : null;
   } else {
     out.band = o.band || null; out.price_usd = o.price_usd == null ? null : Number(o.price_usd); out.text = o.text; out.sha = o.text_sha256;
+    // a signed order says what was signed: the pilot as offered then, or the fee as it stood at the signature
+    const pilot = P.isPilot(o.band) ? { kind: "pilot", monthly_usd: o.band.monthly_usd, months: o.band.pilot.months, lines: o.band.pilot.lines } : null;
+    out.pricing = o.band ? sites.pricingView({ band: o.band, live_tools: (o.stripe || {}).signed_tools || 0, offer: pilot, site_name: f.site_name || co.name, range: rangeOf(o.band) }) : null;
   }
+  out.pilot = P.isPilot(out.band);
   if (o.state === "signed" && !o.payment_method && mine(acc, o)) out.customer = customerFor(site, co, f, o);
   return out;
 }
@@ -397,12 +431,18 @@ async function view(access, acc0) {
   // a customer's earlier order Anetix withdrew, with its note, while there is no open one
   const last = !order && acc.who === "manager" && acc.kind === "m" ? (await q("SELECT note, voided_at FROM platform.orders WHERE site_id=$1 AND kind='customer' ORDER BY created_at DESC LIMIT 1", [site.id])).rows[0] : null;
   const stage = preview ? previewStage(order) : site.stage || "demo";
+  const quote = order && order.state === "draft" ? await quoteFor({ query: q }, site, order.facts, book) : null;
+  const offer = require("./pilot").standing(site);
+  const pilot = Boolean(offer || (order && require("./pilot").isPilot(order.band)));
   return {
     ok: true, who: acc.who, preview: acc.kind === "a", open: await isOpen(),
     company: { slug: acc.co.slug, name: acc.co.name, demo: Boolean(acc.co.demo) },
     site: { id: site.id, stage, stage_label: sites.STAGE_LABEL[stage] },
     terms: { version: terms.TERMS_VERSION, url: termsUrl(), draft: terms.DRAFT, ...assentFor(order && order.facts, acc.co) },
-    order: order ? orderView(order, { acc, book, site, co: acc.co }) : null,
+    order: order ? orderView(order, { acc, book, site, co: acc.co, quote }) : null,
+    // a pilot Anetix offered this company: the screens say "pilot", and what is charged when (www pages.js)
+    pilot, offer: offer ? { monthly_usd: Number(offer.monthly_usd), months: Number(offer.months), line: sites.pilotLine(offer) } : null,
+    words: pilot ? PILOT_WORDS : null,
     prefill: !order && acc.who === "manager" ? await prefill({ query: q }, site, acc.co) : null,
     withdrawn: last && last.note && /^Anetix withdrew/.test(last.note) ? { note: last.note, at: last.voided_at } : null,
     me: acc.who === "manager" ? { email: (mgr && mgr.login) || (ss && ss.email) || null, name: (mgr && mgr.display_name) || (ss && ss.contact) || null } : null,
@@ -412,6 +452,16 @@ async function view(access, acc0) {
     fair_use_share: book.fair_use_share,
   };
 }
+
+// The few lines of the go-live screens that are not the price screen or the order form and that a pilot says
+// differently (anetix.ai lays them out; without them it says a subscription's).
+const PILOT_WORDS = Object.freeze({
+  kicker: "Your pilot",
+  about: "Anetix has offered your site a pilot. Your demo becomes the pilot site, with everything you built still in place: your floor gets its own way in and the AI has no credit to run out of. First, a few facts about the site.",
+  about_approver: "asked you to approve this pilot. These are their answers; correct anything that is wrong.",
+  charge: "the first payment is charged then",
+  done: "Until then the demo works as it does now.",
+});
 
 // ---- what anetix.ai does ----------------------------------------------------------------------------------------------
 // Screen 1: the answers. The first save starts the order (a customer's moves the site to Ordering); a save that
@@ -452,7 +502,7 @@ async function save(access, body = {}) {
     // "That's me": the plant manager's name and title are the person going live's, copied now, so a later change to
     // the plant manager (the approver's, say) does not change who that is
     if (acc.who === "manager" && facts.contact && facts.contact.is_pm) facts.contact = { is_pm: true, name: (facts.plant_manager || {}).name || "", title: (facts.plant_manager || {}).title || "" };
-    const band = Number.isInteger(facts.headcount) ? sites.bandOf(facts, book) : null;
+    const qt = await quoteFor(c, site, facts, book);
     if (!open) {
       let fromStage = null;
       if (!preview) {
@@ -464,13 +514,13 @@ async function save(access, body = {}) {
       const id = crypto.randomUUID();
       await c.query(`INSERT INTO platform.orders (id, site_id, company, state, version, facts, band, price_usd, price_book, terms_version, kind, from_stage, created_by)
                      VALUES ($1,$2,$3,'draft',1,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [id, site.id, site.company, JSON.stringify(facts), band ? JSON.stringify(bandSnap(band)) : null, band ? band.monthly_usd : null, book.version, terms.TERMS_VERSION, preview ? "preview" : "customer", fromStage, preview ? "admin" : acc.who]);
+      [id, site.id, site.company, JSON.stringify(facts), qt.band ? JSON.stringify(qt.band) : null, qt.price_usd, book.version, terms.TERMS_VERSION, preview ? "preview" : "customer", fromStage, preview ? "admin" : acc.who]);
       if (!preview) await writeThrough(c, site, facts);
       return { started: id, detach, replaced };
     }
     if (sites.stable(facts) === sites.stable(open.facts)) return { unchanged: open.id, detach, replaced };
     await c.query("UPDATE platform.orders SET facts=$2, version=version+1, band=$3, price_usd=$4, price_book=$5, updated_at=now() WHERE id=$1",
-      [open.id, JSON.stringify(facts), band ? JSON.stringify(bandSnap(band)) : null, band ? band.monthly_usd : null, book.version]);
+      [open.id, JSON.stringify(facts), qt.band ? JSON.stringify(qt.band) : null, qt.price_usd, book.version]);
     if (!preview) await writeThrough(c, site, facts);
     return { changed: open.id, detach, replaced };
   });
@@ -532,21 +582,24 @@ async function sign(access, body = {}) {
     const missing = missingFacts(open.facts);
     if (missing.length) throw fail(400, `The order still needs ${joinAnd(missing.map((m) => m[1]))}.`, { code: "incomplete" });
     const book = await sites.currentBook();
-    const band = sites.bandOf(open.facts, book);
-    const { text, sha: hash } = draftText(open.facts, book);
+    const qt = await quoteFor(c, site, open.facts, book);
+    if (!qt.band) throw fail(400, "The order still needs the number of people at the site.", { code: "incomplete" });
+    const band = { ...qt.band, monthly_usd: qt.band.monthly_usd };
+    const { text, sha: hash } = draftText(open.facts, book, qt);
     if (!same(hash, sha)) throw fail(409, "The order form changed since this page was opened. Look it over again before you sign.", { code: "changed" });
     const termsSha = await termsGuard(c);
     const assent = assentFor(open.facts, acc.co);
     await c.query(`UPDATE platform.orders SET state='signed', text=$2, text_sha256=$3, band=$4, price_usd=$5, price_book=$6, terms_version=$7, terms_sha256=$8,
-                     signer=$9, learning_opt_in=$10, signed_at=now(), signed_ip=$11, signed_net=$12, signed_ua=$13, assent=$14, updated_at=now() WHERE id=$1`,
-    [open.id, text, hash, JSON.stringify(bandSnap(band)), band.monthly_usd, book.version, terms.TERMS_VERSION, termsSha,
-      JSON.stringify(signer), open.facts.learning === true, clean(body.ip, 64) || null, cleanNet(body.net) ? JSON.stringify(cleanNet(body.net)) : null, clean(body.ua, 300) || null, JSON.stringify(assent)]);
+                     signer=$9, learning_opt_in=$10, signed_at=now(), signed_ip=$11, signed_net=$12, signed_ua=$13, assent=$14,
+                     stripe = stripe || jsonb_build_object('signed_tools', $15::int), updated_at=now() WHERE id=$1`,
+    [open.id, text, hash, JSON.stringify(qt.band), qt.price_usd, book.version, terms.TERMS_VERSION, termsSha,
+      JSON.stringify(signer), open.facts.learning === true, clean(body.ip, 64) || null, cleanNet(body.net) ? JSON.stringify(cleanNet(body.net)) : null, clean(body.ua, 300) || null, JSON.stringify(assent), qt.live_tools || 0]);
     // the signature is the customer's acceptance of the Terms (their section 1.2); a preview is Brendan's own walk-through
     if (open.kind === "customer") await require("./agreements").record(c, { company: site.company, site_id: site.id, kind: "order", words: assent.tick,
       who: { name: signer.name, title: signer.title, email: signer.email, role: via }, ip: body.ip, net: cleanNet(body.net), ua: body.ua, ref: open.id });
-    return { order: open.id, band, preview: open.kind === "preview" };
+    return { order: open.id, band, price_usd: qt.price_usd, preview: open.kind === "preview" };
   });
-  await logEvent("order_signed", acc.co.slug, { order: r.order, site: acc.site.id, by: via, band: r.band.key, price_usd: r.band.monthly_usd, preview: r.preview });
+  await logEvent("order_signed", acc.co.slug, { order: r.order, site: acc.site.id, by: via, band: r.band.key, price_usd: r.price_usd, preview: r.preview });
   return view(access, acc);
 }
 
@@ -618,7 +671,7 @@ async function cardSaved(body = {}) {
   });
   if (r.applied) await logEvent("order_card_saved", r.company, { order: orderId, card: r.card ? `${r.card.brand || "card"} ${r.card.last4 || ""}`.trim() : null, preview: r.preview });
   // the launch audit, C11: a signed order with its card is waiting on Brendan, who aims to switch it on within 24 hours
-  if (r.applied && !r.preview) require("./notify").notify("Signed order: activate within 24 hours", `${r.company_name}${r.site_name && r.site_name !== r.company_name ? `, ${r.site_name}` : ""}: ${(r.band && r.band.name) || "a"} site at $${Number(r.price_usd || 0).toLocaleString("en-US")} a month. The card is saved. Activate is on the Sites tab.`, { priority: 5, tags: ["moneybag"], ref: r.company });
+  if (r.applied && !r.preview) require("./notify").notify("Signed order: activate within 24 hours", `${r.company_name}${r.site_name && r.site_name !== r.company_name ? `, ${r.site_name}` : ""}: ${require("./pilot").isPilot(r.band) ? `a pilot, ${sites.pilotLine({ monthly_usd: r.band.monthly_usd, months: r.band.pilot.months })}` : `${(r.band && r.band.name) || "a"} site at $${Number(r.price_usd || 0).toLocaleString("en-US")} a month${r.band && r.band.per_tool_usd ? ` today ($${r.band.per_tool_usd} a tool, cap $${Number(r.band.monthly_usd).toLocaleString("en-US")})` : ""}`}. The card is saved. Activate is on the Sites tab.`, { priority: 5, tags: ["moneybag"], ref: r.company });
   else if (r.detach) await logEvent("order_card_refused", r.company, { order: orderId, why: r.why });
   return { ok: true, ...r };
 }
@@ -692,10 +745,18 @@ async function adminVoid(slug, { note } = {}, by) {
 // The Go live link for a demo's manager (the credit line, the out-of-credit panel, Settings), or null. An admin
 // looking at the board gets an admin's link. Only the customer's own order shows here, never a preview.
 async function forBoard(co, role) {
-  if (!co || !["manager", "admin"].includes(role) || !co.demo) return null;
+  if (!co || !["manager", "admin"].includes(role)) return null;
+  // a pilot Anetix offered this company (src/pilot.js) shows whether or not Go live is on for everyone, and to a
+  // company that did not come in as a demo too; without one, Go live is a demo's, once the switch is on
+  const had = (await q("SELECT * FROM platform.sites WHERE company=$1", [co.slug])).rows[0] || null;
+  const P = require("./pilot");
+  const offer = had ? P.standing(had) : null;
+  const pilotOrder = had && !offer ? await openOrder(had.id).then((o) => (o && o.kind === "customer" && o.state !== "draft" && P.isPilot(o.band) ? o : null)) : null;
+  const pilot = Boolean(offer || pilotOrder);
+  if (!pilot && !co.demo) return null;
   const open = await isOpen();
-  if (!open && role !== "admin") return null;
-  const site = await ensureSite(co.slug);
+  if (!open && role !== "admin" && !pilot) return null;
+  const site = had || await ensureSite(co.slug);
   const stage = site.stage || "demo";
   if (stage === "subscribed") return null;
   const t = goliveToken(co.slug, site.id, { kind: role === "admin" ? "a" : "m" });
@@ -704,13 +765,22 @@ async function forBoard(co, role) {
   const url = `${WWW()}/c/${co.slug}/go-live?t=${t}`;
   const inAlready = ["signed", "activating"].includes(stage);
   const declined = Boolean(o && o.state === "signed" && !o.payment_method && (o.stripe || {}).declined);   // Activate's charge was declined (stage 3)
+  const book = await sites.currentBook();
+  const started = stage === "ordering";
+  const pl = offer ? sites.pilotLine(offer) : pilotOrder ? sites.pilotLine({ monthly_usd: pilotOrder.band.monthly_usd, months: pilotOrder.band.pilot.months }) : null;
   return {
-    stage, url, preview: role === "admin",
-    from: ["demo", "ordering", "back_to_demo"].includes(stage) ? sites.fromLine(await sites.currentBook()) : null,   // the price before the form (the launch audit, C7)
-    action: inAlready ? "See your order" : declined ? "Add another card" : stage === "ordering" ? "Continue going live" : "Go live",
+    stage, url, preview: role === "admin", pilot,
+    from: pilot ? { line: `Your pilot: ${pl}.`, short: pl } : ["demo", "ordering", "back_to_demo"].includes(stage) ? sites.fromLine(book) : null,   // the price before the form (the launch audit, C7)
+    action: inAlready ? "See your order" : declined ? "Add another card" : pilot ? (started ? "Continue with your pilot" : "Start your pilot") : started ? "Continue going live" : "Go live",
     // the Terms, 5.4: Anetix AIMS to switch a site on within 24 hours (Brendan, 2026-09-26)
-    line: inAlready ? "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now."
-      : declined ? "Your card was declined, so the site is not switched on yet. Use another card to finish going live." : null,
+    line: inAlready ? (pilot ? "Your pilot order is in. Anetix aims to switch this site on within 24 hours, and the first payment is charged then." : "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now.")
+      : declined ? "Your card was declined, so the site is not switched on yet. Use another card to finish going live."
+        // an offer is a line of its own on the board, with the way in beside it: it is there for a company with no credit line too
+        : pilot ? (started ? `Your pilot is waiting for you to finish signing: ${pl}.` : `Anetix has a pilot ready for you to sign: ${pl}. It ends on its own.`) : null,
+    // what Settings' Go live card says before an order is started (the page writes no price of its own)
+    pitch: pilot ? `Anetix has offered this site a pilot: ${pl}. It ends on its own, and everything you built stays. Your floor gets its own way in and the AI has no credit to run out of.`
+      : book.per_tool_usd ? `Make this demo your site: $${Number(book.per_tool_usd).toLocaleString("en-US")} a month for each tool live on your floor, never more than a cap set by the site's size, with no credit to run out of and a way in for the floor. Everything you built stays.`
+        : null,
     waiting_on: o && o.state === "draft" && o.approver ? o.approver.name : null,
     signed_no_card: Boolean(o && o.state === "signed" && !o.payment_method),
     declined,
@@ -784,6 +854,6 @@ router.get("/api/c/:slug/golive", requireManager, guard(async (_b, req) => {
 module.exports = {
   init, SCHEMA, status, isOpen, setOpen, openOrder, addDetach, cardsToRemove, TO_REMOVE_SQL, ensureSite, forBoard, adminLink, ordersOf, adminVoid, termsFor,
   view, save, setApprover, sign, checkout, cardSaved, startOver, withdraw, resolve, withSite, assentFor,
-  goliveToken, readGoliveToken, approverToken, readApproverToken, cleanFacts, missingFacts, customerFor, bandSnap, cleanCard, cleanNet, previewStage,
+  goliveToken, readGoliveToken, approverToken, readApproverToken, cleanFacts, missingFacts, customerFor, bandSnap, quoteFor, cleanCard, cleanNet, previewStage,
   wwwRouter, router,
 };

@@ -127,6 +127,12 @@ S4="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW
 fresh; start "SOS_BROWSER=off $S4"
 run billing                env $S4 node scripts/e2e/billing.js
 
+# 2026-10-05: price book 2 (by the tool live on the floor) and the pilot offer (src/modprice.js, src/pilot.js); one stub
+# plays anetix.ai's private channel and ntfy
+S5="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW_INTERNAL_URL=http://127.0.0.1:4013 WWW_INTERNAL_KEY=e2e-internal-key-0123456789abcdef NTFY_URL=http://127.0.0.1:4013 NTFY_TOPIC=e2e-topic SOS_REPRICE_DELAY_MS=50"
+fresh; start "SOS_BROWSER=off $S5"
+run pricing                env $S5 node scripts/e2e/pricing.js
+
 # the launch audit 0.1: bad values in every route's parameters, and another company by every spelling (no restart loop,
 # so a crash shows as a dead server)
 fresh; start "SOS_BROWSER=off"

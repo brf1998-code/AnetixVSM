@@ -80,6 +80,17 @@ const R = runner(), t = R.t;
   const gateAll = await tile.evaluate((el) => el.textContent);
   t("the gate says what was checked in plain words, the counts folded, and no model", /Checked before it reached you/.test(gate) && /What was checked/.test(gate) && !/checks passed:/.test(gate) && /checks passed:/.test(gateAll) && !/cross-check \(/.test(gateAll) && noMoneyNoModel(gateAll), gate);
   t("the steps are in plain words", /Waiting for your OK to go live/.test(gate) && !/Manager deploy gate|Agent build/.test(gate), gate);
+  // every tool page links back to the improvement board, and so does the preview's bar (Brendan, 2026-10-05)
+  const pv = await ctxM.newPage(); watch(pv, "preview");
+  await pv.goto(BASE + "/c/demo/staging/m/paperline/"); await pv.waitForSelector("#sos-staged-bar");
+  t("the preview's bar links back to the improvement board", (await pv.locator("#sos-staged-bar #sos-bar-board").getAttribute("href")) === "/c/demo/" && /back to the improvement board/.test(await pv.locator("#sos-staged-bar").innerText()));
+  t("and the preview page carries the board link in its corner too", (await pv.locator("#sos-board-link").getAttribute("href")) === "/c/demo/");
+  await Promise.all([pv.waitForURL(/\/c\/demo\/$/), pv.click("#sos-bar-board")]);
+  t("it lands on the board", /Improvement Board/.test(await pv.title()));
+  const lv = await ctxF.newPage(); watch(lv, "live tool");
+  await lv.goto(BASE + PAGE); await lv.waitForSelector("#sos-fb-btn");
+  t("a live tool page carries the link back to the board, for the floor too", (await lv.locator("#sos-board-link").getAttribute("href")) === "/c/demo/" && /Improvement board/.test(await lv.locator("#sos-board-link").innerText()));
+  await pv.close(); await lv.close();
   await tile.locator("button.go", { hasText: /Make it live/ }).click();
   await waitFor("the change live", async () => { const f = await fbRow(mgr, S1); return f && f.status === "done" && f.shipped_version; }, 30000);
   await b.locator("#col-done button", { hasText: "Show the other" }).click().catch(() => {});

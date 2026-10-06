@@ -102,7 +102,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const A = await makeDemo(admin, "Harbor Gear");
   const SA = await toSubscribed(admin, A);
   const signedAlert = await waitAlert(/Signed order/);
-  t("a signed order with its card: an alert with the company, the band and the price, nothing personal", signedAlert && /Harbor Gear/.test(signedAlert.message) && /\$1,000 a month/.test(signedAlert.message) && !/@/.test(signedAlert.message) && signedAlert.priority === 5, signedAlert);
+  t("a signed order with its card: an alert with the company, the band and the price, nothing personal", signedAlert && /Harbor Gear/.test(signedAlert.message) && /Small site at \$300 a month today \(\$300 a tool, cap \$1,000\)/.test(signedAlert.message) && !/@/.test(signedAlert.message) && signedAlert.priority === 5, signedAlert);
   t("Activate switched it on", SA.act.status === 200 && SA.site.stage === "subscribed" && SA.sub, SA.act.json);
 
   // ---- Manage billing -----------------------------------------------------------------------------------------------

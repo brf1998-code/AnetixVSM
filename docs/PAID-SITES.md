@@ -11,6 +11,24 @@ Revised the same day after an adversarial review of the billing design:
 activation retries, event order, where the fair-use check sits, the credit
 epoch, tax, the internal routes, and manager-only routes.
 
+## 2026-10-05: price book 2 and the pilot offer (read this first)
+
+The pricing below this section is price book 1 and is no longer what a new site signs. Since 2026-10-05:
+
+- **Price book 2:** $300 a month for each tool live on the floor, one tool at least, never more than the site's cap.
+  The caps are the band prices below ($1,000, $1,750, $2,500, $3,500, $5,000), still set by headcount and floor
+  space. A tool counts from the bill after it is first made live; drafts and previews are free. So decisions 1 and 8
+  below are replaced (the fee is by the tool up to the cap; a site starts at $300), and the rest stand: per site,
+  never per seat or per use, self-reported size, the rate lock (on the price of a tool and the cap), the 80% line (of
+  what the site is on, so $240 at one tool), cancel any time, back to a demo.
+- **How the bill moves:** `src/modprice.js` and anetix.ai's `/internal/reprice`, no proration, from the next bill.
+- **A pilot offer:** `src/pilot.js`. A fee a month for a number of months, offered to one company from the Sites tab,
+  signed and paid through the same screens, ending on its own (Stripe's `cancel_at`), then back to a demo.
+- Brendan expects this to change as he talks to customers and for enterprise accounts. A new plan is a new book.
+
+The details, the decisions and the limits are the bullet "Price book 2 (by the tool live on the floor), the pilot
+offer, and the board link on every page" in `docs/FEATURES.md`.
+
 ## What Brendan asked for
 
 "A pipeline where people are not just able to add credits but convert their

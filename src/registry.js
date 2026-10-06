@@ -143,24 +143,15 @@ function screenFor(manifest, pagePath) {
   return entries.find((e) => routeMatches(e.route, rel)) || null;
 }
 
-// A trial's tool pages carry a link back to the improvement board (Brendan, 2026-09-27: "it is easy to get lost then
-// struggle to get back to the improvement board"); every company that is not a paid site is a trial (src/kind.js). A
-// paid site's floor keeps its own view of the tool. Remembered 15 seconds so a page load is not a query every time.
-const demoSeen = new Map();
-async function isDemoCompany(company) {
-  const hit = demoSeen.get(company);
-  if (hit && Date.now() - hit.at < 15000) return hit.demo;
-  let demo = false;   // every company that is not a paid site, however it was made (src/kind.js, 2026-09-29)
-  try { demo = await require("./kind").isTrial(company); } catch (e) { return false; }
-  if (demoSeen.size > 1000) demoSeen.clear();
-  demoSeen.set(company, { demo, at: Date.now() });
-  return demo;
-}
+// Every tool page carries a link back to the improvement board, on every company and on a preview's bar too (Brendan,
+// 2026-10-05: "every preview page needs to link back to the improvement board and every page needs to link back to the
+// improvement board otherwise"). The widget draws it (public/assets/feedback-widget.js); until then only a trial's
+// pages had it. data-board="1" on the tag says so to the tests.
 
 // The widget tag carries the company, version and mount so the page can notice a
 // deploy and reload itself, and flag itself when it is the staged preview.
-function widgetInject(html, company, mod, version, mount, manifest, { demo = false } = {}) {
-  let tag = `<script src="/assets/feedback-widget.js" data-company="${company}" data-module="${mod}" data-version="${version}" data-mount="${mount}"${demo ? ' data-demo="1"' : ""}></script>`;
+function widgetInject(html, company, mod, version, mount, manifest) {
+  let tag = `<script src="/assets/feedback-widget.js" data-company="${company}" data-module="${mod}" data-version="${version}" data-mount="${mount}" data-board="1"></script>`;
   // a module with a printer connection gets the platform's print helper: it
   // carries queued labels from this device to the printer chosen on it
   if (hasPrinter(manifest)) tag += `\n<script src="/assets/print-helper.js" data-company="${company}" data-module="${mod}"></script>`;
@@ -185,7 +176,7 @@ async function buildRouter(company, mod, version, schema, { inline = false } = {
   for (const { route, file } of pageEntries(manifest)) {
     router.get(route, async (req, res, next) => { try {
       const html = fs.readFileSync(path.join(dir, file), "utf8");
-      res.set("Cache-Control", "no-cache").type("html").send(widgetInject(html, company, mod, version, mount, manifest, { demo: await isDemoCompany(company) })); } catch (e) { next(e); }
+      res.set("Cache-Control", "no-cache").type("html").send(widgetInject(html, company, mod, version, mount, manifest)); } catch (e) { next(e); }
     });
   }
 
@@ -386,6 +377,7 @@ async function importFromRepo(company, mod) {
     if (clash) throw Object.assign(new Error(`${mod} cannot be added to ${company}: its tables would be the same as ${clash.company}'s ${clash.name}. Give one of the two companies a different code.`), { status: 409 });
     await q("INSERT INTO platform.modules (company, name, title, live_version, repo_hash) VALUES ($1,$2,$3,1,$4)",
       [company, mod, manifest.title, hash]);
+    require("./modprice").changed(company);   // a library tool is live from the start: a site priced by the tool pays for it from its next bill
     await insertVersion(company, mod, 1, "repo", "initial version from repo", files);
     await seedModuleDocs(company, mod);
     await logEvent("module_imported", `${company}/${mod}`, { version: 1, hash });
@@ -606,6 +598,7 @@ async function deployVersion(company, mod, version) {
   await q("UPDATE platform.modules SET live_version=$3, staged_version=NULL WHERE company=$1 AND name=$2", [company, mod, version]);
   unmountStaged(company, mod);
   await logEvent("version_deployed", `${company}/${mod}`, { from: row.live_version, to: version, snapshot: snap });
+  if (!row.live_version) require("./modprice").changed(company);   // a tool's first time on the floor: a site priced by the tool pays for it from its next bill
   if (hooks.deployed) Promise.resolve(hooks.deployed(company, mod, version)).catch((e) => console.error("deploy hook failed:", e.message));
   return { from: row.live_version, to: version };
 }

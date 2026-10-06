@@ -55,6 +55,26 @@ const BOOK_V1 = Object.freeze({
   note: "Five bands by the people at the site, all shifts; full price from month one; floor space moves a site up one band at most.",
 });
 
+// Version 2 (Brendan, 2026-10-05, "a total overhaul of the payment plan"): $300 a month for each tool live on the
+// floor, stacking with every new tool until the site reaches the price its band had in version 1, which is now its
+// cap. "It makes entry much easier and it would also cap out their price for maximum expansion within their plant."
+// So a band's monthly_usd is the CAP in this book, and the fee is per_tool_usd times the tools live, never under
+// min_tools of them and never over the cap (feeFor). A tool counts from the bill after it is first made live; drafts
+// and previews are free. He expects this to change as they talk to customers: a new plan is version 3, and a signed
+// site keeps the book it signed under.
+const BOOK_V2 = Object.freeze({
+  version: 2,
+  per_tool_usd: 300,        // each tool live on the floor
+  min_tools: 1,             // a subscribed site pays for one tool at least
+  fair_use_share: 0.8,
+  alert_share: 0.5,
+  sqft_proposed: true,
+  bands: BOOK_V1.bands,     // the same sizes; each band's monthly_usd is the cap
+  note: "$300 a month for each tool live on the floor, up to the site's cap, which is set by its size (the band prices of version 1).",
+});
+const BOOK = BOOK_V2;       // the book the code is on; platform.price_books holds every version
+const BOOKS = [BOOK_V1, BOOK_V2];
+
 // Why a book cannot be used, or [] when it can. Pure: the tests hold BOOK_V1 to it, and boot refuses to seed a bad one.
 function bookProblems(book) {
   const out = [];
@@ -62,6 +82,11 @@ function bookProblems(book) {
   if (!Number.isInteger(book.version) || book.version < 1) out.push("the version is a whole number, 1 or more");
   if (!(book.fair_use_share > 0 && book.fair_use_share <= 1)) out.push("the fair-use share is above 0 and at most 1");
   if (!(book.alert_share > 0 && book.alert_share <= book.fair_use_share)) out.push("the alert comes at or before the fair-use line");
+  if (book.per_tool_usd != null) {
+    if (!(Number.isFinite(book.per_tool_usd) && book.per_tool_usd > 0)) out.push("the price of a tool is a dollar amount above 0");
+    if (!(Number.isInteger(book.min_tools) && book.min_tools >= 0)) out.push("the fewest tools a site pays for is a whole number");
+    else if (book.per_tool_usd * book.min_tools > book.bands[0].monthly_usd) out.push("the fewest tools a site pays for cost no more than the first band's cap");
+  }
   const keys = new Set();
   book.bands.forEach((b, i) => {
     const prev = book.bands[i - 1];
@@ -82,10 +107,10 @@ function bookProblems(book) {
 }
 
 // The price book as the Sites tab shows it: each band with its annual price, fair-use line and the alert. Pure.
-function bookView(book = BOOK_V1) {
+function bookView(book = BOOK) {
   return {
-    version: book.version, fair_use_share: book.fair_use_share, alert_share: book.alert_share, sqft_proposed: Boolean(book.sqft_proposed), note: book.note || null,
-    bands: book.bands.map((b) => ({ ...b, annual_usd: b.monthly_usd * 12, fair_use_usd: round2(b.monthly_usd * book.fair_use_share), alert_usd: round2(b.monthly_usd * book.alert_share), proposed: Boolean(b.proposed) })),
+    version: book.version, per_tool_usd: book.per_tool_usd || null, min_tools: book.per_tool_usd ? book.min_tools : null, fair_use_share: book.fair_use_share, alert_share: book.alert_share, sqft_proposed: Boolean(book.sqft_proposed), note: book.note || null,
+    bands: book.bands.map((b) => ({ ...b, annual_usd: b.monthly_usd * 12, tools_at_cap: book.per_tool_usd ? Math.ceil(b.monthly_usd / book.per_tool_usd) : null, fair_use_usd: round2(b.monthly_usd * book.fair_use_share), alert_usd: round2(b.monthly_usd * book.alert_share), proposed: Boolean(b.proposed) })),
   };
 }
 
@@ -96,7 +121,7 @@ const wholeOrNull = (v) => { if (v === null || v === undefined || v === "") retu
 //   edge: the headcount is within five below the next band, the place a shaded number would sit
 //   space: the floor space per person is outside what a plant looks like (under 150 is office density; over 5,000
 //          is a warehouse with a few people in it). Neither changes the band.
-function flagsOf({ headcount, sqft = null }, book = BOOK_V1) {
+function flagsOf({ headcount, sqft = null }, book = BOOK) {
   const out = [];
   const h = Number(headcount);
   if (!Number.isInteger(h) || h < 1) return out;
@@ -112,7 +137,7 @@ function flagsOf({ headcount, sqft = null }, book = BOOK_V1) {
 // The band a site's facts put it in, or null when the headcount is not a whole number of people. headcount: the
 // people at the site counting every shift. sqft: its floor space, or null when not given. Floor space at or over the
 // NEXT band's threshold moves the site up that one band, never further. Pure.
-function bandOf({ headcount, sqft = null } = {}, book = BOOK_V1) {
+function bandOf({ headcount, sqft = null } = {}, book = BOOK) {
   const h = Number(headcount);
   if (!Number.isInteger(h) || h < 1) return null;
   const s = sqft === null || sqft === undefined || sqft === "" ? null : Number(sqft);
@@ -131,14 +156,38 @@ function bandOf({ headcount, sqft = null } = {}, book = BOOK_V1) {
     by_headcount: bands[byHead].key, moved_up: moved,
     why: moved ? `${h} people is ${bands[byHead].name}; ${Number(s).toLocaleString("en-US")} square feet moves it up one band` : `${h} people`,
     proposed: Boolean(b.proposed), book: book.version,
+    // version 2: monthly_usd is the cap, and the fee follows the tools live on the floor (feeFor)
+    ...(book.per_tool_usd ? { per_tool_usd: book.per_tool_usd, min_tools: book.min_tools, cap_usd: b.monthly_usd } : {}),
     flags: flagsOf({ headcount: h, sqft: s }, book),
   };
+}
+
+// ---- the fee, by the tools live on the floor (price book 2) --------------------------------------------------------
+// plan: a band as bandOf answers it or as an order or a site keeps it ({ monthly_usd, per_tool_usd, min_tools }).
+// live_tools: how many of the site's tools are live on the floor. A plan with no per_tool_usd is a flat price (a
+// version 1 band, or a pilot): its monthly_usd whatever the tools. Pure.
+//   -> { usd, tools, billed_tools, per_tool_usd, cap_usd, capped, tools_at_cap, flat }
+function feeFor(plan, live_tools = 0) {
+  const p = plan || {}, cap = Number(p.cap_usd != null ? p.cap_usd : p.monthly_usd) || 0;
+  const n = Math.max(0, Math.floor(Number(live_tools) || 0));
+  const per = Number(p.per_tool_usd) || 0;
+  if (!(per > 0)) return { usd: round2(cap), tools: n, billed_tools: n, per_tool_usd: null, cap_usd: round2(cap), capped: false, tools_at_cap: null, flat: true };
+  const billed = Math.max(Number.isInteger(p.min_tools) ? p.min_tools : 1, n);
+  const raw = per * billed;
+  return { usd: round2(Math.min(raw, cap)), tools: n, billed_tools: billed, per_tool_usd: per, cap_usd: round2(cap), capped: raw >= cap, tools_at_cap: Math.ceil(cap / per), flat: false };
+}
+const toolsWord = (n) => `${Number(n).toLocaleString("en-US")} tool${Number(n) === 1 ? "" : "s"}`;
+// The fee in a few words, for a list or a phone alert: "$600 a month (2 tools live; $300 a tool, never more than $1,000)". Pure.
+function feeLine(plan, live_tools = 0) {
+  const f = feeFor(plan, live_tools);
+  if (f.flat) return `${usd(f.usd)} a month`;
+  return `${usd(f.usd)} a month (${toolsWord(f.tools)} live; ${usd(f.per_tool_usd)} a tool, never more than ${usd(f.cap_usd)})`;
 }
 
 // ---- the fair-use line ---------------------------------------------------------------------------------------------
 // Where a site stands against the line in one billing period. fee_usd: the band price for the period (before tax and
 // before any credit on the bill). Pure; stage 3 calls it from the gate every AI start passes.
-function fairUse({ spend_usd = 0, fee_usd, share = BOOK_V1.fair_use_share, alert_share = BOOK_V1.alert_share, lifted = false } = {}) {
+function fairUse({ spend_usd = 0, fee_usd, share = BOOK.fair_use_share, alert_share = BOOK.alert_share, lifted = false } = {}) {
   const fee = Number(fee_usd || 0), spend = round2(spend_usd);
   const line = round2(fee * share);
   return {
@@ -198,7 +247,8 @@ function next(state, event) {
       if (!standing) return no(`a subscription status of ${e.status || "nothing"} means nothing here`);
       const cancel_at = e.cancel_at || null;
       // a cancel on a month nobody paid for ends it now: the order form's "end of the month already paid" is past
-      if (cancel_at && standing !== "good") return to({ standing, cancel_at }, ["end_now"]);
+      // (a pilot's own end date, e.planned_end, is not a cancel: a late payment in its last month is retried like any other)
+      if (cancel_at && standing !== "good" && !e.planned_end) return to({ standing, cancel_at }, ["end_now"]);
       return to({ standing, cancel_at });
     }
     case "ended":   // customer.subscription.deleted for the site's current subscription, or End went through
@@ -223,48 +273,178 @@ const subscribed = (s) => Boolean(s && s.stage === "subscribed");   // "Subscrib
 // shows it only behind that. The signer's typed name is kept beside the text, never in it: the hash is of the page
 // they read. Pure.
 const TERMS_VERSION = require("./terms").TERMS_VERSION;   // the Terms of Service the order form points at (src/terms.js)
-const usd = (n) => `$${Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+const usd = (n) => `$${Number(n).toLocaleString("en-US", Number.isInteger(Number(n)) ? { maximumFractionDigits: 0 } : { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;   // $1,000 and $1,000.50, never $1,000.5
 function addressLine(a) {
   if (!a) return "";
   if (typeof a === "string") return a;
   return [a.line1, a.line2, [a.city, [a.state, a.postal_code].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean).join(", ");
 }
-function orderText({ facts = {}, book = BOOK_V1, terms_version = TERMS_VERSION, terms_url = null } = {}) {
-  const band = bandOf(facts, book);
-  if (!band) throw new Error("the order needs the number of people at the site");
-  const sq = facts.sqft == null || facts.sqft === "" ? "not given" : `${Number(facts.sqft).toLocaleString("en-US")} square feet`;
+// Three order forms, by what is being signed:
+//   a pilot       (offer: what Anetix offered this one company from the Sites tab, src/pilot.js) a fixed monthly fee
+//                 for a fixed number of months that ends on its own, with the offer's own lines
+//   by the tool   (price book 2) $300 a month for each tool live on the floor, up to the site's cap; live_tools is how
+//                 many are live when the text is made, so the figure the signer reads is today's
+//   by the band   (price book 1) one price for the site, set by its size
+const stop = (x) => (/[.!?]$/.test(x) ? x : `${x}.`);   // "Acme Wire & Cable, Inc." ends its own sentence
+const monthsWord = (n) => `${n} month${n === 1 ? "" : "s"}`;
+function partyLines(facts) {
   const pm = facts.plant_manager && facts.plant_manager.name ? facts.plant_manager.name : "not given";
-  const stop = (x) => (/[.!?]$/.test(x) ? x : `${x}.`);   // "Acme Wire & Cable, Inc." ends its own sentence
   return [
-    "ANETIX SITE ORDER FORM",
-    `Terms version: ${terms_version}. Price book: version ${book.version}.`,
-    "",
     stop(`Customer: ${facts.legal_name || "not given"}`),
     stop(`Site: ${facts.site_name || "not given"}, ${addressLine(facts.site_address) || "address not given"}`),
     stop(`Plant manager: ${pm}`),
     ...(facts.billing && facts.billing.email ? [stop(`Billing email: ${facts.billing.email}`)] : []),
+  ];
+}
+const DATA_LINE = "Data: Customer owns the data its people put into Anetix, and Anetix uses it to run the service for Customer. Customer's data is never shown to another customer.";
+const learningLine = (facts) => (facts.learning === true
+  ? "Learning: Customer opts in. Anetix may learn from how the Site uses the system, to improve Anetix for all customers."
+  : "Learning: Customer does not opt in. Anetix does not learn from how the Site uses the system to improve Anetix for other customers.");
+const CREDIT_LINE = "Unused demo credit: credit Customer bought for its demo and has not used by the day the Site is switched on comes off the first bill, at the price Customer paid for it.";
+const termsLine = (terms_version, terms_url) => `Terms: this order form is an Order Form under the Anetix Terms of Service, version ${terms_version}${terms_url ? `, at ${terms_url}` : ""}, as updated under section 19.`;
+const SIGNED_LINE = "Signed for Customer by the person named below, who confirms they may sign for Customer.";
+
+// The pilot's own order form (Brendan, 2026-10-05, for Chelsea Clock: "$1,000 then another $1,000 at the start of the
+// second month", ending on its own; the customer's words: a pilot cost, "not a software license fee" to be paid on an
+// ongoing basis, and any commercial arrangement is a separate conversation after it). Pure.
+function pilotText({ facts = {}, offer, terms_version = TERMS_VERSION, terms_url = null } = {}) {
+  const m = Number(offer.monthly_usd), n = Number(offer.months), share = BOOK.fair_use_share;
+  const pay = n === 1 ? `${usd(m)} on the day Anetix switches the Site on`
+    : n === 2 ? `${usd(m)} on the day Anetix switches the Site on and ${usd(m)} one month later`
+      : `${usd(m)} on the day Anetix switches the Site on and ${usd(m)} on the same day of each of the next ${n - 1} months`;
+  return [
+    "ANETIX PILOT ORDER FORM",
+    `Terms version: ${terms_version}. A pilot offered to Customer by Anetix.`,
+    "",
+    ...partyLines(facts),
+    "",
+    `Pilot: a ${n} month pilot of Anetix at the Site. It starts on the day Anetix switches the Site on and ends ${monthsWord(n)} later.`,
+    `Fee: ${usd(m)} a month for ${monthsWord(n)}, ${usd(m * n)} in all, plus sales tax where it applies, charged to the card on file: ${pay}.`,
+    "What the fee is: the fee covers building and running the pilot. It is not a software license or subscription fee, and nothing in this order form commits Customer to pay anything after the pilot.",
+    "End: the pilot ends on its own on its end date. No charge is made after the payments above unless Customer and Anetix agree new terms in writing. Any continuing arrangement is a separate conversation after the pilot.",
+    "Cancelling: Customer may cancel at any time, in the Service's billing settings or by writing to Anetix. A payment not yet made is then not charged. Payments already made are not refunded, except as the Terms provide.",
+    "Included: use of Anetix at the Site by any number of Customer's people during the pilot, with no limit on tools, requests or changes.",
+    `Fair use: if Anetix's own AI cost for the Site in a month of the pilot passes ${Math.round(share * 100)}% of that month's fee, new AI work pauses until the next month. A fair-use pause does not stop the Site's tools.`,
+    ...(offer.lines || []).map((l) => stop(`${l.label}: ${l.text}`)),
+    DATA_LINE,
+    learningLine(facts),
+    "After the pilot: unless Customer and Anetix have agreed to continue, the Site becomes a demo account for Customer's manager and the floor's sign-in closes. Customer's data is kept until Customer asks for its deletion, or until 12 months pass with no sign-in.",
+    CREDIT_LINE,
+    termsLine(terms_version, terms_url),
+    "Order of precedence: where this order form and the Terms differ on the fee, the length of the pilot or renewal, this order form controls.",
+    "",
+    SIGNED_LINE,
+  ].join("\n");
+}
+function orderText({ facts = {}, book = BOOK, terms_version = TERMS_VERSION, terms_url = null, live_tools = 0, offer = null } = {}) {
+  if (offer && offer.kind === "pilot") return pilotText({ facts, offer, terms_version, terms_url });
+  const band = bandOf(facts, book);
+  if (!band) throw new Error("the order needs the number of people at the site");
+  const sq = facts.sqft == null || facts.sqft === "" ? "not given" : `${Number(facts.sqft).toLocaleString("en-US")} square feet`;
+  const head = [
+    "ANETIX SITE ORDER FORM",
+    `Terms version: ${terms_version}. Price book: version ${book.version}.`,
+    "",
+    ...partyLines(facts),
     "",
     `Size, as stated by Customer: ${Number(facts.headcount).toLocaleString("en-US")} people across all shifts; ${sq}.`,
+  ];
+  // Brendan's notes for counsel (2026-09-26): the order form controls billing (Terms 1.5), so without "except as the
+  // Terms provide" this line would cancel the refunds in sections 6.4 and 13.2
+  const TERM = "Term: month to month. Customer may cancel at any time. A cancellation takes effect at the end of the month already paid, and partial months are not refunded, except as the Terms provide.";
+  const tail = [
+    DATA_LINE,
+    learningLine(facts),
+    "After a cancellation: the Site becomes a demo account for Customer's manager. Customer's data is kept until Customer asks for its deletion, or until 12 months pass with no sign-in.",
+    "Add-ons: integrations and hardware are optional and quoted separately.",
+    CREDIT_LINE,
+    termsLine(terms_version, terms_url),
+  ];
+  if (book.per_tool_usd) {
+    const f = feeFor(band, live_tools);
+    return [
+      ...head,
+      `Cap: ${usd(f.cap_usd)} a month. It is the most the Site pays, however many tools it has, and it is set by the Site's size: ${band.name}${band.moved_up ? " (moved up one band for floor space)" : ""}.`,
+      "",
+      `Fee: ${usd(f.per_tool_usd)} a month for each tool live on the floor at the Site, never less than ${toolsWord(book.min_tools)} and never more than the cap, billed monthly in advance to the card on file, plus sales tax where it applies. The Site has ${toolsWord(f.tools)} live today, which is ${usd(f.usd)} a month. The first month is billed on the day Anetix switches the Site on, for the tools live that day.`,
+      "Tools: a tool is live from the day a manager makes it live for the floor. Drafts and previews cost nothing. A tool made live raises the fee from the next bill, and a tool taken off the floor lowers it from the next bill. Nothing is charged part way through a month.",
+      TERM,
+      "Included: use of Anetix at the Site by any number of Customer's people, with no limit on requests or changes.",
+      `Fair use: if Anetix's own AI cost for the Site in a billing month passes ${Math.round(book.fair_use_share * 100)}% of the Site's monthly fee at that time, new AI work pauses until the next billing month. A fair-use pause does not stop the Site's tools.`,
+      "Price: Anetix will not raise the price of a tool or the Site's cap while this subscription continues, except to move the cap up a band when the Site's stated size grows. Customer confirms the Site's size once a year, and the band can only move up.",
+      ...tail,
+      "Order of precedence: where this order form and section 5 of the Terms differ on how the fee is worked out, this order form controls.",
+      "",
+      SIGNED_LINE,
+    ].join("\n");
+  }
+  return [
+    ...head,
     `Band: ${band.name}${band.moved_up ? " (moved up one band for floor space)" : ""}.`,
     "",
     `Fee: ${usd(band.monthly_usd)} a month, billed monthly in advance to the card on file, plus sales tax where it applies. The first month is billed on the day Anetix switches the Site on.`,
-    // Brendan's notes for counsel (2026-09-26): the order form controls billing (Terms 1.5), so without "except as the
-    // Terms provide" this line would cancel the refunds in sections 6.4 and 13.2
-    "Term: month to month. Customer may cancel at any time. A cancellation takes effect at the end of the month already paid, and partial months are not refunded, except as the Terms provide.",
+    TERM,
     "Included: use of Anetix at the Site by any number of Customer's people, with no limit on tools, requests or changes.",
     `Fair use: if Anetix's own AI cost for the Site in a billing month passes ${Math.round(book.fair_use_share * 100)}% of that month's fee, new AI work pauses until the next billing month. A fair-use pause does not stop the Site's tools.`,   // not "the tools keep working", which reads as an uptime promise
     "Price: Anetix will not raise the Site's price while this subscription continues, except to move the Site up a band when its stated size grows. Customer confirms the Site's size once a year, and the band can only move up.",
-    "Data: Customer owns the data its people put into Anetix, and Anetix uses it to run the service for Customer. Customer's data is never shown to another customer.",
-    facts.learning === true
-      ? "Learning: Customer opts in. Anetix may learn from how the Site uses the system, to improve Anetix for all customers."
-      : "Learning: Customer does not opt in. Anetix does not learn from how the Site uses the system to improve Anetix for other customers.",
-    "After a cancellation: the Site becomes a demo account for Customer's manager. Customer's data is kept until Customer asks for its deletion, or until 12 months pass with no sign-in.",
-    "Add-ons: integrations and hardware are optional and quoted separately.",
-    "Unused demo credit: credit Customer bought for its demo and has not used by the day the Site is switched on comes off the first bill, at the price Customer paid for it.",
-    `Terms: this order form is an Order Form under the Anetix Terms of Service, version ${terms_version}${terms_url ? `, at ${terms_url}` : ""}, as updated under section 19.`,
+    ...tail,
     "",
-    "Signed for Customer by the person named below, who confirms they may sign for Customer.",
+    SIGNED_LINE,
   ].join("\n");
+}
+// A pilot in a few words: "$1,000 a month for 2 months, $2,000 in all". Pure.
+function pilotLine(offer) { const m = Number(offer.monthly_usd), n = Number(offer.months); return `${usd(m)} a month for ${monthsWord(n)}${n > 1 ? `, ${usd(m * n)} in all` : ""}`; }
+
+// What the price screen on anetix.ai says (www pages.js lays these words out and writes none of its own, so the price
+// a person reads is always the product's): a pilot, a site priced by the tool, or null for a flat band (price book 1,
+// which the page still knows how to say). band: bandOf's answer or an order's snapshot. Pure.
+function pricingView({ band, live_tools = 0, offer = null, site_name = "the site", range = "" } = {}) {
+  const site = site_name || "the site";
+  const INCLUDED = [
+    "Everyone at the site, on every shift. There is no count of seats.",
+    "A way in for the floor: the site gets its own password for the shared screens.",
+    "The AI with no credit to run out of. The order form has a fair-use line for a month far past normal use.",
+    "Everything built in the demo stays where it is.",
+  ];
+  if (offer && offer.kind === "pilot") {
+    const m = Number(offer.monthly_usd), n = Number(offer.months);
+    return {
+      kind: "pilot", price_usd: m,
+      headline: `A ${n} month pilot at ${site}`,
+      big: usd(m), big_note: `a month for ${monthsWord(n)}${n > 1 ? `, ${usd(m * n)} in all` : ""}. It ends on its own.`,
+      fine: [
+        `Plus sales tax where it applies. ${n === 1 ? `${usd(m)} is charged on the day Anetix switches the site on.` : n === 2 ? `${usd(m)} is charged on the day Anetix switches the site on and ${usd(m)} one month later.` : `${usd(m)} is charged on the day Anetix switches the site on and on the same day of each of the next ${n - 1} months.`} Nothing is charged after that unless you and Anetix agree new terms.`,
+        "This is a pilot fee, not a software license or a subscription. You can cancel at any time, and a payment not yet made is then not charged.",
+        "Anetix aims to switch the site on within 24 hours of the order being in (signed, with a card saved), and until then you can withdraw it at no charge.",
+      ],
+      how_title: "What the pilot is",
+      how: (offer.lines || []).map((l) => stop(`${l.label}: ${l.text}`)),
+      included: ["Every tool you build during the pilot, and every change to them.", ...INCLUDED],
+      next: "Any arrangement after the pilot is a separate conversation, once you have seen what it did.",
+      summary: `Pilot: ${pilotLine(offer)}. It ends on its own.`,
+    };
+  }
+  if (!band || !band.per_tool_usd) return null;
+  const f = feeFor(band, live_tools);
+  return {
+    kind: "tools", price_usd: f.usd,
+    headline: `${usd(f.per_tool_usd)} a month for each tool live on your floor`,
+    big: usd(f.usd), big_note: `a month today, for ${toolsWord(f.tools)} live${f.tools < f.billed_tools ? ` (a site pays for ${toolsWord(f.billed_tools)} at least)` : ""}. Billed monthly. Cancel any time.`,
+    fine: [
+      `Never more than ${usd(f.cap_usd)} a month, however many tools you have. That is the cap for ${site}: a ${band.name} site${range ? `, ${range}` : ""}${band.moved_up ? " (moved up one band for floor space)" : ""}.`,
+      "Plus sales tax where it applies. The first month is billed on the day Anetix switches the site on, for the tools live that day. Anetix aims to do that within 24 hours of the order being in (signed, with a card saved), and until then you can withdraw it at no charge.",
+    ],
+    how_title: "How we price",
+    how: [
+      `You pay for the tools your floor is using. Each tool that is live on the floor is ${usd(f.per_tool_usd)} a month. A draft or a preview costs nothing, so trying an idea is free.`,
+      "A tool you make live counts from your next bill, and one you take off the floor stops counting from your next bill.",
+      `The price stops climbing at your cap, ${usd(f.cap_usd)} a month, which is set by the size of the site. Past it, every new tool is included.`,
+      "We never charge per person or per use. The system gets better each time someone on the floor uses it, and a price on every use would teach people to use it less.",
+    ],
+    included: ["Every change to your tools, and as many requests as the floor sends.", ...INCLUDED],
+    next: null,
+    summary: `${usd(f.usd)} a month today (${toolsWord(f.tools)} live), never more than ${usd(f.cap_usd)}`,
+  };
 }
 const textHash = (text) => crypto.createHash("sha256").update(String(text), "utf8").digest("hex");
 
@@ -389,26 +569,38 @@ CREATE TABLE IF NOT EXISTS platform.sites (
 // freeze has to look at them.)
 async function init() {
   await q(SCHEMA);
+  await q("ALTER TABLE platform.sites ADD COLUMN IF NOT EXISTS offer JSONB");   // a pilot Anetix offered this one company (src/pilot.js)
   await q(require("./golive").SCHEMA);   // the orders, so the freeze below can see a signed one (src/golive.js makes them)
-  const bad = bookProblems(BOOK_V1);
-  if (bad.length) { console.error(`[sites] the price book in the code is not usable: ${bad.join("; ")}`); return; }
-  await q(`INSERT INTO platform.price_books (version, book, note, made_by) VALUES (1, $1, $2, 'platform')
-           ON CONFLICT (version) DO UPDATE SET book=EXCLUDED.book, note=EXCLUDED.note
-           WHERE NOT EXISTS (SELECT 1 FROM platform.sites WHERE price_book=1 AND stage NOT IN ('demo','ordering'))
-             AND NOT EXISTS (SELECT 1 FROM platform.orders WHERE price_book=1 AND state NOT IN ('draft','void'))`,
-  [JSON.stringify(BOOK_V1), BOOK_V1.note]);
+  for (const book of BOOKS) {
+    const bad = bookProblems(book);
+    if (bad.length) { console.error(`[sites] price book ${book.version} in the code is not usable: ${bad.join("; ")}`); continue; }
+    await q(`INSERT INTO platform.price_books (version, book, note, made_by) VALUES ($3, $1, $2, 'platform')
+             ON CONFLICT (version) DO UPDATE SET book=EXCLUDED.book, note=EXCLUDED.note
+             WHERE NOT EXISTS (SELECT 1 FROM platform.sites WHERE price_book=$3 AND stage NOT IN ('demo','ordering'))
+               AND NOT EXISTS (SELECT 1 FROM platform.orders WHERE price_book=$3 AND state NOT IN ('draft','void'))`,
+    [JSON.stringify(book), book.note, book.version]);
+  }
+}
+// How many of a company's tools are live on the floor: what price book 2 bills by. db: q, or a transaction's client.
+async function liveTools(slug, db) {
+  const run = db && db.query ? (t, p) => db.query(t, p) : q;
+  return (await run("SELECT count(*)::int AS n FROM platform.modules WHERE company=$1 AND live_version IS NOT NULL", [slug])).rows[0].n;
 }
 // The price floor in words, from a book's first band (the launch audit, C7: a demo sees what a site costs before the
 // go-live form asks for anything). Pure. { line: "Sites start at $1,000 a month, for under 50 people.", short: "from $1,000 a month" }
-function fromLine(book = BOOK_V1) {
+function fromLine(book = BOOK) {
   const b = ((book && book.bands) || [])[0];
   if (!b || !(Number(b.monthly_usd) > 0)) return null;
   const price = `$${Number(b.monthly_usd).toLocaleString("en-US")}`;
+  if (book.per_tool_usd) {   // by the tool: the entry price, and the first band's cap
+    const per = `$${Number(book.per_tool_usd).toLocaleString("en-US")}`;
+    return { line: `A site is ${per} a month for each tool live on the floor, and never more than its cap: ${price} a month${b.max != null ? ` for under ${Number(b.max) + 1} people` : ""}.`, short: `${per} a month a tool` };
+  }
   return { line: `Sites start at ${price} a month${b.max != null ? `, for under ${Number(b.max) + 1} people` : ""}.`, short: `from ${price} a month` };
 }
 async function currentBook() {
   const r = (await q("SELECT book FROM platform.price_books WHERE effective_at <= now() ORDER BY version DESC LIMIT 1").catch(() => ({ rows: [] }))).rows[0];
-  return r && bookProblems(r.book).length === 0 ? r.book : BOOK_V1;
+  return r && bookProblems(r.book).length === 0 ? r.book : BOOK;
 }
 async function bookFor(version) {
   if (!version) return currentBook();
@@ -475,10 +667,21 @@ function rowOut(r, { book, tools, credit, last, fair }) {
   const stage = r.stage || "demo";
   // a subscribed site shows the band and price it signed (stage 3), never one worked out again from the facts
   const signedFee = Number(r.site_price_usd);
-  const band = stage === "subscribed" && r.site_band ? { ...r.site_band, monthly_usd: signedFee, annual_usd: signedFee * 12, flags: [], signed: true,
+  // (price book 2: the band's monthly_usd is its cap and stays so; fee_usd is what the site is on, which the fair-use line follows)
+  const capOrFee = stage === "subscribed" && r.site_band && r.site_band.per_tool_usd ? Number(r.site_band.monthly_usd) : signedFee;
+  const band = stage === "subscribed" && r.site_band ? { ...r.site_band, monthly_usd: capOrFee, annual_usd: capOrFee * 12, fee_usd: signedFee, flags: [], signed: true,
     fair_use_usd: round2(signedFee * book.fair_use_share), alert_usd: round2(signedFee * book.alert_share), why: r.site_band.why || "the band and price signed on the order form" } : r.headcount ? bandOf(facts, book) : null;
   const order = orderOut(r);
+  // 2026-10-05: what the site pays, or would pay today. A pilot (src/pilot.js) is its own fee; price book 2 is by the
+  // tools live on the floor, up to the band's cap; a subscribed site reads the amount it is on (price_usd).
+  const P = require("./pilot");
+  const liveN = (tools || []).filter((t) => t.live_version).length;
+  const offer = P.standing({ offer: r.offer, stage });
+  const pilot = stage === "subscribed" && P.isPilot(r.site_band) ? { monthly_usd: Number(r.site_band.monthly_usd), months: r.site_band.pilot.months, ends_at: r.site_band.pilot.ends_at || r.cancel_at || null, line: pilotLine({ monthly_usd: r.site_band.monthly_usd, months: r.site_band.pilot.months }) } : null;
+  const fee = pilot ? { usd: pilot.monthly_usd, flat: true } : band && band.per_tool_usd ? (stage === "subscribed" ? { ...feeFor(band, liveN), usd: signedFee, due_usd: feeFor(band, liveN).usd } : feeFor(band, liveN)) : band ? { usd: band.monthly_usd, flat: true } : null;
   return {
+    offer: offer ? { monthly_usd: Number(offer.monthly_usd), months: Number(offer.months), lines: offer.lines || [], made_by: offer.made_by || null, made_at: offer.made_at || null, line: pilotLine(offer) } : null,
+    pilot, fee,
     slug: r.slug, name: r.name, demo: Boolean(r.demo), site_id: r.site_id || null,
     // a company that did not come in on a pin (a pilot made on the admin page, say) has not been a demo: "Not ordered yet"
     stage, stage_label: stage === "demo" && !r.demo ? "Not ordered yet" : STAGE_LABEL[stage] || stage, standing: r.standing || null, standing_label: r.standing ? STANDING_LABEL[r.standing] || r.standing : null,
@@ -507,7 +710,7 @@ async function pipeline() {
            st.id AS site_id, st.stage, st.standing, st.cancel_at, st.price_book, st.site_name, st.legal_name, st.site_address,
            st.plant_manager, st.headcount, st.sqft, st.deal, st.note, st.updated_at, st.updated_by, st.billing, st.stripe_customer,
            st.stripe_subscription, st.activated_at, st.period_start, st.period_end, st.band AS site_band, st.price_usd AS site_price_usd,
-           st.learning_opt_in, st.tenancy_note, st.attention AS site_attention,
+           st.learning_opt_in, st.tenancy_note, st.attention AS site_attention, st.offer,
            lo.*
       FROM platform.companies c
       LEFT JOIN platform.self_serve s ON s.company=c.slug
@@ -539,7 +742,8 @@ async function pipeline() {
   // The alert at half the fee is a flag on the row and in the tab's count; the customer never sees a meter.
   const attention = out.filter((r) => r.stage === "subscribed" && ((r.standing && r.standing !== "good") || (r.fair_use && r.fair_use.over))).length;
   const alerts = out.filter((r) => r.fair_use && r.fair_use.alert && !r.fair_use.over).length;
-  const cancelling = out.filter((r) => r.stage === "subscribed" && r.cancel_at).length;
+  // a pilot's own end date is its plan, not a cancellation
+  const cancelling = out.filter((r) => r.stage === "subscribed" && r.cancel_at && !(r.pilot && r.pilot.ends_at && Math.abs(new Date(r.cancel_at) - new Date(r.pilot.ends_at)) < 36 * 3600e3)).length;
   const golive = await require("./golive").status().catch(() => null);   // the switch for Go live on anetix.ai (stage 2)
   const activate = require("./activate");
   const sc = require("./stripecheck");
@@ -600,5 +804,5 @@ router.post("/api/admin/sites/:slug", requireAdmin, json, guard(async (req, res)
 
 module.exports = {
   init, router, pipeline, saveFields, deleteRefusal, deleteCompany, currentBook, bookFor, siteRow, FACT_COLS, stable, STAGE_LABEL,
-  BOOK_V1, TERMS_VERSION, STAGES, STANDINGS, fromLine, bookProblems, bookView, bandOf, flagsOf, fairUse, next, subscribed, orderText, textHash, addressLine, refundableCredit, cleanFields,
+  BOOK_V1, BOOK_V2, BOOK, feeFor, feeLine, liveTools, pilotText, pilotLine, pricingView, TERMS_VERSION, STAGES, STANDINGS, fromLine, bookProblems, bookView, bandOf, flagsOf, fairUse, next, subscribed, orderText, textHash, addressLine, refundableCredit, cleanFields,
 };

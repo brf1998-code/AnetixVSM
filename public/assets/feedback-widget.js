@@ -13,13 +13,15 @@
   const company = (script && script.getAttribute("data-company")) || ((/^\/c\/([^/]+)/.exec(location.pathname) || [])[1]) || "demo";
   const staged = mount === "staged";
   const onTest = mount === "test";   // the company's test floor (docs/TEST-ENVIRONMENT.md): a violet bar, nothing here is real
-  // A demo's tool pages: a way back to the improvement board, bottom left (Brendan, 2026-09-27: "it is easy to get lost
-  // then struggle to get back to the improvement board"). The platform marks demo pages with data-demo="1"; a paid
-  // site's floor never gets it, so operators keep their own view of the tool. Not drawn inside a frame.
-  if (script && script.getAttribute("data-demo") === "1" && mod && mod !== "platform" && window.top === window.self) {
+  // Every tool page, on every company, carries a way back to the improvement board, bottom left (Brendan, 2026-09-27:
+  // "it is easy to get lost then struggle to get back to the improvement board"; 2026-10-05: every page, and every
+  // preview page, a paid site's too. Until then only a trial's pages had it). The preview's amber bar and the test
+  // floor's bar carry the same link in their own words. Not drawn inside a frame (the board's screen tiles).
+  const boardHref = "/c/" + encodeURIComponent(company) + "/";
+  if (script && mod && mod !== "platform" && window.top === window.self) {
     const back = document.createElement("a");
     back.id = "sos-board-link";
-    back.href = "/c/" + encodeURIComponent(company) + "/";
+    back.href = boardHref;
     back.title = "Back to your improvement board";
     back.textContent = "\u2190 Improvement board";
     back.style.cssText = "position:fixed!important;left:12px!important;bottom:12px!important;right:auto!important;top:auto!important;z-index:9999;background:#fff!important;color:#1f3a5f!important;border:1px solid #1f3a5f!important;border-radius:18px!important;padding:8px 12px!important;font-size:12.5px!important;font-weight:700!important;line-height:1!important;text-decoration:none!important;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,sans-serif!important;opacity:.95;";
@@ -127,6 +129,7 @@
       ' · <a href="#" id="sos-changes-toggle" style="color:#fff;text-decoration:underline">' + (changesOpen ? "hide what changed" : "what changed?") + "</a>" +
       (marked ? ' · <span style="background:#f2b134;color:#1c242e;border-radius:10px;padding:2px 8px;font-size:11.5px">' + marked + " highlighted on this screen</span>" : "") +
       ' · <a href="' + back + '" style="color:#fff;text-decoration:underline">open the live page</a>' +
+      ' · <a href="' + boardHref + '" id="sos-bar-board" style="color:#fff;text-decoration:underline">back to the improvement board</a>' +
       '<div id="sos-changes"></div>';
     bar.querySelector("#sos-changes-toggle").onclick = (e) => { e.preventDefault(); changesOpen = !changesOpen; stagedBar(liveVersion); };
     renderChanges();
@@ -178,6 +181,7 @@
     const had = document.getElementById("sos-test-step");
     bar.innerHTML = "TEST FLOOR. Nothing here is real." + (j && j.live_version ? " The floor is on version " + j.live_version + (String(j.live_version) !== String(version) ? "; this is version " + version + " under test" : "") + "." : "") +
       ' · <a href="' + back + '" style="color:#fff;text-decoration:underline">open the live page</a>' +
+      ' · <a href="' + boardHref + '" id="sos-bar-board" style="color:#fff;text-decoration:underline">back to the improvement board</a>' +
       '<div id="sos-test-step"></div>';
     if (had) document.getElementById("sos-test-step").innerHTML = had.innerHTML;
   }

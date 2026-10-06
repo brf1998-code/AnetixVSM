@@ -96,11 +96,24 @@ async function portalFor(b = {}) {
 
 // ---- the lines a manager reads -----------------------------------------------------------------------------------------
 // One line for the board and Settings from the site's standing and cancel date, or null. Pure.
-function lineFor(s) {
+// A pilot (src/pilot.js) has its end date from the day it starts: Stripe's cancel_at is the plan, not a cancellation.
+// -> the planned end as a Date, or null for a site that is not a pilot
+function pilotEnd(s) {
+  const b = s && s.band;
+  return require("./pilot").isPilot(b) && b.pilot.ends_at ? new Date(b.pilot.ends_at) : null;
+}
+// Is this cancel date the pilot's own end (within a day and a half of it), and not an earlier cancel by the customer?
+function isPlannedEnd(s, cancelAt) {
+  const end = pilotEnd(s);
+  return Boolean(end && cancelAt && Math.abs(new Date(cancelAt).getTime() - end.getTime()) < 36 * 3600e3);
+}
+function lineFor(s, now = Date.now()) {
   if (!s || s.stage !== "subscribed") return null;
   if (s.standing === "unpaid") return { level: "red", text: `Payment for this site is overdue, so new AI work is paused. Your tools keep running. Update the card under Settings, Manage billing, or write to ${CONTACT}.` };
   if (s.standing === "canceled_at_stripe") return { level: "red", text: `This site's subscription lapsed after its payments failed, so new AI work is paused. Your tools keep running. Write to ${CONTACT} to sort it out.` };
   if (s.standing === "past_due") return { level: "amber", text: "A payment for this site did not go through. Stripe will try the card again; you can update it under Settings, Manage billing. Nothing stops in the meantime." };
+  // a pilot's end is in Settings all along; the board says it in the last two weeks only
+  if (s.cancel_at && isPlannedEnd(s, s.cancel_at)) return new Date(s.cancel_at).getTime() - now > 14 * 86400e3 ? null : { level: "note", pilot: true, text: `This site is on a pilot until ${dayOf(s.cancel_at)}. It ends on its own that day and nothing is charged after it. What comes next is for you and Anetix to agree before then: ${CONTACT}.` };
   if (s.cancel_at) return { level: "amber", text: `This site's subscription ends on ${dayOf(s.cancel_at)}. Everything works until then, and after that it goes back to a demo with your tools and data kept. To keep it, open Settings, Manage billing.` };
   return null;
 }
@@ -118,8 +131,10 @@ async function onSubscription(site, sub, ev) {
   const co = (await q("SELECT name FROM platform.companies WHERE slug=$1", [site.company])).rows[0] || { name: site.company };
   if (["canceled", "incomplete_expired"].includes(sub.status)) {
     const asked = sub.cancellation_reason === "cancellation_requested" || Boolean(site.ending);
-    if (asked) {
-      const r = await backToDemo(site.id, site.ending ? site.ending.why : "the customer cancelled", site.ending ? site.ending.by : "the customer");
+    // a pilot that reached its own end date: Stripe ended it as planned, nobody cancelled anything
+    const planned = !site.ending && pilotEnd(site) && Date.now() >= pilotEnd(site).getTime() - 36 * 3600e3;
+    if (asked || planned) {
+      const r = await backToDemo(site.id, site.ending ? site.ending.why : planned ? "the pilot reached its end date" : "the customer cancelled", site.ending ? site.ending.by : planned ? "the pilot's end date" : "the customer");
       if (r.returned) applied.returned = true;
       return applied;
     }
@@ -132,7 +147,35 @@ async function onSubscription(site, sub, ev) {
     return applied;
   }
   const cancelAt = sub.cancel_at ? new Date(Number(sub.cancel_at) * 1000) : sub.cancel_at_period_end && sub.current_period_end ? new Date(Number(sub.current_period_end) * 1000) : null;
-  const step = sites.next({ stage: site.stage, standing: site.standing === "canceled_at_stripe" ? "good" : site.standing, cancel_at: site.cancel_at }, { type: "stripe_status", status: sub.status, cancel_at: cancelAt ? cancelAt.toISOString() : null });
+  // A pilot whose end date is gone from Stripe (the customer pressed Renew in the billing portal, or someone cleared
+  // it in the dashboard) would be charged month after month. The end date goes back on, and Anetix is told: continuing
+  // is agreed first, never a button.
+  const pend = pilotEnd(site);
+  // A pilot still running at Stripe after its end date (its end date was lost and never got back): it is ended now, the
+  // way it was promised, before the next month can be charged.
+  if (pend && pend.getTime() < Date.now() - 3600e3 && ["active", "trialing", "past_due", "unpaid"].includes(sub.status) && (!cancelAt || cancelAt.getTime() > Date.now() + 86400e3)) {
+    await endNow(site.id, { why: "the pilot reached its end date", by: "the pilot's end date" });
+    notify("A pilot was ended past its date", `${co.name}: the pilot was still running at Stripe after its end date, so it was cancelled now and the site is a demo again. Check Stripe for a charge after ${dayOf(pend)} and refund it.`, { priority: 5, tags: ["rotating_light"], ref: site.company });
+    applied.ended_now = true;
+    return applied;
+  }
+  if (pend && !cancelAt && pend.getTime() > Date.now() && ["active", "trialing", "past_due", "unpaid"].includes(sub.status)) {
+    try {
+      await require("./activate").www("/internal/pilot-end", { subscription: sub.id, site: site.id }, { timeoutMs: 30000 });
+      applied.pilot_end_kept = true;
+      await logEvent("pilot_end_kept", site.company, { event: ev.id, ends_at: pend.toISOString() });
+      notify("A pilot's end date was put back", `${co.name}: the pilot's end date was cleared at Stripe (Renew in the billing portal, most likely). It is back on ${dayOf(pend)}, so nothing is charged after it. They may want to continue: talk to them.`, { priority: 4, tags: ["hourglass_flowing_sand"], ref: site.company });
+    } catch (e) {
+      console.error(`[billing] ${site.company}: the pilot's end date is gone at Stripe and could not be put back: ${e.message}`);
+      notify("A pilot has no end date at Stripe", `${co.name}: the pilot should end on ${dayOf(pend)} but Stripe has no cancel date on it, and putting it back failed (${clean(e.message, 120)}). It is tried again every 15 minutes and at Stripe's next delivery of this event. If this alert repeats, set "cancel at" on the subscription in the Stripe dashboard.`, { priority: 5, tags: ["rotating_light"], ref: site.company });
+      // not recorded as handled: anetix.ai answers Stripe with an error, and Stripe delivers the event again (found by the
+      // review of 2026-10-05: one failed try was the only try)
+      throw fail(503, `the pilot's end date could not be put back: ${clean(e.message, 200)}`);
+    }
+    return applied;
+  }
+  const plannedEnd = isPlannedEnd(site, cancelAt);   // a pilot's own end date is not a cancel: it never ends a late month early, and nobody is told "cancelled"
+  const step = sites.next({ stage: site.stage, standing: site.standing === "canceled_at_stripe" ? "good" : site.standing, cancel_at: site.cancel_at }, { type: "stripe_status", status: sub.status, cancel_at: cancelAt ? cancelAt.toISOString() : null, planned_end: plannedEnd });
   if (!step.ok) return applied;   // trialing and the like: nothing to do
   const st = step.state;
   if (step.effects.includes("end_now")) {   // a cancel on a month nobody paid for: it ends now, not on the date Stripe gave
@@ -151,7 +194,9 @@ async function onSubscription(site, sub, ev) {
     else if (st.standing === "unpaid") notify("A site is unpaid", `${co.name}: Stripe's retries ran out. New AI work is paused, the tools keep running. End is on the Sites tab if it comes to that.`, { priority: 5, tags: ["rotating_light"], ref: site.company });
     else if (st.standing === "good" && ["past_due", "unpaid"].includes(was.standing)) notify("A site paid", `${co.name}: the overdue payment went through. Back to good standing.`, { tags: ["white_check_mark"], ref: site.company });
   }
-  if (!was.cancel_at && st.cancel_at) {
+  if (plannedEnd) return applied;   // the pilot's end date, there from the start: nothing was cancelled and nothing taken back
+  if (was.cancel_at && isPlannedEnd(site, was.cancel_at) && !st.cancel_at) return applied;
+  if ((!was.cancel_at || isPlannedEnd(site, was.cancel_at)) && st.cancel_at) {
     await logEvent("site_cancel_set", site.company, { cancel_at: st.cancel_at, event: ev.id });
     await require("./record").record("site_cancel_set", { company: site.company, actor: { role: "manager", name: null }, after: `Cancelled in billing: the subscription ends on ${dayOf(st.cancel_at)}.`, detail: { cancel_at: st.cancel_at } }).catch(() => {});
     notify("A site cancelled", `${co.name} cancelled. It ends on ${dayOf(st.cancel_at)} and goes back to a demo then.`, { priority: 4, tags: ["wave"], ref: site.company });
@@ -206,7 +251,7 @@ async function backToDemo(siteId, why, by) {
     await c.query(`INSERT INTO platform.company_access (company, legacy_login) VALUES ($1,false)
                    ON CONFLICT (company) DO UPDATE SET floor_hash=NULL, manager_hash=NULL, legacy_login=false,
                      generation=platform.company_access.generation + 1, updated_at=now()`, [s.company]);
-    await require("./notices").add(s.company, "back_to_demo", `This site's subscription has ended (${clean(why, 200)}), so it is a demo again. Every tool and all your data are still here. The floor's sign-in is closed, and AI runs on credit again: add credit on anetix.ai to keep building, or go live again any time. Questions: ${CONTACT}.`, { why: clean(why, 300) }, c);
+    await require("./notices").add(s.company, "back_to_demo", `This site's ${pilotEnd(s) ? "pilot" : "subscription"} has ended (${clean(why, 200)}), so it is a demo again. Every tool and all your data are still here. The floor's sign-in is closed, and AI runs on credit again: add credit on anetix.ai to keep building, or go live again any time. Questions: ${CONTACT}.`, { why: clean(why, 300) }, c);
     await c.query("COMMIT");
   } catch (e) { await c.query("ROLLBACK").catch(() => {}); throw e; }
   finally { c.release(); }
@@ -255,4 +300,4 @@ const wwwRouter = express.Router();
 wwwRouter.use("/api/www/billing/portal", (req, res, next) => (require("./selfserve").keyOk(req) ? next() : res.status(401).json({ error: "www key required" })));
 wwwRouter.post("/api/www/billing/portal", json, guard((b) => portalFor(b)));
 
-module.exports = { init, SCHEMA, billingToken, billingTokenOk, linkFor, portalFor, lineFor, forBoard, onSubscription, onFinalizationFailed, endNow, backToDemo, end, router, wwwRouter, CONTACT };
+module.exports = { pilotEnd, isPlannedEnd, init, SCHEMA, billingToken, billingTokenOk, linkFor, portalFor, lineFor, forBoard, onSubscription, onFinalizationFailed, endNow, backToDemo, end, router, wwwRouter, CONTACT };

@@ -160,7 +160,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const oStop = await order(SA.order);
   t("Stripe failing is not a decline: the order stays switching on with the error, nothing lost", stop.status === 502 && stop.json.code === "stopped" && oStop.state === "activating" && oStop.stripe.last_error && /Stripe answered 500/.test(oStop.stripe.last_error.message) && (await site(A.slug)).stage === "activating", { stop: stop.json, o: oStop.state });
   const call1 = callsTo("/internal/activate")[0].body;
-  t("what the product asks anetix.ai for: the site's Customer, the card, the band's monthly price by lookup key, the order in the metadata", call1.customer === (await site(A.slug)).stripe_customer && call1.payment_method === SA.pm && call1.price.lookup_key === "anetix_site_core_v1_250000" && call1.price.unit_amount === 250000 && call1.metadata.order === SA.order && call1.metadata.site === (await site(A.slug)).id && call1.balance.cents === 0, call1);
+  t("what the product asks anetix.ai for: the site's Customer, the card, the band's monthly price by lookup key, the order in the metadata", call1.customer === (await site(A.slug)).stripe_customer && call1.payment_method === SA.pm && call1.price.lookup_key === "anetix_tools_v2_30000" && call1.price.unit_amount === 30000 && call1.metadata.plan === "tools" && call1.metadata.tools === "0" && call1.metadata.order === SA.order && call1.metadata.site === (await site(A.slug)).id && call1.balance.cents === 0, call1);
   const rStop = (await admin.get("/api/admin/sites")).json.rows.find((r) => r.slug === A.slug);
   t("the Sites tab says it stopped and why", rStop.stage === "activating" && rStop.order.activate && rStop.order.activate.last_error.message === "Stripe answered 500" && rStop.order.activate.attempts === 1, rStop.order);
   const withdrawNow = await www("/api/www/golive/withdraw", { access: SA.access });
@@ -168,7 +168,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const act = await admin.post(`/api/admin/sites/${A.slug}/activate`, { password: PW.admin, test_mode_ok: true });
   const sA = await site(A.slug), oA2 = await order(SA.order), coA = (await q("SELECT * FROM platform.companies WHERE slug=$1", [A.slug])).rows[0];
   t("Activate again carries on: subscribed, the same amounts sent again", act.status === 200 && act.json.activated === true && sA.stage === "subscribed" && sA.standing === "good" && oA2.state === "activated" && callsTo("/internal/activate")[1].body.balance.cents === call1.balance.cents, act.json);
-  t("the site keeps what it signed: its subscription, the period, the band and price, the learning choice, when it converted", sA.stripe_subscription && oA2.stripe.subscription === sA.stripe_subscription && sA.period_end && Number(sA.price_usd) === 2500 && sA.band.key === "core" && sA.learning_opt_in === false && sA.converted_at && sA.order_id === SA.order);
+  t("the site keeps what it signed: its subscription, the period, the band and price, the learning choice, when it converted", sA.stripe_subscription && oA2.stripe.subscription === sA.stripe_subscription && sA.period_end && Number(sA.price_usd) === 300 && sA.band.key === "core" && sA.band.per_tool_usd === 300 && sA.band.monthly_usd === 2500 && sA.learning_opt_in === false && sA.converted_at && sA.order_id === SA.order);
   t("the rollover: the DEMO strip off, the company named for the site, every step marked done", coA.demo === false && coA.name === FACTS.site_name && sA.rollover && sA.rollover.done_at && sA.rollover.floor_at && sA.rollover.sample_at);
   const access = (await q("SELECT floor_hash, manager_hash FROM platform.company_access WHERE company=$1", [A.slug])).rows[0];
   t("the floor has a password of its own now, and the manager still no shared one", access.floor_hash && !access.manager_hash);
@@ -196,19 +196,19 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   await q("INSERT INTO platform.ai_usage (company, kind, cost_usd, detail) VALUES ($1, 'chat', 2100, '{}')", [A.slug]);
   const over = await A.mgr.post(`/api/c/${A.slug}/intakes`, {});
   const over2 = await A.mgr.post(`/api/c/${A.slug}/intakes`, {});
-  t("past the fair-use line (80% of $2,500), new AI work is paused with the words from the spec", over.status >= 400 && /New AI work here is paused until .+ This month passed the fair-use line in your agreement, which normal use does not reach, and Anetix has been told\. Your tools keep working\./.test(over.json.error) && over2.status >= 400, over.json);
+  t("past the fair-use line (80% of the fee), new AI work is paused with the words from the spec", over.status >= 400 && /New AI work here is paused until .+ This month passed the fair-use line in your agreement, which normal use does not reach, and Anetix has been told\. Your tools keep working\./.test(over.json.error) && over2.status >= 400, over.json);
   t("Anetix is told once a period, not at every refused start", (await q("SELECT count(*)::int AS n FROM platform.events WHERE kind='fair_use_reached' AND ref=$1", [A.slug])).rows[0].n === 1);
   const bOver = (await A.mgr.get(`/api/c/${A.slug}/board`)).json;
   t("the manager's board says it once", bOver.fair_use && bOver.fair_use.over === true && /paused until/.test(bOver.fair_use.message));
   const pipe = (await admin.get("/api/admin/sites")).json, rA = pipe.rows.find((r) => r.slug === A.slug);
-  t("the Sites tab: needs attention, the share of the line, the band and price as signed", pipe.attention >= 1 && rA.fair_use.over === true && rA.fair_use.line_usd === 2000 && rA.band.monthly_usd === 2500 && rA.band.signed === true && rA.band.fair_use_usd === 2000 && rA.subscription.id === sA.stripe_subscription, { attention: pipe.attention, f: rA.fair_use });
+  t("the Sites tab: needs attention, the share of the line, the band and price as signed", pipe.attention >= 1 && rA.fair_use.over === true && rA.fair_use.line_usd === 240 && rA.band.monthly_usd === 2500 && rA.band.fee_usd === 300 && rA.band.signed === true && rA.band.fair_use_usd === 240 && rA.subscription.id === sA.stripe_subscription, { attention: pipe.attention, f: rA.fair_use });
   t("a lift needs a reason", (await admin.post(`/api/admin/sites/${A.slug}/lift`, { note: "" })).status === 400);
   const lift = await admin.post(`/api/admin/sites/${A.slug}/lift`, { note: "a big first month of new tools" });
   t("Brendan lifts the line for the rest of the period, and new AI work starts again", lift.status === 200 && lift.json.lifted === true && lift.json.over === false && (await A.mgr.post(`/api/c/${A.slug}/intakes`, {})).status === 200, lift.json);
 
   // ---- Settings: the learning choice; the Demos tab's bound ---------------------------------------------------------------
   const st = (await A.mgr.get(`/api/c/${A.slug}/site`)).json;
-  t("Settings: the band, the price and the learning choice from the order form", st.subscribed === true && st.band === "Core" && st.price_usd === 2500 && st.learning_opt_in === false && /\/terms\?k=/.test(st.terms_link), st);
+  t("Settings: the band, the price and the learning choice from the order form", st.subscribed === true && st.band === "Core" && st.price_usd === 300 && /^\$300 a month: \$300 for each tool live on your floor/.test(st.summary) && /never more than \$2,500/.test(st.summary) && st.learning_opt_in === false && /\/terms\?k=/.test(st.terms_link), st);
   const lon = await A.mgr.post(`/api/c/${A.slug}/learning`, { on: true });
   t("the manager opts in later (the Terms, 10.2), and it is on the record", lon.json.learning_opt_in === true && (await site(A.slug)).learning_opt_in === true && (await q("SELECT 1 FROM platform.record WHERE company=$1 AND kind='learning_changed'", [A.slug])).rows.length === 1);
   t("an admin cannot make the choice for them", (await admin.post(`/api/c/${A.slug}/learning`, { on: false })).status === 403);

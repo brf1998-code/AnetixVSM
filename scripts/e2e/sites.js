@@ -22,11 +22,11 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   // ---- the price book, before anyone is in
   const empty = await admin.get("/api/admin/sites");
   const B = empty.json && empty.json.book;
-  t("the price book is version 1 with five bands at Brendan's prices", empty.status === 200 && B.version === 1 && B.bands.map((b) => `${b.key}:${b.monthly_usd}`).join(",") === "small:1000,mid:1750,core:2500,large:3500,very_large:5000", B);
+  t("the price book is version 2: $300 a tool, and the five bands' prices are the caps", empty.status === 200 && B.version === 2 && B.per_tool_usd === 300 && B.bands.map((b) => `${b.key}:${b.monthly_usd}`).join(",") === "small:1000,mid:1750,core:2500,large:3500,very_large:5000", B);
   t("each band carries its annual price, fair-use line and floor-space threshold", B.bands[2].annual_usd === 30000 && B.bands[2].fair_use_usd === 2000 && B.bands[1].sqft_min === 75000 && B.bands[0].sqft_min === null && B.fair_use_share === 0.8 && B.sqft_proposed === true);
   t("with nobody in, the pipeline is empty and every stage reads zero", empty.json.rows.length === 0 && Object.values(empty.json.stages).every((n) => n === 0) && empty.json.attention === 0 && empty.json.cancelling === 0, empty.json.stages);
   const stored = (await q("SELECT version, book FROM platform.price_books ORDER BY version")).rows;
-  t("the book is in the database as version 1, written from the code", stored.length === 1 && stored[0].version === 1 && stored[0].book.bands.length === 5);
+  t("both books are in the database, written from the code: version 1 (flat bands) and version 2 (by the tool)", stored.length === 2 && stored[0].version === 1 && stored[0].book.bands.length === 5 && !stored[0].book.per_tool_usd && stored[1].version === 2 && stored[1].book.per_tool_usd === 300);
 
   // ---- two demos, made the way anetix.ai makes them
   const mk = async (label, email, name) => {

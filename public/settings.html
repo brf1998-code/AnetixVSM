@@ -185,7 +185,11 @@ async function loadSubscription() {
   } else {
     card.style.display = "block";
     const day = (d) => new Date(d).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
-    document.getElementById("sub-sub").textContent = `${s.band || "Your"} site, $${Number(s.price_usd || 0).toLocaleString("en-US")} a month, billed monthly. The price is locked while the subscription runs.${s.next_bill ? ` Next bill ${day(s.next_bill)}.` : ""}${s.ends_on ? ` Ends ${day(s.ends_on)}.` : ""}`;
+    // the price in the product's own words (src/modprice.js summaryFor): a pilot, or the fee by the tools live on the floor
+    document.getElementById("sub-sub").textContent = s.summary
+      ? `${s.summary}${s.next_bill && !s.pilot ? ` Next bill ${day(s.next_bill)}.` : ""}${s.ends_on && !s.pilot ? ` Ends ${day(s.ends_on)}.` : ""}`
+      : `${s.band || "Your"} site, $${Number(s.price_usd || 0).toLocaleString("en-US")} a month, billed monthly. The price is locked while the subscription runs.${s.next_bill ? ` Next bill ${day(s.next_bill)}.` : ""}${s.ends_on ? ` Ends ${day(s.ends_on)}.` : ""}`;
+    if (s.pilot) document.getElementById("billing").textContent = "Your pilot";
     line.style.display = s.line ? "block" : "none"; line.textContent = s.line ? s.line.text : "";
     line.style.color = s.line && s.line.level === "red" ? "var(--red, #b3261e)" : "#8a5a00";
     bill.style.display = s.billing ? "block" : "none";
@@ -215,7 +219,7 @@ async function loadGoLive() {
     || (g.stage === "ordering"
       ? (g.signed_no_card ? "Your order form is signed. Add a card to finish; nothing is charged until Anetix switches the site on."
         : g.waiting_on ? `Your order is started on anetix.ai and waits for ${g.waiting_on} to sign.` : "Your order is started on anetix.ai. Pick up where you left off.")
-      : `Make this demo your site: one price for the site, set by its size, with no credit to run out of and a way in for the floor. Everything you built stays.${g.from ? ` ${g.from.line}` : ""}`);
+      : g.pitch || `Make this demo your site: one price for the site, set by its size, with no credit to run out of and a way in for the floor. Everything you built stays.${g.from ? ` ${g.from.line}` : ""}`);
   document.getElementById("gl-body").innerHTML = g.url ? `<a class="btn primary" id="gl-go" href="${esc(g.url)}">${esc(g.action)}${g.preview ? " (admin preview)" : ""}</a>` : "";
 }
 // The system review (moved here from the board, 2026-09-26): one select, one button, and a line while one runs.

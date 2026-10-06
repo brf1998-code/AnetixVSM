@@ -40,7 +40,7 @@ t("150 people: under 300,000 stays Core, at 300,000 moves to Large", band(150, 2
 t("Very large has nowhere to move", (() => { const x = S.bandOf({ headcount: 600, sqft: 10000000 }); return x.key === "very_large" && x.moved_up === false; })());
 t("no floor space given: headcount alone decides", S.bandOf({ headcount: 40 }).moved_up === false && S.bandOf({ headcount: 40, sqft: "" }).key === "small");
 const core = S.bandOf({ headcount: 150 });
-t("Core's figures: $2,500 a month, $30,000 a year, the line at $2,000, the alert at $1,250", core.monthly_usd === 2500 && core.annual_usd === 30000 && core.fair_use_usd === 2000 && core.alert_usd === 1250 && core.proposed === false && core.book === 1, core);
+t("Core's figures: $2,500 a month, $30,000 a year, the line at $2,000, the alert at $1,250", core.monthly_usd === 2500 && core.annual_usd === 30000 && core.fair_use_usd === 2000 && core.alert_usd === 1250 && core.proposed === false && core.book === 2 && S.bandOf({ headcount: 150 }, S.BOOK_V1).book === 1, core);
 t("a Large site says its price is still proposed", S.bandOf({ headcount: 300 }).proposed === true);
 t("the doc's worked examples: 22 people and 15,000 sq ft is $1,000; 40 and 110,000 is $1,750; 150 and 215,000 is $2,500",
   S.bandOf({ headcount: 22, sqft: 15000 }).monthly_usd === 1000 && S.bandOf({ headcount: 40, sqft: 110000 }).monthly_usd === 1750 && S.bandOf({ headcount: 150, sqft: 215000 }).monthly_usd === 2500);
@@ -104,15 +104,15 @@ t("every stage the machine can reach is a known stage", [happy.state, sent.state
 
 // ---- the order form
 const facts = { legal_name: "Keystone Fab LLC", site_name: "Keystone Fab, Allentown", site_address: { line1: "12 Mill Road", city: "Allentown", state: "PA", postal_code: "18101" }, plant_manager: { name: "Omar Reyes" }, headcount: 150, sqft: 90000 };
-const text = S.orderText({ facts });
+const text = S.orderText({ facts, book: S.BOOK_V1 });   // price book 1, a flat band; price book 2 and the pilot are in test-pricing.js
 t("the order form carries every figure: who, where, size, band, fee", /Customer: Keystone Fab LLC\./.test(text) && /Site: Keystone Fab, Allentown, 12 Mill Road, Allentown, PA 18101\./.test(text) && /Plant manager: Omar Reyes\./.test(text) && /150 people across all shifts; 90,000 square feet/.test(text) && /Band: Core\./.test(text) && /\$2,500 a month/.test(text), text);
 t("and the terms: month to month, the 80% line, the price lock, the data, after a cancellation", /month to month/.test(text) && /passes 80% of that month's fee/.test(text) && /will not raise the Site's price/.test(text) && /owns the data/.test(text) && /becomes a demo account/.test(text));
 t("it names the terms version and the price book", new RegExp(`Terms version: ${require("../src/terms").TERMS_VERSION}\\. Price book: version 1\\.`).test(text));
 t("Brendan's order-form changes (his notes for counsel): the refunds the Terms provide, the fair-use pause wording", /partial months are not refunded, except as the Terms provide\./.test(text) && /A fair-use pause does not stop the Site's tools\./.test(text) && !/The Site's tools keep working/.test(text));
 t("no em or en dashes on the page a customer signs", !/[–—]/.test(text));
-t("floor space moving the band says so on the form", /moved up one band for floor space/.test(S.orderText({ facts: { ...facts, headcount: 40, sqft: 110000 } })));
+t("floor space moving the band says so on the form", /moved up one band for floor space/.test(S.orderText({ facts: { ...facts, headcount: 40, sqft: 110000 }, book: S.BOOK_V1 })));
 t("no headcount, no order form", (() => { try { S.orderText({ facts: { legal_name: "x" } }); return false; } catch (e) { return /people at the site/.test(e.message); } })());
-const h1 = S.textHash(text), h2 = S.textHash(S.orderText({ facts }));
+const h1 = S.textHash(text), h2 = S.textHash(S.orderText({ facts, book: S.BOOK_V1 }));
 t("the hash is the same for the same page and 64 hex characters", h1 === h2 && /^[0-9a-f]{64}$/.test(h1));
 t("a different headcount is a different page", S.textHash(S.orderText({ facts: { ...facts, headcount: 151 } })) !== h1 && S.textHash(S.orderText({ facts: { ...facts, headcount: 250 } })) !== h1);
 t("an address written as one line works too", S.addressLine("1 Main St, Boston, MA") === "1 Main St, Boston, MA" && S.addressLine(null) === "");

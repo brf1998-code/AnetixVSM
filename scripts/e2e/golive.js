@@ -77,7 +77,7 @@ const FACTS = {
   const on = await admin.post("/api/admin/golive", { open: true });
   t("the admin switches it on", on.status === 200 && on.json.open === true, on.json);
   const b1 = (await A.mgr.get(`/api/c/${A.slug}/board`)).json.golive;
-  t("beside it, what a site costs, from the price book, before any form (C7)", b1 && b1.from && b1.from.line === "Sites start at $1,000 a month, for under 50 people." && b1.from.short === "from $1,000 a month", b1 && b1.from);
+  t("beside it, what a site costs, from the price book, before any form (C7)", b1 && b1.from && b1.from.line === "A site is $300 a month for each tool live on the floor, and never more than its cap: $1,000 a month for under 50 people." && b1.from.short === "$300 a month a tool", b1 && b1.from);
   t("the manager's board now carries a customer's Go live link", b1 && b1.preview === false && b1.action === "Go live" && b1.stage === "demo" && /\.m\.[A-Za-z0-9_-]{32}$/.test(tokenOf(b1.url)) && tokenOf(b1.url).startsWith(siteId), b1);
   t("Settings' card carries the same", (await A.mgr.get(`/api/c/${A.slug}/golive`)).json.golive.url === b1.url);
   const showroom = (await (await login(PW.manager, "demo")).get("/api/c/demo/board")).json;
@@ -91,7 +91,7 @@ const FACTS = {
   const s1 = await www("/api/www/golive/save", { access: M, fields: { legal_name: FACTS.legal_name, headcount: 140 } });
   t("the first answers start the order: a draft, version 1, what it still needs", s1.status === 200 && s1.json.order && s1.json.order.state === "draft" && s1.json.order.version === 1 && s1.json.order.complete === false && s1.json.order.missing.some((m) => m.key === "sqft") && s1.json.order.text === null, s1.json.order);
   t("the site moves to Ordering", s1.json.site.stage === "ordering");
-  t("the band is worked out by the product from the headcount", s1.json.order.band && s1.json.order.band.key === "core" && s1.json.order.price_usd === 2500 && !("flags" in s1.json.order.band), s1.json.order.band);
+  t("the band is worked out by the product from the headcount", s1.json.order.band && s1.json.order.band.key === "core" && s1.json.order.band.monthly_usd === 2500 && s1.json.order.band.per_tool_usd === 300 && s1.json.order.price_usd === 300 && !("flags" in s1.json.order.band), s1.json.order.band);
   const s2 = await www("/api/www/golive/save", { access: M, fields: FACTS });
   t("all the answers: version 2, complete, the order form's text and its hash", s2.status === 200 && s2.json.order.version === 2 && s2.json.order.complete === true && /Customer: Acme Wire & Cable, Inc\./.test(s2.json.order.text) && /^[0-9a-f]{64}$/.test(s2.json.order.sha), s2.json.order);
   t("the text names the terms at anetix.ai and the credit back", s2.json.order.text.includes(`Anetix Terms of Service, version ${T.TERMS_VERSION}, at ${WWW}/terms, as updated under section 19.`) && /Unused demo credit/.test(s2.json.order.text));
@@ -148,15 +148,15 @@ const FACTS = {
   t("two signers at once make one signature; the other is told it is signed", [x.status, y.status].sort().join(",") === "200,409" && [x, y].find((r) => r.status === 409).json.code === "signed", [x.status, y.status, x.json.error || "", y.json.error || ""]);
   const won = x.status === 200 ? { r: x, who: "manager", ip: "203.0.113.9", ua: "Manager browser" } : { r: y, who: "approver", ip: "198.51.100.4", ua: "Approver browser" };
   const so = (await q("SELECT * FROM platform.orders WHERE id=$1", [v3.id])).rows[0];
-  t("the signed order keeps the text shown, its hash, the terms and their hash, the signer, the address and browser", so.state === "signed" && so.text === v3.text && so.text_sha256 === v3.sha && so.terms_version === T.TERMS_VERSION && so.terms_sha256 === T.termsHash() && so.signer.via === won.who && so.signed_ip === won.ip && so.signed_ua === won.ua && so.signed_at && Number(so.price_usd) === 2500 && so.band.key === "core", so);
+  t("the signed order keeps the text shown, its hash, the terms and their hash, the signer, the address and browser", so.state === "signed" && so.text === v3.text && so.text_sha256 === v3.sha && so.terms_version === T.TERMS_VERSION && so.terms_sha256 === T.termsHash() && so.signer.via === won.who && so.signed_ip === won.ip && so.signed_ua === won.ua && so.signed_at && Number(so.price_usd) === 300 && so.band.key === "core" && so.band.monthly_usd === 2500 && so.price_book === 2, so);
   t("the learning choice is the one in the signed words, and the evidence for the address is kept", so.learning_opt_in === true && so.signed_net && (won.who === "manager" ? so.signed_net.xff === "6.6.6.6, 203.0.113.9" : so.signed_net.real === "198.51.100.4"), so.signed_net);
   const tv = (await q("SELECT sha256, doc FROM platform.terms_versions WHERE version=$1", [T.TERMS_VERSION])).rows[0];
   t("the first signature keeps the words of its terms version", tv && tv.sha256 === T.termsHash() && tv.doc.version === T.TERMS_VERSION && tv.doc.sections.length === 21, tv && tv.sha256);
-  // the price book it was signed under is frozen now: the boot's seed no longer rewrites version 1
-  await q("UPDATE platform.price_books SET note='tampered by the test' WHERE version=1");
+  // the price book it was signed under is frozen now: the boot's seed no longer rewrites version 2
+  await q("UPDATE platform.price_books SET note='tampered by the test' WHERE version=2");
   await require("../../src/sites").init();
-  t("signed under price book 1, the book is frozen: a boot does not rewrite it", (await q("SELECT note FROM platform.price_books WHERE version=1")).rows[0].note === "tampered by the test");
-  await q("UPDATE platform.price_books SET note=$1 WHERE version=1", [require("../../src/sites").BOOK_V1.note]);
+  t("signed under price book 2, the book is frozen: a boot does not rewrite it", (await q("SELECT note FROM platform.price_books WHERE version=2")).rows[0].note === "tampered by the test");
+  await q("UPDATE platform.price_books SET note=$1 WHERE version=2", [require("../../src/sites").BOOK_V2.note]);
   t("signed but no card: the site is still Ordering, and the view has what the Stripe Customer needs", won.r.json.site.stage === "ordering" && won.r.json.order.state === "signed" && won.r.json.order.card_saved === false && won.r.json.order.customer && won.r.json.order.customer.name === FACTS.legal_name && won.r.json.order.customer.metadata.site === siteId && won.r.json.order.customer.existing === null, won.r.json.order.customer);
   t("the answers cannot change once signed", (await www("/api/www/golive/save", { access: M, fields: { headcount: 170 } })).status === 409 && (await www("/api/www/golive/save", { access: P, fields: { headcount: 170 } })).status === 409);
   t("nor can it be signed twice", (await www("/api/www/golive/sign", { access: M, version: so.version, sha: so.text_sha256, signer, authority: true })).json.code === "signed");
@@ -225,7 +225,7 @@ const FACTS = {
   const bSite = tokenOf(Bl.url).split(".")[0];
   t("another demo's link does not open the first", (await www("/api/www/golive/view", { access: { slug: A.slug, t: BM.t } })).status === 404);
   const bs = await www("/api/www/golive/save", { access: BM, fields: { ...FACTS, legal_name: "Northside Stamping LLC", site_name: "Northside, Lowell", headcount: 48, sqft: 30000, billing: { email: "billing@northside.test", same_as_site: false, address: { line1: "1 Ledger Way", city: "Boston", state: "MA", postal_code: "02110" } } } });
-  t("48 people is Small at $1,000", bs.json.order.band.key === "small" && bs.json.order.price_usd === 1000, bs.json.order.band);
+  t("48 people is Small: a $1,000 cap, $300 today with no tool live", bs.json.order.band.key === "small" && bs.json.order.band.monthly_usd === 1000 && bs.json.order.price_usd === 300, bs.json.order.band);
   const bap = await www("/api/www/golive/approver", { access: BM, approver: { name: "Lee Park", email: "lee@northside.test" } });
   const BP = { order: bap.json.order.id, t: tokenOf(bap.json.order.approver.url) };
   const bap2 = await www("/api/www/golive/approver", { access: BM, approver: { name: "Kim Park", email: "kim@northside.test" } });

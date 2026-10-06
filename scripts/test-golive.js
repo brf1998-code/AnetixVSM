@@ -100,7 +100,7 @@ const text = S.orderText({ facts: cf.facts, terms_url: "https://anetix.ai/terms"
 t("the order form points at the terms by version and address, as updated under section 19", new RegExp(`Terms: this order form is an Order Form under the Anetix Terms of Service, version ${T.TERMS_VERSION}, at https://anetix\\.ai/terms, as updated under section 19\\.`).test(text), text);
 t("and says unused demo credit comes off the first bill", /Unused demo credit: credit Customer bought for its demo and has not used by the day the Site is switched on comes off the first bill/.test(text));
 t("the terms address is part of what is signed", S.textHash(text) !== S.textHash(S.orderText({ facts: cf.facts, terms_url: "https://other.test/terms" })));
-t("140 people on 120,000 square feet is Core at $2,500", /Band: Core\./.test(text) && /\$2,500 a month/.test(text));
+t("140 people on 120,000 square feet is Core: a $2,500 cap, and $300 a tool (price book 2)", /Cap: \$2,500 a month\. .*Core\./.test(text) && /Fee: \$300 a month for each tool live on the floor/.test(text));
 t("the billing email is on the order form (the terms send notices there)", /Billing email: ap@acmewire\.test\./.test(text));
 t("the learning choice is in the signed words, either way", /Learning: Customer does not opt in\./.test(text) && /Learning: Customer opts in\./.test(S.orderText({ facts: { ...cf.facts, learning: true } })) && S.textHash(text) !== S.textHash(S.orderText({ facts: { ...cf.facts, learning: true }, terms_url: "https://anetix.ai/terms" })));
 t("a legal name that ends in a period ends its own sentence (no Inc..)", /Customer: Acme Wire & Cable, Inc\.\n/.test(text) && !/Inc\.\./.test(text) && /Plant manager: Sam Ortiz\.\n/.test(text));
