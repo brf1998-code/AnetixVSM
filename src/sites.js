@@ -800,6 +800,15 @@ router.post("/api/admin/sites/quote", requireAdmin, json, guard(async (req, res)
   if (!band) throw fail(400, "give the number of people at the site");
   res.json({ band });
 }));
+// A company added by hand on /admin is not in the pipeline until it has a site row (2026-10-06, Brendan: a company Anetix
+// runs for the customer still needs its pilot offered and switched on from the Sites tab). This makes the row.
+router.post("/api/admin/sites/:slug/track", requireAdmin, guard(async (req, res) => {
+  const slug = String(req.params.slug || "").toLowerCase();
+  if (!SLUG.test(slug) || !(await q("SELECT 1 FROM platform.companies WHERE slug=$1", [slug])).rows[0]) throw fail(404, "no such company");
+  await require("./golive").ensureSite(slug);
+  await logEvent("site_tracked", slug, { by: who(req) });
+  res.json({ ok: true, site: (await pipeline()).rows.find((r) => r.slug === slug) || null });
+}));
 router.post("/api/admin/sites/:slug", requireAdmin, json, guard(async (req, res) => res.json({ ok: true, site: await saveFields(req.params.slug, req.body, who(req)) })));
 
 module.exports = {

@@ -581,7 +581,7 @@ async function loginMode(slug) {
   return row && !row.floor_hash && !row.manager_hash && !row.legacy_login ? "account" : "password";
 }
 
-module.exports = { startAccountSession,
+module.exports = { startAccountSession, loginBlocked, noteLoginFail,
   middleware, currentSession, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
   setPasswords, accountsOnly, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, ticketHandler, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,

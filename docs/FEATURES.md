@@ -3374,3 +3374,35 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     `run-all.sh`), the Sites tab's offer form in `sites-browser.js`, the board link in `board-browser.js` and
     `campaign-browser.js`; www `test-www.js` (141) and `e2e-activate.js` (74: a pilot and a second tool through both
     services and the fake Stripe).
+
+- **Adding a manager to a company that already exists; a company added by hand on the Sites tab** (2026-10-06;
+  `src/managers.js`, `public/join.html`, `src/sites.js`). Brendan: "We are also going to largely manage the
+  improvement board and modules for him (at least at first) so I will need a company set up, where I am running it,
+  then I can add him as a manager later down the road." Until now a manager account was made only with its company,
+  from a pin.
+  - *The invitation.* Settings has a Managers card: the accounts, and Add a manager (a name and an email). The product
+    makes the manager account with a password nobody is shown and a one-time link, `/join?t=<id>.<token>`, good for 7
+    days. Nothing is emailed; the link is copied and sent, like a pin. The person picks their own password on
+    `/join` and lands in the enrollment-only session a new demo's manager gets, on `/c/<slug>/enroll`.
+  - *The link* is the password step, once: 32 random bytes, only the sha256 kept, claimed in the statement that
+    checks it, and only for an account with no second factor that is still switched on. A new link for the same person
+    ends the old one. `/join` and `POST /join/look|/join` are mounted before the sign-in middleware and read no
+    cookie; a wrong link counts against the address like a wrong password. The page takes the token out of the
+    address bar and sends no referrer.
+  - *Who may add.* An Anetix admin, any company, any time. A manager: with an account of their own (never the shared
+    manager password), and once the company is a paying site (`kind.isSite`; a demo is one person's account). Never
+    the floor, never another company's manager. Twelve managers a company at most.
+  - *Take back* removes an invitation nobody used (and its account). *Switch off* signs a manager out for good; not
+    yourself, and a manager cannot switch off the last one.
+  - *A company added by hand* is not in the pipeline until it has a site row: its card on the Companies tab has "Set
+    up billing (Sites tab)" (`POST /api/admin/sites/:slug/track`) and "Add a manager". From there a pilot is offered
+    as for any company. An admin's own link on its board is a preview; the customer's order is started from the
+    company's manager sign-in (the shared password or a named manager), and "Someone else approves this" gives the
+    owner a link to sign with no account. Activate gives the floor a new password, which signs the shared-password
+    sessions out; signing in again as the manager shows it once.
+  - *Backup.* `manager_invites` is never in a file and is cleared by a restore, like sign-in tickets.
+  - *Known limits.* No fresh second factor is asked before adding a manager. There is one manager tier: an owner tier
+    (billing, signing, people) above managers is the next step, and so is a way for Anetix to run a company without
+    using its shared manager password to start an order.
+  - *Tests:* `scripts/test-managers.js` (9), `scripts/e2e/managers.js` (40), `scripts/e2e/managers-browser.js` (14),
+    and the by-hand company's pilot through to Activate in `scripts/e2e/pricing.js` (82).

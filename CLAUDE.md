@@ -165,6 +165,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The first-time user round (2026-10-01)
 - Connector sign-in and the admin MCP (2026-10-05)
 - Price book 2 (by the tool live on the floor), the pilot offer, and the board link on every page (2026-10-05)
+- Adding a manager to a company that already exists; a company added by hand on the Sites tab (2026-10-06)
 
 ## What this is
 

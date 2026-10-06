@@ -54,6 +54,23 @@
       <label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px;font-size:14px"><input type="checkbox" id="sub-learn" style="margin-top:3px"><span>Anetix may learn from how the site uses the system, to improve Anetix for all customers. <span class="sub" style="display:block;margin-top:2px">Opting in also lets Anetix offer versions of the tools built here to other customers, never with your data in them. Either way your data is yours and never shown to another customer. <a id="sub-terms" href="#" target="_blank" rel="noopener">The Terms</a>, section 10.2.</span></span></label>
       <div id="sub-msg" class="sub" style="margin-top:6px"></div>
     </div>
+    <div class="card" id="mg-card" style="display:none">
+      <h2 id="managers">Managers</h2>
+      <div class="sub">The people who can approve changes, make tools live and see billing here. Each has a sign-in of their own.</div>
+      <div id="mg-list" style="margin-top:8px"></div>
+      <div id="mg-add" style="display:none;margin-top:10px">
+        <h3 style="font-size:14px;margin:0 0 4px">Add a manager</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="mg-name" placeholder="Their name" maxlength="80" style="flex:1;min-width:150px"><input id="mg-email" type="email" placeholder="Their email" maxlength="120" autocapitalize="none" spellcheck="false" style="flex:1;min-width:190px"><button class="primary" id="mg-go" onclick="addManager()">Make their link</button></div>
+        <div class="sub" style="margin-top:4px">You get a link to send them. It works once, for 7 days. They pick their own password and set up their own second step.</div>
+      </div>
+      <div class="sub" id="mg-why" style="display:none;margin-top:8px"></div>
+      <div id="mg-link" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--green, #2e7d4f);border-radius:9px">
+        <b id="mg-link-for"></b>
+        <div style="display:flex;gap:8px;margin-top:6px"><input id="mg-link-url" readonly style="flex:1;min-width:0;font-size:12.5px"><button class="primary" id="mg-copy" onclick="copyManagerLink()">Copy</button></div>
+        <div class="sub" style="margin-top:4px">Send it the way you usually would. Nothing is emailed from here, and it is not shown again.</div>
+      </div>
+      <div class="sub" id="mg-msg" style="margin-top:6px"></div>
+    </div>
     <div class="card" id="pk-card" style="display:none">
       <h2>Your sign-in</h2>
       <div class="sub" id="me-line"></div>
@@ -156,6 +173,7 @@ async function load() {
   loadReview(D.modules || []);
   loadGoLive();
   loadSubscription();
+  loadManagers();
 }
 // A paying site (stage 3, src/activate.js): its band and price, and the learning choice from its order form, which the
 // manager can change here (the Terms, 10.2). Stage 4 (src/billing.js): the next bill or the end date, a line when a
@@ -205,6 +223,53 @@ async function loadSubscription() {
     if (!x.ok) { msg.textContent = j.error || "That did not save."; box.checked = !box.checked; return; }
     box.checked = j.learning_opt_in; msg.textContent = j.learning_opt_in ? "Saved: learning is on." : "Saved: learning is off, for data from now on.";
   };
+}
+// Managers (src/managers.js, 2026-10-06): who manages this company, and a one-time link for a new one. A manager adds
+// one once the company is a paying site; Anetix can at any time.
+async function loadManagers() {
+  const r = await fetch(`/api/c/${SLUG}/managers`, { cache: "no-store" });
+  const card = document.getElementById("mg-card");
+  if (!r.ok) { card.style.display = "none"; return; }
+  const M = await r.json();
+  if (!M.managers.length && !M.can_add) { card.style.display = "none"; return; }
+  card.style.display = "block";
+  const day = (d) => new Date(d).toLocaleDateString([], { month: "short", day: "numeric" });
+  document.getElementById("mg-list").innerHTML = M.managers.length ? M.managers.map((m) => `<div class="mg-row" data-manager="${m.id}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 0;border-top:1px solid var(--line)">
+      <div style="flex:1;min-width:180px"><b>${esc(m.name)}</b>${m.id === M.me ? ' <span class="sub">(you)</span>' : ""}<div class="sub">${esc(m.email)}${m.status !== "active" ? " · switched off" : m.pending ? (m.pending.expired ? " · invited, the link ran out" : ` · invited, link good until ${esc(day(m.pending.until))}`) : m.enrolled ? "" : " · has not finished setting up"}</div></div>
+      ${M.can_add && m.status === "active" && m.pending ? `<button class="quiet" onclick="againManager(${m.id})">New link</button><button class="quiet" onclick="managerAct(${m.id}, 'take-back', 'Take back the invitation for ${esc(m.name).replace(/['\\]/g, "")}?')">Take back</button>` : ""}
+      ${M.can_add && m.status === "active" && !m.pending && m.id !== M.me ? `<button class="quiet" onclick="managerAct(${m.id}, 'off', 'Switch off ${esc(m.name).replace(/['\\]/g, "")}? They are signed out and cannot sign in again.')">Switch off</button>` : ""}</div>`).join("")
+    : '<div class="sub">No manager has a sign-in of their own here yet.</div>';
+  window.MANAGERS = M.managers;
+  document.getElementById("mg-add").style.display = M.can_add ? "block" : "none";
+  const why = document.getElementById("mg-why"); why.style.display = M.can_add || !M.why_not ? "none" : "block"; why.textContent = M.why_not || "";
+}
+async function addManager(name, email) {
+  const msg = document.getElementById("mg-msg"), btn = document.getElementById("mg-go");
+  msg.textContent = ""; btn.disabled = true;
+  const r = await fetch(`/api/c/${SLUG}/managers/invite`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name || document.getElementById("mg-name").value, email: email || document.getElementById("mg-email").value }) });
+  const j = await r.json().catch(() => ({}));
+  btn.disabled = false;
+  if (!r.ok) { msg.textContent = j.error || "That did not work."; return; }
+  document.getElementById("mg-name").value = ""; document.getElementById("mg-email").value = "";
+  document.getElementById("mg-link").style.display = "block";
+  document.getElementById("mg-link-for").textContent = `The link for ${j.name} (good for ${j.days} days, one use)`;
+  document.getElementById("mg-link-url").value = location.origin + j.link;
+  loadManagers();
+}
+function againManager(id) { const m = (window.MANAGERS || []).find((x) => x.id === id); if (m) addManager(m.name, m.email); }
+async function managerAct(id, act, ask) {
+  if (!confirm(ask)) return;
+  const r = await fetch(`/api/c/${SLUG}/managers/${id}/${act}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  document.getElementById("mg-msg").textContent = r.ok ? "" : (j.error || "That did not work.");
+  document.getElementById("mg-link").style.display = "none";
+  loadManagers();
+}
+function copyManagerLink() {
+  const el = document.getElementById("mg-link-url"), b = document.getElementById("mg-copy");
+  el.select();
+  const done = () => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); };
+  if (navigator.clipboard) navigator.clipboard.writeText(el.value).then(done, () => { document.execCommand("copy"); done(); }); else { document.execCommand("copy"); done(); }
 }
 // Go live (src/golive.js): a demo becomes a paid site on anetix.ai. Shown to a demo's manager once Anetix has switched
 // it on; the order's progress when one is started.

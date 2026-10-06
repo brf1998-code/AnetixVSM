@@ -251,6 +251,16 @@
 <script src="/assets/admin-demos.js"></script>
 <script src="/assets/admin-sites.js"></script>
 <script>
+// A company added by hand is not on the Sites tab until it is put there (src/sites.js, 2026-10-06): its row is made,
+// then the tab opens on it.
+async function trackSite(slug) {
+  const r = await fetch(`/api/admin/sites/${encodeURIComponent(slug)}/track`, { method: "POST" });
+  if (!r.ok) { alert(((await r.json().catch(() => ({}))).error) || "that did not work"); return; }
+  location.hash = "#sites";
+  if (window.AdminSites) { await AdminSites.show(); AdminSites.edit(slug); }
+}
+</script>
+<script>
 let D = null;
 // ---- the standard header (/assets/admin-shell.js): pills that stay on every tab, and a dot on a tab that wants a look.
 // Each loader drops what it learned into P and calls drawPills(); nothing here fetches.
@@ -807,7 +817,7 @@ function companyCard(c) {
       <div class="kpi"><b>$${c.spend_usd.toFixed(2)}</b><span>AI spend this month</span></div>
     </div>
     <h3>Go to</h3>
-    <div class="links"><a href="/c/${c.slug}/">Improvement board</a><a href="/c/${c.slug}/settings" title="What the manager sees: people, printers and spreadsheets, the wall sign, what happens when a request arrives">Settings</a><a href="/c/${c.slug}/agents">Agent settings and docs</a><a href="/c/${c.slug}/checks" title="Every build the platform's checks stopped, labeled right, wrong or unsure">Checks log</a><a href="/c/${c.slug}/people">People</a><a href="/c/${c.slug}/connections">Connections</a><a href="/api/c/${c.slug}/record/export" download title="The interaction record: everything said and decided, word for word, insert-only">Download the record</a></div>
+    <div class="links"><a href="/c/${c.slug}/">Improvement board</a><a href="/c/${c.slug}/settings" title="What the manager sees: people, printers and spreadsheets, the wall sign, what happens when a request arrives">Settings</a><a href="/c/${c.slug}/settings#managers" title="Give a person at this company a manager sign-in of their own: a one-time link you send them">Add a manager</a><a href="#" data-track="${esc(c.slug)}" onclick="trackSite(this.dataset.track);return false" title="Puts this company on the Sites tab, where its pilot is offered, its order shows and it is switched on">Set up billing (Sites tab)</a><a href="/c/${c.slug}/agents">Agent settings and docs</a><a href="/c/${c.slug}/checks" title="Every build the platform's checks stopped, labeled right, wrong or unsure">Checks log</a><a href="/c/${c.slug}/people">People</a><a href="/c/${c.slug}/connections">Connections</a><a href="/api/c/${c.slug}/record/export" download title="The interaction record: everything said and decided, word for word, insert-only">Download the record</a></div>
     <div class="secs">
       <div class="sec wide"><h3>Modules</h3>
         ${c.modules.length ? `<table class="list"><tr><th>Module</th><th>On the floor</th><th title="Outside connections are off until Anetix turns them on for the tool">Outside</th><th></th></tr>${c.modules.map(m => `<tr><td><b>${esc(m.title)}</b> <small class="sub">(${esc(m.name)})</small></td>

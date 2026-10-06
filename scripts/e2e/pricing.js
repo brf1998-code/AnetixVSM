@@ -246,6 +246,57 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const wOrder = await order(wDraft.id);
   t("an offer withdrawn with a draft open: the draft is priced by the book again, the board stops showing a pilot and its link stops opening (Go live is off)", wd.status === 200 && wd.json.offer === null && wDraft.band.key === "pilot" && wOrder.band.key === "small" && Number(wOrder.price_usd) === 300 && (await W.mgr.get(`/api/c/${W.slug}/board`)).json.golive === null && (await www("/api/www/golive/view", { access: { slug: W.slug, t: tokenOf(wUrl) } })).status === 404, wOrder.band);
 
+  // ---- Anetix runs the company and the customer only signs: the manager (Anetix's own account on it) starts the pilot and
+  // asks the owner to approve; the owner's link opens with no account and with Go live off, signs and takes the card
+  const R2 = await makeDemo(admin, "Run For Them Co");
+  await admin.post(`/api/admin/sites/${R2.slug}/offer`, { monthly_usd: 1000, months: 2, lines: [] });
+  const accR = { slug: R2.slug, t: tokenOf((await R2.mgr.get(`/api/c/${R2.slug}/board`)).json.golive.url) };
+  const oR = (await www("/api/www/golive/save", { access: accR, fields: { ...FACTS, legal_name: "Run For Them Co.", site_name: "Run For Them", contact: { is_pm: false, name: "Brendan Finn", title: "Anetix" }, billing: { email: "owner@runforthem.test", same_as_site: true } } })).json.order;
+  const asked = await www("/api/www/golive/approver", { access: accR, approver: { name: "Arthur Stone", title: "Owner", email: "owner@runforthem.test" } });
+  const apUrl = new URL(asked.json.order.approver.url);
+  const accAp = { order: apUrl.pathname.split("/").pop(), t: apUrl.searchParams.get("t") };
+  const apView = await www("/api/www/golive/view", { access: accAp });
+  t("the owner's link opens the pilot with no account, though Go live is off for customers", asked.status === 200 && apView.status === 200 && apView.json.who === "approver" && apView.json.pilot === true && apView.json.order.pricing.kind === "pilot" && /^ANETIX PILOT ORDER FORM/.test(apView.json.order.text), { asked: asked.status, view: apView.status, err: apView.json.error });
+  const apSign = await www("/api/www/golive/sign", { access: accAp, version: apView.json.order.version, sha: apView.json.order.sha, signer: { name: "Arthur Stone", title: "Owner", email: "owner@runforthem.test" }, authority: true, ip: "198.51.100.9", ua: "e2e" });
+  const nR = ++cardN;
+  const ckR = await www("/api/www/golive/checkout", { access: accAp, stripe_customer: `cus_price${nR}`, setup_session: `cs_price${nR}` });
+  const cdR = await www("/api/www/golive/card", { order: oR.id, setup_session: `cs_price${nR}`, stripe_customer: `cus_price${nR}`, payment_method: `pm_price${nR}`, card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 } });
+  const ordR = await order(oR.id);
+  t("the owner signs and saves the card from that link: signed by the approver, waiting on Activate", apSign.status === 200 && ckR.status === 200 && cdR.json.applied === true && ordR.state === "signed" && ordR.signer.via === "approver" && ordR.signer.name === "Arthur Stone" && (await site(R2.slug)).stage === "signed", { sign: apSign.json.error, ck: ckR.json.error, card: cdR.json });
+  t("after signing the owner's link still opens (the order is in), Go live still off", (await www("/api/www/golive/view", { access: accAp })).status === 200);
+  const actR = await admin.post(`/api/admin/sites/${R2.slug}/activate`, { password: PW.admin, test_mode_ok: true });
+  t("and Activate charges the pilot", actR.status === 200 && actR.json.charged_usd === 1000 && Boolean(actR.json.ends_at), actR.json);
+
+  // ---- a company added by hand on /admin that Anetix runs for the customer (2026-10-06): onto the Sites tab, a pilot
+  // offered, the order started from the company's own manager sign-in, the owner signs from the link, Activate
+  const hand = await admin.post("/api/admin/companies", { slug: "hand-made", name: "Hand Made Clocks" });
+  await admin.post("/api/admin/sites/hand-made/track", {});
+  await admin.post("/api/admin/sites/hand-made", { legal_name: "Hand Made Clocks, LLC", site_name: "Hand Made Clocks", site_address: FACTS.site_address, plant_manager: FACTS.plant_manager, headcount: 22, sqft: 15000 });
+  await admin.post("/api/admin/sites/hand-made/offer", { monthly_usd: 1000, months: 2, lines: [] });
+  t("an admin looking at its board gets a preview link, never the customer's order", (await admin.get("/api/c/hand-made/board")).json.golive.preview === true);
+  const hm = await login(hand.json.passwords.manager, "hand-made");
+  const hgl = (await hm.get("/api/c/hand-made/board")).json.golive;
+  const accH = { slug: "hand-made", t: tokenOf(hgl.url) };
+  const hv = await www("/api/www/golive/view", { access: accH });
+  t("its manager sign-in starts the real order, with what the Sites tab holds filled in", hgl.pilot === true && hgl.preview === false && hv.status === 200 && hv.json.preview === false && hv.json.prefill.legal_name === "Hand Made Clocks, LLC" && hv.json.company.demo === false, hv.json.error || hv.json.prefill);
+  const oH = (await www("/api/www/golive/save", { access: accH, fields: { ...hv.json.prefill, contact: { is_pm: false, name: "Brendan Finn", title: "Anetix" }, billing: { email: "owner@handmade.test", same_as_site: true } } })).json.order;
+  const askH = await www("/api/www/golive/approver", { access: accH, approver: { name: "Arthur Stone", title: "Owner", email: "owner@handmade.test" } });
+  const apH = new URL(askH.json.order.approver.url), accApH = { order: apH.pathname.split("/").pop(), t: apH.searchParams.get("t") };
+  const apvH = (await www("/api/www/golive/view", { access: accApH })).json;
+  await www("/api/www/golive/sign", { access: accApH, version: apvH.order.version, sha: apvH.order.sha, signer: { name: "Arthur Stone", title: "Owner", email: "owner@handmade.test" }, authority: true, ip: "198.51.100.9", ua: "e2e" });
+  const nH = ++cardN;
+  await www("/api/www/golive/checkout", { access: accApH, stripe_customer: `cus_price${nH}`, setup_session: `cs_price${nH}` });
+  await www("/api/www/golive/card", { order: oH.id, setup_session: `cs_price${nH}`, stripe_customer: `cus_price${nH}`, payment_method: `pm_price${nH}`, card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 } });
+  const actH = await admin.post("/api/admin/sites/hand-made/activate", { password: PW.admin, test_mode_ok: true });
+  const sH = await site("hand-made");
+  // the floor's new password signs every shared-password session out, the manager's too: it signs in again
+  const signedOut = (await hm.get("/api/c/hand-made/board")).status === 401;
+  const hm2 = await login(hand.json.passwords.manager, "hand-made");
+  const bH = (await hm2.get("/api/c/hand-made/board")).json;
+  t("the owner signs from the link and Activate switches the by-hand company on as a pilot", actH.status === 200 && actH.json.charged_usd === 1000 && sH.stage === "subscribed" && sH.band.key === "pilot" && Boolean(sH.cancel_at) && signedOut && bH.welcome && bH.welcome.ready === true && bH.golive === null, { act: actH.json, stage: sH.stage, signedOut });
+  const wH = await hm2.post("/api/c/hand-made/welcome", {});
+  t("the floor's new password is handed to the manager sign-in once, and opens the floor", wH.status === 200 && Boolean(wH.json.floor) && (await client().post("/login", { password: wH.json.floor, company: "hand-made" })).status === 200, wH.json.error);
+
   // ======== by the tool ==================================================================================================
   await admin.post("/api/admin/golive", { open: true });
   const K = await makeDemo(admin, "Keystone Fab");

@@ -133,6 +133,11 @@ S5="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW
 fresh; start "SOS_BROWSER=off $S5"
 run pricing                env $S5 node scripts/e2e/pricing.js
 
+# 2026-10-06: a manager added to a company that already exists, and a company added by hand put on the Sites tab
+fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
+run managers               env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/managers.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"; run managers-browser env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/managers-browser.js; }
+
 # the launch audit 0.1: bad values in every route's parameters, and another company by every spelling (no restart loop,
 # so a crash shows as a dead server)
 fresh; start "SOS_BROWSER=off"

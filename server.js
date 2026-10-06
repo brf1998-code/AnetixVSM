@@ -34,6 +34,7 @@ async function main() {
   await accounts.init();      // named admin accounts, their authenticators and recovery codes, the sign-in log (src/accounts.js)
   await require("./src/passkeys").init();   // passkeys: sign in with an email and Face ID, a fingerprint or the device PIN (src/passkeys.js); after accounts, whose table it points at
   await require("./src/devices").init();   // trusted admin devices: "remember this computer", the code skipped at sign-in for 30 days (src/devices.js)
+  await require("./src/managers").init();   // invitations to be a manager of a company that already exists (src/managers.js)
   await require("./src/tickets").init();   // one sign-in straight from demo setup on anetix.ai, before any second factor exists (src/tickets.js, 3.8)
   await record.init();   // the interaction record: insert-only, what everyone said and decided
   await people.init();        // operator identity: names and PINs per company
@@ -122,6 +123,9 @@ async function main() {
   });
   // a new demo's one sign-in straight from anetix.ai's set-up form, on to the authenticator setup (src/tickets.js, 3.8)
   app.get("/login/ticket", auth.ticketHandler);
+  // an invitation to be a manager of a company that already exists (src/managers.js): the link's token is the only key
+  app.get("/join", (_req, res) => res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" }).sendFile(page("join.html")));
+  app.use(require("./src/managers").publicRouter);
   // a passkey sign-in (src/passkeys.js): the same CORS as /login, since anetix.ai's wall offers it too
   app.options(["/login/passkey/options", "/login/passkey"], selfserve.loginCors);
   app.post("/login/passkey/options", selfserve.loginCors, express.json(), require("./src/passkeys").beginSignIn);
@@ -198,6 +202,7 @@ async function main() {
   app.use(require("./src/notices").router);      // /api/c/:slug/notices/:id/seen
   app.use(require("./src/dataexport").router);   // /api/c/:slug/export: the company's own data as one JSON file (the Terms, 10.6)
   app.use(require("./src/billing").router);      // /api/c/:slug/billing (the portal link), /api/admin/sites/:slug/end (src/billing.js)
+  app.use(require("./src/managers").router);     // /api/c/:slug/managers*: who manages a company, invitations, switching one off (src/managers.js)
   app.use(require("./src/pilot").router);        // /api/admin/sites/:slug/offer: a pilot Anetix offers one company (src/pilot.js)
   app.use(require("./src/notify").router);       // /api/admin/notify*: alerts to Anetix's phones through ntfy (src/notify.js)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card

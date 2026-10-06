@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Anetix · Join your company</title>
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/anetix-touch-180.png">
+<style>
+  /* An invitation to be a manager of a company that already exists (src/managers.js, 2026-10-06): the person picks
+     their own password here, then sets up a passkey or an authenticator on the next page. */
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --red:#b3261e; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui,sans-serif; background:var(--fog); color:var(--ink); min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:24px; width:100%; max-width:400px; }
+  h1 { font-size:20px; margin-bottom:6px; }
+  .sub { color:var(--steel); font-size:13.5px; line-height:1.5; margin-bottom:14px; }
+  label { display:block; font-size:12.5px; color:var(--steel); margin:10px 0 4px; }
+  input { width:100%; font-size:16px; padding:12px; border:1px solid var(--line); border-radius:8px; font-family:inherit; }
+  input[readonly] { background:var(--fog); color:var(--steel); }
+  button { width:100%; margin-top:14px; background:var(--navy); color:#fff; border:none; border-radius:8px; padding:14px; font-size:16px; font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.6; }
+  .err { color:var(--red); font-size:13px; margin-top:10px; min-height:1em; }
+  .hint { color:var(--steel); font-size:12.5px; margin-top:14px; line-height:1.45; } .hint a, .sub a { color:var(--navy); }
+</style>
+</head>
+<body>
+  <form class="card" id="f" autocomplete="on">
+    <h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:34px;height:34px;border-radius:8px;vertical-align:middle;margin-right:10px"><span id="title">Anetix</span></h1>
+    <div class="sub" id="sub">Checking your invitation.</div>
+    <div id="form" hidden>
+      <label for="email">Your email (this is what you sign in with)</label>
+      <input id="email" name="username" type="email" autocomplete="username" readonly>
+      <label for="pw">Pick a password <span id="rule"></span></label>
+      <input id="pw" name="password" type="password" autocomplete="new-password" required>
+      <button type="submit" id="go">Continue</button>
+      <div class="hint">Next you set up the second step of signing in: Face ID or a fingerprint on a phone, or an authenticator app on a computer.</div>
+    </div>
+    <div class="err" id="err" role="alert"></div>
+    <div class="hint" id="help">Stuck? Write to <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</div>
+  </form>
+<script>
+const T = new URLSearchParams(location.search).get("t") || "";
+const $ = (id) => document.getElementById(id);
+history.replaceState(null, "", "/join");   // the link is one use: it does not stay in the address bar or the history
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  return { ok: r.ok, status: r.status, json: await r.json().catch(() => ({})) };
+}
+(async () => {
+  const r = await post("/join/look", { t: T });
+  if (!r.ok) {
+    $("sub").textContent = r.json.error || "This link no longer works.";
+    if (r.json.code === "used") $("sub").innerHTML += ' <a href="/login?staff=1">Sign in</a>';
+    return;
+  }
+  $("title").textContent = r.json.company;
+  $("sub").textContent = `${r.json.name}, you were invited to be a manager at ${r.json.company} on Anetix. Pick a password to start.`;
+  $("email").value = r.json.email; $("rule").textContent = `(${String(r.json.rule || "").replace(/\.$/, "").toLowerCase()})`;
+  $("form").hidden = false; $("pw").focus();
+})();
+$("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("err").textContent = ""; $("go").disabled = true;
+  const r = await post("/join", { t: T, password: $("pw").value });
+  if (!r.ok) { $("err").textContent = r.json.error || "That did not work. Try again in a minute."; $("go").disabled = false; return; }
+  location.href = r.json.next;
+});
+</script>
+</body>
+</html>
