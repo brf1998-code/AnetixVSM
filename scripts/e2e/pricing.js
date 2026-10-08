@@ -2,7 +2,7 @@
 //   by the tool   a demo goes live at $300 a month for each tool live on its floor, the first month for the tools live
 //                 that day; a tool made live moves the subscription to the next amount from the next bill (no
 //                 proration), the manager and the phone are told; the cap holds; the Sites tab and Settings say it
-//   a pilot       Anetix offers one company a pilot from the Sites tab; its manager sees Start your pilot with Go live
+//   a pilot       Anetix offers one company a pilot from the Sites tab; its manager sees Review your pilot with Go live
 //                 switched OFF for everyone else; the order form and the price screen are the pilot's; Activate asks
 //                 for a subscription that ends on its own; the end date is not a cancellation; Renew in the portal
 //                 puts the end date back; a cancel a month early is a cancel; the end returns the site to a demo
@@ -129,8 +129,8 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const rowC = await row(admin, C.slug);
   t("the Sites tab's row says a pilot is offered", rowC.offer && rowC.offer.line === "$1,000 a month for 2 months, $2,000 in all" && rowC.pilot === null, rowC.offer);
   const bC = (await C.mgr.get(`/api/c/${C.slug}/board`)).json.golive;
-  t("its manager sees Start your pilot on the board, with the fee and that it ends on its own, though Go live is off", bC && bC.pilot === true && bC.action === "Start your pilot" && /Anetix has a pilot ready for you to sign: \$1,000 a month for 2 months, \$2,000 in all\. It ends on its own\./.test(bC.line) && /\/c\/[^/]+\/go-live\?t=/.test(bC.url), bC);
-  t("Settings' card says the same", /Anetix has offered this site a pilot: \$1,000 a month for 2 months/.test((await C.mgr.get(`/api/c/${C.slug}/golive`)).json.golive.pitch));
+  t("its manager sees Review your pilot on the board, with no price on the line, though Go live is off", bC && bC.pilot === true && bC.action === "Review your pilot" && bC.line === "Your pilot with Anetix is set up. Have a look when you're ready." && !/\$/.test(bC.line) && /\/c\/[^/]+\/go-live\?t=/.test(bC.url), bC);
+  t("Settings' card says the same, with no price", (await C.mgr.get(`/api/c/${C.slug}/golive`)).json.golive.pitch.startsWith("Your pilot with Anetix is set up.") && !/\$/.test((await C.mgr.get(`/api/c/${C.slug}/golive`)).json.golive.pitch));
   t("the demo with no offer still sees nothing", (await other.mgr.get(`/api/c/${other.slug}/board`)).json.golive === null);
   const access = { slug: C.slug, t: tokenOf(bC.url) };
   const v0 = await www("/api/www/golive/view", { access });

@@ -771,14 +771,15 @@ async function forBoard(co, role) {
   return {
     stage, url, preview: role === "admin", pilot,
     from: pilot ? { line: `Your pilot: ${pl}.`, short: pl } : ["demo", "ordering", "back_to_demo"].includes(stage) ? sites.fromLine(book) : null,   // the price before the form (the launch audit, C7)
-    action: inAlready ? "See your order" : declined ? "Add another card" : pilot ? (started ? "Continue with your pilot" : "Start your pilot") : started ? "Continue going live" : "Go live",
+    action: inAlready ? "See your order" : declined ? "Add another card" : pilot ? (started ? "Continue with your pilot" : "Review your pilot") : started ? "Continue going live" : "Go live",
     // the Terms, 5.4: Anetix AIMS to switch a site on within 24 hours (Brendan, 2026-09-26)
     line: inAlready ? (pilot ? "Your pilot order is in. Anetix aims to switch this site on within 24 hours, and the first payment is charged then." : "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now.")
       : declined ? "Your card was declined, so the site is not switched on yet. Use another card to finish going live."
-        // an offer is a line of its own on the board, with the way in beside it: it is there for a company with no credit line too
-        : pilot ? (started ? `Your pilot is waiting for you to finish signing: ${pl}.` : `Anetix has a pilot ready for you to sign: ${pl}. It ends on its own.`) : null,
+        // an offer is a line of its own on the board, with the way in beside it: it is there for a company with no credit line too.
+        // No price and no end date here: the manager already knows the terms, and they are on the order form (Brendan, 2026-10-08)
+        : pilot ? (started ? "Your pilot is waiting for you to finish signing." : "Your pilot with Anetix is set up. Have a look when you're ready.") : null,
     // what Settings' Go live card says before an order is started (the page writes no price of its own)
-    pitch: pilot ? `Anetix has offered this site a pilot: ${pl}. It ends on its own, and everything you built stays. Your floor gets its own way in and the AI has no credit to run out of.`
+    pitch: pilot ? "Your pilot with Anetix is set up. Everything you built stays, and the floor gets its own way in with no AI credit to run out of."
       : book.per_tool_usd ? `Make this demo your site: $${Number(book.per_tool_usd).toLocaleString("en-US")} a month for each tool live on your floor, never more than a cap set by the site's size, with no credit to run out of and a way in for the floor. Everything you built stays.`
         : null,
     waiting_on: o && o.state === "draft" && o.approver ? o.approver.name : null,

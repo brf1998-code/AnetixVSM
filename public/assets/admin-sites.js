@@ -282,7 +282,7 @@
     offerPanel(r);
   }
   // ---- a pilot offer (src/pilot.js, 2026-10-05): a fixed fee for a fixed number of months that ends on its own, with
-  // lines of its own, offered to this one company. Its manager sees "Start your pilot" on the board; the rest is the
+  // lines of its own, offered to this one company. Its manager sees "Review your pilot" on the board; the rest is the
   // same signature, card and Activate. One line of the box is one line of the order form: "Label: words".
   const linesText = (lines) => (lines || []).map((l) => `${l.label}: ${l.text}`).join("\n");
   function linesFrom(text) {
@@ -298,7 +298,7 @@
     const of = j.offer, d = of || j.defaults;
     const signed = r.order && r.order.kind !== "preview" && ["signed"].includes(r.order.state);
     into.innerHTML = `<h3>Pilot offer</h3><div class="act${of ? "" : " stop"}" id="sf-offerbox">
-      ${of ? `<b>Offered:</b> ${esc(r.offer ? r.offer.line : "")}${of.made_by ? ` <span class="sub">by ${esc(of.made_by)}, ${esc(day(of.made_at))}</span>` : ""}. Their manager sees <b>Start your pilot</b> on the board and in Settings, whether or not Go live is on for everyone. Activate charges the first month and Stripe ends it on its own after the last.`
+      ${of ? `<b>Offered:</b> ${esc(r.offer ? r.offer.line : "")}${of.made_by ? ` <span class="sub">by ${esc(of.made_by)}, ${esc(day(of.made_at))}</span>` : ""}. Their manager sees <b>Review your pilot</b> on the board and in Settings, whether or not Go live is on for everyone. Activate charges the first month and Stripe ends it on its own after the last.`
         : `<span class="sub">A fixed fee for a fixed number of months that ends on its own, for this one company (an onsite pilot, say). It replaces the price book for them until it is signed, withdrawn or over. Nothing is charged until you press Activate on their signed order.</span>`}
       ${signed ? '<br><span class="bad">Their order is signed, so the offer cannot change.</span> Send the order back or withdraw it first.' : ""}</div>
       <div class="fgrid" style="margin-top:8px">${field("sf-of-usd", "Fee a month ($)", d.monthly_usd, { mode: "decimal" })}${field("sf-of-months", "Months (it ends on its own after the last)", d.months, { mode: "numeric" })}
@@ -315,7 +315,7 @@
     const slug = EDIT; await show(); edit(slug);
   }
   async function clearOffer() {
-    if (!confirm("Withdraw the pilot offer? Their manager stops seeing Start your pilot, and an order they had started under it is asked to look again at the price book's terms.")) return;
+    if (!confirm("Withdraw the pilot offer? Their manager stops seeing Review your pilot, and an order they had started under it is asked to look again at the price book's terms.")) return;
     const r = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/offer`, { clear: true });
     if (!r.ok) { document.getElementById("sf-of-err").textContent = r.json.error || "that did not change"; return; }
     const slug = EDIT; await show(); edit(slug);

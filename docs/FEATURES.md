@@ -3350,7 +3350,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     late cannot leave it on another amount). The fair-use line is 80% of what the site is on: $240 at one tool.
   - *A pilot offer* (`src/pilot.js`, `platform.sites.offer`): from a site's form on the Sites tab, a fee a month, a
     number of months, and lines of its own ("Label: words"; the order form's own labels are refused). While it stands
-    the company's manager sees Start your pilot on the board and in Settings even with Go live off (`golive.forBoard`,
+    the company's manager sees Review your pilot on the board (no price or end date on the board line, 2026-10-08) and in Settings even with Go live off (`golive.forBoard`,
     `resolve`, `invited`), the price screen and the order form are the pilot's ("not a software license or
     subscription fee", "ends on its own", any continuing arrangement a separate conversation), and the signed order
     keeps the offer as a band of its own (`key: "pilot"`). Changing or withdrawing it re-quotes an open draft and is

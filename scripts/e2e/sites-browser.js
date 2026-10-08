@@ -79,7 +79,7 @@ const www = async (p, b) => (await fetch(BASE + p, { method: "POST", headers: { 
   await p.click("#sf-of-save");
   await p.waitForSelector("#sf-of-clear", { timeout: 8000 });
   const box = await p.locator("#sf-offerbox").innerText();
-  t("offered: the form says what their manager now sees, and shows the order form they will sign", /Offered: \$1,000 a month for 2 months, \$2,000 in all/.test(box) && /Start your pilot/.test(box) && /ANETIX PILOT ORDER FORM/.test(await p.locator("#sf-of-text").textContent()) && /Integrations: QuickBooks at no additional charge\./.test(await p.locator("#sf-of-text").textContent()), box);
+  t("offered: the form says what their manager now sees, and shows the order form they will sign", /Offered: \$1,000 a month for 2 months, \$2,000 in all/.test(box) && /Review your pilot/.test(box) && /ANETIX PILOT ORDER FORM/.test(await p.locator("#sf-of-text").textContent()) && /Integrations: QuickBooks at no additional charge\./.test(await p.locator("#sf-of-text").textContent()), box);
   if (SHOTS) await p.screenshot({ path: `${SHOTS}/sites-offer.png`, fullPage: true });
   t("the row behind says a pilot is offered", /pilot offered: \$1,000 a month for 2 months/.test(await p.locator(`tr.row[data-slug="${slug}"]`).innerText()));
   p.once("dialog", (d) => d.accept());

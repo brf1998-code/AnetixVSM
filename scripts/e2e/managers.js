@@ -33,7 +33,7 @@ const tokenOf = (link) => new URL(link, BASE).searchParams.get("t");
   const offer = await admin.post("/api/admin/sites/clockworks/offer", { monthly_usd: 1000, months: 2, lines: [] });
   const shared = await login(made.json.passwords.manager, "clockworks");
   const gl = (await shared.get("/api/c/clockworks/board")).json.golive;
-  t("a pilot offered to it shows as Start your pilot to its manager sign-in, with a customer's link (not a preview)", offer.status === 200 && gl && gl.pilot === true && gl.action === "Start your pilot" && gl.preview === false && /go-live\?t=[0-9a-f-]{36}\.\d+\.m\./.test(gl.url), gl);
+  t("a pilot offered to it shows as Review your pilot to its manager sign-in, with a customer's link (not a preview)", offer.status === 200 && gl && gl.pilot === true && gl.action === "Review your pilot" && gl.preview === false && /go-live\?t=[0-9a-f-]{36}\.\d+\.m\./.test(gl.url), gl);
 
   // ---- who may invite
   const m0 = (await admin.get("/api/c/clockworks/managers")).json;
@@ -72,7 +72,7 @@ const tokenOf = (link) => new URL(link, BASE).searchParams.get("t");
   const ev = await fresh.post("/api/c/clockworks/me/enroll/verify", { code: await codeFor(es.json.secret.replace(/\s/g, "")) });
   const b = await fresh.get("/api/c/clockworks/board");
   t("with an authenticator set up they are a manager of the company", ev.status === 200 && b.status === 200 && b.json.role === "manager" && b.json.company.slug === "clockworks", { ev: ev.status, b: b.status });
-  t("and see the pilot waiting for them, as the owner", b.json.golive && b.json.golive.action === "Start your pilot");
+  t("and see the pilot waiting for them, as the owner", b.json.golive && b.json.golive.action === "Review your pilot");
   t("the password they picked signs in (with the code asked for next)", await (async () => { const r = await client().post("/login", { name: "art@clockworks.test", password: "brass-gear-4471-chime" }); return r.status === 401 && r.json && (r.json.code_required || /code/i.test(r.json.error || "")) || r.status === 200; })());
   const m2 = (await admin.get("/api/c/clockworks/managers")).json.managers[0];
   t("the list shows them as a manager, no longer invited", m2.enrolled === true && m2.pending === null);

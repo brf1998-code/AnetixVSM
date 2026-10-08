@@ -7,7 +7,7 @@
 // WHAT IT IS. An offer Anetix makes to ONE company from the Sites tab: a fixed monthly fee for a fixed number of months,
 // with lines of its own (time on site, integrations, hardware, the case study). It is kept on the company's site row
 // (platform.sites.offer). While it stands:
-//   - the company's manager sees "Start your pilot" on the board and in Settings, whether or not Go live is switched on
+//   - the company's manager sees "Review your pilot" on the board and in Settings, whether or not Go live is switched on
 //     for everyone (src/golive.js forBoard and resolve): the offer is the invitation
 //   - Go live on anetix.ai is the same four screens, signature and card, but the price screen and the order form are the
 //     pilot's (src/sites.js pilotText, pricingView), and a signed order keeps the offer exactly as it was signed
