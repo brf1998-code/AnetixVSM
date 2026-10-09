@@ -565,15 +565,17 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
     tool_choice: forced ? { type: "tool", name: toolName } : { type: "auto" },
   });
   let resp;
-  if (noForcedTool.has(model)) resp = await call(false);
-  else {
-    try { resp = await call(true); }
-    catch (e) {
-      const msg = String(e && e.message || e);
-      if (e && e.status === 400 && /tool_choice/i.test(msg)) { noForcedTool.add(model); resp = await call(false); }
-      else throw e;
+  try {
+    if (noForcedTool.has(model)) resp = await call(false);
+    else {
+      try { resp = await call(true); }
+      catch (e) {
+        const msg = String(e && e.message || e);
+        if (e && e.status === 400 && /tool_choice/i.test(msg)) { noForcedTool.add(model); resp = await call(false); }
+        else throw e;
+      }
     }
-  }
+  } catch (e) { throw noteApi(e, toolName, company); }
   await meter({ company, kind: `structured:${toolName}`, model, usage: resp.usage, costUsd: costOf(model, resp.usage || {}), ok: resp.stop_reason !== "max_tokens" });
   let data;
   const use = resp.content.find((b) => b.type === "tool_use");
@@ -588,6 +590,17 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
   return { data, costUsd, stopReason: resp.stop_reason };
 }
 
+// Every failed call to the API, from either call below, goes to src/credit.js's noteFailure here, so the phones hear of it
+// whichever of the 27 callers made it (2026-10-08: the arrival path reported its failure, but chat, the assistant, reviews,
+// diagrams and the brand guide reported none). A connection or timeout error carries no API body, so it is named for
+// classify. Returns the error for the caller to throw.
+function noteApi(e, kind, company) {
+  const name = (e && e.constructor && e.constructor.name) || "";
+  const msg = e && e.status == null && /Connection|Timeout/.test(name) ? `anthropic_connection_error: ${e.message}` : String((e && e.message) || e);
+  require("./credit").noteFailure(msg, `an AI call (${kind}${company ? `, ${company}` : ""})`).catch(() => {});
+  return e;
+}
+
 // Plain chat call (no tools): a module's conversational agent. Returns
 // { text, costUsd }. Fake mode answers with a canned line.
 async function runChat({ model, system, messages, maxTokens, company }) {
@@ -599,7 +612,9 @@ async function runChat({ model, system, messages, maxTokens, company }) {
   if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured on this instance");
   const Anthropic = require("@anthropic-ai/sdk");
   const client = new Anthropic();
-  const resp = await client.messages.create({ model, max_tokens: maxTokens || 1500, system, messages });
+  let resp;
+  try { resp = await client.messages.create({ model, max_tokens: maxTokens || 1500, system, messages }); }
+  catch (e) { throw noteApi(e, "chat", company); }
   await meter({ company, kind: "chat", model, usage: resp.usage, costUsd: costOf(model, resp.usage || {}) });
   const text = resp.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
   return { text, costUsd: costOf(model, resp.usage || {}) };

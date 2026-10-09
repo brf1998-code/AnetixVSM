@@ -78,13 +78,42 @@ function slopeOf({ anchor, spentSince, daily, now, balance, runout }) {
 }
 
 // What kind of failure an error from the AI service is, when it is the SERVICE and not the work:
-// credit (billing), key (authentication), busy (overloaded or rate limited). null = not one of these.
+// credit (billing), key (the key or its workspace refused), model (a model id the API does not know), busy (overloaded,
+// rate limited, an internal error or the API not reachable, after the SDK's own retries), api (any other error the API
+// itself answered with). null = not one of these: a build that failed on its own merits.
+//
+// 2026-10-08: a new key that was not scoped to a workspace came back as a 400 invalid_request_error ("This API key is not
+// scoped to a workspace..."). None of the three patterns of the time matched it, so it was logged and nothing reached the
+// phones. Since then anything in the API's own error shape is at least "api", and every kind alerts (src/notify.js).
 function classify(message) {
   const m = String(message || "");
   if (/credit balance|billing|payment|insufficient (funds|credit|quota)|purchase credits/i.test(m)) return "credit";
-  if (/invalid x-api-key|authentication_error|invalid api key|api key.*(invalid|revoked|disabled)|\b401\b.*anthropic/i.test(m)) return "key";
-  if (/overloaded|rate.?limit|\b529\b|\b429\b|service unavailable|\b503\b/i.test(m)) return "busy";
+  if (/invalid x-api-key|authentication_error|permission_error|invalid api key|api key.*(invalid|revoked|disabled)|not scoped to a workspace|anthropic-workspace-id|organization (has been |is )?disabled|\b401\b.*anthropic/i.test(m)) return "key";
+  if (/not_found_error/.test(m) && /model/i.test(m)) return "model";
+  if (/overloaded|rate.?limit|\b529\b|\b429\b|service unavailable|\b503\b|\bapi_error\b|anthropic_connection_error/i.test(m)) return "busy";
+  if (apiError(m) || /model's API answered with an error/i.test(m)) return "api";
   return null;
+}
+// The API's own error, when the message carries its body ({"type":"error","error":{"type","message"}}) or names one of its
+// error types. -> { type, message } or null. Pure.
+const API_TYPES = /\b(invalid_request_error|authentication_error|permission_error|not_found_error|request_too_large|rate_limit_error|api_error|overloaded_error|billing_error)\b/;
+function apiError(message) {
+  const m = String(message || ""), j = m.indexOf("{");
+  if (j >= 0) { try { const o = JSON.parse(m.slice(j)); if (o && o.type === "error" && o.error && o.error.type) return { type: String(o.error.type), message: String(o.error.message || "") }; } catch { /* not the API's body */ } }
+  const t = m.match(API_TYPES);
+  return t ? { type: t[1], message: "" } : null;
+}
+// The alert for a kind, or null for none. Pure: noteFailure sends it. What goes out: the kind, where it happened (a feature,
+// a request number, a company's slug) and Anthropic's own error text, never anything from a company's data.
+function alertFor(kind, where, message) {
+  if (!kind) return null;
+  const at = where || "a call";
+  const api = apiError(message), said = api && api.message ? ` Anthropic said: "${api.message.replace(/\s+/g, " ").slice(0, 200)}"` : "";
+  const stopped = " Nothing new is proposed or built until it answers again; the Instance tab of /admin shows it.";
+  if (kind === "busy") return { key: "ai_busy", gapMs: 60 * 60e3, event: false, title: "The AI service is overloaded", message: `A call during ${at} gave up after the SDK's retries (overloaded, rate limited or not reachable).${said} One is a blip; if more follow, check status.anthropic.com.`, priority: 3, tags: ["hourglass"] };
+  if (kind === "api") return { key: "ai_unavailable:api", gapMs: 30 * 60e3, event: true, title: "An AI call failed", message: `The API answered with an error during ${at}.${said} The Instance tab of /admin shows it.`, priority: 4, tags: ["warning"] };
+  const why = kind === "credit" ? "out of credit" : kind === "key" ? "the key was refused" : kind === "model" ? "a model was not found" : kind;
+  return { key: `ai_unavailable:${kind}`, gapMs: 30 * 60e3, event: true, title: "The AI service is refusing work", message: `It refused a call (${why}) during ${at}.${said}${stopped}`, priority: 5, tags: ["rotating_light"] };
 }
 // What a manager reads instead of the raw message.
 function plain(kind) {
@@ -147,14 +176,21 @@ async function setBalance({ balance_usd, autofill, note, by }) {
   await logEvent("ai_credit_noted", null, { balance_usd: n, autofill: Boolean(autofill) });
   return status();
 }
-// Called wherever an AI call fails: if it is the service, leave a mark the admin page reads. Never throws.
+// Called wherever an AI call fails (each caller, and since 2026-10-08 the shared calls in src/agent.js, so the same failure
+// usually arrives twice: the second within a few seconds is dropped). Leaves a mark the admin page reads and alerts the
+// phones. Never throws.
+let lastNoted = { message: null, at: 0 };
 async function noteFailure(message, where) {
   const kind = classify(message);
-  if (!kind || kind === "busy") return kind;
-  try { await logEvent("ai_unavailable", null, { kind, where: where || null, message: String(message || "").slice(0, 300) }); } catch (e) { /* best effort */ }
-  console.error(`[credit] the AI service refused a call (${kind}) during ${where || "a call"}: ${String(message || "").slice(0, 160)}`);
-  require("./notify").notifyEvery(`ai_unavailable:${kind}`, 30 * 60e3, "The AI service is refusing work", `It refused a call (${kind}) during ${where || "a call"}. Nothing new is proposed or built until it answers again; the Instance tab of /admin shows it.`, { priority: 5, tags: ["rotating_light"] });
+  const a = alertFor(kind, where, message);
+  if (!a) return kind;
+  const msg = String(message || "");
+  if (lastNoted.message === msg && Date.now() - lastNoted.at < 10e3) return kind;
+  lastNoted = { message: msg, at: Date.now() };
+  if (a.event) { try { await logEvent("ai_unavailable", null, { kind, where: where || null, message: msg.slice(0, 300) }); } catch (e) { /* best effort */ } }
+  console.error(`[credit] the AI service failed a call (${kind}) during ${where || "a call"}: ${msg.slice(0, 160)}`);
+  require("./notify").notifyEvery(a.key, a.gapMs, a.title, a.message, { priority: a.priority, tags: a.tags });
   return kind;
 }
 
-module.exports = { init, SCHEMA, project, slopeOf, classify, plain, status, setBalance, noteFailure, withMeter };
+module.exports = { init, SCHEMA, project, slopeOf, classify, apiError, alertFor, plain, status, setBalance, noteFailure, withMeter };

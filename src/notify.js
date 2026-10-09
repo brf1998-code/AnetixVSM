@@ -3,7 +3,7 @@
 //   (src/agent.js), a signed order and a card declined at Activate (src/golive.js, src/activate.js), billing
 //   (src/billing.js), a demo request and a new demo (src/demorequests.js, src/selfserve.js), refused pins
 //   (src/selfserve.js), an account locked (src/accounts.js), a demo's build stopped before a preview
-//   (src/demostops.js), the AI service refusing (src/credit.js), a request to Anetix (src/feedback.js), a tool process
+//   (src/demostops.js), the AI service refusing or any AI call failing (src/credit.js, reported from src/agent.js and the callers), a request to Anetix (src/feedback.js), a tool process
 //   restarted after it kept timing out (src/runner.js), anetix.ai not answering (src/uptime.js). anetix.ai sends its
 //   own for a Stripe event it could not apply and for this product not answering (www/notify.js, www/uptime.js). Brendan chose push
 // through ntfy: the free ntfy app on his and Taylor's phones, both subscribed to one private topic. Nothing here reaches a

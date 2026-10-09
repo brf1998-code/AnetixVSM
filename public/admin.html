@@ -429,7 +429,7 @@ async function loadCredit() {
   const r = await fetch("/api/admin/credit"); if (!r.ok) return;
   const c = await r.json(), el = document.getElementById("credit");
   const color = { red: "var(--red)", amber: "#c2620a", ok: "var(--green)", unknown: "var(--steel)" }[c.level] || "var(--steel)";
-  const out = c.outage ? `<div style="color:var(--red);font-weight:700">The AI service refused a call at ${new Date(c.outage.at).toLocaleString()} (${c.outage.kind === "key" ? "the key was not accepted" : "no credit left"}${c.outage.where ? `, during ${esc(c.outage.where)}` : ""}) and nothing has worked since. No proposal or build will run until it is fixed.</div>` : "";
+  const out = c.outage ? `<div style="color:var(--red);font-weight:700">The AI service refused a call at ${new Date(c.outage.at).toLocaleString()} (${({ key: "the key was not accepted", credit: "no credit left", model: "a model was not found", api: "the API answered with an error" })[c.outage.kind] || "no credit left"}${c.outage.where ? `, during ${esc(c.outage.where)}` : ""}) and nothing has worked since. No proposal or build will run until it is fixed.</div>` : "";
   P.credit = { level: c.level, title: c.line, value: c.outage ? "refused, nothing runs" : !c.known ? "balance not entered" : `$${Number(c.balance_usd).toFixed(2)} left${c.days_left != null ? `, ${c.days_left} day${c.days_left === 1 ? "" : "s"}` : ""}${c.anchor && c.anchor.autofill ? " (auto reload)" : ""}` };
   drawPills();
   el.style.borderLeft = `4px solid ${color}`;

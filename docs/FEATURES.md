@@ -3513,3 +3513,17 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     check's five cases (146 in all; www e2e 93, e2e-golive 56, e2e-golive-browser 26, e2e-activate 74). `run-all.sh`:
     57 suites, 2,173 checks, and the 42 unit suites. An older suite found the card's Sign-in section by the words
     "Sign-in" (`phase2-browser`), so the Safeguards section says "Shared passwords work from".
+
+- **Every AI failure reaches the phones (2026-10-08)**: `src/credit.js`, `src/agent.js`, `public/admin.html`.
+  - *What happened:* at 9:54 pm a new API key that was not scoped to a workspace made request #205's proposal fail
+    with a 400 `invalid_request_error`. `noteFailure` was called, but `classify` only knew credit, a bad key and busy,
+    so it returned nothing and no alert went out. Brendan: he absolutely should get a notification for an API failure.
+  - *What changed:* `classify` now also knows a key or workspace refused (`permission_error`, "not scoped to a
+    workspace"), a model the API does not know (`model`), an internal error or the API out of reach (`busy`), and
+    anything else in the API's own error shape (`api`). `alertFor` (pure) decides each alert: credit, key and model
+    at priority 5 every 30 minutes, api at 4 every 30 minutes, busy at 3 at most hourly and not marked as an outage.
+    Alerts carry Anthropic's own error text. `runStructured` and `runChat` report every failed call themselves
+    (`noteApi`), so all 27 callers are covered, not only the four that called `noteFailure`; the same message twice
+    within 10 s is noted once. The Instance tab names the new kinds.
+  - *Tests:* `scripts/test-credit.js` (46: the 2026-10-08 message, each error shape, a module's own JSON error that
+    is not the API's, every kind alerting, no dashes in alert text).

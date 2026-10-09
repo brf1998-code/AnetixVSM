@@ -32,6 +32,24 @@ t("billing words are credit", c.classify("Your credit balance is too low to acce
 t("a bad key is key", c.classify("authentication_error: invalid x-api-key") === "key");
 t("overloaded and rate limits are busy", c.classify("overloaded_error: Overloaded") === "busy" && c.classify("429 rate_limit_error") === "busy");
 t("an ordinary build failure is none of these", c.classify("build agent failed: the agent process died right after starting") === null && c.classify("cross-check failed: the requirement is not met") === null && c.classify("internal tests failed: /api/state answered 404") === null);
+// 2026-10-08: the failure that reached no phone, and the rest of the API's error shapes
+{
+  const WS = '400 {"type":"error","error":{"type":"invalid_request_error","message":"This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header with the ID of the workspace to use. Add the header, or use an API key that is scoped to a workspace."},"request_id":null}';
+  t("the live failure of 2026-10-08 (a key with no workspace) is key", c.classify(WS) === "key");
+  t("a permission error is key", c.classify('403 {"type":"error","error":{"type":"permission_error","message":"Your API key does not have permission to use the specified resource."}}') === "key");
+  t("a model the API does not know is model", c.classify('404 {"type":"error","error":{"type":"not_found_error","message":"model: claude-opus-9"}}') === "model");
+  t("an internal error at Anthropic is busy", c.classify('500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}') === "busy");
+  t("the API out of reach (named by src/agent.js) is busy", c.classify("anthropic_connection_error: Connection error.") === "busy" && c.classify("Connection error.") === null);
+  t("any other error in the API's own shape is api", c.classify('400 {"type":"error","error":{"type":"invalid_request_error","message":"messages: at least one message is required"}}') === "api");
+  t("the build agent's wording of an unknown API error is api", c.classify("build agent failed: the model's API answered with an error: something new (after 12 messages)") === "api");
+  t("a module's own JSON error is not the API's", c.classify('internal tests failed: /api/save answered 400 {"error":{"type":"bad_row"}}') === null);
+  t("apiError reads Anthropic's own words out of the body", (c.apiError(WS) || {}).message.startsWith("This API key is not scoped to a workspace"));
+  const a = c.alertFor(c.classify(WS), "an AI call (proposal, chemco)", WS);
+  t("the 2026-10-08 failure now alerts, top priority, with Anthropic's words", a && a.priority === 5 && a.event && /key was refused/.test(a.message) && /not scoped to a workspace/.test(a.message) && /proposal, chemco/.test(a.message), a);
+  t("every kind alerts; only no kind is silent", ["credit", "key", "model", "busy", "api"].every((k) => c.alertFor(k, "x", "") !== null) && c.alertFor(null, "x", "") === null);
+  t("busy alerts quietly and at most hourly, and is not an outage", (() => { const b = c.alertFor("busy", "x", ""); return b.priority === 3 && b.gapMs === 3600e3 && b.event === false; })());
+  t("no alert text carries a dash", ["credit", "key", "model", "busy", "api"].every((k) => { const x = c.alertFor(k, "x", WS); return ![8211, 8212].some((d) => (x.title + x.message).includes(String.fromCharCode(d))); }));
+}
 t("what a manager reads never carries the raw message, a dash, or blame", ["credit", "key", "busy"].every((k) => { const s = c.plain(k); return /Nothing is wrong with your request/.test(s) && !/credit|balance|key|API/i.test(s) && ![8211, 8212].some((d) => s.includes(String.fromCharCode(d))); }));
 
 // the slope as drawn: the entered balance, down by each day's spend, to what is left now, then to zero on the runout day
