@@ -1197,6 +1197,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     await require("./demostops").deleteCompany(co.slug);   // its stopped builds on the Demos tab (src/demostops.js)
     await require("./sites").deleteCompany(co.slug);   // its row in the pipeline (src/sites.js)
     await require("./notices").deleteCompany(co.slug);   // its managers' notices
+    await require("./assist").deleteCompany(co.slug);   // its Ask Anetix conversations and their audit (src/assist.js)
     await require("./agreements").forget(co.slug);       // its acceptances of the Terms stay on record (the Terms, 10.7) and stop counting
     registry.unmountCompany(co.slug);
     for (const m of mods) {

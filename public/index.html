@@ -140,7 +140,8 @@
   .firsttool b { font-size:17px; } .firsttool p { margin:4px 0 0; color:var(--steel); font-size:14px; line-height:1.5; max-width:640px; } .firsttool .grow { flex:1; min-width:240px; }
   .firsttool button.big { font-size:15px; padding:12px 20px; margin:0; min-height:46px; }
   /* the phone: the Feedback button sits in the band instead of floating over the cards (the launch audit 1.9) */
-  #fbdock:empty { display:none; }
+  #fbdock:empty, #askdock:empty { display:none; }
+  .chip.convo { background:#e3f2f1; color:#0b5f5c; cursor:pointer; border:none; font-family:inherit; font-size:10.5px; font-weight:800; letter-spacing:.04em; min-height:0; margin:0 4px 0 0; padding:2px 8px; line-height:1.4; }
   @media (max-width: 640px) { #fbdock { margin-left:auto; } }
   .cols { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; align-items:start; }
   @media (max-width: 1100px) { .cols { grid-template-columns:repeat(2,1fr); } }
@@ -292,6 +293,7 @@
       <h1><img class="mark" id="comark" alt="">Improvement Board <small id="coname"></small></h1>
       <span id="global-busy"><span class="spin"></span><span id="global-busy-text">working</span></span>
       <span class="right" id="who"></span>
+      <span id="askdock"></span>
       <span id="fbdock"></span>
     </div>
     <div class="inner modstrip" id="modules"></div>
@@ -1191,7 +1193,8 @@ function card(fb) {
   const ig = isPlatform && fb.anetix_kind === "integration";
   const igTool = ig ? ((DATA.modules.find(m => m.name === fb.about_module) || {}).title || fb.about_module || "") : "";
   html += `<div class="meta">#${fb.id} · ${isPlatform ? `<span class="chip platform">TO ANETIX</span>${ig ? `<span class="chip integration" title="Connecting a tool to an outside system is set up by Anetix's integration team, not built by the AI">INTEGRATION${fb.about_system ? ": " + esc(fb.about_system) : ""}</span>` : ""}` : esc(fb.module)} · ${ig && igTool ? `${esc(igTool)} · ` : ""}${esc(fb.name || "anonymous")}`
-       + (fb.recurrence > 1 && !(fb.dupes && fb.dupes.length) ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "") + `</div>`;
+       + (fb.recurrence > 1 && !(fb.dupes && fb.dupes.length) ? ` · <span class="chip rec">x${fb.recurrence}</span>` : "")
+       + (fb.source === "assistant" ? ` · ${MGR() && window.Assist && fb.source_ref ? `<button class="chip convo" title="Sent from Ask Anetix; open the conversation" onclick="Assist.openConversation(${Number(fb.source_ref)})">FROM A CONVERSATION</button>` : `<span class="chip convo">FROM A CONVERSATION</span>`}` : "") + `</div>`;
   html += `<div class="meta"><span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>${/^\/c\/[^/]+\/test\/m\//.test(fb.page || "") ? `<span class="chip testfloor" title="Sent from the test floor, where nothing is real; the screen is the same as on the floor">from the test floor</span>` : ""}${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
   html += pointedHtml(fb) + askedHtml(fb);
   if (fb.follow_up_of) html += fb.follow_up_origin === "little_left"
@@ -1595,6 +1598,7 @@ function render() {
     (m.live_version || m.staged_version) && pagesOf(m.name).length > 1 ? `<button class="vbtn" onclick="openScreens('${m.name}')" title="Every screen of this tool at once; tap one to go there">Screens</button>` : "",
     m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}">Diagrams</a>` : "",
     MGR() && m.live_version ? `<button class="vbtn" onclick="openVersions('${m.name}')">Versions</button>` : "",
+    MGR() && window.Assist && Assist.on() ? `<button class="vbtn" onclick="Assist.open({kind:'tool',module:'${m.name}'})" title="Ask Anetix about this tool: how it works, where things are, what changed">Ask</button>` : "",
     MGR() && TRIAL() && (m.live_version || m.staged_version) ? `<button class="vbtn" onclick="openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
   ].filter(Boolean).join('<span class="sep">·</span>');
   // the phone's one-line summary of the strip: which modules the board is showing
@@ -1695,6 +1699,7 @@ async function passkeyNudge() {
 }
 </script>
 <script src="/assets/dictate.js"></script>
+<script src="/assets/assist.js"></script>
 <script src="/assets/intake.js"></script>
 <script src="/assets/feedback-widget.js" data-module="platform" data-dock="#fbdock"></script>
 <script>if (window.sosPerson) window.sosPerson.onChange(() => { if (EDITING === null) load(); });</script>

@@ -1,4 +1,28 @@
-# The assistant on the board (design, 2026-10-08, not built)
+# The assistant on the board (design and build, 2026-10-08)
+
+## As built (2026-10-08)
+
+Built the same evening Brendan approved the design, as **Ask Anetix**. What it is in the code is the bullet "Ask
+Anetix: the assistant on the board" in `docs/FEATURES.md`; the rules for changing it are in CLAUDE.md's hard rules.
+Where the build differs from the design below:
+
+- **No link on a tool's own pages.** The feedback widget on a tool page does not know who is signed in, and finding
+  out would mean opening another route to tool pages. Instead the band of the board has an **Ask** link on each tool,
+  and `/c/<slug>/?ask=<tool>` opens the panel on that tool.
+- **A switch.** Ask Anetix is a Safeguard on the company's card (on by default), so Anetix can turn it off for a
+  company that wants no AI chat, as the safeguards rule asks of anything that sends a company's information out.
+- **The read role** is `sos_<company>_read`, shared with the company MCP's phase 2 (docs/MCP.md said `_mcp`).
+- **Waiting for an answer.** The words do not stream; the panel shows each step as it happens and the answer when it
+  is done (a turn runs behind the request, so no proxy times out on a long one).
+- **Memory.** The model sees the last 20 messages of the conversation as words, with a note of what became of any
+  request card. Nothing carries across conversations.
+- **Evals.** The golden questions are graded by code, not by another model, and run from /admin (Health tab).
+- **Not built, as planned:** idea cards on the board (v2), the floor (decision 2), memory across conversations.
+- **Not yet run against the real model.** The sandbox has no key. The request shape is tested against a stand-in for
+  the Messages API (`scripts/e2e/assist-api.js`). First step after the push: run the golden questions on a paid site
+  or a company made for it.
+
+
 
 An AI engineer inside the improvement board. It walks people through the tools they have, explains how Anetix works,
 helps turn an idea into a request, and for a manager knows the whole company. It is the "no forward deployed

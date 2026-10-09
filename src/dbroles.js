@@ -19,6 +19,12 @@
 //                        ctx.peer). So until the manager approves it, new code
 //                        cannot change a row on the floor: the manager's gate
 //                        holds at the database, not only in the pipeline.
+//   sos_<company>_read   (2026-10-08, the assistant on the board, docs/ASSISTANT.md) SELECT only on the company's own
+//                        LIVE module tables, never _migrations, never the platform schema, never another company.
+//                        The assistant's record tools read through it inside a READ ONLY transaction, so "read only"
+//                        and "its own company only" are held by Postgres, not just by the code in front of it. The
+//                        company MCP (docs/MCP.md, phase 2) is to read through the same role. Not a module lane: no
+//                        child process ever connects as it.
 //
 // The platform stays the owner of every schema and the only one that migrates,
 // clones, snapshots and restores. Whenever it has made or remade tables
@@ -51,7 +57,8 @@ const CONNECTION_LIMIT = Number(process.env.SOS_ROLE_CONNECTIONS || 12);
 const STATEMENT_TIMEOUT = process.env.SOS_ROLE_STATEMENT_TIMEOUT || "30s";
 
 // ---- pure ------------------------------------------------------------------------------------------
-function roleName(company, lane) { return `sos_${ident(company)}_${lane === "staged" ? "stg" : lane === TEST ? "tst" : "live"}`.slice(0, 63); }
+const READ = "read";
+function roleName(company, lane) { return `sos_${ident(company)}_${lane === "staged" ? "stg" : lane === TEST ? "tst" : lane === READ ? "read" : "live"}`.slice(0, 63); }
 function secret() { return process.env.SOS_CONNECTION_KEY || process.env.SESSION_SECRET || "sos-dev-secret-not-for-production"; }
 // url-safe on purpose: it goes into a connection string and into ALTER ROLE as a literal
 function passwordFor(role) { return crypto.createHmac("sha256", secret()).update(`sos-dbrole:${role}`).digest("base64url"); }
@@ -71,7 +78,7 @@ function connectionFor(company, lane, base = DATABASE_URL) {
 // statement about it.
 function grantStatements(company, mod, has) {
   const live = `mod_${ident(company)}_${ident(mod)}`, stg = `stg_${ident(company)}_${ident(mod)}`, tst = `tst_${ident(company)}_${ident(mod)}`;
-  const L = roleName(company, "live"), S = roleName(company, "staged"), T = roleName(company, TEST);
+  const L = roleName(company, "live"), S = roleName(company, "staged"), T = roleName(company, TEST), R = roleName(company, READ);
   const out = [];
   if (has.test) {
     out.push(`GRANT USAGE ON SCHEMA ${tst} TO ${T}`);
@@ -87,6 +94,10 @@ function grantStatements(company, mod, has) {
     // a staging table is made LIKE the live one, so its serial columns draw from the FLOOR's sequence
     out.push(`GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${live} TO ${S}`);
     if (has.liveMigrations) out.push(`REVOKE ALL ON ${live}._migrations FROM ${L}, ${S}`);
+    // the read role: the floor's rows, read only (the assistant's record tools)
+    out.push(`GRANT USAGE ON SCHEMA ${live} TO ${R}`);
+    out.push(`GRANT SELECT ON ALL TABLES IN SCHEMA ${live} TO ${R}`);
+    if (has.liveMigrations) out.push(`REVOKE ALL ON ${live}._migrations FROM ${R}`);
   }
   if (has.staged) {
     out.push(`GRANT USAGE ON SCHEMA ${stg} TO ${S}`);
@@ -111,7 +122,7 @@ async function ensureRole(role) {
 }
 async function ensureCompany(company) {
   if (ensured.has(company)) return;
-  for (const lane of LANES) await ensureRole(roleName(company, lane));
+  for (const lane of [...LANES, READ]) await ensureRole(roleName(company, lane));
   ensured.add(company);
 }
 // Call after the platform made or remade tables for this module (mount, staging clone, restore).
@@ -134,7 +145,7 @@ async function grant(company, mod) {
 async function dropCompany(company) {
   ensured.delete(company);
   ensured.delete(`${company}/${TEST}`);
-  for (const lane of ALL_LANES) {
+  for (const lane of [...ALL_LANES, READ]) {
     const role = roleName(company, lane);
     try {
       if (!(await q("SELECT 1 FROM pg_roles WHERE rolname=$1", [role])).rows.length) continue;
@@ -176,4 +187,4 @@ async function selfTest() {
   }
 }
 
-module.exports = { roleName, passwordFor, connectionFor, grantStatements, ensureCompany, ensureTestRole, grant, dropCompany, selfTest, state, LANES, ALL_LANES, TEST };
+module.exports = { roleName, passwordFor, connectionFor, grantStatements, ensureCompany, ensureTestRole, grant, dropCompany, selfTest, state, LANES, ALL_LANES, TEST, READ };

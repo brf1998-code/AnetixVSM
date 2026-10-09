@@ -193,6 +193,15 @@ run safeguards             env $SG node scripts/e2e/safeguards.js
 fresh; start "SOS_BROWSER=off"
 run safeguards-noscanner   node scripts/e2e/safeguards.js noscanner
 
+# 2026-10-08: Ask Anetix, the assistant on the board (docs/ASSISTANT.md): managers only, one company, one tool, the wall
+# (the prompt log), a demo's set answer, the read-only role, the card filing nothing until the tap; the panel in a
+# browser; and the requests a real turn sends, against a stand-in for the Messages API the script serves on 3998
+fresh; rm -f "$LOG/assist-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/assist-prompts.jsonl"
+run assist                 env SOS_PROMPT_LOG=$LOG/assist-prompts.jsonl node scripts/e2e/assist.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run assist-browser node scripts/e2e/assist-browser.js; }
+fresh; start "SOS_BROWSER=off SOS_FAKE_AGENT=0 ANTHROPIC_API_KEY=stand-in ANTHROPIC_BASE_URL=http://127.0.0.1:3998"
+run assist-api             node scripts/e2e/assist-api.js
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop

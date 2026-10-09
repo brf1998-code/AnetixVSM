@@ -51,6 +51,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   seeded, module `reference.md` seeded from `principles/module-formats/`).
   Every run records which docs it was guided by (`evidence.docs`).
 - Old URLs `/m/<module>` redirect to `/c/demo/m/<module>`.
+- `/api/c/<slug>/assist*` is Ask Anetix, the assistant on the board (managers only; design and research in
+  `docs/ASSISTANT.md`, the bullet "Ask Anetix: the assistant on the board"). Its tools are `src/assist-tools.js`,
+  the one registry the company MCP is to serve too; its product knowledge is `principles/HELP.md`.
 - `/mcp/admin` is the admin MCP address (a connected AI app's calls, bearer token only) and `/oauth/*` the sign-in
   an app goes through to reach it, both mounted BEFORE the sign-in middleware and both a 404 until `SOS_PUBLIC_URL`
   is set (see "Connector sign-in and the admin MCP"; the design, and the company MCP that is not built, are
@@ -167,6 +170,8 @@ Index of `docs/FEATURES.md`, in its order:
 - Price book 2 (by the tool live on the floor), the pilot offer, and the board link on every page (2026-10-05)
 - Adding a manager to a company that already exists; a company added by hand on the Sites tab (2026-10-06)
 - Safeguards for a company that keeps contract information here, and the upload scanner (2026-10-08)
+- Every AI failure reaches the phones (2026-10-08)
+- Ask Anetix: the assistant on the board (2026-10-08)
 
 ## What this is
 
@@ -342,6 +347,10 @@ tool list, 401 from the API) proves the CLI itself starts.
   (3310), `SOS_SCAN_TIMEOUT_MS` (20000), `SOS_SCAN_SWEEP_MIN` (60; 0 = no look-behind), `SOS_SCAN_RESCAN_DAYS` (7),
   `SOS_SCAN_STALE_DAYS` (3: signatures older than this are a fault). `SOS_LABELARY_URL` (the public label renderer;
   a stand-in in the tests only).
+- Ask Anetix (`src/assist.js`): `SOS_ASSIST_STEPS` (8: model calls in one answer), `SOS_ASSIST_MAX_TOKENS` (1500 a
+  call), `SOS_ASSIST_HISTORY` (20: earlier messages the model sees), `SOS_ASSIST_TURNS_DAY` (120 questions a person a
+  day, a loop guard), `SOS_ASSIST_FILES_DAY` (20 requests sent to Reviewing a person a day), `SOS_ASSIST_TOOL_CHARS`
+  (30000: the most text one tool answer carries). It uses the company's propose model and the instance's key.
 - `SOS_CONNECTION_KEY` (REQUIRED; any long random string, `openssl rand -hex
   32`): the key every admin's and manager's authenticator secret, every ERP
   login, every company's welcome handout and the per-company database passwords
@@ -535,6 +544,16 @@ Passwords live only in Railway; never commit them.
   instance gets a row in the table of `docs/SAFEGUARDS.md` and, where it is a choice, a switch in
   `src/safeguards.js` that Anetix sets per company. Anything that holds a request to the plant's network reads the address through
   `edge.clientIp` and lets a named account and the platform's own loopback calls pass (`safeguards.networkGate`).
+- Ask Anetix sees only what the manager could see, and the scope comes from the session: a new tool in
+  `src/assist-tools.js` takes no argument that names a company, a role or a person, pins itself to the conversation's
+  tool in a one-tool conversation, reads records only through `readOnly` (the company's `sos_<company>_read` role,
+  READ ONLY, names checked against the tool's own tables, no free SQL), is left out by `toolsFor` when it reads records
+  and the wall is up, returns typed text under `words` or `records`, and gets its case in `scripts/test-assist.js` and
+  its call in `scripts/e2e/assist.js`. The assistant writes nothing but a request card; only the manager's tap files
+  it, and the manager's approval in Reviewing stays the gate. Its routes stay under `/api/c/:slug/assist`, a path the
+  tool page policy does not open, and it is never put on a tool's own pages. When a feature on the board changes,
+  change its paragraph in `principles/HELP.md` in the same push, and run the golden questions (/admin, Health) after
+  any change to the prompt, a tool's description, HELP.md or the baseline model.
 - Every company gets every feature its kind gets, whenever it was made. A feature gate reads what a company is NOW
   (`src/kind.js`: a paid site or a trial), never a column fixed on the day the company was made; `companies.demo`
   means only "came in from anetix.ai with credit". Anything the platform keeps per company (a flag, a seeded row, a

@@ -209,6 +209,8 @@
         <h3 style="margin-top:14px">Requests for a new tool</h3>${intakes || '<p class="sub">None.</p>'}</div>
       <div class="card"><h2>Their board <small>every request, in their words</small></h2>
         ${reqs ? `<div style="overflow-x:auto"><table class="list"><tr><th>#</th><th>Tool</th><th>What they asked</th><th>Where it is</th><th>What happened</th></tr>${reqs}</table></div>` : '<p class="sub">Nothing filed yet.</p>'}</div>
+      <div class="card"><h2>What they asked Ask Anetix <small>the panel gives a demo set answers; these are the questions, newest first</small></h2>
+        ${(d.asked || []).length ? `<table class="list"><tr><th>When</th><th>Chip</th><th>What they asked</th></tr>${d.asked.map((a) => `<tr><td><small class="sub">${day(a.at)}</small></td><td>${esc(a.chip)}</td><td>${esc(a.text)}</td></tr>`).join("")}</table>` : '<p class="sub">Nothing asked.</p>'}</div>
       <div class="card"><h2>Builds</h2>
         ${runs ? `<div style="overflow-x:auto"><table class="list"><tr><th>When</th><th>Tool</th><th>What changed</th><th>Status</th><th>AI</th></tr>${runs}</table></div>` : '<p class="sub">No builds yet.</p>'}</div>
       <div class="secs">

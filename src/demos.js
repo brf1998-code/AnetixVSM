@@ -285,7 +285,12 @@ async function detail(slug) {
   const timeline = (await q(`SELECT id, kind, module, actor_role, actor_name, feedback_id, run_id, intake_id, version, before, after, created_at
                              FROM platform.record WHERE company=$1 AND ($2::timestamptz IS NULL OR created_at < $2) ORDER BY id DESC LIMIT 600`, [slug, until])).rows
     .map((r) => ({ ...r, before: r.before ? cut(r.before, 600) : null, after: r.after ? cut(r.after, 600) : null }));
-  return { ...summary, modules, intakes, feedback, runs, ledger, spend, timeline };
+  // Ask Anetix in the demo (src/assist.js): the panel gave set answers, so what is worth keeping is what they asked, on
+  // which chip. What a demo expects an engineer on the board to do.
+  const asked = (await q(`SELECT m.text, m.created_at, c.scope_kind, c.scope_module FROM platform.assist_messages m JOIN platform.assist_conversations c ON c.id=m.conversation_id
+                           WHERE m.company=$1 AND m.role='user' AND c.owner_key <> 'eval' AND ($2::timestamptz IS NULL OR m.created_at < $2) ORDER BY m.id DESC LIMIT 200`, [slug, until]).catch(() => ({ rows: [] }))).rows
+    .map((r) => ({ text: cut(r.text, 600), at: r.created_at, chip: r.scope_kind === "tool" ? r.scope_module : r.scope_kind === "help" ? "Anetix help" : "Whole company" }));
+  return { ...summary, modules, intakes, feedback, runs, ledger, spend, timeline, asked };
 }
 
 async function exportAll() {

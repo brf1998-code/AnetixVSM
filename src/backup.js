@@ -29,6 +29,7 @@ const PLATFORM_TABLES = [
   "price_books", "sites", "orders", "terms_versions",   // paid sites: the price book's versions, the pipeline (src/sites.js), the orders and the terms as signed (src/golive.js)
   "acceptances", "notices", "billing_events",   // stage 3: every acceptance of the Terms (src/agreements.js), the managers' notices (src/notices.js), Stripe's events as applied (src/activate.js)
   "connection_allowances",   // which outside connections Anetix turned on for which tool (src/connections.js)
+  "assist_conversations", "assist_messages",   // Ask Anetix: what each manager asked and was answered, the request cards (src/assist.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under
@@ -37,7 +38,8 @@ const ACCOUNT_TABLES = ["accounts", "account_factors", "account_recovery_codes",
 // Never in the file: who tried to sign in from where. It is a log of this instance, and it names addresses.
 const NOT_IN_BACKUP = ["auth_events", "admin_devices", "pin_refusals", "manager_invites", "signin_tickets",   // (manager_invites, src/managers.js: a restore ends pending invitations, and they are made again)
      // the sign-in log, the trusted devices, the refused pins and the one-time sign-ins from demo setup are this instance's, never a file's
-  "mcp_clients", "mcp_grants", "mcp_tokens", "mcp_codes", "mcp_calls"];   // connected AI apps, their tokens (hashes) and what they asked (src/mcpauth.js, src/mcp.js): a restore ends every connection, and each app is connected again
+  "mcp_clients", "mcp_grants", "mcp_tokens", "mcp_codes", "mcp_calls",   // connected AI apps, their tokens (hashes) and what they asked (src/mcpauth.js, src/mcp.js): a restore ends every connection, and each app is connected again
+  "assist_calls"];   // Ask Anetix's audit of every tool call (src/assist.js): this instance's log, like mcp_calls
 
 async function columnInfo(schema, table) {
   return (await q(

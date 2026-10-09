@@ -750,6 +750,7 @@ function capReached(which, usd, cap) {
 module.exports = {
   withMeterTag,
   atWall,   // the data wall's choke point and the prompt log (src/datawall.js)
+  noteApi,  // a failed call to the API, to the phones (src/credit.js); for a caller with its own call, as src/assist.js
   runAgent, runStructured, runChat, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
   SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,

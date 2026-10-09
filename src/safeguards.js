@@ -42,6 +42,7 @@ const SCHEMA = `
 ALTER TABLE platform.companies ADD COLUMN IF NOT EXISTS allow_talk BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE platform.companies ADD COLUMN IF NOT EXISTS allow_label_preview BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE platform.companies ADD COLUMN IF NOT EXISTS require_scan BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE platform.companies ADD COLUMN IF NOT EXISTS allow_assistant BOOLEAN NOT NULL DEFAULT true;   -- Ask Anetix on the board (src/assist.js)
 ALTER TABLE platform.company_access ADD COLUMN IF NOT EXISTS networks TEXT[];
 `;
 async function init() { await q(SCHEMA); }
@@ -98,15 +99,15 @@ const TTL = 10000;
 // a page loaded in the same instant as the switch kept the old answer for ten seconds). Every change moves the
 // count; a read remembers its answer only if the count has not moved since it asked.
 let changes = 0;
-const DEFAULTS = Object.freeze({ talk: true, label_preview: true, require_scan: false, networks: [] });
+const DEFAULTS = Object.freeze({ talk: true, label_preview: true, require_scan: false, assistant: true, networks: [] });
 async function get(company) {
   if (!company) return DEFAULTS;
   const c = cache.get(company);
   if (c && Date.now() - c.at < TTL) return c.v;
   const asked = changes;
-  const r = (await q(`SELECT c.allow_talk, c.allow_label_preview, c.require_scan, a.networks
+  const r = (await q(`SELECT c.allow_talk, c.allow_label_preview, c.require_scan, c.allow_assistant, a.networks
                         FROM platform.companies c LEFT JOIN platform.company_access a ON a.company=c.slug WHERE c.slug=$1`, [company])).rows[0];
-  const v = r ? { talk: r.allow_talk !== false, label_preview: r.allow_label_preview !== false, require_scan: r.require_scan === true, networks: r.networks || [] } : DEFAULTS;
+  const v = r ? { talk: r.allow_talk !== false, label_preview: r.allow_label_preview !== false, require_scan: r.require_scan === true, assistant: r.allow_assistant !== false, networks: r.networks || [] } : DEFAULTS;
   if (asked === changes) cache.set(company, { at: Date.now(), v });
   return v;
 }
@@ -117,7 +118,7 @@ async function set(company, patch, who) {
   if (!co) throw Object.assign(new Error("unknown company"), { status: 404 });
   cache.delete(company);
   const was = await get(company), now = { ...was };
-  for (const k of ["talk", "label_preview", "require_scan"]) if (patch[k] !== undefined) now[k] = Boolean(patch[k]);
+  for (const k of ["talk", "label_preview", "require_scan", "assistant"]) if (patch[k] !== undefined) now[k] = Boolean(patch[k]);
   if (patch.networks !== undefined) now.networks = cleanNetworks(patch.networks);
   // the list first: it is the one part that can be refused, and nothing else is saved when it is
   if (patch.networks !== undefined) {
@@ -126,7 +127,7 @@ async function set(company, patch, who) {
     const up = await q("UPDATE platform.company_access SET networks=$2 WHERE company=$1", [company, now.networks.length ? now.networks : null]);
     if (!up.rowCount && now.networks.length) throw Object.assign(new Error("this company has no sign-in of its own yet: set its passwords first"), { status: 409 });
   }
-  await q("UPDATE platform.companies SET allow_talk=$2, allow_label_preview=$3, require_scan=$4 WHERE slug=$1", [company, now.talk, now.label_preview, now.require_scan]);
+  await q("UPDATE platform.companies SET allow_talk=$2, allow_label_preview=$3, require_scan=$4, allow_assistant=$5 WHERE slug=$1", [company, now.talk, now.label_preview, now.require_scan, now.assistant]);
   changes++; cache.delete(company);
   const changed = Object.keys(now).filter((k) => JSON.stringify(now[k]) !== JSON.stringify(was[k]));
   if (changed.length) {
@@ -217,7 +218,7 @@ router.get("/api/admin/companies/:slug/safeguards", requireAdmin, async (req, re
 });
 router.post("/api/admin/companies/:slug/safeguards", requireAdmin, json, async (req, res) => {
   const b = req.body || {};
-  await set(req.params.slug, { talk: b.talk, label_preview: b.label_preview, require_scan: b.require_scan, networks: b.networks }, actorOf(req));
+  await set(req.params.slug, { talk: b.talk, label_preview: b.label_preview, require_scan: b.require_scan, assistant: b.assistant, networks: b.networks }, actorOf(req));
   res.json({ ok: true, ...(await view(req, req.params.slug)) });
 });
 // A manager signs in by name with a second factor and no other way. Refused until the company has a manager account

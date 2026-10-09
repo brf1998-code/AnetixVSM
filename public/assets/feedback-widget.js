@@ -290,7 +290,9 @@
     const params = new URLSearchParams(location.search);
     let st = tourState();
     if (params.get("tour")) {
-      st = { i: 0 };
+      // &step=N (1 based): Ask Anetix's Show me button opens the tour at the step that answers the question
+      const n = Number(params.get("step"));
+      st = { i: Number.isInteger(n) && n > 0 ? n - 1 : 0 };
       setTour(st);
       history.replaceState(null, "", location.pathname);
     }

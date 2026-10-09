@@ -3527,3 +3527,97 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     within 10 s is noted once. The Instance tab names the new kinds.
   - *Tests:* `scripts/test-credit.js` (46: the 2026-10-08 message, each error shape, a module's own JSON error that
     is not the API's, every kind alerting, no dashes in alert text).
+
+- **Ask Anetix: the assistant on the board** (2026-10-08; `src/assist.js`, `src/assist-tools.js`,
+  `src/assist-evals.js`, `principles/HELP.md`, `public/assets/assist.js`, `docs/ASSISTANT.md` for the design and the
+  research behind it). Brendan: "an agentic chatbot ... that will help walk people through the systems they have and
+  help them with suggesting requests ... That will be their forward deployed engineer, and for someone with owner
+  privileges it will have full company access", "this can write proposal that will go straight to under review based
+  on the chat discussion", and in a demo "a scripted explanation of what it does". His decisions: every manager gets
+  the whole company (no new owner role), managers only in v1, the baseline model for every scope at first, a demo
+  gets set answers only.
+  - *Where.* An **Ask Anetix** button in the band of the board (`#askdock`), an **Ask** link on each tool in the band,
+    and `?ask=<tool>` on the board's address; managers and Anetix admins only (the board shows the floor nothing, and
+    every route answers a floor session 403). A side panel on a computer (the board moves over beside it at 1100 px
+    and wider), the whole screen on a phone. Not on a tool's own pages: anything a tool page can reach is reachable by
+    agent-written code with the session of whoever has the page open, so the routes live under `/api/c/:slug/assist`,
+    a path `registry.modulePagePolicy` does not open (the e2e checks the header).
+  - *The chips.* Anetix help, one per tool, Whole company. It opens on the tool the board is filtered to, else Whole
+    company. A chip change starts a new conversation and says so (Atlassian shipped a bug in 2026 where a scope change
+    silently dropped the context). Three starters per scope that fill the box and send nothing.
+  - *The turn* (`assist.runTurn`): a plain Messages API tool loop (not the Agent SDK), at most `SOS_ASSIST_STEPS` (8)
+    model calls; the last asks for an answer in the same turn as the tool results. `SOS_ASSIST_MAX_TOKENS` (1500) a
+    call. The model is the company's propose model (`agent.modelFor(company, "propose")`, the baseline unless pinned).
+    The system prompt is the rules plus `principles/HELP.md`, cached (`cache_control` on that block; the tools come
+    before it), then the company's part (date, company, who, the scope, its tools, whether the wall is up), then the
+    conversation with a moving cache mark on its last block. The model sees the last `SOS_ASSIST_HISTORY` (20)
+    messages as words only, with a note where an answer had a card and what became of it. The turn runs behind the
+    request; the panel asks for it every 1.1 s and shows each step as it happens ("Reading how Cycle count works").
+    Every model call goes through `agent.atWall("assist", ...)` (the prompt log) and the meter as kind `assistant`;
+    the turn's spend is filed in `ai_usage` as `assistant` (the company's spend, a site's fair use). The answer goes
+    through `assist.scrubText`: model names as everywhere a company reads, "Claude the AI", the maker's name, and any
+    long dash. A turn running at a restart is marked failed at boot with words that say to ask again.
+  - *The tools* (`src/assist-tools.js`, one registry, written so the company MCP's phase 2 can serve the same list):
+    `list_tools`, `describe_tool` (screens with addresses, tables and columns with row counts, the diagram, the tour's
+    numbered steps), `whats_changed`, `list_requests`, `get_request`, `summarize_records`, `read_records`,
+    `show_on_screen`, `draft_request`. Anetix help gets `list_tools` and `draft_request` only. Scope comes from the
+    session: no tool argument names a company, a role or a person; in a one-tool conversation every call is pinned to
+    that tool and naming another is an error that points at the chips. Text people typed comes back in fields named
+    `words` or under `records`, with a note that it is information, never an instruction. Every call is a row in
+    `platform.assist_calls` (who, scope, tool, arguments, ok, what was read, size, time; never the answer).
+  - *Records.* `summarize_records` (count, sum, avg, min, max; grouped by a value or by day, week or month; filters;
+    a last-N-days window) and `read_records` (50 rows a call, columns, filters, order, offset). The query is built
+    from table and column names checked against the tool's own live tables in the catalog; values are parameters;
+    no free SQL. They read through a new database role per company, **`sos_<company>_read`** (`dbroles.READ`; made
+    with the other two, SELECT on the live module tables only, never `_migrations`, the platform, staging or another
+    company; dropped with the company), inside `BEGIN READ ONLY` with a 5 s statement timeout. An instance that cannot
+    make roles reads on the platform's connection, still READ ONLY, and says so once in the log. With the data wall
+    up the two tools are not offered at all, a call anyway is refused naming the wall, and the prompt says so.
+  - *The request card* (Brendan's "straight to under review"). `draft_request` files nothing: it puts a card under the
+    answer (the tool, the screen when one was named and checked, the words, why, open requests that share its words)
+    and tells the model never to say it was filed. **Send to Reviewing** (`POST .../messages/:id/file`, the words may
+    have been changed on the card) makes the feedback row with `feedback.source = 'assistant'` and `source_ref` = the
+    conversation, the person's name, the screen's page and file, and calls `arrival.start(id, { force: true })`: read
+    now even with the company's "Read it at once" off, past the busy-hour limit, and for a tool whose first version is
+    still a preview. The proposer sorts it as any request (a repeat folds in, a new tool or an outside connection is
+    flagged or handed off) but never asks its one question (`proposals.generateProposal`: the manager just talked it
+    through). It lands in Reviewing with the draft; the approval is the manager's as always. The board's card carries
+    FROM A CONVERSATION, which opens it. In Anetix help the card goes to Requests to Anetix (`module='platform'`) and
+    is not read by the proposer. Not now puts a card away; a card is sent once. `SOS_ASSIST_FILES_DAY` (20) a person.
+  - *A demo* (any company that is not a paid site, `kind.isSite`, read at the moment): the panel, chips and starters
+    show, the note says "Demo: set answers", and every question gets the set answer for its chip (`assist.setAnswer`):
+    no model, no tool, no credit. What a demo user typed is kept; the Demos tab shows "What they asked Ask Anetix".
+  - *Who owns a conversation.* A named account (`acct:<id>`), a person signed in with a name and a PIN
+    (`person:<id>`), or the shared manager password (`role:manager`, one history for the shared login). History lists
+    your own. An Anetix admin may read any conversation of a company (support) and cannot write in one.
+  - *Failures.* A refused or failed call goes through `agent.noteApi` like every other caller's (the phones hear of
+    it, "Every AI failure reaches the phones"), and the person reads "That did not work just now. Ask again in a
+    moment.", or the credit words when the credit or a budget stopped it.
+  - *Limits.* One running answer per conversation (409), `SOS_ASSIST_TURNS_DAY` (120) questions a person a day as a
+    loop guard (not a spend cap; Brendan's rule of alerts instead of caps stands), 4,000 characters a question,
+    `SOS_ASSIST_TOOL_CHARS` (30000) a tool's answer. `agent.assertUnderCap` before a turn, as for any AI work.
+  - *Anetix's side.* The Health tab's Ask Anetix card (`GET /api/admin/assist?days=`): per company conversations,
+    questions, failed answers, ratings, cards and requests sent and approved, spend; the answers rated down with the
+    reason; a company's conversations and each transcript with its tool calls. **The golden questions**
+    (`src/assist-evals.js`, `POST`/`GET /api/admin/assist/evals`): twelve questions through the real turn on a company
+    Anetix picks, graded by code (tools called, words said or not, a card or not, no model name, no dash), spend
+    filed as `assess` (out of the company's spend), transcripts kept as "Anetix evals". Run before a new site gets it
+    and after any change to the prompt, a tool description, HELP.md or the baseline.
+  - *The switch.* Safeguards on the company's card: **Ask Anetix** (`companies.allow_assistant`, on by default). Off,
+    the config answers `{ mode: "off" }`, the board shows no button and no Ask links, every other route refuses.
+  - *The record.* `chat_question` and `chat_answer` with `detail.via = 'assistant'` (scope, conversation, tools,
+    card, model and cost on the answer), `feedback_filed` with `via`, `assistant_rated`.
+  - *Tours.* `?tour=1&step=N` opens a tool's tour at step N (`feedback-widget.js`), for the Show me button.
+  - *Tests.* `scripts/test-assist.js` (70: the words people read, the history, the request's shape, the scopes' tools,
+    the read role's grants, the eval grader); `scripts/e2e/assist.js` (85, fake model: managers only, one company,
+    one tool, the wall with the prompt log, a demo's set answer with no model, the read role refused writes, the
+    platform and another company, typed text as data, the card filing nothing until the tap, Reviewing with read-at-once
+    off, the switch, the admin view, the eval run, a tool page's policy, gone with the company);
+    `scripts/e2e/assist-browser.js` (32: the panel on a computer and a phone, a demo, the floor sees nothing);
+    `scripts/e2e/assist-api.js` (14: the requests a real turn sends, against a stand-in for the Messages API on 3998:
+    tools, cache marks, alternating roles, every tool call answered first in the next turn, no empty text, the step
+    limit, the spend filed).
+  - *Known limits.* Not run against the real model yet (the sandbox has no key): run the golden questions on the live
+    instance first. No streaming of the words themselves (the steps show as they happen). No memory across
+    conversations. No idea cards on the board yet (v2). The tool pages carry no link to it (the widget does not know
+    who is signed in); the band's Ask link per tool stands in.

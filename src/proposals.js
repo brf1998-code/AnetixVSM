@@ -144,7 +144,8 @@ async function generateProposal(feedbackId, opts = {}) {
   const arrival = require("./arrival");
   const answered = Boolean(fb.question && fb.question.answer);
   const mayTriage = !opts.force && !opts.answered && !answered && !fb.triage;
-  const mayAsk = mayTriage && !fb.question;
+  // a request sent from Ask Anetix (src/assist.js) was talked through with the manager first: sorted, never asked again
+  const mayAsk = mayTriage && !fb.question && fb.source !== "assistant";
 
   const ctx = await moduleContext(fb.company, fb.module, { first: [fb.target_file], version: await pageVersion(fb) });
   const screenLine = await screenLineFor(fb);

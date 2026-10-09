@@ -66,6 +66,7 @@ async function main() {
   await require("./src/mcp").init();         // the MCP addresses' call log (src/mcp.js)
   await require("./src/safeguards").init();  // safeguards for a company that keeps contract information here: the mic, label previews, scanned uploads, the plant's network (src/safeguards.js)
   await require("./src/scan").init();        // every file from outside is scanned for malware before it is kept (src/scan.js)
+  await require("./src/assist").init();      // Ask Anetix, the assistant on the board: its conversations, the audit of its tool calls, feedback.source (src/assist.js, docs/ASSISTANT.md)
 
   const app = express();
   app.disable("x-powered-by");
@@ -210,6 +211,8 @@ async function main() {
   app.use(require("./src/pilot").router);        // /api/admin/sites/:slug/offer: a pilot Anetix offers one company (src/pilot.js)
   app.use(require("./src/notify").router);       // /api/admin/notify*: alerts to Anetix's phones through ntfy (src/notify.js)
   app.use(require("./src/safeguards").router);   // /api/admin/companies/:slug/safeguards*, /api/admin/scan*: a company's safeguards and the upload scanner (src/safeguards.js, src/scan.js)
+  app.use(require("./src/assist").router);       // /api/c/:slug/assist*: Ask Anetix on the board, managers only, a path tool pages cannot reach (src/assist.js)
+  app.use(require("./src/assist").adminRouter);  // /api/admin/assist*: what companies ask it, answers rated down, the golden questions (src/assist.js, src/assist-evals.js)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset

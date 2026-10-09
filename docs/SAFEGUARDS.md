@@ -27,6 +27,7 @@ All on the company's card on `/admin` (More, Safeguards), set by Anetix, each ch
 | Talk instead of typing | Off: no mic button on the company's pages. The page asks the platform before it ever listens, and the browser is told the microphone is not for these pages. On: the browser turns speech into words by sending the audio to Google (Chrome, Edge) or Apple (Safari). | On |
 | Label previews | Off: a label's contents are never sent to the public renderer that draws its picture; the tool shows the label's text. | On |
 | Uploads must be scanned | On: a file the malware scan could not take (no scanner, or it did not answer) is refused. Off: it is kept, marked unscanned, and scanned when the scanner answers again. A flagged file is refused either way. | Off |
+| Ask Anetix | Off: no assistant on the board and its routes refuse. On: managers can ask it; what it reads to answer (how the tools are built, the board, and the records unless the company is walled off) goes to the AI service like the rest of the loop. | On |
 | Shared passwords work from | Empty: anywhere. A list of addresses or ranges: the floor's password (and a shared manager password while one exists) works only from the plant's own network, at sign-in and on every request after. A named account with a second factor works from anywhere. | Anywhere |
 
 And one action, under Sign-in on the same card: **take the shared manager password away**, so a manager signs
@@ -112,7 +113,7 @@ Everything the product connects to, and what decides whether a given company's i
 |---|---|---|
 | Railway (hosting, the database, its backups) | Everything the company keeps here | Always. Anetix's hosting provider |
 | Cloudflare (in front of the product) | Every request and answer, in passing | Always. Requests that skip it are refused |
-| The AI service (Anthropic's API) | A tool's files and the words people type; rows, uploads, photos and ERP answers too unless the company is walled off | What the AI reads, per company |
+| The AI service (Anthropic's API) | A tool's files and the words people type; rows, uploads, photos and ERP answers too unless the company is walled off. Ask Anetix sends a manager's questions and what it reads to answer them, inside the same wall | What the AI reads, per company; Ask Anetix, per company |
 | The upload scanner | Every uploaded file's bytes, for the length of the scan | Always. Inside the private network, not outside |
 | The plant's own ERP (read only) | Queries the plant's tools ask of it | Off until Anetix turns it on, per tool |
 | A label printer on the plant's device | A label, from the browser to a program on the same device | Off until Anetix turns it on, per tool |

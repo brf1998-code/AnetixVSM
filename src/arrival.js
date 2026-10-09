@@ -189,17 +189,20 @@ function inOrder(key, fn) {
 // they get their answer the request is either marked "proposing" or marked with why it was passed over, and a
 // manager's button pressed in the same instant cannot start a second call; work() runs behind the response.
 // Neither throws.
-async function claim(feedbackId) {
+// opts.force (Ask Anetix's Send to Reviewing, src/assist.js): the manager talked the request through and pressed the
+// button, so it is read now even where "read it at once" is off, past the busy-hour limit (Ask Anetix has its own
+// daily limit per person), and for a tool whose first version is still a preview (the proposer reads the preview).
+async function claim(feedbackId, opts = {}) {
   try {
     const fb = (await q("SELECT * FROM platform.feedback WHERE id=$1", [Number(feedbackId)])).rows[0];
     if (!fb || fb.kind !== "feedback" || !fb.module || fb.module === "platform" || fb.status !== "new" || fb.review_id || fb.duplicate_of || fb.arrival) return null;
     const agent = require("./agent");
     const skip = async (why) => { await q("UPDATE platform.feedback SET arrival=$2 WHERE id=$1", [fb.id, `skipped: ${why}`]); return null; };
-    if (!(await settings(fb.company)).auto_propose) return skip("switched off for this company");
+    if (!opts.force && !(await settings(fb.company)).auto_propose) return skip("switched off for this company");
     if (!agent.haveKey()) return skip("no AI on this instance");
-    const live = (await q("SELECT live_version FROM platform.modules WHERE company=$1 AND name=$2", [fb.company, fb.module])).rows[0];
-    if (!live || !live.live_version) return skip("the tool is not live yet");
-    const lastHour = Number((await q("SELECT count(*) FROM platform.feedback WHERE company=$1 AND (arrival IN ('proposing','done','failed')) AND created_at > now() - interval '1 hour'", [fb.company])).rows[0].count);
+    const live = (await q("SELECT live_version, staged_version FROM platform.modules WHERE company=$1 AND name=$2", [fb.company, fb.module])).rows[0];
+    if (!live || !(live.live_version || (opts.force && live.staged_version))) return skip("the tool is not live yet");
+    const lastHour = opts.force ? 0 : Number((await q("SELECT count(*) FROM platform.feedback WHERE company=$1 AND (arrival IN ('proposing','done','failed')) AND created_at > now() - interval '1 hour'", [fb.company])).rows[0].count);
     if (lastHour >= PER_HOUR) { console.error(`[arrival] ${fb.company}: ${lastHour} requests read in the last hour, the limit is ${PER_HOUR}; #${fb.id} waits for the manager's button`); return skip("a busy hour"); }
     const got = (await q("UPDATE platform.feedback SET arrival='proposing' WHERE id=$1 AND arrival IS NULL RETURNING *", [fb.id])).rows[0];
     return got || null;
@@ -221,7 +224,7 @@ function work(fb, opts = {}) {
 }
 // claim now, work behind the caller. Resolves to true when the proposer is reading it.
 async function start(feedbackId, opts) {
-  const fb = await claim(feedbackId);
+  const fb = await claim(feedbackId, opts || {});
   if (fb) setImmediate(() => work(fb, opts).catch(() => {}));
   return Boolean(fb);
 }

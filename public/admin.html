@@ -126,6 +126,17 @@
       <details style="margin-top:10px"><summary>How to read these numbers</summary>
       <p class="sub" id="h-note" style="margin-top:6px">Counts are for the window; open items, what is waiting, and the quiet stretch are as of now. Same shift means feedback to floor within 8 hours. To floor runs from the feedback item to the deploy (the oldest item in a batch). Manager wait is proposal drafted to decided, then ready to deployed. Stops are where builds stopped: the platform's own checks (gate), the reviewer, the tests, or something else. Quiet is days since the last reviewer or test stop, gate stop, and rollback; a long quiet stretch is the signal to try a cheaper build model. Edited is how many approved proposals the manager changed first (on the record since Sept 19). Decision times before the record use the run's start.</p></details>
     </div>
+    <div class="card" id="assist-card">
+      <h3>Ask Anetix <small>the assistant on the board, managers only (docs/ASSISTANT.md). A demo's rows are what demo users typed into a panel that gave set answers.</small></h3>
+      <div class="hwrap"><table class="health" id="ax-table"></table></div>
+      <div id="ax-down" style="margin-top:10px"></div>
+      <div id="ax-convs" style="margin-top:10px"></div>
+      <details style="margin-top:10px" id="ax-evals-wrap"><summary style="cursor:pointer;font-weight:700;color:var(--navy)">The golden questions</summary>
+        <p class="sub" style="margin-top:6px">A dozen questions asked through the real assistant on one company (it needs tools on the floor), graded by what it called and what it said. Run it before a new site gets the assistant and after any change to its prompt, its tools, principles/HELP.md or the baseline model. Each run costs a few dollars of AI, filed apart from the company's spend. The transcripts stay on that company's list below, as "Anetix evals".</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select id="ax-ev-co"></select><button class="go" onclick="runAssistEvals()">Run them</button><span class="sub" id="ax-ev-state"></span></div>
+        <div id="ax-ev-out" style="margin-top:8px"></div>
+      </details>
+    </div>
   </section>
 
   <!-- ================= Requests: feedback about the software itself, from every board, and the way back ================= -->
@@ -493,7 +504,56 @@ function drawIsolation(rn) {
   }
   el.innerHTML = `<b style="color:${color}">Module isolation</b> · ${body}`;
 }
+// ---- Ask Anetix on the Health tab (src/assist.js): who asks it what, what was rated down, the transcripts, the evals
+async function loadAssist() {
+  const days = Number(document.getElementById("h-days").value) || 365;
+  const r = await fetch(`/api/admin/assist?days=${days}`); if (!r.ok) return;
+  const A = await r.json();
+  const t = document.getElementById("ax-table");
+  t.innerHTML = A.companies.length ? `<tr><th>Company</th><th>Conversations</th><th>Questions</th><th>Failed</th><th>Rated</th><th>Cards</th><th>Sent</th><th>Approved</th><th>AI spend</th><th>Last</th></tr>` + A.companies.map((c) =>
+    `<tr><td><a href="#" onclick="assistConvs('${jss(c.company)}');return false">${esc(c.name)}</a>${c.demo ? ' <small class="sub">demo</small>' : ""}</td><td>${c.conversations}</td><td>${c.questions}</td><td>${c.failed || ""}</td><td>${c.up || c.down ? `${c.up} up · ${c.down} down` : ""}</td><td>${c.cards || ""}</td><td>${c.filed || ""}</td><td>${c.approved || ""}</td><td>${c.spend ? usd(c.spend) : ""}</td><td>${c.last_at ? new Date(c.last_at).toLocaleDateString() : ""}</td></tr>`).join("")
+    : `<tr><td class="sub">Nobody has asked it anything in the window.</td></tr>`;
+  document.getElementById("ax-down").innerHTML = A.down.length ? `<b>Rated down</b>` + A.down.map((d) => `<div class="sub" style="margin-top:4px">${esc(d.company)} · <a href="#" onclick="assistTranscript(${Number(d.conversation_id)});return false">conversation #${Number(d.conversation_id)}</a> · ${new Date(d.created_at).toLocaleString()}: <b>${esc(d.thumbs_reason || "(no reason)")}</b> on "${esc(d.text)}"</div>`).join("") : "";
+  const sel = document.getElementById("ax-ev-co");
+  if (!sel.options.length) {
+    const list = (typeof D !== "undefined" && D && D.companies) || [];   // the overview the page already holds
+    sel.innerHTML = (list || []).map((c) => `<option value="${esc(c.slug)}">${esc(c.name)} (${esc(c.slug)})</option>`).join("");
+  }
+  showAssistEvals((await fetch("/api/admin/assist/evals").then((x) => x.json()).catch(() => ({}))));
+}
+async function assistConvs(slug) {
+  const j = await fetch(`/api/admin/assist/companies/${encodeURIComponent(slug)}/conversations`).then((x) => x.json());
+  const where = (c) => c.scope_kind === "tool" ? esc(c.scope_module) : c.scope_kind === "help" ? "Anetix help" : "Whole company";
+  document.getElementById("ax-convs").innerHTML = `<b>${esc(slug)}: conversations</b>` + (j.conversations.length ? j.conversations.map((c) =>
+    `<div class="sub" style="margin-top:4px"><a href="#" onclick="assistTranscript(${Number(c.id)});return false">#${Number(c.id)}</a> · ${esc(c.owner_name || c.owner_role)} · ${where(c)} · ${c.questions} question${c.questions === 1 ? "" : "s"}${c.demo ? " · demo" : ""} · ${new Date(c.updated_at).toLocaleString()}: ${esc(c.title || "")}</div>`).join("") : `<div class="sub">none</div>`) + `<div id="ax-transcript"></div>`;
+}
+async function assistTranscript(id) {
+  const j = await fetch(`/api/admin/assist/conversations/${Number(id)}`).then((x) => x.json());
+  let box = document.getElementById("ax-transcript");
+  if (!box) { document.getElementById("ax-convs").innerHTML += `<div id="ax-transcript"></div>`; box = document.getElementById("ax-transcript"); }
+  const calls = (mid) => j.calls.filter((c) => c.message_id === mid).map((c) => `<code>${esc(c.tool)}</code>${c.ok ? "" : ' <span class="fail">refused</span>'} <small class="sub">${esc(JSON.stringify(c.args)).slice(0, 160)} · ${c.chars} chars · ${c.ms} ms</small>`).join("<br>");
+  box.innerHTML = `<div class="card" style="margin-top:8px;background:#fafbfc"><b>Conversation #${Number(j.conversation.id)}</b> <span class="sub">${esc(j.conversation.company)} · ${esc(j.conversation.owner_name || j.conversation.owner_role)} · ${esc(j.conversation.scope_kind)}${j.conversation.scope_module ? " " + esc(j.conversation.scope_module) : ""}</span>` +
+    j.messages.map((m) => `<div style="margin-top:8px;${m.role === "user" ? "font-weight:600" : ""}">${m.role === "user" ? "Q" : "A"}: ${esc(m.text || "(" + m.status + ")")}${m.role === "assistant" ? `<div class="sub" style="margin-top:2px">${m.scripted ? "set answer · " : ""}${m.model ? esc(m.model) + " · " : ""}${m.cost_usd ? usd(Number(m.cost_usd)) : ""}${m.thumbs ? ` · rated ${m.thumbs > 0 ? "up" : "down"}${m.thumbs_reason ? ": " + esc(m.thumbs_reason) : ""}` : ""}${m.card ? ` · card ${esc(m.card.state)}${m.card.feedback_id ? " #" + Number(m.card.feedback_id) : ""}` : ""}</div>${calls(m.id) ? `<div style="margin-top:2px">${calls(m.id)}</div>` : ""}` : ""}</div>`).join("") + `</div>`;
+}
+async function runAssistEvals() {
+  const company = document.getElementById("ax-ev-co").value;
+  if (!company || !confirm(`Ask the dozen golden questions on ${company}, through the real assistant? It costs a few dollars of AI.`)) return;
+  const r = await fetch("/api/admin/assist/evals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company }) });
+  const j = await r.json().catch(() => ({}));
+  document.getElementById("ax-ev-state").textContent = j.started ? "running; this takes a few minutes" : (j.error || "did not start");
+  const tick = async () => { const s = await fetch("/api/admin/assist/evals").then((x) => x.json()).catch(() => null); if (!s) return; showAssistEvals(s); if (s.running) setTimeout(tick, 5000); };
+  setTimeout(tick, 3000);
+}
+function showAssistEvals(s) {
+  const st = document.getElementById("ax-ev-state"), out = document.getElementById("ax-ev-out");
+  if (!st || !s) return;
+  if (s.running && s.progress) st.textContent = `running on ${s.progress.company}: ${s.progress.done} of ${s.progress.of}`;
+  const L = s.last; if (!L) { if (!s.running) st.textContent = "never run"; return; }
+  if (!s.running) st.textContent = `last run ${new Date(L.finished_at).toLocaleString()} on ${L.company}${L.by ? " by " + L.by : ""}: ${L.passed} of ${L.ran} passed, ${usd(L.cost_usd || 0)}`;
+  out.innerHTML = L.results.map((x) => `<div class="sub" style="margin-top:4px"><b style="color:${x.skipped ? "var(--steel)" : x.ok ? "var(--green)" : "var(--red)"}">${x.skipped ? "skipped" : x.ok ? "pass" : "FAIL"}</b> ${esc(x.id)}${x.skipped ? ` (${esc(x.skipped)})` : ""}${(x.fails || []).length ? `: ${esc(x.fails.join("; "))}` : ""}${x.conversation ? ` · <a href="#" onclick="assistTranscript(${Number(x.conversation)});return false">transcript</a>` : ""}${x.tools && x.tools.length ? ` · ${esc(x.tools.join(", "))}` : ""}</div>`).join("");
+}
 async function loadHealth() {
+  loadAssist().catch((e) => console.error("assist:", e));
   loadCredit().catch((e) => console.error("credit:", e));
   loadNotify().catch((e) => console.error("notify:", e));
   loadScan().catch((e) => console.error("scanner:", e));
@@ -902,6 +962,7 @@ function safeguardsHtml(c) {
     ${row("talk", c.allow_talk !== false, "Talk instead of typing", "On: the mic button is offered, and the browser sends the audio to Google or Apple to turn it into words.", "Off: no mic button on this company's pages.")}
     ${row("label_preview", c.allow_label_preview !== false, "Label previews", "On: a label's contents go to a public renderer to draw its picture.", "Off: nothing is sent, and a tool shows the label's text.")}
     ${row("require_scan", c.require_scan === true, "Uploads must be scanned", "On: a file the malware scan could not take is refused.", "Off: a file the scan could not take is kept, and scanned when the scanner answers again.")}
+    ${row("assistant", c.allow_assistant !== false, "Ask Anetix", "On: the company's managers can ask the assistant on the board; what it reads goes to the AI service like the rest of the loop, inside the data wall.", "Off: no Ask Anetix button, and its routes refuse.")}
     <div style="margin-top:8px" data-sg-networks><b>Shared passwords work from:</b> ${nets.length ? esc(nets.join(", ")) : "anywhere"} <button class="quiet" onclick="openNetworks('${c.slug}', '${jss(c.name)}')">${nets.length ? "Change" : "Limit to the plant's network"}</button>
       <div class="sub">That is the floor's password${a.own_manager ? " and the shared manager password" : ""}. A named account with a second factor works from anywhere.</div></div>`;
 }
