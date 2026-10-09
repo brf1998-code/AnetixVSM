@@ -232,6 +232,8 @@
       <div class="card"><h2>Spend and default models</h2><div id="top" style="margin-top:8px;line-height:1.7"></div></div>
       <div class="card"><h2>Module isolation <small>where agent-written module code runs</small></h2><div id="isolation" class="note"></div></div>
       <div class="card"><h2>Edge check <small>requests must come through Cloudflare</small></h2><div class="note" id="edge-line"></div></div>
+      <div class="card"><h2>Upload scanner <small>every file from outside is scanned for malware before it is kept</small></h2><div class="note" id="scan-line">Loading…</div>
+        <button class="quiet" id="scan-sweep" onclick="scanSweep()">Scan the stored files now</button> <span class="sub" id="scan-msg"></span></div>
       <div class="card"><h2>Phone alerts <small>signed orders, declined cards, billing trouble, product errors, fast AI spend (ntfy)</small></h2><div class="note" id="notify-line">Loading…</div><div class="note" id="spend-line"></div>
         <button class="quiet" id="notify-test" onclick="testAlert()">Send a test alert</button> <span class="sub" id="notify-msg"></span></div>
     </div>
@@ -276,6 +278,7 @@ function drawPills() {
     P.isolation && { id: "isolation", label: "Isolation", value: P.isolation.value, level: P.isolation.level, href: "#instance", title: "Whether module code runs in a process of its own with a database login of its own" },
     P.edge && { id: "edge", label: "Edge", value: P.edge.value, level: P.edge.level, href: "#instance", title: "Whether a request that did not come through Cloudflare is refused" },
     P.signin && { id: "signin", label: "Sign-in", value: P.signin.value, level: P.signin.level, href: "#accounts", title: P.signin.title },
+    P.scan && { id: "scan", label: "Upload scanner", value: P.scan.value, level: P.scan.level, href: "#instance", title: "Whether a file from outside is scanned for malware before it is kept" },
   ].filter((p) => p && (p.level === "amber" || p.level === "red")));   // a pill only when something wants a look (the launch audit 2.5)
   const worst = (...xs) => (xs.some((x) => x && x.level === "red") ? "red" : xs.some((x) => x && x.level === "amber") ? "amber" : null);
   AdminShell.setBadge("health", { level: worst(P.data) });
@@ -283,9 +286,14 @@ function drawPills() {
   AdminShell.setBadge("pins", P.demoreq && P.demoreq.open ? { n: P.demoreq.open, level: "amber" } : { n: P.pins ? P.pins.live : undefined, level: null });
   AdminShell.setBadge("accounts", { level: worst(P.signin) });
   AdminShell.setBadge("models", { level: worst(P.models) });
-  AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null) });
+  AdminShell.setBadge("instance", { level: worst(P.credit, P.spend, P.isolation, P.edge && P.edge.level === "red" ? P.edge : null, P.scan) });
 }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c])); }
+// Free text (a company's name, a sign-in email) inside a quoted argument of an onclick: esc() alone leaves an
+// apostrophe standing, which ends the quoted argument, so "O'Brien Tool" broke its own buttons and a name written
+// for the purpose could run as script in an admin's session (found by the review of 2026-10-08). The backslash and
+// the apostrophe are escaped for the script first, then the whole for the attribute.
+function jss(s) { return esc(String(s == null ? "" : s).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/[\r\n\u2028\u2029]+/g, " ")); }
 function ml(id) { const m = ((D && (D.labels || D.models)) || []).find(x => x.id === id); return m ? m.label : id; }
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -384,6 +392,39 @@ async function testAlert() {
   const r = await fetch("/api/admin/notify/test", { method: "POST" }); const j = await r.json().catch(() => ({}));
   m.textContent = r.ok ? "Sent. Check both phones." : (j.error || "It did not send."); loadNotify();
 }
+// The upload scanner (src/scan.js): whether it answers, how old its signatures are, how the stored files stand.
+let SCAN = null;
+async function loadScan() {
+  const r = await fetch("/api/admin/scan", { cache: "no-store" }); if (!r.ok) return;
+  const s = SCAN = await r.json(), el = document.getElementById("scan-line"), f = s.files || { total: 0, clean: 0, unscanned: 0 };
+  const day = (t) => (t ? new Date(t).toLocaleDateString() : "an unknown day");
+  const files = `${f.total} stored file${f.total === 1 ? "" : "s"}: ${f.clean} scanned clean${f.unscanned ? `, <span class="warn">${f.unscanned} not scanned yet</span>` : ""}.`;
+  const must = s.companies_requiring ? ` <span class="fail">${s.companies_requiring} compan${s.companies_requiring === 1 ? "y has" : "ies have"} "Uploads must be scanned" on: every file of theirs is refused until the scanner answers.</span>` : "";
+  if (!s.configured) {
+    el.className = "note amber";
+    el.innerHTML = `<b>No scanner on this instance</b>: SOS_SCAN_HOST is not set, so a file is checked for its kind and its size and kept unscanned.${must} ${files}`;
+    P.scan = { value: "none", level: s.companies_requiring ? "red" : "amber" };
+  } else if (!s.reachable) {
+    el.className = "note bad";
+    el.innerHTML = `<b>The scanner is not answering</b> at ${esc(s.host)}${s.down_since ? ` since ${new Date(s.down_since).toLocaleString()}` : ""} <span class="sub">(${esc(s.error || "no answer")})</span>. Files are kept unscanned and scanned once it is back.${must} ${files}`;
+    P.scan = { value: "not answering", level: "red" };
+  } else {
+    el.className = "note " + (s.stale || f.unscanned ? "amber" : "good");
+    el.innerHTML = `<b>Answering</b> at ${esc(s.host)}: engine ${esc(s.engine)}, ${s.signatures ? `signatures ${esc(s.signatures)} of ${day(s.signatures_at)}${s.stale ? ` <span class="fail">older than ${s.stale_days} days: restart the scanner service and read its log</span>` : ""}` : `<span class="fail">it names no signature set: restart the scanner service and read its log</span>`}. ${files} Every stored file is scanned again once its last scan is ${s.rescan_days} days old.`
+      + (s.last_sweep ? `<br><span class="sub">Last look over the stored files ${new Date(s.last_sweep.at).toLocaleString()}: ${s.last_sweep.scanned} scanned, ${s.last_sweep.removed} removed.</span>` : "")
+      + (s.last_flag ? `<br><span class="warn">Last file flagged ${new Date(s.last_flag.at).toLocaleString()} (${esc(s.last_flag.company)}, ${s.last_flag.stored ? "a stored file, removed" : "refused at the door"}). It is in the event log and on that company's record.</span>` : "");
+    P.scan = { value: !s.signatures ? "no signatures" : s.stale ? "old signatures" : "on", level: s.stale ? "amber" : "ok" };
+  }
+  document.getElementById("scan-sweep").style.display = s.configured ? "" : "none";
+  drawPills();
+}
+async function scanSweep() {
+  const m = document.getElementById("scan-msg"); m.textContent = "Scanning…";
+  const r = await fetch("/api/admin/scan/sweep", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); const j = await r.json().catch(() => ({}));
+  const w = j.sweep || {};
+  m.textContent = !r.ok ? (j.error || "It did not run.") : w.skipped ? `Not run: ${w.skipped}.` : `${w.scanned} scanned, ${w.clean} clean, ${w.removed} removed${w.left ? `, ${w.left} left for next time` : ""}.`;
+  loadScan();
+}
 async function loadCredit() {
   const r = await fetch("/api/admin/credit"); if (!r.ok) return;
   const c = await r.json(), el = document.getElementById("credit");
@@ -455,6 +496,7 @@ function drawIsolation(rn) {
 async function loadHealth() {
   loadCredit().catch((e) => console.error("credit:", e));
   loadNotify().catch((e) => console.error("notify:", e));
+  loadScan().catch((e) => console.error("scanner:", e));
   const days = document.getElementById("h-days").value;
   const r = await fetch(`/api/admin/health?days=${days}`);
   if (!r.ok) { document.getElementById("h-fleet").innerHTML = `<div class="sub fail">could not load loop health (${r.status})</div>`; return; }
@@ -825,12 +867,12 @@ function companyCard(c) {
           <td style="white-space:nowrap" data-outside="${esc(m.name)}">${["erp", "printer"].map(k => { const on = (m.outside_on || []).includes(k); return `<label style="margin-right:8px;font-size:12px" title="${on ? "Turned on: builds of this tool may connect to it" : "Off: no build of this tool may connect to it"}"><input type="checkbox" ${on ? "checked" : ""} onchange="setOutside('${c.slug}','${m.name}','${k}',this.checked)"> ${k === "erp" ? "ERP" : "Printer"}</label>`; }).join("")}</td>
           <td style="white-space:nowrap">${m.live_version ? `<a href="/c/${c.slug}/m/${m.name}/">Open</a>${hasTour(m.name) ? ` <a class="tourlink" style="margin-left:6px" href="/c/${c.slug}/m/${m.name}/?tour=1">Start tour</a>` : ""}` : ""}</td></tr>`).join("")}</table>` : '<div class="sub">None yet.</div>'}
       </div>
-      <div class="sec"><h3>Sign-in</h3>${accessText(c)}${c.demo ? "" : `<br><button class="quiet" onclick="openAccess('${c.slug}', '${esc(c.name)}')">Set passwords</button>`}
+      <div class="sec"><h3>Sign-in</h3>${accessText(c)}${c.demo ? "" : `<br><button class="quiet" onclick="openAccess('${c.slug}', '${jss(c.name)}')">Set passwords</button>`}
         <div class="sub" style="margin-top:6px">Names and PINs for the people on the floor are on its <a href="/c/${c.slug}/people">People</a> page.</div></div>
       <div class="sec"><h3>AI credit</h3>${c.credit ? `<b class="${c.credit.level === "red" ? "fail" : c.credit.level === "amber" ? "warn" : "ok"}">$${c.credit.balance_usd.toFixed(2)} left</b> of $${c.credit.credit_usd.toFixed(2)} bought or granted, $${c.credit.spent_usd.toFixed(2)} used since ${day(c.credit.since)}.${c.credit.balance_usd <= 0 ? " <b class=\"fail\">Nothing runs for them until credit is added.</b>" : ""}${c.credit.contact || c.credit.email ? `<br><small class="sub">${esc(c.credit.contact || "")}${c.credit.email ? ` · ${esc(c.credit.email)}` : ""}</small>` : ""}<br><small class="sub">They add credit at <a href="${esc(c.credit.topup_url)}" target="_blank" rel="noopener">${esc(c.credit.topup_url)}</a>; the ledger is on the <a href="#demos/${esc(c.slug)}">Demos</a> tab.</small>` : `<span class="sub">Not self-serve: this company was made here, not from anetix.ai, and runs on its budget. A grant makes it self-serve, with its AI spend counted against the credit from then on.</span>`}<br>
         <button class="quiet" onclick="grantCredit('${c.slug}')">Grant credit</button></div>
     </div>
-    <details class="comore" data-more="${esc(c.slug)}" ${CO_MORE.has(c.slug) ? "open" : ""} ontoggle="coMore('${esc(c.slug)}', this.open)"><summary>More: add a tool, AI budget and models, test floor, what the AI reads, brand</summary>
+    <details class="comore" data-more="${esc(c.slug)}" ${CO_MORE.has(c.slug) ? "open" : ""} ontoggle="coMore('${esc(c.slug)}', this.open)"><summary>More: add a tool, AI budget and models, test floor, what the AI reads, safeguards, brand</summary>
     <div class="secs">
       <div class="sec wide"><h3>Add a tool</h3><select id="lib-${c.slug}">${addable.map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
           <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
@@ -840,15 +882,56 @@ function companyCard(c) {
         <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(${(c.models.pinned || []).length ? `pinned here: ${c.models.pinned.join(", ")}; ` : "all on the platform's models; "}change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
       <div class="sec"><h3>Test floor</h3>${testFloorHtml(c)}</div>
       <div class="sec"><h3>What the AI reads</h3>${dataWallHtml(c)}</div>
+      <div class="sec wide" data-safeguards="${esc(c.slug)}"><h3>Safeguards</h3>${safeguardsHtml(c)}</div>
       <div class="sec wide"><h3>Brand</h3>${brandHtml(c)}</div>
     </div></details>
     <div class="secs">
       <div class="sec"><h3>Agent docs</h3>${c.docs.length ? `<details><summary>${c.docs.length} doc${c.docs.length === 1 ? "" : "s"} the agents read</summary><ul>` + c.docs.map(d => `<li>${esc(d.name)} <span class="sub">(${d.module ? "module " + esc(d.module) : "company-wide"}, ${d.bytes} bytes, ${d.source === "repo" ? "seeded" : "edited"})</span></li>`).join("") + `</ul></details>` : "None."}
         <div class="sub" style="margin-top:6px">Read and edit them on <a href="/c/${c.slug}/agents">agent settings and docs</a>.</div></div>
       <div class="sec dz"><h3>Danger zone</h3>Everything this company owns goes, with no undo apart from a backup file. Asks for the slug and a fresh code.<br>
-        <button class="danger" onclick="openDelete('${c.slug}', '${esc(c.name)}')">Delete company</button></div>
+        <button class="danger" onclick="openDelete('${c.slug}', '${jss(c.name)}')">Delete company</button></div>
     </div>
   </div>`;
+}
+// Safeguards (src/safeguards.js): what Anetix switches for a company that keeps government contract information here
+// (a defense supplier). Each is off or open until it is switched for that company, and each change is on its record.
+function safeguardsHtml(c) {
+  const a = c.access || {}, nets = a.networks || [];
+  const row = (key, on, title, onWords, offWords) => `<label style="display:block;margin:5px 0"><input type="checkbox" data-sg="${key}" ${on ? "checked" : ""} onchange="setSafeguard('${c.slug}','${key}',this.checked,this)"> <b>${title}</b> <span class="sub">${on ? onWords : offWords}</span></label>`;
+  return `<div class="sub" style="margin-bottom:6px">For a company that keeps government contract information here (a defense supplier). Nothing below changes for a company until it is switched for that company.</div>
+    ${row("talk", c.allow_talk !== false, "Talk instead of typing", "On: the mic button is offered, and the browser sends the audio to Google or Apple to turn it into words.", "Off: no mic button on this company's pages.")}
+    ${row("label_preview", c.allow_label_preview !== false, "Label previews", "On: a label's contents go to a public renderer to draw its picture.", "Off: nothing is sent, and a tool shows the label's text.")}
+    ${row("require_scan", c.require_scan === true, "Uploads must be scanned", "On: a file the malware scan could not take is refused.", "Off: a file the scan could not take is kept, and scanned when the scanner answers again.")}
+    <div style="margin-top:8px" data-sg-networks><b>Shared passwords work from:</b> ${nets.length ? esc(nets.join(", ")) : "anywhere"} <button class="quiet" onclick="openNetworks('${c.slug}', '${jss(c.name)}')">${nets.length ? "Change" : "Limit to the plant's network"}</button>
+      <div class="sub">That is the floor's password${a.own_manager ? " and the shared manager password" : ""}. A named account with a second factor works from anywhere.</div></div>`;
+}
+async function setSafeguard(slug, key, on, box) {
+  if (key === "require_scan" && on && SCAN && !SCAN.configured && !confirm("There is no scanner on this instance yet, so every upload for this company will be refused until there is one. Switch it on anyway?")) { box.checked = false; return; }
+  await post(`/api/admin/companies/${slug}/safeguards`, { [key]: on });
+  load(); loadScan();
+}
+async function openNetworks(slug, name) {
+  const r = await fetch(`/api/admin/companies/${slug}/safeguards`, { cache: "no-store" }); const s = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(s.error || "could not read the company's safeguards");
+  openModal(`<h2>Where ${esc(name)}'s shared passwords work from</h2>
+    <p class="sub">One address or range a line: what the plant's internet connection shows the world. Their IT knows it, or stand in the plant on its wifi and press the button below. Empty means anywhere.</p>
+    <p class="sub">This holds the floor's password${s.shared_manager_password ? " and the shared manager password" : ""}. A manager with an account of their own, and Anetix, sign in from anywhere. A device that leaves the plant's wifi is refused until it is back, and is not signed out. It is not a second factor: a guest on the plant's wifi shares its address.</p>
+    <textarea id="nw-list" rows="5" style="width:100%;font-size:14px" placeholder="203.0.113.7&#10;198.51.100.0/24">${esc((s.networks || []).join("\n"))}</textarea>
+    ${s.address_proven ? "" : `<p class="fail" id="nw-unproven">The edge check is not enforced on this instance (the Instance tab), so the address a request claims is not proven: a list holds nobody out until it is.</p>`}
+    <div class="sub" style="margin:6px 0">You are coming from <b>${esc(s.your_address || "an address that could not be read")}</b>${s.your_address_listed ? " (on the list)" : ""}.${s.your_network && !s.your_address_listed ? ` <button class="quiet" style="margin-top:0" onclick="addMyNetwork('${esc(s.your_network)}')">Add the network I am on now</button>` : ""}</div>
+    <div><button class="go" onclick="saveNetworks('${slug}')">Save</button><button class="quiet" onclick="closeModal()">Cancel</button> <span class="fail" id="nw-msg"></span></div>`);
+}
+function addMyNetwork(n) { const t = document.getElementById("nw-list"); if (!t.value.split(/\s+/).includes(n)) t.value = (t.value.trim() ? t.value.trim() + "\n" : "") + n; }
+async function saveNetworks(slug) {
+  const r = await fetch(`/api/admin/companies/${slug}/safeguards`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ networks: document.getElementById("nw-list").value }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { document.getElementById("nw-msg").textContent = j.error || "It did not save."; return; }
+  closeModal(); load();
+}
+async function dropManagerPassword(slug) {
+  if (!confirm("Take away this company's shared manager password? From then on a manager signs in with an account of their own and a second factor, and no other way. Everyone on the floor's password signs in once more. The floor's password stays as it is.")) return;
+  await post(`/api/admin/companies/${slug}/safeguards/drop-manager-password`, {});
+  load();
 }
 // The data wall (src/datawall.js): whether the AI may read the company's data. Walled off, it builds the pipeline the
 // data goes through without seeing the data: the tool's files and the words people type, never rows, uploads, ERP
@@ -922,7 +1005,9 @@ function accessText(c) {
   const a = c.access || {};
   if (a.legacy_login) return '<span class="fail">still on the shared floor and manager passwords from before 2026-09-19. Anyone holding those can sign in here.</span>';
   // a self-serve company: the floor's shared password, and for the manager an account with an authenticator app (never a shared manager password)
-  if ((c.managers || []).length) return `${a.own_floor ? "its own floor password" : c.demo ? "a demo: no floor password (the floor gets its own when the site goes live)" : '<span class="warn">no floor password yet (the floor cannot sign in)</span>'}; manager sign-in is by account:<br>` + c.managers.map(m => `<b>${esc(m.login)}</b> <small class="sub">(${esc(m.name || "")}${m.status !== "active" ? ", switched off" : ""}; ${m.enrolled ? "authenticator set up" : '<span class="warn">authenticator not set up yet: set up at their first sign-in</span>'}${m.last_sign_in ? `; last sign-in ${new Date(m.last_sign_in).toLocaleDateString()}` : "; never signed in"})</small> <button class="quiet" style="margin:2px 0;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-password','${esc(m.login)}')">New password</button>${m.enrolled ? `<button class="quiet" style="margin:2px 0 2px 4px;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-factor','${esc(m.login)}')">Reset authenticator</button>` : ""}`).join("<br>");
+  if ((c.managers || []).length) return `${a.own_floor ? "its own floor password" : c.demo ? "a demo: no floor password (the floor gets its own when the site goes live)" : '<span class="warn">no floor password yet (the floor cannot sign in)</span>'}; manager sign-in is by account:<br>` + c.managers.map(m => `<b>${esc(m.login)}</b> <small class="sub">(${esc(m.name || "")}${m.status !== "active" ? ", switched off" : ""}; ${m.enrolled ? "authenticator set up" : '<span class="warn">authenticator not set up yet: set up at their first sign-in</span>'}${m.last_sign_in ? `; last sign-in ${new Date(m.last_sign_in).toLocaleDateString()}` : "; never signed in"})</small> <button class="quiet" style="margin:2px 0;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-password','${jss(m.login)}')">New password</button>${m.enrolled ? `<button class="quiet" style="margin:2px 0 2px 4px;min-height:28px;padding:3px 8px" onclick="accAct(${m.id},'reset-factor','${jss(m.login)}')">Reset authenticator</button>` : ""}`).join("<br>")
+    // a shared manager password beside the accounts is a second way in with no second factor (src/safeguards.js)
+    + (a.own_manager ? `<br><span class="warn">A shared manager password is set as well: anyone who holds it manages this company with no second factor.</span> <button class="quiet" style="margin:2px 0;min-height:28px;padding:3px 8px" onclick="dropManagerPassword('${c.slug}')">Take it away</button>` : "");
   if (a.own_floor && a.own_manager) return "its own floor and manager passwords" + (a.updated_at ? ", set " + new Date(a.updated_at).toLocaleDateString() : "");
   return `<span class="fail">${a.own_floor ? "no manager password yet (only an admin can manage it)" : a.own_manager ? "no floor password yet (the floor cannot sign in)" : "no passwords yet"}</span>`;
 }
@@ -931,7 +1016,7 @@ function openAccess(slug, name) {
     <p class="sub">The floor password is for everyone on the floor, the manager password for the people who approve changes. They are kept scrambled: nobody can read them back later, so hand them over now. Setting them here ends this company's use of the shared passwords. Leave a box empty to keep that password as it is.</p>
     <input id="ac-floor" placeholder="floor password (8 or more characters)" autocomplete="off">
     <input id="ac-manager" placeholder="manager password (8 or more characters)" autocomplete="off">
-    <div><button class="go" onclick="saveAccess('${slug}', '${esc(name)}', false)">Save these</button><button class="quiet" onclick="saveAccess('${slug}', '${esc(name)}', true)">Make up both for me</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+    <div><button class="go" onclick="saveAccess('${slug}', '${jss(name)}', false)">Save these</button><button class="quiet" onclick="saveAccess('${slug}', '${jss(name)}', true)">Make up both for me</button><button class="quiet" onclick="closeModal()">Cancel</button></div>`);
   setTimeout(() => document.getElementById("ac-floor").focus(), 50);
 }
 async function saveAccess(slug, name, generate) {
@@ -1102,7 +1187,7 @@ async function loadAccounts() {
     <td>${esc(a.login)}</td>
     <td>${a.enrolled ? `<span class="ok">set up</span> <small class="sub">${a.recovery_left} recovery code${a.recovery_left === 1 ? "" : "s"} left${a.passkeys ? ` · ${a.passkeys} passkey${a.passkeys === 1 ? "" : "s"}` : ""}</small>` : '<span class="warn">not set up yet</span>'}</td>
     <td>${when(a.last_sign_in)}${a.devices ? `<br><small class="sub">${a.devices} trusted computer${a.devices === 1 ? "" : "s"}</small>` : ""}</td>
-    <td><button class="quiet" onclick="accSignOut(${a.id}, ${a.id === mine})" title="Ends every session of this account, on every device, and stops every computer it trusted, within ten seconds">Sign out everywhere</button>${a.enrolled ? `<button class="quiet" onclick="accAct(${a.id},'reset-factor','${esc(a.login)}')">Reset authenticator</button>` : ""}${a.id !== mine ? `<button class="quiet" onclick="accAct(${a.id},'reset-password','${esc(a.login)}')">New password</button>` + (a.status === "active" ? `<button class="danger" onclick="accDisable(${a.id},'${esc(a.login)}')">Switch off</button>` : `<button class="quiet" onclick="accAct(${a.id},'enable','${esc(a.login)}')">Switch on</button><button class="danger" onclick="accAct(${a.id},'remove','${esc(a.login)}')" title="Only an account that is switched off can be removed">Remove</button>`) : ""}</td></tr>`).join("")
+    <td><button class="quiet" onclick="accSignOut(${a.id}, ${a.id === mine})" title="Ends every session of this account, on every device, and stops every computer it trusted, within ten seconds">Sign out everywhere</button>${a.enrolled ? `<button class="quiet" onclick="accAct(${a.id},'reset-factor','${jss(a.login)}')">Reset authenticator</button>` : ""}${a.id !== mine ? `<button class="quiet" onclick="accAct(${a.id},'reset-password','${jss(a.login)}')">New password</button>` + (a.status === "active" ? `<button class="danger" onclick="accDisable(${a.id},'${jss(a.login)}')">Switch off</button>` : `<button class="quiet" onclick="accAct(${a.id},'enable','${jss(a.login)}')">Switch on</button><button class="danger" onclick="accAct(${a.id},'remove','${jss(a.login)}')" title="Only an account that is switched off can be removed">Remove</button>`) : ""}</td></tr>`).join("")
     : `<tr><td class="sub">No accounts yet.</td></tr>`;
   document.getElementById("acc-me").innerHTML = ME.me ? `<button class="quiet" onclick="changePassword()">Change my password</button>${ME.me.enrolled ? "" : `<button class="go" onclick="enrollStart(false)">Set up my authenticator</button>`}` : "";
   loadDevices(A.trusted_days).catch((e) => console.error("devices:", e));

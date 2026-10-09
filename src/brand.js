@@ -91,7 +91,9 @@ async function readSite(url) {
 }
 
 // Best icon: the largest apple-touch-icon, else any declared icon, else /favicon.ico.
-async function readIcon(site) {
+// The icon is a file from outside, so it is scanned for malware like any other before it is kept (src/scan.js); one
+// that is refused is passed over for the next candidate.
+async function readIcon(site, company) {
   const cands = [...site.icons].sort((a, b) => {
     const s = (x) => (/apple/.test(x.rel) ? 1000 : 0) + (parseInt(x.sizes, 10) || 0);
     return s(b) - s(a);
@@ -99,7 +101,9 @@ async function readIcon(site) {
   cands.push(abs(site.url, "/apple-touch-icon.png"), abs(site.url, "/favicon.ico"));
   for (const href of cands) {
     const got = await getBinary(href, MAX_ICON);
-    if (got) return { dataUrl: `data:${got.type};base64,${got.data.toString("base64")}`, type: got.type, from: href };
+    if (!got) continue;
+    if (company) { try { await require("./scan").check({ company, bytes: got.data, what: "icon", filename: href }); } catch (e) { console.error(`[brand] ${company}: an icon was passed over (${e.message})`); continue; } }
+    return { dataUrl: `data:${got.type};base64,${got.data.toString("base64")}`, type: got.type, from: href };
   }
   return null;
 }
@@ -136,7 +140,7 @@ async function buildGuide(slug, url, model) {
   try {
     if (!/^https?:\/\//i.test(url)) throw new Error("URL must start with http:// or https://");
     const site = fakeMode() ? { url, title: "Fake site", meta: {}, icons: [], logos: [], colors: ["#1f3a5f (x9)"], rgbColors: [], cssVars: [], fonts: ["system-ui"], text: "Fake site text", stylesheets: 0, cssBytes: 0 } : await readSite(url);
-    const icon = fakeMode() ? null : await readIcon(site);
+    const icon = fakeMode() ? null : await readIcon(site, slug);
     if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured");
     const { data, costUsd } = await runStructured({ company: slug,
       model,

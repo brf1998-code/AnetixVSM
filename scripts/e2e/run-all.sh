@@ -183,6 +183,16 @@ run mcp                    env $MCP node scripts/e2e/mcp.js
 fresh; start "SOS_BROWSER=off"
 run mcp-off                node scripts/e2e/mcp.js off
 
+# 2026-10-08: a company's safeguards (the mic, label previews, uploads that must be scanned, the plant's network, no
+# shared manager password) and the upload scanner; the script plays the scanner on 4666 and, on 4667, ntfy and the label
+# renderer. Then the same instance with no scanner at all.
+SG="SOS_SCAN_HOST=127.0.0.1 SOS_SCAN_PORT=4666 SOS_SCAN_SWEEP_MIN=0 SOS_SCAN_TIMEOUT_MS=3000 NTFY_URL=http://127.0.0.1:4667 NTFY_TOPIC=e2e-topic SOS_LABELARY_URL=http://127.0.0.1:4667/labelary"
+fresh; start "SOS_BROWSER=off $SG"
+run safeguards             env $SG node scripts/e2e/safeguards.js
+[ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off $SG"; run safeguards-browser env $SG node scripts/e2e/safeguards-browser.js; }
+fresh; start "SOS_BROWSER=off"
+run safeguards-noscanner   node scripts/e2e/safeguards.js noscanner
+
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
 stop

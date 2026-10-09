@@ -91,7 +91,10 @@ router.post("/api/feedback", async (req, res) => {
       // a bound on what a floor device can put in the database: photos a company a day
       const today = Number((await q("SELECT count(*) FROM platform.attachments WHERE company=$1 AND feedback_id IS NOT NULL AND created_at > now() - interval '24 hours'", [co.slug])).rows[0].count);
       if (today >= arrival.PHOTOS_PER_DAY) throw new Error("enough photos for one day; the words went through");
-      await q("INSERT INTO platform.attachments (company, feedback_id, filename, mime, size, bytes) VALUES ($1,$2,$3,$4,$5,$6)", [co.slug, fb.id, `request-${fb.id}.${mime.split("/")[1].replace("jpeg", "jpg")}`, mime, bytes.length, bytes]);
+      const photoName = `request-${fb.id}.${mime.split("/")[1].replace("jpeg", "jpg")}`;
+      // scanned for malware before it is kept (src/scan.js); a photo that is refused does not stop the words
+      const sc = await require("./scan").check({ company: co.slug, bytes, what: "photo", filename: photoName, ids: { feedback_id: fb.id } }).catch((e) => { throw new Error(`${e.message} The words went through.`); });
+      await q("INSERT INTO platform.attachments (company, feedback_id, filename, mime, size, bytes, scan, scanned_at, scan_sig) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [co.slug, fb.id, photoName, mime, bytes.length, bytes, sc.scan, sc.scanned_at, sc.scan_sig]);
     } catch (e) { photoNote = e.message; }
   }
   await logEvent("feedback_submitted", fb.id, { company: co.slug, module: mod, screen });
@@ -906,7 +909,8 @@ router.get("/api/admin/health", requireAdmin, async (req, res) => {
 const whoAmI = (req) => (req.sosPersonId && req.sosPersonCompany === req.params.slug ? { id: req.sosPersonId, name: req.sosPerson, role: req.sosPersonRole } : null);
 router.get("/api/c/:slug/who", async (req, res) => {
   // account: the named account behind this session (an admin, a demo's manager), so the feedback button can say who it sends as when nobody tapped a name
-  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), account: req.sosAccount ? { name: req.sosAccount.name || req.sosAccount.login } : null, photos: (await arrival.settings(req.params.slug)).allow_photos }); }
+  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), account: req.sosAccount ? { name: req.sosAccount.name || req.sosAccount.login } : null, photos: (await arrival.settings(req.params.slug)).allow_photos,
+    talk: (await require("./safeguards").get(req.params.slug)).talk }); }   // talk: whether the mic button may be offered (public/assets/dictate.js asks before it listens)
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 router.get("/api/c/:slug/people", requireManager, async (req, res) => {
@@ -1044,7 +1048,8 @@ router.get("/api/c/:slug/connections/:mod/:name/preview.png", requireManager, as
     if (!c || c.kind !== "printer") return res.status(404).end();
     const co = (await q("SELECT name FROM platform.companies WHERE slug=$1", [req.params.slug])).rows[0];
     const zpl = connections.renderZpl(connections.TEST_LABEL, { company: co ? co.name : req.params.slug, when: "date and time", code: "TEST000000" });
-    const png = await connections.previewPng(zpl, c.settings);
+    if (!(await require("./safeguards").get(req.params.slug)).label_preview) return res.status(409).json({ error: "label previews are switched off for this company", preview_off: true });
+    const png = await connections.previewPng(zpl, c.settings, req.params.slug);
     if (!png) return res.status(503).json({ error: "the label renderer could not be reached" });
     res.set("Cache-Control", "no-cache").type("png").send(png);
   } catch (e) { res.status(500).json({ error: e.message }); }

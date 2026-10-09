@@ -64,6 +64,8 @@ async function main() {
   await require("./src/demostops").init();   // a demo's build that stopped before a preview: its spend handed back, listed on /admin until addressed (the launch audit 1.20)
   await require("./src/mcpauth").init();     // connector sign-in: the apps, connections and tokens behind an MCP address (src/mcpauth.js, docs/MCP.md)
   await require("./src/mcp").init();         // the MCP addresses' call log (src/mcp.js)
+  await require("./src/safeguards").init();  // safeguards for a company that keeps contract information here: the mic, label previews, scanned uploads, the plant's network (src/safeguards.js)
+  await require("./src/scan").init();        // every file from outside is scanned for malware before it is kept (src/scan.js)
 
   const app = express();
   app.disable("x-powered-by");
@@ -154,6 +156,8 @@ async function main() {
 
   app.use(auth.middleware);    // everything below needs a floor, manager, or admin session
   app.use(auth.companyGuard);  // and a floor or manager session reaches its own company only
+  app.use(require("./src/safeguards").networkGate);   // a company's shared sign-ins work only from its own network, when it has a list (src/safeguards.js)
+  app.use(require("./src/safeguards").pageHeaders);   // a company with the mic switched off: its pages tell the browser so (src/safeguards.js)
   app.use(require("./src/companyview").middleware);   // what a manager or floor reads of /api/: no model names, no AI costs (src/companyview.js)
   app.use(people.attach);      // who is standing at this device, if anyone (a name and a PIN, src/people.js)
   app.use(connections.deviceCookie);   // a random device id per browser, so a print job goes back to the screen that asked
@@ -205,6 +209,7 @@ async function main() {
   app.use(require("./src/managers").router);     // /api/c/:slug/managers*: who manages a company, invitations, switching one off (src/managers.js)
   app.use(require("./src/pilot").router);        // /api/admin/sites/:slug/offer: a pilot Anetix offers one company (src/pilot.js)
   app.use(require("./src/notify").router);       // /api/admin/notify*: alerts to Anetix's phones through ntfy (src/notify.js)
+  app.use(require("./src/safeguards").router);   // /api/admin/companies/:slug/safeguards*, /api/admin/scan*: a company's safeguards and the upload scanner (src/safeguards.js, src/scan.js)
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
@@ -254,6 +259,8 @@ async function main() {
   require("./src/campaign").startWatching();
   require("./src/spendwatch").start();       // phone alerts when AI spend climbs fast; never refuses anything (src/spendwatch.js, the launch audit 0.5)
   require("./src/uptime").start();           // anetix.ai not answering: an alert (src/uptime.js; anetix.ai watches this product the same way)
+  require("./src/scan").start();             // the upload scanner: says whether it answers, and the look-behind over stored files (src/scan.js)
+  require("./src/safeguards").bootCheck().catch((e) => console.error("[safeguards] boot check:", e.message));   // a network list standing while the edge check is not enforced
   require("./src/dataexport").startSweeps();   // demo requests past 12 months go (the privacy notice)   // the guided steps' watches, every few seconds while any campaign is walking
   // modules with no diagrams yet (first boot after this feature) get them now
   // (only ones never attempted: a failed drawing is not paid for again on every restart; Diagrams on the board redraws on demand)

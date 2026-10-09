@@ -340,6 +340,8 @@ async function previewUpload(company, mod, name, { filename, mime, data }, actor
   if (!buf.length) throw new Error("the file is empty");
   if (buf.length > attachments.MAX_BYTES) throw new Error(`the file is over ${Math.round(attachments.MAX_BYTES / 1048576)} MB`);
   if (attachments.kindOf(mime, filename) !== "sheet") throw new Error("that is not a spreadsheet: a csv or an xlsx file works");
+  // scanned for malware before it is read (src/scan.js); its bytes are not kept after this, only its rows
+  await require("./scan").check({ company, bytes: buf, what: "sheet", filename });
   let parsed; try { parsed = parseAll(buf, mime, filename); } catch (e) { throw new Error(`could not read that spreadsheet (${e.message}); save it as csv and try again`); }
   if (!parsed.headers.length) throw new Error("the spreadsheet has no header row");
   const schema = migrate.liveSchema(company, mod);
@@ -466,8 +468,11 @@ async function jobs(company, mod, name, limit = 20) {
 // A PNG of the label, from Labelary's public renderer (the platform reaches
 // it, the device never does). null when it cannot be reached; the module
 // shows the text of the label instead.
+// A company with label previews switched off (src/safeguards.js): nothing is sent, the answer is null, and the tool
+// shows the label's text exactly as it does when the renderer cannot be reached.
 const previews = new Map();
-async function previewPng(zpl, settings) {
+async function previewPng(zpl, settings, company) {
+  if (company && !(await require("./safeguards").get(company)).label_preview) return null;
   const s = printerSettings({ settings });
   const k = crypto.createHash("md5").update(`${s.dpmm}|${s.width_in}|${s.height_in}|${zpl}`).digest("hex");
   const hit = previews.get(k); if (hit && hit.at > Date.now() - PREVIEW_TTL_MS) return hit.png;
@@ -993,7 +998,7 @@ function surfaces(company, mod, version, manifest, lane = "live") {
         if (!d.templates.includes(template)) throw new Error(`no label named ${template} on this connection`);
         const zpl = renderZpl(await templateText(company, mod, version, template), data || {});
         const c = await row(company, mod, name);
-        return { zpl, png: await previewPng(zpl, c && c.settings) };
+        return { zpl, png: await previewPng(zpl, c && c.settings, company) };
       },
     };
   }

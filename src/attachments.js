@@ -127,15 +127,17 @@ async function add({ company, intakeId, questionId, filename, mime, data }) {
   if (buf.length > MAX_BYTES) throw new Error(`that file is bigger than ${Math.round(MAX_BYTES / 1048576)} MB`);
   const n = Number((await q("SELECT count(*) FROM platform.attachments WHERE intake_id=$1", [intakeId])).rows[0].count);
   if (n >= MAX_PER_INTAKE) throw new Error(`this intake already has ${MAX_PER_INTAKE} files; remove one first`);
+  // scanned for malware before it is kept or read (src/scan.js)
+  const sc = await require("./scan").check({ company, bytes: buf, what: "attachment", filename, ids: { intake_id: intakeId } });
   let parsed = null;
   if (kind === "sheet") {
     try { parsed = parseSheet(buf, mime, filename); }
     catch (e) { throw new Error(`could not read that spreadsheet (${e.message}). Save it as csv and try again.`); }
   }
   const r = await q(
-    `INSERT INTO platform.attachments (company, intake_id, question_id, filename, mime, size, bytes, parsed)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, question_id, filename, mime, size, parsed, created_at`,
-    [company, intakeId, questionId || null, String(filename || "file").slice(0, 200), mime || "application/octet-stream", buf.length, buf, parsed ? JSON.stringify(parsed) : null]);
+    `INSERT INTO platform.attachments (company, intake_id, question_id, filename, mime, size, bytes, parsed, scan, scanned_at, scan_sig)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id, question_id, filename, mime, size, parsed, created_at`,
+    [company, intakeId, questionId || null, String(filename || "file").slice(0, 200), mime || "application/octet-stream", buf.length, buf, parsed ? JSON.stringify(parsed) : null, sc.scan, sc.scanned_at, sc.scan_sig]);
   return { ...r.rows[0], kind };
 }
 async function list(intakeId) {

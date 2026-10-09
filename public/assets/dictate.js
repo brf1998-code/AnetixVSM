@@ -11,6 +11,10 @@
 //     Fine for demos and first pilots; before a defense or CMMC customer this
 //     file is the one place to swap for a record-and-transcribe-on-our-server
 //     version. Callers only use attach / scan / stop, so nothing else changes.
+//   - Since 2026-10-08 a company can have talking switched off (src/safeguards.js,
+//     set by Anetix on the company's card): the button is never offered there. This
+//     file asks the platform once (/who, which a tool's own pages may reach) and
+//     nothing listens before the answer; an answer that never comes counts as off.
 //
 // Words land in the box as they are heard and fire an ordinary "input" event,
 // so whatever the page already does on typing (saving an answer, a character
@@ -22,6 +26,19 @@ window.Dictate = (() => {
   const supported = Boolean(SR);
   const MAX_MS = 3 * 60 * 1000;   // one tap listens at most this long, so a forgotten mic does not stay open
   let active = null;               // the one box listening right now
+  // Is talking on for this company? null until /who answers. A page that is not a company's (no /c/<slug>/ in its
+  // address) has nothing to ask.
+  let allowed = null;
+  const slug = (/^\/c\/([^/]+)\//.exec(location.pathname) || [])[1];
+  const ask = !supported ? Promise.resolve(false) : !slug ? Promise.resolve(true)
+    : fetch("/api/c/" + encodeURIComponent(slug) + "/who", { cache: "no-store", credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null)).then((j) => Boolean(j && j.talk !== false)).catch(() => false);
+  ask.then((ok) => {
+    allowed = ok;
+    if (ok) return;
+    stop(false);
+    for (const w of document.querySelectorAll(".sos-dictate")) w.remove();   // a button drawn before the answer came
+  });
 
   const MIC = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v4"/></svg>';
   const IDLE_LABEL = "Talk instead of typing";
@@ -144,7 +161,7 @@ window.Dictate = (() => {
 
   // Put a mic button under one text box. Safe to call again on the same box.
   function attach(el) {
-    if (!supported || !el || el.getAttribute("data-dictate") === "on" || el.disabled || el.readOnly) return null;
+    if (!supported || allowed === false || !el || el.getAttribute("data-dictate") === "on" || el.disabled || el.readOnly) return null;
     css();
     el.setAttribute("data-dictate", "on");
     const wrap = document.createElement("div");
@@ -163,7 +180,8 @@ window.Dictate = (() => {
       e.preventDefault(); e.stopPropagation();
       const mine = active && active.el === el;
       if (active) stop(mine);
-      if (!mine) listen(el, btn, wrap);
+      // never before the platform has said talking is on for this company
+      if (!mine) ask.then((ok) => { if (ok && el.isConnected && !active) listen(el, btn, wrap); });
     });
     // the person typing takes the box back
     el.addEventListener("input", (e) => { if (e.isTrusted && active && active.el === el) stop(); });
@@ -171,7 +189,7 @@ window.Dictate = (() => {
     return wrap;
   }
   function scan(root, selector) {
-    if (!supported || !root) return;
+    if (!supported || allowed === false || !root) return;
     for (const el of root.querySelectorAll(selector || "textarea")) attach(el);
   }
   // a phone locked or a tab switched: stop listening
@@ -183,5 +201,6 @@ window.Dictate = (() => {
     supported, attach, scan,
     stop: (within) => { if (active && (!within || within.contains(active.el))) stop(false); },
     isListening: () => Boolean(active),
+    allowed: () => allowed,   // null until the platform has answered
   };
 })();

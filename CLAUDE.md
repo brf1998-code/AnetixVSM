@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-10-05)
+# Symbiotic OS: Workspace Guide (current as of 2026-10-08)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -166,6 +166,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Connector sign-in and the admin MCP (2026-10-05)
 - Price book 2 (by the tool live on the floor), the pilot offer, and the board link on every page (2026-10-05)
 - Adding a manager to a company that already exists; a company added by hand on the Sites tab (2026-10-06)
+- Safeguards for a company that keeps contract information here, and the upload scanner (2026-10-08)
 
 ## What this is
 
@@ -334,6 +335,13 @@ tool list, 401 from the API) proves the CLI itself starts.
   with none left is refused) and named in the log. `SOS_MCP_ACCESS_MIN` (60), `SOS_MCP_MAX_CHARS` (120000: the most text one tool answer carries),
   `SOS_MCP_CALL_DAYS` (400: how long the call log is kept). A connection's idle and cap windows are the admin
   cookie's (`SOS_ADMIN_IDLE_HOURS`, `SOS_ADMIN_CAP_HOURS`).
+- `SOS_SCAN_HOST` (clamav.railway.internal: the upload scanner's private address, `src/scan.js`; the service is
+  `clamav` in the same project, image `clamav/clamav:stable`, a volume at `/var/lib/clamav`, `FRESHCLAM_CHECKS=4`,
+  no public domain; `docs/SAFEGUARDS.md` has the setup). Unset: files are kept unscanned as before, the Instance tab
+  says so in amber, and a company with "Uploads must be scanned" on gets every upload refused. `SOS_SCAN_PORT`
+  (3310), `SOS_SCAN_TIMEOUT_MS` (20000), `SOS_SCAN_SWEEP_MIN` (60; 0 = no look-behind), `SOS_SCAN_RESCAN_DAYS` (7),
+  `SOS_SCAN_STALE_DAYS` (3: signatures older than this are a fault). `SOS_LABELARY_URL` (the public label renderer;
+  a stand-in in the tests only).
 - `SOS_CONNECTION_KEY` (REQUIRED; any long random string, `openssl rand -hex
   32`): the key every admin's and manager's authenticator secret, every ERP
   login, every company's welcome handout and the per-company database passwords
@@ -517,6 +525,16 @@ Passwords live only in Railway; never commit them.
   words of a failed check (its kind only): a new tool gets its case in `scripts/test-mcp.js` and its call in
   `scripts/e2e/mcp.js`, where a canary row and a canary failure line must be in no answer. A new table that points
   at `platform.accounts` goes in `backup.js` restore's TRUNCATE list, or a restore fails.
+- Free text (a company's name, a person's name, an email) never goes into a quoted argument of an inline `onclick`
+  with `esc()` alone: an apostrophe ends the argument and the rest runs as script. On `/admin` it goes through
+  `jss()`; better still, pass an id or a slug and look the words up in what the page already holds.
+- A file from outside is never kept before `scan.check` has seen it (`src/scan.js`): a new way for a file to come
+  in (a photo, an attachment, a sheet, anything fetched from an address a person gave) calls it with the bytes and
+  stores what it answers beside the file, or keeps nothing. Never catch its refusal and keep the file anyway.
+  Nothing a company reads names the scanner. A new connection that sends a company's information outside the
+  instance gets a row in the table of `docs/SAFEGUARDS.md` and, where it is a choice, a switch in
+  `src/safeguards.js` that Anetix sets per company. Anything that holds a request to the plant's network reads the address through
+  `edge.clientIp` and lets a named account and the platform's own loopback calls pass (`safeguards.networkGate`).
 - Every company gets every feature its kind gets, whenever it was made. A feature gate reads what a company is NOW
   (`src/kind.js`: a paid site or a trial), never a column fixed on the day the company was made; `companies.demo`
   means only "came in from anetix.ai with credit". Anything the platform keeps per company (a flag, a seeded row, a

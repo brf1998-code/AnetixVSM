@@ -1,0 +1,16 @@
+# Dependabot (2026-10-08, the CMMC Level 1 gap audit, P3): a weekly look at this repo's npm packages, and a pull
+# request for each one with an update. Security advisories open their own pull request the day GitHub learns of
+# them, whatever the schedule, once "Dependabot alerts" and "Dependabot security updates" are switched on for the
+# repo (Settings, Code security). Nothing here deploys: a pull request waits for a person, and Railway builds main
+# only. What was done about each is written down in docs/UPDATES.md (the sos repo).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]

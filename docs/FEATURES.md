@@ -3406,3 +3406,110 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     using its shared manager password to start an order.
   - *Tests:* `scripts/test-managers.js` (9), `scripts/e2e/managers.js` (40), `scripts/e2e/managers-browser.js` (14),
     and the by-hand company's pilot through to Activate in `scripts/e2e/pricing.js` (82).
+
+- **Safeguards for a company that keeps contract information here, and the upload scanner** (2026-10-08;
+  `src/safeguards.js`, `src/scan.js`, `docs/SAFEGUARDS.md`, `docs/UPDATES.md`, `.github/dependabot.yml`; in the www
+  repo `edge.js`). Brendan: "offering to some of the defense base", then, after the CMMC Level 1 gap audit of the
+  same day (project doc `claude/cmmc-level-1-gap-audit-2026-10-08.md`): "get going on the product side fixes that
+  are needed including scanning uploaded files for malware". The audit's product items P1 to P4 and P8, plus P3's
+  update. `docs/SAFEGUARDS.md` is the runbook for a defense supplier, the list of where a company's information can
+  go, and the draft of who covers which of the fifteen safeguards.
+  - *The upload scanner (P1).* Every file from outside is scanned for malware before it is kept: a photo with a
+    request (`feedback.js`), an attachment to a new tool's questions (`attachments.add`), a spreadsheet for a tool
+    (`connections.previewUpload`), a company's icon from its site (`brand.readIcon`). All four go through
+    `scan.check({ company, bytes, what, filename, ids })`, which speaks clamd's INSTREAM protocol over one TCP
+    connection a file to a ClamAV service on the private network (`SOS_SCAN_HOST`; no dependency). Clean: kept,
+    with `scan='clean'`, `scanned_at` and `scan_sig` (the signature set, "27784 of 2026-10-07") on its
+    `platform.attachments` row. Flagged: refused (422), never stored, `file_refused_by_scan` on the company's
+    record, `scan_refused` in the events, a phone alert with the company and the kind of file (never the file's
+    name). Could not be scanned: refused (503, "try again in a few minutes") for a company with `require_scan`,
+    kept as `unscanned` for any other. A photo that is refused never stops the request's words. Nothing a person
+    reads names the scanner.
+  - *The look-behind.* `scan.sweep()`, 90 seconds after boot and every `SOS_SCAN_SWEEP_MIN` (60): every file not
+    marked clean, then every file whose last scan is older than `SOS_SCAN_RESCAN_DAYS` (7), 200 a round. A stored
+    file a later scan flags is DELETED (`file_removed_by_scan`, `scan_removed`, a phone alert): a false alarm costs
+    a photo or a sheet the manager sends again, a kept file would be served back to a browser. A spreadsheet's bytes
+    are not kept after it is read and an icon lives in the brand, so the look-behind is over `platform.attachments`.
+    Alerts, each at most once per gap: the scanner not answering (6 hours), signatures older than
+    `SOS_SCAN_STALE_DAYS` (3) (a day).
+  - *On /admin.* The Instance tab's Upload scanner card (`GET /api/admin/scan`, `POST /api/admin/scan/sweep`):
+    answering or not and since when, the engine, the day of its signatures, stored files clean and not scanned yet,
+    the last look-behind, the last file flagged; a header pill when there is no scanner, it is not answering or its
+    signatures are old. With `SOS_SCAN_HOST` unset nothing changes for any company except one with `require_scan`.
+  - *The switches (P2, P4)*, on the company's card under More, Safeguards (`GET` and `POST
+    /api/admin/companies/:slug/safeguards`, admin only, each change a `safeguards_changed` row on the record):
+    `companies.allow_talk` (the mic), `companies.allow_label_preview`, `companies.require_scan`, and
+    `company_access.networks` (a `TEXT[]` of addresses and ranges). `safeguards.get(company)` is the one read,
+    remembered ten seconds; a change moves a counter so a read that began before it is never remembered after it.
+  - *The mic.* `/api/c/:slug/who` answers `talk`; `public/assets/dictate.js` asks it once per page and nothing
+    listens before the answer (no answer counts as off, a button already drawn is taken away). Every `GET` under
+    `/c/<slug>/` carries `Permissions-Policy: microphone=()` with it off and `microphone=(self)` with it on: on,
+    too, because a browser that already holds the page revalidates it, and a header missing from "not changed"
+    leaves the old one standing (the browser suite found a company switched back on with no microphone).
+  - *Label previews.* `connections.previewPng(zpl, settings, company)` answers null with the switch off and nothing
+    is sent to the public renderer; a tool falls back to the label's text as it does when the renderer is down.
+  - *The plant's network.* `safeguards.networkGate`, after `auth.companyGuard`: a SHARED-password session (floor, or
+    a shared manager password) from an address not on the company's list is refused on every request, 403 with a
+    page that says to join the plant's wifi ("You are still signed in") or JSON `{ off_network: true }`. It is not
+    signed out: back on the wifi it works. A named account (`req.sosAccount`), an admin, the internal token and
+    the platform's own calls over loopback with no forwarded address (the checks and page load of a staged build)
+    pass. At sign-in (`auth.loginHandler`) the refusal comes whether the password was right or wrong, with the
+    same words, so it says nothing about the password; it counts against the address like a wrong password and is
+    in the sign-in log (`off_network`). The address is `edge.clientIp`. Entries: an address or a range, IPv4 no
+    wider than /8, IPv6 no wider than /16, twenty at most; "the network I am on" is the IPv4 address or the IPv6
+    /64. The list lives on the company's access row and travels in a backup.
+  - *No shared manager password.* `POST /api/admin/companies/:slug/safeguards/drop-manager-password`
+    (`auth.dropManagerPassword`): refused for a company still on the old shared passwords and until a manager
+    account with a second factor exists; then the manager hash goes, the generation moves (every shared session
+    signs in once more, the floor's password is unchanged), `manager_password_dropped` on the record. The Sign-in
+    section of the card now says when a shared manager password sits beside manager accounts, with Take it away.
+  - *Updates (P3).* `@modelcontextprotocol/sdk` 1.30.0 to 1.32.1 (GHSA-6qxp-vccf-f47h, high, in its OAuth client;
+    the product runs the server side); `npm audit` is 0 in both repos. `.github/dependabot.yml` in both repos
+    (weekly, minor and patch grouped). `docs/UPDATES.md`: the rule (a stated time to fix, proposed, Brendan to
+    confirm), the monthly check, the log.
+  - *anetix.ai's edge check (P8, www repo).* `www/edge.js`, first in line in `www/server.js`: with
+    `SOS_EDGE_SECRET` set on the anetix-www service a request without the Cloudflare rule's `X-SOS-Edge` header is
+    refused (403), apart from `/health` and loopback; `SOS_EDGE_MODE=report` logs and refuses nothing. Until this,
+    a request sent straight to Railway with `Host: anetix.ai` chose its own address for the pin limiter.
+  - *A second pair of eyes (a review of the finished change, the same day), and what it changed.* A company's
+    name sat inside a quoted `onclick` argument on the card with only `esc()` on it, so an apostrophe ended the
+    argument: "O'Brien Tool" broke its own buttons, and a name written for the purpose would have run as script in
+    an admin's session. The new button had copied the pattern from Set passwords and Delete company, and the
+    account buttons did the same with a sign-in email; all of them now go through `jss()` in `admin.html`. The
+    look-behind stopped at the first file the scanner gave up on and never got past it: such a file is now marked
+    as tried, with why, and tried again a day later, and only a scanner that stops answering ends a round. The
+    network refusal at sign-in came after the password was hashed, so its timing still told a right manager
+    password from a wrong one: it now comes first. A list is only as good as the address, which is proven only
+    while the edge check is enforced: a hosted instance refuses a list otherwise, the list's box says so, and boot
+    says so if one is standing. `Permissions-Policy` joined the headers a tool's code cannot set. A scanner's
+    "past my limits" answer is never read as a flag. `safeguards.set` saves nothing when the list is refused, and
+    taking a manager password away from a company that does not exist is a 404.
+  - *Decisions made in the build (Brendan to overrule).* A stored file a later scan flags is removed, not
+    quarantined. The network list holds shared passwords only, never a named account. The list is checked on every
+    request rather than at sign-in alone. Setting it is Anetix's, not the manager's.
+  - *Known limits.* The floor's password is still one per plant and a floor device can file with no name. The
+    network list is not a second factor (a guest on the plant's wifi shares its address) and a plant whose address
+    changes is locked out until Anetix changes the list. The scanner takes commands from any service on the
+    private network. A restore's file is not scanned at the door (the look-behind scans what it carried). A tool's
+    own table may hold bytes that came through the tool's own screen, outside the scan (none does today). A wrong
+    try from off the plant's network counts against that address for every sign-in. The
+    header that takes the microphone away is read by Chrome and Edge; Safari may not read it. Found on the way and
+    NOT changed: the data wall's ten second memory (`datawall.isWalled`) has the same stale-read race the switches
+    had, so a read that began in the instant a company was walled off can be remembered as "not walled" for up to
+    ten seconds.
+  - *Against a real scanner.* In the sandbox, `clamd` 1.5.4 from Ubuntu's package with a hand-made signature set
+    (the published md5 of the industry's test file, and a body mark): `scan.scanBuffer` got clean, flagged by hash,
+    flagged by body, an empty file, three chunks, 15 MB in 0.2 s, "size limit exceeded" at 26 MB against its 25M,
+    and twelve at once; then the product itself pointed at it refused the test file as an attachment and a marked
+    sheet, kept a clean photo and a clean sheet, and wrote both refusals on the record. Not yet seen: the official
+    image on Railway with the full signature set (the first deploy's log and the Instance tab's card are the check).
+  - *Tests:* `scripts/test-scan.js` (22: the verdict and version lines, a scanner that names no signature set, the
+    protocol against a stand-in scanner, a file of several chunks, a file over the limit, a scanner that hangs up or
+    is not there),
+    `scripts/test-safeguards.js` (19: the network list), `scripts/e2e/safeguards.js` (73, and 6 in `noscanner`
+    mode), `scripts/e2e/safeguards-browser.js` (21). `scripts/e2e/fake-clamd.js` is the stand-in scanner. Three
+    safeguards were broken on purpose to see the suite fail (the gate taken out, the attachment's scan skipped,
+    the sign-in refusal only for a right password): six checks failed. www `scripts/test-www.js` has the edge
+    check's five cases (146 in all; www e2e 93, e2e-golive 56, e2e-golive-browser 26, e2e-activate 74). `run-all.sh`:
+    57 suites, 2,173 checks, and the 42 unit suites. An older suite found the card's Sign-in section by the words
+    "Sign-in" (`phase2-browser`), so the Safeguards section says "Shared passwords work from".

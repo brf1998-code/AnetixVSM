@@ -181,7 +181,15 @@ async function ensureAccessRows() {
   return r.rows.length;
 }
 function accessPublic(row) {
-  return { own_floor: Boolean(row && row.floor_hash), own_manager: Boolean(row && row.manager_hash), legacy_login: Boolean(row && row.legacy_login), updated_at: row ? row.updated_at : null };
+  return { own_floor: Boolean(row && row.floor_hash), own_manager: Boolean(row && row.manager_hash), legacy_login: Boolean(row && row.legacy_login), updated_at: row ? row.updated_at : null,
+    networks: (row && row.networks) || [] };   // where the shared sign-ins work from; empty = anywhere (src/safeguards.js)
+}
+// Take away a company's shared manager password (2026-10-08, src/safeguards.js): from then on a manager signs in by
+// name with a second factor and no other way. The floor's password stays. Everyone on a shared sign-in at that
+// company signs in again (the generation moves), which is the point for whoever held the manager password.
+async function dropManagerPassword(slug) {
+  await q("UPDATE platform.company_access SET manager_hash=NULL, generation=generation + 1, updated_at=now() WHERE company=$1", [slug]);
+  generations.delete(slug);
 }
 
 // ---- the session cookie -------------------------------------------------------------------
@@ -512,8 +520,23 @@ async function loginHandler(req, res) {
       const out = startAccountSession(req, res, r.account, { enroll: r.enroll, extraCookies: extra, now });
       return res.json({ ...out, trusted: Boolean(r.trusted), remembered: Boolean(r.device) });
     }
+    // A company whose shared sign-ins work only from its own network (src/safeguards.js): a device anywhere else gets
+    // the same answer whether the password was right or wrong, and gets it BEFORE any password is hashed, so neither
+    // the words nor the time the answer takes says anything about the password. The old shared admin password is the
+    // one thing looked at first (a plain comparison, no hash): it is not a company's, and it is held to the list
+    // below if it turns out to be only the manager password doing double duty.
+    const offNetworkAnswer = async (forCompany) => {
+      noteLoginFail(ip);
+      await accounts.event("off_network", { ip, detail: { company: forCompany } });
+      return res.status(403).json({ error: require("./safeguards").OFF_NETWORK, off_network: true });
+    };
+    if (!(ADMIN ? same(password, ADMIN) : same(password, MANAGER))) {
+      const named = await resolveCompany(company);
+      if (named && await require("./safeguards").offNetwork(req, named)) return offNetworkAnswer(named);
+    }
     let session = await sessionFor(password, company);
     if (session && session.refused_shared) { await accounts.event("legacy_admin_refused", { ip }); session = null; }
+    if (session && session.role !== "admin" && await require("./safeguards").offNetwork(req, session.company)) return offNetworkAnswer(session.company);
     if (!session) {
       noteLoginFail(ip);
       // say when the missing piece is the company, so the page can ask for it
@@ -583,6 +606,6 @@ async function loginMode(slug) {
 
 module.exports = { startAccountSession, loginBlocked, noteLoginFail,
   middleware, currentSession, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
-  setPasswords, accountsOnly, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
+  setPasswords, accountsOnly, dropManagerPassword, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, ticketHandler, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

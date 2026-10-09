@@ -725,7 +725,8 @@ function modulePagePolicy(req, company, mod) {
     "sandbox allow-scripts allow-same-origin allow-forms allow-modals allow-downloads",
   ].join("; ");
 }
-const LOCKED_HEADER = /^(content-security-policy|content-security-policy-report-only|service-worker-allowed)$/i;
+// permissions-policy: the platform says whether the page may have the microphone (src/safeguards.js pageHeaders)
+const LOCKED_HEADER = /^(content-security-policy|content-security-policy-report-only|service-worker-allowed|permissions-policy)$/i;
 // SOS_PAGE_LOCK: "on" (default) enforces the policy; "report" sends it as
 // report-only so a mismatch shows in the browser console without breaking a
 // page; "off" sends nothing. The escape hatch for the first live deploy: the
