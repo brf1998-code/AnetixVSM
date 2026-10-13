@@ -53,12 +53,15 @@ One instance hosts many **companies**. Everything is scoped by company slug:
 - Old URLs `/m/<module>` redirect to `/c/demo/m/<module>`.
 - `/api/c/<slug>/assist*` is Ask Anetix, the assistant on the board (managers only; design and research in
   `docs/ASSISTANT.md`, the bullet "Ask Anetix: the assistant on the board"). Its tools are `src/assist-tools.js`,
-  the one registry the company MCP is to serve too; its product knowledge is `principles/HELP.md`.
+  the one registry the company MCP serves too; its product knowledge is `principles/HELP.md`.
 - `/mcp/admin` is the admin MCP address (a connected AI app's calls, bearer token only) and `/oauth/*` the sign-in
   an app goes through to reach it, both mounted BEFORE the sign-in middleware and both a 404 until `SOS_PUBLIC_URL`
-  is set (see "Connector sign-in and the admin MCP"; the design, and the company MCP that is not built, are
-  `docs/MCP.md`). Since 2026-10-06 a connection that was ticked to write can start and fill in a company's new tool
-  request and send it to the agent (`src/mcp-intake.js`, "The admin MCP writes new tool requests").
+  is set (see "Connector sign-in and the admin MCP"; the design is `docs/MCP.md`). Since 2026-10-06 a connection that
+  was ticked to write can start and fill in a company's new tool request and send it to the agent (`src/mcp-intake.js`,
+  "The admin MCP writes new tool requests"). Since 2026-10-13 `/mcp` is the company MCP (`src/mcp-company.js`, "The
+  company MCP"): a manager of a paying site (or a trial on `SOS_MCP_TRIALS`) connects their own AI app to their own
+  company; it reads the tools, the board and, with the manager's records switch on, the records, and files a request
+  that waits for a manager (`feedback.held`). Settings has its card, Connected AI apps; /admin has Anetix's lock.
 
 Index of `docs/FEATURES.md`, in its order:
 
@@ -176,6 +179,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Ask Anetix: the assistant on the board (2026-10-08)
 - Change it at the gate, Ask Anetix in demos, and the audit tools (2026-10-12)
 - Notices fold into one line; switch a site on by hand, payment to follow (2026-10-13)
+- The company MCP (2026-10-13)
 
 ## What this is
 
@@ -344,7 +348,10 @@ tool list, 401 from the API) proves the CLI itself starts.
   with none left is refused) and named in the log. `SOS_MCP_ACCESS_MIN` (60), `SOS_MCP_MAX_CHARS` (120000: the most text one tool answer carries),
   `SOS_MCP_CALL_DAYS` (400: how long the call log is kept), `SOS_MCP_AI_STARTS_PER_HOUR` (30: how many times an hour
   one account's connected apps may send a new tool request to the agent or ask for a design change; 0 = no limit). A connection's idle and cap windows are the admin
-  cookie's (`SOS_ADMIN_IDLE_HOURS`, `SOS_ADMIN_CAP_HOURS`).
+  cookie's (`SOS_ADMIN_IDLE_HOURS`, `SOS_ADMIN_CAP_HOURS`), a manager's connection to the company address too.
+  `SOS_MCP_TRIALS` (comma separated slugs, empty by default): trials whose managers may connect an app to the company
+  address anyway (a paying site always may); `anetix` first, Anetix's own company. Never a wildcard. `SOS_MCP_FILES_DAY`
+  (20: requests one company's connected apps may file in a day; 0 = none).
 - `SOS_SCAN_HOST` (clamav.railway.internal: the upload scanner's private address, `src/scan.js`; the service is
   `clamav` in the same project, image `clamav/clamav:stable`, a volume at `/var/lib/clamav`, `FRESHCLAM_CHECKS=4`,
   no public domain; `docs/SAFEGUARDS.md` has the setup). Unset: files are kept unscanned as before, the Instance tab
@@ -547,6 +554,14 @@ Passwords live only in Railway; never commit them.
   deletes. An app writes only to a request Anetix started (`module_intakes.via`), and a paying site's own request is
   neither read nor taken over. What an app sends is checked for shape before it is saved. A new table that points
   at `platform.accounts` goes in `backup.js` restore's TRUNCATE list, or a restore fails.
+- The company MCP (`/mcp`, `src/mcp-company.js`) is a company's own AI app: its company comes from the token, never an
+  argument, and is checked again at every call (a manager of that company, the company a paying site or on
+  `SOS_MCP_TRIALS`). It serves the tools of `src/assist-tools.js` with `ctx.via = "mcp"`, where `ctx.walled` means the
+  manager's records switch or Anetix's lock (`mcp_reads_records`, `mcp_records_locked`), not the data wall; records
+  are read through the company's read role only. It edits no row. Its one write, `file_request`, puts a request on the
+  board with `held` true: no AI reads a held request's words until a manager's tap (`proposals.generateProposal`
+  clears it). Anything new that hands request words to a model (a prompt, Ask Anetix, the admin MCP) leaves a held
+  request's words out, and gets a case in `scripts/e2e/mcp-company.js`, where the prompt log must not carry them.
 - Free text (a company's name, a person's name, an email) never goes into a quoted argument of an inline `onclick`
   with `esc()` alone: an apostrophe ends the argument and the rest runs as script. On `/admin` it goes through
   `jss()`; better still, pass an id or a slug and look the words up in what the page already holds.

@@ -20,15 +20,19 @@
 //   - Off until SOS_PUBLIC_URL names the instance's own address (https://app.anetix.ai). No variable, no connector:
 //     a missing variable never means open, and the issuer is never read from a request's Host header.
 //   - Only a named account that is switched on and has its second factor can connect an app. A floor session, a shared
-//     company password or the internal token never can. In this first phase only an ADMIN account can, and only to
-//     the admin address; a company's managers come with the company MCP (docs/MCP.md, phase 2).
+//     company password or the internal token never can. An ADMIN account connects to the admin address only; a
+//     MANAGER account to its own company's address only (/mcp, the company MCP, phase 2, 2026-10-13), and only while
+//     that company is a paying site (src/kind.js, read at every call, never a flag fixed when the app was connected)
+//     or a trial Anetix named in SOS_MCP_TRIALS (its own company, to use the connector on itself first). A manager's
+//     token carries its company; there is no company picker and no way to name another.
 //   - A connection (platform.mcp_grants) belongs to one account and one address. A token for the admin address is
 //     refused anywhere else. Every call re-checks the account: switched off, removed, or "Sign out everywhere"
 //     (the generation) ends its connections at once.
 //   - Tokens are random and only their sha256 is kept. Access: SOS_MCP_ACCESS_MIN (60) minutes. Refresh: one use
-//     each, a new one with every refresh, good for the same idle window the account's cookie has
-//     (SOS_ADMIN_IDLE_HOURS, 168), and the whole connection ends at the cookie's cap (SOS_ADMIN_CAP_HOURS, 720):
-//     an admin's app is connected again with a passkey about once a month, like the admin's own browser.
+//     each, a new one with every refresh, good for the admin cookie's idle window (SOS_ADMIN_IDLE_HOURS, 168), and the
+//     whole connection ends at the admin cookie's cap (SOS_ADMIN_CAP_HOURS, 720): an app is connected again with a
+//     passkey or code about once a month, like an admin's own browser. A manager's connection keeps the same windows,
+//     not the manager cookie's longer ones: a connection reads records, so it is held to the shorter of the two.
 //     A refresh token used a second time ends the connection (someone else holds a copy); a second use inside
 //     REUSE_GRACE_S is only refused, since an app whose first try was cut off will try once more.
 //   - Where an answer may be sent is an allow-list (SOS_MCP_REDIRECTS): Claude's hosted callback and a callback on
@@ -63,8 +67,18 @@ function publicUrl(value = process.env.SOS_PUBLIC_URL) {
 }
 const PUBLIC = publicUrl();
 const enabled = () => Boolean(PUBLIC);
-// The addresses a token can be for. Phase 2 adds { company: PUBLIC + "/mcp" }.
-const SURFACES = { admin: { path: "/mcp/admin", role: "admin", name: "Anetix admin" } };
+// The addresses a token can be for: Anetix's own, and one address every company's managers share (the token says
+// which company, src/mcp-company.js).
+const SURFACES = {
+  admin: { path: "/mcp/admin", role: "admin", name: "Anetix admin" },
+  company: { path: "/mcp", role: "manager", name: "Anetix" },
+};
+// The trials Anetix lets connect an app to the company address anyway (SOS_MCP_TRIALS, comma separated slugs; empty by
+// default, so only a paying site can). For Anetix's own company first. Never a wildcard.
+function trialList(value = process.env.SOS_MCP_TRIALS) {
+  return String(value || "").split(",").map((x) => x.trim().toLowerCase()).filter((x) => /^[a-z0-9][a-z0-9-]{1,40}$/.test(x));
+}
+const TRIALS = new Set(trialList());
 const resourceOf = (surface, base = PUBLIC) => (base && SURFACES[surface] ? base + SURFACES[surface].path : null);
 // Which surface an address names: exact, with or without a trailing slash, nothing else.
 function surfaceOf(resource, base = PUBLIC) {
@@ -78,8 +92,9 @@ const CODE_S = 120;           // an authorization code: the app trades it within
 const CONSENT_S = 15 * 60;    // how long the consent page may sit open
 const REUSE_GRACE_S = 60;
 const CALL_DAYS = Number(process.env.SOS_MCP_CALL_DAYS || 400);
-// the same windows the account's cookie has (src/auth.js WINDOWS), in seconds; cap 0 = no cap
-const windowsFor = (role) => { const w = role === "admin" ? auth.WINDOWS.admin : auth.WINDOWS.device; return { idle: w.idle * 3600, cap: w.cap ? w.cap * 3600 : 0 }; };
+// A connection's windows, in seconds; cap 0 = no cap. Every address gets the admin cookie's (src/auth.js WINDOWS.admin),
+// the shorter ones: a manager's cookie may last months, a connection that can read a company's records may not.
+const windowsFor = (_role) => { const w = auth.WINDOWS.admin; return { idle: w.idle * 3600, cap: w.cap ? w.cap * 3600 : 0 }; };
 
 // Where an answer may be sent. "loopback" = this person's own computer (http, localhost or 127.0.0.1, any port),
 // which is how Claude Code and other desktop apps receive it (RFC 8252).
@@ -121,16 +136,37 @@ function openRequest(value, now = Date.now()) {
   if (!o || typeof o !== "object" || !(Number(o.exp) > now / 1000)) return null;
   return o;
 }
-// May this account connect an app to this surface? -> null, or why not in words the consent page shows.
+// May this account connect an app to this surface? -> null, or why not in words the consent page shows. The account
+// half only; companyRefusal is the company half, and refusalNow both.
 function refusal(account, surface, { twoFaOff = false } = {}) {
   const s = SURFACES[surface];
   if (!s) return "that is not an address of this instance";
   if (!account) return "sign in first";
   if (account.status !== "active") return "this account is switched off";
-  if (account.role !== s.role) return account.role === "manager" ? "connecting an app to a company's tools is not open yet; this address is for Anetix's own accounts" : "this address is for another kind of account";
-  if (!account.enrolled && !twoFaOff) return "set up your authenticator app first";
+  if (account.role !== s.role) {
+    if (account.role === "manager") return `this address is for Anetix's own accounts; your company's address is ${resourceOf("company") || "/mcp"}`;
+    if (account.role === "admin" && surface === "company") return `this address is for a company's managers, each connecting with their own account; Anetix's own address is ${resourceOf("admin") || "/mcp/admin"}`;
+    return "this address is for another kind of account";
+  }
+  if (surface === "company" && !account.company) return "this account belongs to no company";
+  if (!account.enrolled && !twoFaOff) return "set up your authenticator app or a passkey first";
   return null;
 }
+// The company half: a manager's app connects only while the company is a paying site, or a trial Anetix named.
+async function companyRefusal(account, surface) {
+  if (surface !== "company") return null;
+  const co = (await q("SELECT slug FROM platform.companies WHERE slug=$1", [account.company])).rows[0];
+  if (!co) return "this account's company is not on this instance";
+  if (TRIALS.has(co.slug)) return null;
+  if (await require("./kind").isSite(co.slug)) return null;
+  return "connecting an AI app is part of a paying site, and this company is a trial";
+}
+async function refusalNow(account, surface) {
+  return refusal(account, surface, { twoFaOff: accounts.twoFaOff() }) || (account ? await companyRefusal(account, surface) : null);
+}
+// The address a sign-in request is for: the one the app named, or, when it named none, the one this account's kind
+// has (an admin's is the admin address, a manager's its company's). Never more than the account could ask for anyway.
+const surfaceFor = (named, account) => named || (account && account.role === "manager" ? "company" : "admin");
 
 // ---- tables -----------------------------------------------------------------------------------------------------
 const SCHEMA = `
@@ -181,9 +217,12 @@ CREATE TABLE IF NOT EXISTS platform.mcp_codes (
 );
 ALTER TABLE platform.mcp_grants ADD COLUMN IF NOT EXISTS writes BOOLEAN NOT NULL DEFAULT false;   -- may it use the write tools (the consent page's tick)
 ALTER TABLE platform.mcp_codes  ADD COLUMN IF NOT EXISTS writes BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE platform.mcp_codes  ADD COLUMN IF NOT EXISTS company TEXT;   -- a company connection: the manager's company when the person said Allow
+CREATE INDEX IF NOT EXISTS mcp_grants_company ON platform.mcp_grants (company) WHERE company IS NOT NULL;
 `;
-// Which addresses have write tools at all: the consent page offers the tick only for these.
-const WRITES = { admin: true };
+// Which addresses have write tools at all: the consent page offers the tick only for these. The company address's one
+// write is filing a request on the board, which waits there for a manager (src/mcp-company.js).
+const WRITES = { admin: true, company: true };
 async function sweep() {
   await q("DELETE FROM platform.mcp_codes WHERE expires_at < now() - interval '1 day'");
   await q("DELETE FROM platform.mcp_tokens WHERE expires_at < now() - interval '1 day'");
@@ -197,7 +236,7 @@ async function init() {
   await q(SCHEMA);
   await sweep().catch((e) => console.error("[mcp] sweep:", e.message));
   if (!enabled()) console.log(`[mcp] connectors are off: SOS_PUBLIC_URL ${process.env.SOS_PUBLIC_URL ? "is not an https address with no path" : "is not set"}`);
-  else console.log(`[mcp] connectors are on at ${PUBLIC} (answers may go to: ${redirectList().join(", ")})`);
+  else console.log(`[mcp] connectors are on at ${PUBLIC} (answers may go to: ${redirectList().join(", ")})${TRIALS.size ? `; trials that may connect a company app: ${[...TRIALS].join(", ")}` : ""}`);
   setInterval(() => sweep().catch((e) => console.error("[mcp] sweep:", e.message)), 24 * 3600e3).unref();
 }
 
@@ -213,11 +252,16 @@ async function accountOf(req) {
   if (st.role === "manager" && st.company !== s.company) return null;
   return st;
 }
-// The same account, by id, for a token: null unless it could still connect an app to that surface right now.
-async function liveAccount(id, surface, generation) {
+// The same account, by id, for a token: null unless it could still connect an app to that surface right now. A
+// company connection also has to be for the company the account is in now, and that company still one that may.
+async function liveAccount(id, surface, generation, company) {
   const st = await accounts.sessionState(id);   // remembered for ten seconds, and forgotten at once by every change to the account (src/accounts.js)
   if (!st || refusal(st, surface, { twoFaOff: accounts.twoFaOff() })) return null;
   if (generation !== undefined && st.generation !== Number(generation)) return null;
+  if (surface === "company") {
+    if (company !== undefined && company !== st.company) return null;
+    if (await companyRefusal(st, surface)) return null;
+  }
   return st;
 }
 
@@ -265,6 +309,14 @@ async function endGrant(id, by) {
 }
 const grantAlive = (g, now = Date.now()) => Boolean(g && !g.revoked_at && (!g.expires_at || new Date(g.expires_at).getTime() > now));
 
+// A company connection refused only because of its company (not a site right now, or off SOS_MCP_TRIALS): the account
+// itself is still good for it, so the connection is kept for when the company may again.
+async function companyOnlyRefusal(g) {
+  if (g.surface !== "company") return false;
+  const st = await accounts.sessionState(g.account_id);
+  return Boolean(st && !refusal(st, g.surface, { twoFaOff: accounts.twoFaOff() }) && st.generation === Number(g.generation) && st.company === g.company);
+}
+
 // ---- the provider the SDK's handlers call -----------------------------------------------------------------------
 const provider = {
   get clientsStore() { return clientsStore; },
@@ -272,8 +324,9 @@ const provider = {
   // /oauth/authorize has checked the app and its redirect address. Nothing is decided here: the browser goes to
   // the consent page with the request sealed in the address.
   async authorize(client, params, res) {
-    const surface = params.resource ? surfaceOf(params.resource.href) : "admin";   // an app that names no address gets the only one there is
-    if (!surface) throw new InvalidTargetError("that is not an address of this server");
+    // an app that names no address gets the one the person's account has, decided on the consent page (surfaceFor)
+    const surface = params.resource ? surfaceOf(params.resource.href) : null;
+    if (params.resource && !surface) throw new InvalidTargetError("that is not an address of this server");
     if (!redirectAllowed(params.redirectUri)) throw new AccessDeniedError("this server does not send sign-in answers there");   // the list changed since the app registered
     const sealed = sealRequest({ c: client.client_id, r: params.redirectUri, s: params.state || null, ch: params.codeChallenge, f: surface });
     res.redirect(302, `/oauth/consent?req=${encodeURIComponent(sealed)}`);
@@ -301,6 +354,7 @@ const provider = {
     if (!c) throw new InvalidGrantError("that code is used or too old");
     const account = await liveAccount(c.account_id, c.surface, c.generation);
     if (!account) throw new InvalidGrantError("the account can no longer connect an app");
+    if (c.surface === "company" && c.company && c.company !== account.company) throw new InvalidGrantError("the account can no longer connect an app");
     const w = windowsFor(SURFACES[c.surface].role);
     const grant = (await q(`INSERT INTO platform.mcp_grants (account_id, client_id, client_name, redirect_host, surface, company, generation, expires_at, writes)
                             VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::int > 0 THEN now() + make_interval(secs => $8::int) ELSE NULL END, $9) RETURNING *`,
@@ -312,7 +366,7 @@ const provider = {
 
   async exchangeRefreshToken(client, refreshToken, _scopes, resource) {
     const hash = hashToken(refreshToken);
-    const t = (await q(`SELECT t.*, g.id AS gid, g.account_id, g.client_id, g.client_name, g.surface, g.generation, g.expires_at AS grant_expires_at, g.revoked_at
+    const t = (await q(`SELECT t.*, g.id AS gid, g.account_id, g.client_id, g.client_name, g.surface, g.company, g.generation, g.expires_at AS grant_expires_at, g.revoked_at
                           FROM platform.mcp_tokens t JOIN platform.mcp_grants g ON g.id=t.grant_id WHERE t.token_hash=$1 AND t.kind='refresh'`, [hash])).rows[0];
     if (!t || t.client_id !== client.client_id) throw new InvalidGrantError("that refresh token is not one this server made for this app");
     const grant = { id: t.gid, surface: t.surface, expires_at: t.grant_expires_at, revoked_at: t.revoked_at };
@@ -325,7 +379,11 @@ const provider = {
       }
       throw new InvalidGrantError("that refresh token was already used");
     }
-    if (!(await liveAccount(t.account_id, t.surface, t.generation))) { await endGrant(t.gid, "the account can no longer hold a connection"); throw new InvalidGrantError("the account can no longer hold a connection"); }
+    if (!(await liveAccount(t.account_id, t.surface, t.generation, t.surface === "company" ? t.company : undefined))) {
+      // as at verifyAccessToken: a company that is not a site right now is refused, its connection kept
+      if (await companyOnlyRefusal(t)) throw new InvalidGrantError("this company cannot use a connected app right now");
+      await endGrant(t.gid, "the account can no longer hold a connection"); throw new InvalidGrantError("the account can no longer hold a connection");
+    }
     const claimed = (await q("UPDATE platform.mcp_tokens SET used_at=now() WHERE token_hash=$1 AND used_at IS NULL RETURNING token_hash", [hash])).rows[0];
     if (!claimed) throw new InvalidGrantError("that refresh token was already used");
     await q("DELETE FROM platform.mcp_tokens WHERE grant_id=$1 AND (expires_at < now() OR (kind='refresh' AND used_at < now() - make_interval(secs => $2)))", [t.gid, REUSE_GRACE_S * 10]);
@@ -340,8 +398,13 @@ const provider = {
     // the token's own end under its own name: the connection has an expires_at too (its cap), and g.* would hide this one
     const t = (await q(`SELECT g.*, t.expires_at AS token_expires_at FROM platform.mcp_tokens t JOIN platform.mcp_grants g ON g.id=t.grant_id WHERE t.token_hash=$1 AND t.kind='access'`, [hashToken(token)])).rows[0];
     if (!t || !grantAlive(t) || new Date(t.token_expires_at).getTime() <= Date.now()) throw no();
-    const account = await liveAccount(t.account_id, t.surface, t.generation);
-    if (!account) { await endGrant(t.id, "the account can no longer hold a connection"); throw no(); }
+    const account = await liveAccount(t.account_id, t.surface, t.generation, t.surface === "company" ? t.company : undefined);
+    if (!account) {
+      // a company that is not a site any more (or Anetix took it off SOS_MCP_TRIALS) may become one again: its
+      // connection is refused, not ended. Anything about the account itself ends it.
+      if (!(await companyOnlyRefusal(t))) await endGrant(t.id, "the account can no longer hold a connection");
+      throw no();
+    }
     if (!t.last_used_at || Date.now() - new Date(t.last_used_at).getTime() > 60e3) q("UPDATE platform.mcp_grants SET last_used_at=now() WHERE id=$1", [t.id]).catch(() => {});
     return {
       token, clientId: t.client_id, scopes: [], expiresAt: Math.floor(new Date(t.token_expires_at).getTime() / 1000), resource: new URL(resourceOf(t.surface)),
@@ -367,11 +430,14 @@ async function consentInfo(req, res) {
   if (!o) return res.status(400).json({ error: "this sign-in request is too old or was changed. Go back to the app and connect again." });
   const client = await clientsStore.getClient(o.c);
   if (!client) return res.status(400).json({ error: "the app that asked is not registered here any more. Go back to it and connect again." });
-  const why = refusal(account, o.f, { twoFaOff: accounts.twoFaOff() });
+  o.f = surfaceFor(o.f, account);
+  const why = await refusalNow(account, o.f);
+  const co = o.f === "company" && account.company ? (await q("SELECT name FROM platform.companies WHERE slug=$1", [account.company])).rows[0] : null;
   res.json({
     account: { login: account.login, name: account.name, role: account.role, passkeys: account.passkeys || 0 },
     app: { name: cleanName(client.client_name) || "An app", sends_to: hostOf(o.r), this_computer: isLoopback(o.r) },
     address: resourceOf(o.f), surface: o.f, surface_name: SURFACES[o.f] ? SURFACES[o.f].name : null, can_write: Boolean(WRITES[o.f]),
+    company: co ? { slug: account.company, name: co.name, records: (await require("./mcp-company").recordsState(account.company)).on } : null,
     allowed: !why, why: why || null, step_up: accounts.twoFaOff() ? "password" : "code",
     lasts: SURFACES[o.f] ? { idle_days: Math.round(windowsFor(SURFACES[o.f].role).idle / 86400), cap_days: Math.round(windowsFor(SURFACES[o.f].role).cap / 86400) || null } : null,
   });
@@ -389,6 +455,7 @@ async function consentDecide(req, res) {
   if (!o) return res.status(400).json({ error: "this sign-in request is too old or was changed. Go back to the app and connect again." });
   const client = await clientsStore.getClient(o.c);
   if (!client || !redirectAllowed(o.r)) return res.status(400).json({ error: "the app that asked is not registered here any more. Go back to it and connect again." });
+  o.f = surfaceFor(o.f, account);
   const back = new URL(o.r);
   if (o.s) back.searchParams.set("state", o.s);
   const ip = edge.clientIp(req);
@@ -397,16 +464,17 @@ async function consentDecide(req, res) {
     back.searchParams.set("error", "access_denied"); back.searchParams.set("error_description", "the person said no");
     return res.json({ redirect: back.href });
   }
-  const why = refusal(account, o.f, { twoFaOff: accounts.twoFaOff() });
+  const why = await refusalNow(account, o.f);
   if (why) return res.status(403).json({ error: why });
   // a fresh passkey or code, the step a destructive admin action takes: the session alone never connects an app
   const step = await accounts.stepUp(account, { code: body.code, password: body.password, passkey: body.passkey }, ip, `mcp_connect:${o.f}`, req);
   if (!step.ok) return res.status(403).json({ error: step.error, step_up: true });
   const code = mint("anx_ac");
   const writes = body.writes === true && Boolean(WRITES[o.f]);   // only the page's own tick, and only where there is something to write
-  await q("INSERT INTO platform.mcp_codes (code_hash, client_id, account_id, generation, surface, redirect_uri, challenge, expires_at, writes) VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8), $9)",
-    [hashToken(code), client.client_id, account.id, account.generation, o.f, o.r, String(o.ch), CODE_S, writes]);
+  await q("INSERT INTO platform.mcp_codes (code_hash, client_id, account_id, generation, surface, redirect_uri, challenge, expires_at, writes, company) VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8), $9, $10)",
+    [hashToken(code), client.client_id, account.id, account.generation, o.f, o.r, String(o.ch), CODE_S, writes, o.f === "company" ? account.company : null]);
   await accounts.event("mcp_consent_yes", { account_id: account.id, login: account.login, ip, detail: { app: cleanName(client.client_name), to: hostOf(o.r), surface: o.f, writes } });
+  if (o.f === "company") await require("./record").record("mcp_connected", { company: account.company, actor: { role: "manager", name: account.name || account.login }, detail: { app: cleanName(client.client_name), to: hostOf(o.r), writes } });
   back.searchParams.set("code", code);
   res.json({ redirect: back.href });
 }
@@ -421,7 +489,7 @@ async function grantsView() {
                           ORDER BY g.id DESC`)).rows;
   const calls = (await q(`SELECT c.id, c.at, c.tool, c.ok, c.ms, c.chars, c.error, a.login, g.client_name FROM platform.mcp_calls c
                             LEFT JOIN platform.accounts a ON a.id=c.account_id LEFT JOIN platform.mcp_grants g ON g.id=c.grant_id ORDER BY c.id DESC LIMIT 40`)).rows;
-  return { enabled: enabled(), address: resourceOf("admin"), public_url: PUBLIC, redirects: redirectList(), access_minutes: ACCESS_S / 60,
+  return { enabled: enabled(), address: resourceOf("admin"), company_address: resourceOf("company"), public_url: PUBLIC, redirects: redirectList(), access_minutes: ACCESS_S / 60,
     idle_hours: auth.WINDOWS.admin.idle, cap_hours: auth.WINDOWS.admin.cap || null, grants: rows, calls };
 }
 const router = express.Router();
@@ -438,6 +506,6 @@ router.post("/api/admin/mcp/grants/:id(\\d{1,9})/disconnect", requireAdmin, asyn
 
 module.exports = {
   init, sweep, enabled, provider, clientsStore, router, consentInfo, consentDecide, json, accountOf, endGrant, grantsView,
-  PUBLIC, SURFACES, WRITES, resourceOf, surfaceOf, publicUrl, redirectList, redirectAllowed, isLoopback, sealRequest, openRequest, refusal, hashToken, windowsFor,
+  PUBLIC, SURFACES, WRITES, TRIALS, trialList, resourceOf, surfaceOf, surfaceFor, publicUrl, redirectList, redirectAllowed, isLoopback, sealRequest, openRequest, refusal, companyRefusal, refusalNow, hashToken, windowsFor,
   ACCESS_S, CODE_S, CONSENT_S, REUSE_GRACE_S, CALL_DAYS, DEFAULT_REDIRECTS,
 };

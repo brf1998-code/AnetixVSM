@@ -36,12 +36,17 @@ const REQ = new URLSearchParams(location.search).get("req") || "";
 const HEAD = `<h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:9px">Connect an app</h1>`;
 // what each address lets an app do, in the words the person agreeing reads
 const CAN = {
-  admin: ["Read demos, sites, loop health, AI spend, requests to Anetix, build runs and new tool requests, across every company.", "It never gets a record from a company's tools."],
+  admin: () => ["Read demos, sites, loop health, AI spend, requests to Anetix, build runs and new tool requests, across every company.", "It never gets a record from a company's tools."],
+  // a company's own app (src/mcp-company.js): what it reads depends on the company's records switch
+  company: (i) => ["Read this company's tools, how each one works, what changed, and the requests on its board.",
+    i.company && i.company.records ? "Read the records the tools keep: your company has that switched on in Settings, under Connected apps." : "Not the records the tools keep: that is switched off for this company. A manager can turn it on in Settings, under Connected apps."],
 };
 // what the tick adds, and what it never does (src/mcp-intake.js)
 const WRITE = {
   admin: { label: "Let it start and fill in new tool requests", can: ["Start a new tool request for any company, as Anetix, and write its answers.", "Send the answers to the agent and ask it for design changes. That spends the company's AI credit."],
     never: "It cannot confirm a design, build, put anything on a floor, withdraw a request, or change anything else. Without the tick it cannot change anything at all." },
+  company: { label: "Let it file requests on the board", can: ["Put a request for a change to one of the tools on the board, in your name, marked as sent from this app."],
+    never: "A request it files waits for a manager: nothing reads it or drafts a change until a manager reviews it, and every change still needs a manager's approval. It cannot change a tool or a record. Without the tick it cannot change anything at all." },
 };
 let INFO = null, busy = false;
 function stop(message) { card.innerHTML = `${HEAD}<div class="note bad">${esc(message)}</div><p class="sub" style="margin-top:12px">You can close this page.</p>`; }
@@ -54,10 +59,12 @@ async function load() {
   INFO = j; draw();
 }
 function draw() {
-  const i = INFO, can = CAN[i.surface] || [];
-  const lasts = i.lasts ? `It stays connected while it is used, ${i.lasts.cap_days ? `for up to ${i.lasts.cap_days} days` : "until you disconnect it"}, and ends by itself after ${i.lasts.idle_days} days unused. You can disconnect it any time on the admin page, under Accounts.` : "";
+  const i = INFO, can = CAN[i.surface] ? CAN[i.surface](i) : [];
+  const where = i.surface === "company" ? "in Settings, under Connected apps" : "on the admin page, under Accounts";
+  const lasts = i.lasts ? `It stays connected while it is used, ${i.lasts.cap_days ? `for up to ${i.lasts.cap_days} days` : "until you disconnect it"}, and ends by itself after ${i.lasts.idle_days} days unused. You can disconnect it any time ${where}.` : "";
+  const to = i.surface === "company" && i.company ? `${esc(i.company.name)}</b> on <b>Anetix` : esc(i.surface_name || "Anetix");
   let html = `${HEAD}
-    <div class="who"><b>${esc(i.app.name)}</b> is asking to connect to <b>${esc(i.surface_name || "Anetix")}</b><br><span class="sub">${esc(i.address || "")}</span></div>
+    <div class="who"><b>${esc(i.app.name)}</b> is asking to connect to <b>${to}</b><br><span class="sub">${esc(i.address || "")}</span></div>
     <p class="sub" style="margin:10px 0 0">You are signed in as <b>${esc(i.account.login)}</b>. The app will act as you.</p>`;
   if (!i.allowed) {
     card.innerHTML = html + `<div class="note bad">This account cannot connect an app here: ${esc(i.why)}.</div><div><button class="quiet" id="no">Go back to the app</button></div><div class="fail" id="err"></div>`;

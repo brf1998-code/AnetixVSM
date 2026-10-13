@@ -5,7 +5,7 @@ let pass = 0, fail = 0;
 function t(name, cond, detail) { if (cond) { pass++; } else { fail++; console.log(`FAIL  ${name}${detail !== undefined ? "\n      " + (typeof detail === "string" ? detail : JSON.stringify(detail)) : ""}`); } }
 process.env.SESSION_SECRET = "unit-secret";
 function load(env) {
-  for (const k of ["SOS_PUBLIC_URL", "SOS_MCP_REDIRECTS", "SOS_MCP_ACCESS_MIN"]) delete process.env[k];
+  for (const k of ["SOS_PUBLIC_URL", "SOS_MCP_REDIRECTS", "SOS_MCP_ACCESS_MIN", "SOS_MCP_TRIALS"]) delete process.env[k];
   Object.assign(process.env, env || {});
   for (const f of ["mcpauth", "mcp", "mcp-admin"]) delete require.cache[path.resolve(__dirname, `../src/${f}.js`)];
   return require("../src/mcpauth");
@@ -19,9 +19,10 @@ t("an https address with no path is taken, as its origin", m.publicUrl("https://
 t("http is taken only for this computer", m.publicUrl("http://127.0.0.1:3999") === "http://127.0.0.1:3999" && m.publicUrl("http://localhost:3999") === "http://localhost:3999" && m.publicUrl("http://app.anetix.ai") === null);
 t("a path, a query, a fragment, another scheme or junk is not an address", ["https://app.anetix.ai/x", "https://app.anetix.ai?x=1", "https://app.anetix.ai#x", "ftp://app.anetix.ai", "app.anetix.ai", "", null, undefined, "on", "1"].every((v) => m.publicUrl(v) === null));
 m = load({ SOS_PUBLIC_URL: "https://app.anetix.ai" });
-t("with it set: on, and the admin address is under it", m.enabled() && m.resourceOf("admin") === "https://app.anetix.ai/mcp/admin" && m.resourceOf("company") === null);
+t("with it set: on, and both addresses are under it", m.enabled() && m.resourceOf("admin") === "https://app.anetix.ai/mcp/admin" && m.resourceOf("company") === "https://app.anetix.ai/mcp" && m.resourceOf("nope") === null);
 t("an address names its surface exactly: a trailing slash or a fragment is forgiven, nothing else", m.surfaceOf("https://app.anetix.ai/mcp/admin") === "admin" && m.surfaceOf("https://app.anetix.ai/mcp/admin/") === "admin" && m.surfaceOf("https://app.anetix.ai/mcp/admin#x") === "admin"
-  && [null, "", "https://app.anetix.ai/mcp", "https://app.anetix.ai/mcp/admin/x", "https://evil.example/mcp/admin", "http://app.anetix.ai/mcp/admin", "https://app.anetix.ai/mcp/admin?x=1", "https://app.anetix.ai/MCP/ADMIN"].every((v) => m.surfaceOf(v) === null));
+  && m.surfaceOf("https://app.anetix.ai/mcp") === "company" && m.surfaceOf("https://app.anetix.ai/mcp/") === "company"
+  && [null, "", "https://app.anetix.ai", "https://app.anetix.ai/mcp/x", "https://app.anetix.ai/mcp/admin/x", "https://evil.example/mcp/admin", "https://evil.example/mcp", "http://app.anetix.ai/mcp/admin", "http://app.anetix.ai/mcp", "https://app.anetix.ai/mcp/admin?x=1", "https://app.anetix.ai/mcp?c=acme", "https://app.anetix.ai/MCP/ADMIN", "https://app.anetix.ai/MCP"].every((v) => m.surfaceOf(v) === null));
 
 // ---- where an answer may be sent
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
@@ -49,9 +50,16 @@ const admin = { id: 1, role: "admin", status: "active", enrolled: true }, manage
 t("an admin account with its second factor may connect an app to the admin address", m.refusal(admin, "admin") === null);
 t("nobody, a switched-off account, and an account with no second factor may not", /sign in/.test(m.refusal(null, "admin")) && /switched off/.test(m.refusal({ ...admin, status: "disabled" }, "admin")) && /authenticator/.test(m.refusal({ ...admin, enrolled: false }, "admin")));
 t("under break glass the password stands in for the factor, as it does on /admin", m.refusal({ ...admin, enrolled: false }, "admin", { twoFaOff: true }) === null);
-t("a manager account may not, whatever its factor", /not open yet/.test(m.refusal(manager, "admin")) && /not open yet/.test(m.refusal(manager, "admin", { twoFaOff: true })));
-t("an address this instance does not have connects no one", /not an address/.test(m.refusal(admin, "company")) && /not an address/.test(m.refusal(admin, undefined)));
-t("a connection lives by the admin cookie's own windows", m.windowsFor("admin").idle === 168 * 3600 && m.windowsFor("admin").cap === 720 * 3600 && m.ACCESS_S === 3600);
+t("a manager account may not connect to the admin address, whatever its factor, and is told its own", /Anetix's own accounts; your company's address is https:\/\/app\.anetix\.ai\/mcp$/.test(m.refusal(manager, "admin")) && /Anetix's own accounts/.test(m.refusal(manager, "admin", { twoFaOff: true })));
+t("an admin account may not connect to the company address: a company's managers do, each with their own account", /for a company's managers/.test(m.refusal(admin, "company")) && /mcp\/admin/.test(m.refusal(admin, "company")));
+t("a manager account with its second factor may connect to the company address (the company half is checked apart)", m.refusal(manager, "company") === null && /authenticator app or a passkey/.test(m.refusal({ ...manager, enrolled: false }, "company")));
+t("a manager account with no company connects nowhere", /no company/.test(m.refusal({ ...manager, company: null }, "company")));
+t("an address this instance does not have connects no one", /not an address/.test(m.refusal(admin, "elsewhere")) && /not an address/.test(m.refusal(admin, undefined)) && /not an address/.test(m.refusal(manager, "")));
+t("an app that names no address gets the one the account's kind has, never more", m.surfaceFor(null, admin) === "admin" && m.surfaceFor(null, manager) === "company" && m.surfaceFor("admin", manager) === "admin" && m.surfaceFor(undefined, null) === "admin");
+t("a connection lives by the admin cookie's own windows, a manager's too", m.windowsFor("admin").idle === 168 * 3600 && m.windowsFor("admin").cap === 720 * 3600 && m.ACCESS_S === 3600
+  && m.windowsFor("manager").idle === m.windowsFor("admin").idle && m.windowsFor("manager").cap === m.windowsFor("admin").cap);
+t("SOS_MCP_TRIALS is a list of slugs: junk is dropped, nothing is a wildcard, empty is none", m.trialList("anetix, Demo ,bad slug!,*,,x") .join() === "anetix,demo" && m.trialList("").length === 0 && m.trialList(undefined).length === 0 && m.TRIALS.size === 0);
+t("the company address has one write tool, so the consent page offers the tick there too", m.WRITES.company === true && m.WRITES.admin === true);
 t("a token's hash is sha256, and never the token", /^[0-9a-f]{64}$/.test(m.hashToken("anx_at_x")) && m.hashToken("a") !== m.hashToken("b"));
 
 // ---- what a tool's answer becomes, and what the log keeps
@@ -149,5 +157,20 @@ const notIn = /const NOT_IN_BACKUP = \[([^\]]*)\]/.exec(backup)[1];
 t("no connector table is ever in a backup file", ["mcp_clients", "mcp_grants", "mcp_tokens", "mcp_codes", "mcp_calls"].every((x) => notIn.includes(`"${x}"`)));
 t("a restore clears the connections, tokens and codes together with the accounts they point at", ["platform.mcp_grants", "platform.mcp_tokens", "platform.mcp_codes"].every((x) => new RegExp(`TRUNCATE[^\\n]*"${x.replace(".", "\\.")}"`).test(backup)));
 
+
+// ---- the company MCP (src/mcp-company.js): the shared tools, what leaves, and the one write
+{
+  const mc = quiet(() => require("../src/mcp-company"));
+  const names = mc.tools.map((x) => x.name);
+  t("the company address serves the shared registry's tools and file_request, nothing else", names.join() === "list_tools,describe_tool,whats_changed,list_requests,get_request,summarize_records,read_records,file_request", names);
+  t("file_request is its only write; every other tool reads", mc.tools.filter((x) => x.readOnly === false).map((x) => x.name).join() === "file_request");
+  t("the two record tools are the ones marked as reading records", mc.tools.filter((x) => x.records).map((x) => x.name).join() === "summarize_records,read_records");
+  t("no tool takes a company, a role or a person", mc.tools.every((x) => !Object.keys(x.input || {}).some((k) => /company|role|person|slug|account/.test(k))), mc.tools.map((x) => Object.keys(x.input || {})));
+  const scrubbed = mc.out({ tool: "Cycle count", cost_usd: 1.2, model: "claude-opus-5", note: "built by claude-opus-5", records: [{ model: "claude-opus-5", cost_usd: 9.5, part: "A1" }] });
+  t("what leaves is scrubbed of model names and AI costs, apart from the company's own rows", scrubbed.cost_usd === undefined && scrubbed.model === undefined && scrubbed.note === "built by the AI" && scrubbed.records[0].model === "claude-opus-5" && scrubbed.records[0].cost_usd === 9.5, scrubbed);
+  t("an answer with no records is scrubbed whole", mc.out({ spend: 3, list: [{ cost_usd: 1, a: 1 }] }).spend === undefined && mc.out({ list: [{ cost_usd: 1, a: 1 }] }).list[0].cost_usd === undefined);
+  t("the refusal words for records name the manager's switch, and Anetix's lock apart", /Settings, under Connected apps/.test(mc.RECORDS_OFF) && /Anetix has records switched off/.test(mc.RECORDS_LOCKED));
+  t("the surface tells the app what is the company's and that a filed request waits", /belongs to this company/.test(mc.surface.instructions) && /waits there for a manager/.test(mc.surface.instructions) && !/[–—]/.test(mc.surface.instructions + mc.tools.map((x) => x.description).join(" ")));
+}
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

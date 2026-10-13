@@ -43,10 +43,12 @@ function reviewSchema(files) {
 
 async function historyText(company, mod) {
   const fb = (await q(
-    `SELECT f.id, f.screen, f.status, f.message, f.name, f.recurrence, f.outcome, f.created_at, p.class, p.target_file
+    `SELECT f.id, f.screen, f.status, f.message, f.name, f.recurrence, f.outcome, f.created_at, f.held, p.class, p.target_file
        FROM platform.feedback f
        LEFT JOIN LATERAL (SELECT * FROM platform.proposals WHERE feedback_id=f.id ORDER BY id DESC LIMIT 1) p ON true
-      WHERE f.company=$1 AND f.module=$2 ORDER BY f.id DESC LIMIT 60`, [company, mod])).rows;
+      WHERE f.company=$1 AND f.module=$2 ORDER BY f.id DESC LIMIT 60`, [company, mod])).rows
+    // a connected app's request no manager has reviewed yet: its words wait for that (src/mcp-company.js)
+    .map((f) => (f.held ? { ...f, message: "(a request from the company's connected app, not reviewed yet)" } : f));
   const runs = (await q(
     `SELECT id, lane, status, model, from_version, to_version, cost_usd, created_at, evidence->>'build_summary' AS summary
        FROM platform.build_runs WHERE company=$1 AND module=$2 ORDER BY id DESC LIMIT 25`, [company, mod])).rows;

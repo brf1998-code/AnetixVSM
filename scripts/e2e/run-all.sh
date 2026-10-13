@@ -185,6 +185,11 @@ MCP="SOS_PUBLIC_URL=http://127.0.0.1:3999"
 fresh; start "SOS_BROWSER=off $MCP"
 run mcp                    env $MCP node scripts/e2e/mcp.js
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off $MCP"; run mcp-browser env $MCP node scripts/e2e/mcp-browser.js; }
+# the company MCP (phase 2, src/mcp-company.js): a manager's own app, the records switch and Anetix's lock, the read role
+# across companies, a filed request that reaches no prompt until the manager's tap (the prompt log), Disconnect
+MCPC="$MCP SOS_MCP_TRIALS=trialco SOS_PROMPT_LOG=$LOG/mcp-company-prompts.jsonl"
+fresh; rm -f "$LOG/mcp-company-prompts.jsonl"; start "SOS_BROWSER=off $MCPC"
+run mcp-company            env $MCPC node scripts/e2e/mcp-company.js
 fresh; start "SOS_BROWSER=off"
 run mcp-off                node scripts/e2e/mcp.js off
 

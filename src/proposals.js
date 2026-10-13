@@ -141,11 +141,20 @@ async function generateProposal(feedbackId, opts = {}) {
   if (!fb.module || fb.module === "platform") throw new Error("platform feedback is handled outside the AI loop");
   if (fb.kind === "module_request") throw new Error("a module request is answered in its own popout, not reviewed as feedback");
   if (fb.duplicate_of) throw new Error(`this one is folded into request #${fb.duplicate_of}; press "not the same" on it first`);
+  // A request a company's connected AI app filed (src/mcp-company.js) waits for a manager: only the manager's own tap
+  // (Review with AI, Review all, the data check's re-propose) reads it, and that tap is what lets the AI read it from
+  // then on. The platform on its own (arrival, an answered question) never does.
+  if (fb.held) {
+    if (opts.arrival || opts.answered) throw new Error("a request from a connected app waits for a manager to review it");
+    await q("UPDATE platform.feedback SET held=false WHERE id=$1", [fb.id]);
+    await require("./record").record("mcp_request_released", { company: fb.company, module: fb.module, actor: opts.by || "manager", feedback_id: fb.id });
+  }
   const arrival = require("./arrival");
   const answered = Boolean(fb.question && fb.question.answer);
   const mayTriage = !opts.force && !opts.answered && !answered && !fb.triage;
   // a request sent from Ask Anetix (src/assist.js) was talked through with the manager first: sorted, never asked again
-  const mayAsk = mayTriage && !fb.question && fb.source !== "assistant";
+  // nor one a connected app filed in the manager's name: there is nobody on a screen to ask
+  const mayAsk = mayTriage && !fb.question && fb.source !== "assistant" && fb.source !== "mcp";
 
   const ctx = await moduleContext(fb.company, fb.module, { first: [fb.target_file], version: await pageVersion(fb) });
   const screenLine = await screenLineFor(fb);

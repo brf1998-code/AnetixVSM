@@ -2,7 +2,9 @@
 // src/mcpauth.js is the sign-in behind them; src/mcp-admin.js is what the admin address offers.
 //
 //   POST /mcp/admin    Anetix's own: operations across the instance, read only. A named ADMIN account's app only.
-//   (phase 2: /mcp, a company's managers: their own tools, records, board, and filing a request)
+//   POST /mcp          a company's own (phase 2, 2026-10-13, src/mcp-company.js): its tools, its board, its records when
+//                      its manager switched them on, and filing a request that waits for a manager. A named MANAGER
+//                      account's app only; the token carries the company.
 //
 // How a call is handled:
 //   - The bearer check comes first, for every method: no token or a dead one is a 401 that points the app at the
@@ -16,7 +18,7 @@
 //   - A tool's answer is JSON as text, at most SOS_MCP_MAX_CHARS (120000) characters; past that the app is told
 //     it was cut and to ask for less. A tool that throws answers "that did not work" with the error's words only
 //     when the tool marked them as fit to read (err.say); the Railway log has the rest.
-//   - A tool marked readOnly: false changes something (2026-10-06, src/mcp-intake.js). It runs only on a connection
+//   - A tool marked readOnly: false changes something (2026-10-06, src/mcp-intake.js; file_request in src/mcp-company.js). It runs only on a connection
 //     whose person ticked "let it write" on the consent page (who.writes, mcp_grants.writes); on any other it answers
 //     in words that say to connect the app again, and is logged as refused. Nothing a tool here does is destructive.
 //

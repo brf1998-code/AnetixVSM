@@ -150,7 +150,7 @@ async function main() {
   t("a shared manager password's session is nobody here", (await info(infoPath, sharedMgr)).status === 401);
   t("the shared admin password's session is nobody here", (await info(infoPath, shared)).status === 401);
   const mi = await info(infoPath, manager);
-  t("a manager account is told this address is not for it", mi.status === 200 && mi.json.allowed === false && /not open yet/.test(mi.json.why), mi.text);
+  t("a manager account is told this address is not for it, and which one is", mi.status === 200 && mi.json.allowed === false && /Anetix's own accounts; your company's address is .*\/mcp$/.test(mi.json.why), mi.text);
   const ai = await info(infoPath, admin);
   t("the admin is shown the app, where the answer goes, the address and what is asked", ai.status === 200 && ai.json.allowed === true && ai.json.app.name === "Claude" && ai.json.app.sends_to === "claude.ai" && ai.json.app.this_computer === false
     && ai.json.address === ADDRESS && ai.json.account.login === ADMIN && ai.json.step_up === "code" && ai.json.lasts.idle_days === 7 && ai.json.lasts.cap_days === 30, ai.text);

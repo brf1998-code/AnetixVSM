@@ -171,7 +171,9 @@ document.getElementById("f").onsubmit = async (e) => {
 function after(j) {
   if (j.role === "manager") {
     const own = "/c/" + j.company + "/";
-    location.href = j.enroll ? (j.enroll_url || own + "enroll") : next && next.startsWith(own) ? next : own; return;
+    // back to the page that asks whether to connect an AI app (src/mcpauth.js), when that is what sent them here
+    const consent = next && /^\/oauth\/consent\?req=[A-Za-z0-9._%-]+$/.test(next);
+    location.href = j.enroll ? (j.enroll_url || own + "enroll") : next && (next.startsWith(own) || consent) ? next : own; return;
   }
   location.href = next && /^\/(?!\/)/.test(next) && !j.enroll ? next : "/admin";
 }

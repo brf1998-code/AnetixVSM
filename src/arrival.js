@@ -130,6 +130,7 @@ async function candidates(fb) {
        FROM platform.feedback f
        LEFT JOIN LATERAL (SELECT body FROM platform.proposals WHERE feedback_id=f.id AND status <> 'superseded' ORDER BY id DESC LIMIT 1) p ON true
       WHERE f.company=$1 AND f.module=$2 AND f.kind='feedback' AND f.duplicate_of IS NULL AND f.id < $3 AND f.status = ANY($4::text[])
+        AND NOT f.held   -- a connected app's request no manager has reviewed: no AI reads its words yet (src/mcp-company.js)
       ORDER BY f.id DESC LIMIT 40`, [fb.company, fb.module, fb.id, OPEN])).rows;
 }
 async function photoBlocks(feedbackId) {
@@ -198,6 +199,8 @@ async function claim(feedbackId, opts = {}) {
     if (!fb || fb.kind !== "feedback" || !fb.module || fb.module === "platform" || fb.status !== "new" || fb.review_id || fb.duplicate_of || fb.arrival) return null;
     const agent = require("./agent");
     const skip = async (why) => { await q("UPDATE platform.feedback SET arrival=$2 WHERE id=$1", [fb.id, `skipped: ${why}`]); return null; };
+    // filed by a company's connected AI app (src/mcp-company.js): it waits for a manager's tap, whatever the switches say
+    if (fb.held) return skip("sent from a connected app, waits for a manager");
     if (!opts.force && !(await settings(fb.company)).auto_propose) return skip("switched off for this company");
     if (!agent.haveKey()) return skip("no AI on this instance");
     const live = (await q("SELECT live_version, staged_version FROM platform.modules WHERE company=$1 AND name=$2", [fb.company, fb.module])).rows[0];

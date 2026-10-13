@@ -3712,3 +3712,36 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     billing (50), sample (41), managers (40), standardize (19) pass.
   - *Known limits.* A site on by hand has no end date: nothing sends it back to a trial if the payment never comes,
     that is Anetix's call on the Sites tab. Its fair-use line does not apply until Activate (no period yet).
+- **The company MCP (2026-10-13)** (`src/mcp-company.js`, `src/mcpauth.js`, `src/assist-tools.js`, `public/settings.html`,
+  `public/connect.html`; the design and what changed from it are `docs/MCP.md`, "Phase 2"). Brendan: "build phase 2,
+  but ensure it is properly aligned", asked when he wanted Claude to keep Anetix's own CRM and action items (tools on
+  the `anetix` company) in step.
+  - *What it is.* `https://app.anetix.ai/mcp`: a manager of a paying site (or of a trial Anetix names in
+    `SOS_MCP_TRIALS`) adds it to their AI app as a custom connector, signs in with their own account and a fresh
+    passkey or code, and the app reads the company's tools (`list_tools`, `describe_tool`), what changed, the board
+    (`list_requests`, `get_request`) and, with the manager's records switch on, the records (`read_records`,
+    `summarize_records`, through the company's read role). Its one write, `file_request` (only on a connection ticked
+    to file), puts a request on the board in the manager's name. It edits no row, approves nothing, builds nothing.
+  - *Decisions kept (2026-10-05):* reads and files requests, never a row edit; records are the manager's own switch,
+    off by default, independent of the data wall; a filed request waits for the manager's tap; Anetix can lock the
+    records switch off (/admin, the company card's More); paying sites only; no added cost.
+  - *Held requests.* `feedback.held` on a filed request until a manager presses Review with AI or Review all:
+    `arrival.claim` refuses it, the duplicate check and the system review leave its words out, Ask Anetix and the
+    admin MCP show that it exists, not its words. The tap clears it (`proposals.generateProposal`,
+    `mcp_request_released` on the record) and the loop goes on as for any request, with no question asked of nobody.
+  - *Screens.* Settings: the card "Connected AI apps" (the address with Copy, the records switch with its step-up,
+    every connection with Disconnect, the last 25 calls). The board: a FROM <APP> chip and a line saying it waits. The
+    consent page names the company and what records it may read. /admin: the lock and the count on the company card,
+    whose company on the Accounts tab's connected apps, `connected_apps` in the admin MCP's `list_companies`.
+  - *Rules it keeps.* The company comes from the token and is checked again at every call; an admin account connects
+    to the admin address only and a manager to its company's only; a connection keeps the admin windows (7 days idle,
+    30 days cap); a company that stops being a site is refused but keeps its connections; Disconnect, Sign out
+    everywhere, switching the account off or deleting the company end them. Every answer is scrubbed of model names and
+    AI costs except the company's own rows. Every call is in `platform.mcp_calls` with its company.
+  - *Tests:* `scripts/e2e/mcp-company.js` (68, in run-all as mcp-company: the design's proof list and the screens'
+    routes), `scripts/test-mcp.js` (76), `scripts/e2e/mcp.js` (the manager's refusal on the admin address now names
+    the company address).
+  - *Known limits.* Not changed: the Terms sentence on data read through a connector (a new Terms version; for HLEP).
+    The golden questions were not rerun (no API key in the sandbox); run them on /admin, Health, since HELP.md
+    changed. Nothing here has met the real Claude on the company address yet. Writing records is the next step Brendan
+    named, and needs his word on decision 2.

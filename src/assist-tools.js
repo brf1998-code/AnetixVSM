@@ -12,7 +12,10 @@
 //     sos_<company>_read) inside a READ ONLY transaction with a short statement timeout. The query is built here from
 //     table and column names checked against the tool's own live tables; values are parameters; there is no free SQL.
 //   - With the data wall up (src/datawall.js) the record tools are not offered at all, and a call to one anyway is
-//     refused here too.
+//     refused here too. The company MCP (src/mcp-company.js) serves the same tools to the company's own AI app with
+//     ctx.walled meaning its own records switch instead (ctx.via "mcp", ctx.recordsOff the words for a refusal).
+//   - A request a connected app filed (feedback.held, src/mcp-company.js) waits for a manager before any of Anetix's AI
+//     reads it: here its words are left out unless the caller is the company's own app (ctx.via "mcp").
 //   - Nothing here returns a tool's code, an agent doc, a model name, an AI cost, a secret, a reply token or another
 //     company's anything.
 //   - Text people typed (a request, an answer, a record) is returned in fields named `words` or inside `records`,
@@ -150,8 +153,10 @@ function whereSql(cols, where, since, params) {
   }
   return parts.length ? ` WHERE ${parts.join(" AND ")}` : "";
 }
+const WALL_SAY = "This company has its records switched off for Anetix's AI (the data wall). You can explain how the tool is built and what it keeps, but not what is in it. Say so plainly.";
+const HELD_WORDS = "(sent from the company's connected AI app; its words are read once a manager reviews it on the board)";
 async function recordTable(ctx, args) {
-  if (ctx.walled) throw say("This company has its records switched off for Anetix's AI (the data wall). You can explain how the tool is built and what it keeps, but not what is in it. Say so plainly.");
+  if (ctx.walled) throw say(ctx.recordsOff || WALL_SAY);
   const m = await toolFor(ctx, args.tool);
   if (!m.live_version) throw say(`${m.title} is not on the floor yet, so it has no records.`);
   const { schema, tables } = await tablesOf(ctx.company, m.name);
@@ -241,18 +246,18 @@ const TOOLS = [
       const m = toAnetix ? null : await toolFor(ctx, args.tool, { optional: true });
       const statuses = STATUS_FILTER[args.status || "open"] === undefined ? STATUS_FILTER.open : STATUS_FILTER[args.status || "open"];
       const rows = (await q(
-        `SELECT id, kind, module, status, message, name, screen, recurrence, created_at, source FROM platform.feedback
+        `SELECT id, kind, module, status, message, name, screen, recurrence, created_at, source, held FROM platform.feedback
           WHERE company=$1 AND duplicate_of IS NULL AND kind IN ('feedback','module_request')
-            AND ($2::text IS NULL OR module=$2) AND ($3::text[] IS NULL OR status = ANY($3::text[])) AND ($4::text IS NULL OR message ILIKE $4)
+            AND ($2::text IS NULL OR module=$2) AND ($3::text[] IS NULL OR status = ANY($3::text[])) AND ($4::text IS NULL OR (message ILIKE $4 AND ($6::boolean OR NOT held)))
           ORDER BY id DESC LIMIT $5`,
-        [ctx.company, toAnetix ? "platform" : m ? m.name : null, statuses, args.words ? `%${String(args.words).slice(0, 80).replace(/[\\%_]/g, (x) => "\\" + x)}%` : null, Math.min(40, Math.max(1, Number(args.limit) || 15))])).rows;
+        [ctx.company, toAnetix ? "platform" : m ? m.name : null, statuses, args.words ? `%${String(args.words).slice(0, 80).replace(/[\\%_]/g, (x) => "\\" + x)}%` : null, Math.min(40, Math.max(1, Number(args.limit) || 15)), ctx.via === "mcp"])).rows;
       const titles = new Map((await modules(ctx.company)).map((x) => [x.name, x.title]));
       ctx.refs.push({ kind: "requests", module: m ? m.name : toAnetix ? "platform" : null });
       return {
         note: WORDS_NOTE,
         requests: rows.map((r) => ({ id: r.id, tool: r.kind === "module_request" ? "(a new tool)" : r.module === "platform" ? "Anetix (the software itself)" : titles.get(r.module) || r.module,
-          where_it_is: STATUS_WORDS[r.status] || r.status, words: clip(r.message, 500), asked_by: r.name || null, screen: r.screen || null, asked_times: r.recurrence, asked_on: r.created_at,
-          ...(r.source === "assistant" ? { from_a_conversation_with_you: true } : {}) })),
+          where_it_is: STATUS_WORDS[r.status] || r.status, words: r.held && ctx.via !== "mcp" ? HELD_WORDS : clip(r.message, 500), asked_by: r.name || null, screen: r.screen || null, asked_times: r.recurrence, asked_on: r.created_at,
+          ...sourceOf(r, ctx) })),
       };
     },
   },
@@ -265,6 +270,7 @@ const TOOLS = [
       const id = Number(args.id);
       const f = Number.isSafeInteger(id) && id > 0 && id < 2147483647 ? (await q("SELECT * FROM platform.feedback WHERE id=$1 AND company=$2", [id, ctx.company])).rows[0] : null;
       if (!f || (ctx.scope.kind === "tool" && f.module !== ctx.scope.module)) throw say(ctx.scope.kind === "tool" ? `There is no request #${clip(args.id, 12)} on this tool.` : `There is no request #${clip(args.id, 12)}.`);
+      const hide = f.held && ctx.via !== "mcp";
       const p = (await q("SELECT body, class, status, created_at FROM platform.proposals WHERE feedback_id=$1 ORDER BY id DESC LIMIT 1", [f.id])).rows[0];
       const dupes = (await q("SELECT id, message, name, created_at FROM platform.feedback WHERE duplicate_of=$1 ORDER BY id", [f.id])).rows;
       const hist = (await q(`SELECT kind, actor_role, actor_name, created_at FROM platform.record WHERE company=$1 AND feedback_id=$2 ORDER BY id LIMIT 40`, [ctx.company, f.id])).rows;
@@ -272,14 +278,14 @@ const TOOLS = [
       const title = f.module === "platform" ? "Anetix (the software itself)" : ((await modules(ctx.company)).find((m) => m.name === f.module) || {}).title || f.module;
       return {
         note: WORDS_NOTE,
-        id: f.id, tool: title, where_it_is: STATUS_WORDS[f.status] || f.status, words: clip(f.message, 2000), asked_by: f.name || null, screen: f.screen || null, asked_on: f.created_at,
+        id: f.id, tool: title, where_it_is: STATUS_WORDS[f.status] || f.status, words: hide ? HELD_WORDS : clip(f.message, 2000), asked_by: f.name || null, screen: f.screen || null, asked_on: f.created_at,
         change_drafted: p ? { words: clip(p.body, 1500), kind: p.class === "ui" ? "how it looks" : "how it works", decision: p.status } : null,
         question: f.question ? { asked: clip(f.question.text, 300), answer: f.question.answer ? { words: clip(f.question.answer, 500), by: f.question.answered_by || null } : null } : null,
         also_asked_by: dupes.map((d) => ({ id: d.id, words: clip(d.message, 400), by: d.name || null, on: d.created_at })),
         outcome: f.outcome ? { words: clip(f.outcome, 600) } : null, went_live_in_version: f.shipped_version || null, went_live_on: f.shipped_at || null,
         floor_said_afterwards: f.floor_answer || null, manager_said_afterwards: f.manager_answer || null,
         on_the_record: hist.map((h) => ({ what: h.kind.replace(/_/g, " "), by: h.actor_name || h.actor_role || null, on: h.created_at })),
-        ...(f.source === "assistant" ? { from_a_conversation_with_you: true } : {}),
+        ...sourceOf(f, ctx),
       };
     },
   },
@@ -400,23 +406,9 @@ const TOOLS = [
       let m = null, screen = null;
       if (!toAnetix) {
         m = await toolFor(ctx, args.tool, { optional: ctx.scope.kind === "tool" });
-        const man = await manifestOf(ctx.company, m);
-        const entries = registry.pageEntries(man);
-        if (args.screen) {
-          const hit = entries.find((e) => norm(e.label) === norm(args.screen) || norm(e.file) === norm(args.screen)) || entries.find((e) => norm(e.label).includes(norm(args.screen)));
-          if (!hit) throw say(`${m.title} has no screen called "${clip(args.screen, 60)}". Its screens: ${entries.map((e) => e.label).join(", ")}.`);
-          screen = { label: hit.label, file: hit.file, route: hit.route };
-        }
+        if (args.screen) screen = await screenOf(ctx, m, args.screen);
       }
-      // open requests that may ask for the same thing: shared words (cheap, only a hint for the person; the proposer's
-      // own duplicate check still runs when the request arrives)
-      const words = stems(what).slice(0, 14);
-      const similar = words.length ? (await q(
-        `SELECT id, message, status, name, recurrence FROM platform.feedback WHERE company=$1 AND module=$2 AND duplicate_of IS NULL AND kind='feedback' AND status IN ('new','reviewing','in_progress')
-          ORDER BY id DESC LIMIT 200`, [ctx.company, toAnetix ? "platform" : m.name])).rows
-        .map((r) => { const theirs = new Set(stems(r.message)); return { r, n: words.filter((w) => theirs.has(w)).length }; })
-        .filter((x) => x.n >= Math.max(2, Math.ceil(words.length / 4)))
-        .sort((a, b) => b.n - a.n).slice(0, 3).map(({ r }) => ({ id: r.id, words: clip(r.message, 300), where_it_is: STATUS_WORDS[r.status], asked_by: r.name || null, asked_times: r.recurrence })) : [];
+      const similar = await similarOpen(ctx.company, toAnetix ? "platform" : m.name, what, { held: false });
       const card = { tool: toAnetix ? "platform" : m.name, tool_title: toAnetix ? "Anetix (the software itself)" : m.title, screen, what: clip(what, 1800), why: clip(String(args.why || "").trim(), 400) || null, similar: similar.map((s) => s.id) };
       ctx.cards.push(card);
       return { note: WORDS_NOTE, card_shown: true, nothing_filed_yet: "The person sees the card with a Send to Reviewing button. Say in a sentence that it is ready for them to check and send; never say it was filed.", may_already_be_asked: similar };
@@ -424,6 +416,34 @@ const TOOLS = [
   },
 ];
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+
+// Where a request came from, for the model: Ask Anetix's own card, or the company's connected app (and whether it is
+// still waiting for a manager before any AI reads it).
+function sourceOf(r, ctx) {
+  if (r.source === "assistant") return { from_a_conversation_with_you: true };
+  if (r.source === "mcp") return ctx.via === "mcp" ? { from_a_connected_app: true, ...(r.held ? { waiting_for_a_manager: true } : {}) } : { from_the_companys_connected_app: true, ...(r.held ? { not_reviewed_yet: true } : {}) };
+  return {};
+}
+// One of a tool's screens by its label (or file), for a request card or a filed request. -> { label, file, route }
+async function screenOf(ctx, m, asked) {
+  const entries = registry.pageEntries(await manifestOf(ctx.company, m));
+  const hit = entries.find((e) => norm(e.label) === norm(asked) || norm(e.file) === norm(asked)) || entries.find((e) => norm(e.label).includes(norm(asked)));
+  if (!hit) throw say(`${m.title} has no screen called "${clip(asked, 60)}". Its screens: ${entries.map((e) => e.label).join(", ")}.`);
+  return { label: hit.label, file: hit.file, route: hit.route };
+}
+// Open requests that may ask for the same thing: shared words (cheap, only a hint for the person; the proposer's own
+// duplicate check still runs when a request is read). opts.held false: a request a connected app filed that no manager
+// has reviewed yet is left out, for a caller whose answer goes to Anetix's AI.
+async function similarOpen(company, module, what, { held = true } = {}) {
+  const words = stems(what).slice(0, 14);
+  if (!words.length) return [];
+  return (await q(
+    `SELECT id, message, status, name, recurrence FROM platform.feedback WHERE company=$1 AND module=$2 AND duplicate_of IS NULL AND kind='feedback' AND status IN ('new','reviewing','in_progress')
+       AND ($3::boolean OR NOT held) ORDER BY id DESC LIMIT 200`, [company, module, held])).rows
+    .map((r) => { const theirs = new Set(stems(r.message)); return { r, n: words.filter((w) => theirs.has(w)).length }; })
+    .filter((x) => x.n >= Math.max(2, Math.ceil(words.length / 4)))
+    .sort((a, b) => b.n - a.n).slice(0, 3).map(({ r }) => ({ id: r.id, words: clip(r.message, 300), where_it_is: STATUS_WORDS[r.status], asked_by: r.name || null, asked_times: r.recurrence }));
+}
 
 // The tools offered for a scope. A walled company never sees the record tools. The order is fixed so the prompt
 // cache holds (a few variants in all: help, one tool, whole company, each with the wall up or down).
@@ -437,7 +457,7 @@ async function call(ctx, name, args) {
   const tool = BY_NAME.get(name);
   const offered = tool && toolsFor(ctx).includes(tool);
   try {
-    if (!offered) throw say(tool && tool.records && ctx.walled ? "This company has its records switched off for Anetix's AI (the data wall). Say so plainly." : `There is no tool called ${clip(name, 40)} here.`);
+    if (!offered) throw say(tool && tool.records && ctx.walled ? (ctx.recordsOff || "This company has its records switched off for Anetix's AI (the data wall). Say so plainly.") : `There is no tool called ${clip(name, 40)} here.`);
     const out = await tool.run(ctx, args && typeof args === "object" ? args : {});
     let text = JSON.stringify(out);
     if (text.length > MAX_CHARS) text = JSON.stringify({ cut: `This answer was too long and was cut at ${MAX_CHARS} characters. Ask for less (fewer rows, a filter, or a summary).`, start: text.slice(0, MAX_CHARS - 300) });
@@ -449,4 +469,4 @@ async function call(ctx, name, args) {
 }
 function newCtx({ company, role, scope, walled, person }) { return { company, role, scope, walled: Boolean(walled), person: person || null, refs: [], cards: [], shows: [] }; }
 
-module.exports = { TOOLS, toolsFor, definitions, call, newCtx, toolFor, tablesOf, readOnly, dropPool, modules, cell, stems, WORDS_NOTE, STATUS_WORDS, MAX_ROWS, MAX_CHARS };
+module.exports = { TOOLS, toolsFor, definitions, call, newCtx, toolFor, tablesOf, readOnly, dropPool, modules, cell, stems, screenOf, similarOpen, sourceOf, WORDS_NOTE, STATUS_WORDS, HELD_WORDS, MAX_ROWS, MAX_CHARS };

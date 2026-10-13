@@ -88,8 +88,15 @@ async function untilBySlug() {
   return new Map(rows.map((r) => [r.company, r.converted_at]));
 }
 const keep = (until, slug, at) => { const u = until.get(slug); return !u || new Date(at) < new Date(u); };
+// A request a company's connected AI app filed that no manager has reviewed yet (feedback.held, src/mcp-company.js):
+// the app may read the company's records and could have pasted them in, so its words wait for a manager here too.
+const HELD = "(sent from the company's connected AI app; its words show here once a manager has reviewed it on the board)";
+async function heldIds(company) {
+  return new Set((await q("SELECT id FROM platform.feedback WHERE held AND ($1::text IS NULL OR company=$1)", [company || null])).rows.map((r) => r.id));
+}
 const DETAIL_KEYS = ["round", "verdict", "by", "decision", "answer", "scope", "lane", "from", "to", "via", "follow_up_id", "asked_by", "kind", "rules"];
-function activityOut(r) {
+function activityOut(r, held = new Set()) {
+  if (r.feedback_id && held.has(Number(r.feedback_id))) return { ...activityOut({ ...r, feedback_id: null }), feedback_id: r.feedback_id, before: null, words: HELD };
   const words = !WORDLESS.has(r.kind);
   return {
     id: r.id, at: r.created_at, company: r.company, tool: r.module, kind: r.kind, who: r.actor_name || r.actor_role || null, role: r.actor_role,
@@ -102,7 +109,7 @@ function activityOut(r) {
 const tools = [
   {
     name: "list_companies", title: "Companies",
-    description: "Every company on the instance, one line each: whether it is a paying site or a trial, its tools and their live versions, open requests, builds, this month's AI spend, when it last did anything, and whether its data is walled off from Anetix's AI. Start here to get a company's slug.",
+    description: "Every company on the instance, one line each: whether it is a paying site or a trial, its tools and their live versions, open requests, builds, this month's AI spend, when it last did anything, whether its data is walled off from Anetix's AI, and its own connected AI apps (how many, and whether they may read records). Start here to get a company's slug.",
     input: {},
     async run() {
       const kind = require("./kind"), agent = require("./agent");
@@ -112,6 +119,7 @@ const tools = [
       const runs = (await q("SELECT company, count(*)::int AS builds, count(*) FILTER (WHERE status='deployed')::int AS deployed, count(*) FILTER (WHERE status IN ('running','queued','waiting'))::int AS in_flight FROM platform.build_runs GROUP BY company")).rows;
       const last = (await q("SELECT company, max(created_at) AS at FROM platform.record GROUP BY company")).rows;
       const spend = await agent.spendSince(null);
+      const apps = await require("./mcp-company").adminSummary();
       const by = (rows, slug) => rows.find((r) => r.company === slug);
       const out = [];
       for (const c of companies) out.push({
@@ -120,6 +128,7 @@ const tools = [
         tools: modules.filter((m) => m.company === c.slug).map((m) => ({ name: m.name, title: m.title, live_version: m.live_version, preview_waiting: m.staged_version != null && m.staged_version !== m.live_version })),
         requests: pick(by(fb, c.slug) || { open: 0, total: 0 }, ["open", "total"]), builds: pick(by(runs, c.slug) || { builds: 0, deployed: 0, in_flight: 0 }, ["builds", "deployed", "in_flight"]),
         ai_spend_this_month_usd: money(spend.by[c.slug] || 0), ai_budget_usd: c.monthly_cap_usd == null ? null : Number(c.monthly_cap_usd), last_activity: (by(last, c.slug) || {}).at || null,
+        connected_apps: apps[c.slug] ? { may_connect: apps[c.slug].may_connect, connections: apps[c.slug].connections, reads_records: apps[c.slug].records_on, locked_by_anetix: apps[c.slug].records_locked } : null,
       });
       return { companies: out, ai_spend_this_month_usd: money(spend.total) };
     },
@@ -141,8 +150,10 @@ const tools = [
       const health = require("./health");
       const d = await require("./demos").detail(slugArg(company));
       if (!d) throw say("No demo by that slug. list_demos names the ones there are.");
+      const held = await heldIds(d.slug || slugArg(company));
       return {
         ...demoOut(d),
+        ...(Array.isArray(d.feedback) ? { feedback: d.feedback.map((f) => (held.has(f.id) ? { ...f, message: HELD } : f)) } : {}),
         runs: (d.runs || []).map((r) => demoRunOut(r, health.stopKind)),
         ledger: (d.ledger || []).map((l) => pick(l, ["id", "kind", "delta_usd", "paid_usd", "note", "made_by", "created_at"])),   // not the Stripe reference
         // what a chat persona was asked and answered can quote a tool's records: those two kinds stay out
@@ -239,9 +250,10 @@ const tools = [
                                WHERE r.created_at >= $1 AND ($2::text IS NULL OR r.company=$2) AND r.kind <> ALL($3::text[]) ORDER BY r.id LIMIT $4`, [from, slug, NEVER, max + 1])).rows
         .filter((r) => keep(until, r.company, r.created_at));
       const more = rows.length > max, lines = rows.slice(0, max);
+      const held = await heldIds(slug);
       const byCompany = {};
       for (const r of lines) { const b = byCompany[r.company] || (byCompany[r.company] = { company: r.company, name: r.company_name, lines: 0, kinds: {} }); b.lines++; b.kinds[r.kind] = (b.kinds[r.kind] || 0) + 1; }
-      return { since: from, lines: lines.length, more, companies: Object.values(byCompany), activity: lines.map(activityOut),
+      return { since: from, lines: lines.length, more, companies: Object.values(byCompany), activity: lines.map((r) => activityOut(r, held)),
         left_out: "Ask Anetix (list_assistant_conversations); a chat persona's questions and answers; the words of checks, system reviews and saved agent docs; a paying site's activity after it went live without the learning opt-in" };
     },
   },
@@ -302,7 +314,7 @@ const tools = [
       const slug = company ? slugArg(company) : null, st = status || "open";
       const want = st === "open" ? ["new", "reviewing", "in_progress"] : st === "all" ? null : [st];
       const until = await untilBySlug();
-      const rows = (await q(`SELECT f.id, f.company, co.name AS company_name, f.module, m.title AS tool_title, f.screen, f.kind, f.message, f.name, f.status, f.outcome, f.recurrence, f.source,
+      const rows = (await q(`SELECT f.id, f.company, co.name AS company_name, f.module, m.title AS tool_title, f.screen, f.kind, f.message, f.name, f.status, f.outcome, f.recurrence, f.source, f.held,
                                     f.follow_up_of, f.duplicate_of, f.triage, f.question, f.floor_answer, f.manager_answer, f.shipped_version, f.created_at, f.updated_at
                                FROM platform.feedback f LEFT JOIN platform.companies co ON co.slug=f.company LEFT JOIN platform.modules m ON m.company=f.company AND m.name=f.module
                               WHERE f.module IS DISTINCT FROM 'platform' AND ($1::text[] IS NULL OR f.status = ANY($1::text[])) AND ($2::text IS NULL OR f.company=$2)
@@ -311,7 +323,7 @@ const tools = [
       const counts = {};
       for (const r of rows) { const c = counts[r.company] || (counts[r.company] = { company: r.company, name: r.company_name, new: 0, reviewing: 0, in_progress: 0, done: 0, declined: 0 }); if (c[r.status] !== undefined) c[r.status]++; }
       return { status: st, counts: Object.values(counts), requests: rows.map((r) => ({
-        id: r.id, company: r.company, tool: r.tool_title || r.module, screen: r.screen, kind: r.kind, words: cut(r.message, 2000), from: r.name || null, via: r.source || "board",
+        id: r.id, company: r.company, tool: r.tool_title || r.module, screen: r.screen, kind: r.kind, words: r.held ? HELD : cut(r.message, 2000), from: r.name || null, via: r.source === "mcp" ? "the company's connected app" : r.source || "board",
         status: r.status, outcome: cut(r.outcome, 600), times_asked: r.recurrence, follow_up_of: r.follow_up_of, duplicate_of: r.duplicate_of, triage: r.triage,
         waiting_on_an_answer: r.question && r.question.text && !r.question.answer ? cut(r.question.text, 400) : null,
         floor_said: r.floor_answer, manager_said: r.manager_answer, shipped_version: r.shipped_version, filed: r.created_at, last_moved: r.updated_at,
@@ -323,4 +335,4 @@ const tools = [
 // the new tool request tools: two that read, four that write (src/mcp-intake.js)
 tools.push(...require("./mcp-intake").tools);
 
-module.exports = { surface, tools, demoOut, demoRunOut, siteOut, runOut, SITE_KEYS, activityOut, WORDLESS, NEVER, RECORD_TOOLS };
+module.exports = { surface, tools, demoOut, demoRunOut, siteOut, runOut, SITE_KEYS, activityOut, heldIds, WORDLESS, NEVER, RECORD_TOOLS, HELD };

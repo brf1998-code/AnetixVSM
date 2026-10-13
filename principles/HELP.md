@@ -80,7 +80,16 @@ The manager's one settings page (Settings, top right of the board): managers and
 (passkeys, the authenticator app, password), people and their PINs, printers and spreadsheets, the wall sign (a QR
 code that opens the board), When a request arrives (read at once, photos), the system review (now and then the AI
 reads one whole tool and files what it would change, held for the manager's approval), the test floor, Your data
-(download everything the company put in, as one file) and Help.
+(download everything the company put in, as one file), Connected AI apps and Help.
+
+**Connected AI apps** (a paying site): an AI app the company already uses can connect to the company's own Anetix
+through the address shown there, added to the app as a custom connector. A manager connects it with their own account
+and a passkey or code. It reads the company's tools, how they work, what changed and the requests on the board. It
+reads the records the tools keep only when a manager turns on "Let connected apps read your records" (off at first;
+Anetix can also keep it off). It can put a request on the board in the manager's name, marked FROM and the app's name:
+that request waits for a manager, nothing reads it until a manager presses Review with AI, and every change still needs
+the manager's approval. It never changes a tool or a record. Each connection can be disconnected there, and the last
+things the apps did are listed.
 
 ## Outside systems
 

@@ -138,6 +138,12 @@
       <div class="sub">Everything your company put into Anetix, as one file: each tool's records, your requests and their answers, the answers to new-tool questions, attached photos and files, uploads, labels printed and your people. The tools' code is part of Anetix and is not in it.</div>
       <a class="btn primary" id="export-go" download>Download your data (JSON)</a>
     </div>
+    <div class="card" id="mcp-card" style="display:none">
+      <h2 id="mcp">Connected AI apps</h2>
+      <div class="sub">An AI app your company already uses can connect to this company's Anetix. It reads your tools, how each one works, what changed and the requests on the board, and it can put a request on the board for you to review. It never changes a tool or a record, and nothing it files is read or built until a manager reviews it on the board.</div>
+      <div id="mcp-body" style="margin-top:10px"></div>
+      <span class="ok" id="mcp-ok"></span>
+    </div>
     <div class="card" id="help-card">
       <h2>Help</h2>
       <div class="sub">Stuck, or something looks wrong? Write to <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>. Inside the product, a request under Requests to Anetix reaches us too, and the answer shows under My requests.</div>
@@ -174,6 +180,7 @@ async function load() {
   loadGoLive();
   loadSubscription();
   loadManagers();
+  loadMcp(D.me);
 }
 // A paying site (stage 3, src/activate.js): its band and price, and the learning choice from its order form, which the
 // manager can change here (the Terms, 10.2). Stage 4 (src/billing.js): the next bill or the end date, a line when a
@@ -357,6 +364,62 @@ load();
 // Your sign-in (the launch audit 1.10 and 1.3): a manager with an account of their own sees their passkeys, whether the
 // authenticator app is set up (and a way to add it, for a passkey-first account), and Change my password. A shared
 // password's session has no account, and the card stays hidden.
+// Connected AI apps (src/mcp-company.js, docs/MCP.md): the address, the records switch, every app connected to this
+// company with Disconnect, and the last calls. Turning records on asks for a fresh passkey or code; off asks for nothing.
+let MCP = null, MCP_ME = null;
+const mcpEsc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const mcpWhen = (d) => (d ? new Date(d).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "never");
+async function loadMcp(me) {
+  if (me !== undefined) MCP_ME = me;
+  const r = await fetch(`/api/c/${SLUG}/mcp`, { cache: "no-store" });
+  if (!r.ok) return;
+  MCP = await r.json();
+  const card = document.getElementById("mcp-card"), body = document.getElementById("mcp-body");
+  if (!MCP.enabled) { card.style.display = "none"; return; }
+  card.style.display = "";
+  let h = "";
+  if (!MCP.may_connect) h += `<div class="sub" style="color:#8a5a00">Not open for this company: ${mcpEsc(MCP.why_not)}.${MCP.connections.length ? " The apps below are connected but cannot read anything until it is." : ""}</div>`;
+  else h += `<div><b>The address</b> <span class="sub">(add it to your AI app as a custom connector; you then sign in here with your own account and confirm with your passkey or code)</span></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px"><code style="background:var(--fog);padding:6px 9px;border-radius:6px;word-break:break-all">${mcpEsc(MCP.address)}</code><button class="quiet" style="margin:0" onclick="navigator.clipboard.writeText(MCP.address).then(() => { document.getElementById('mcp-ok').textContent = 'Copied.'; })">Copy</button></div>`;
+  const rec = MCP.records || {};
+  const can = MCP.can_switch && !rec.locked;
+  h += `<label class="sw" style="margin-top:10px;border-top:1px solid var(--line)"><input type="checkbox" id="mcp-rec" ${rec.on ? "checked" : ""} ${can ? "" : "disabled"} onchange="mcpRecords(this.checked)"><span><b>Let connected apps read your records</b>
+    <span class="sub">${rec.locked ? "Off: Anetix has this switched off for your company. Ask Anetix about it." : "The rows your tools keep. What an app reads goes to that app's AI service, under your own agreement with them. It does not change what Anetix's AI can see."}${!MCP.can_switch && !rec.locked ? " A manager turns this on from their own account." : ""}</span></span></label>
+    <div id="mcp-step" style="display:none;margin:4px 0 8px 28px"></div>`;
+  if (MCP.connections.length) {
+    h += `<table class="acc"><tr><th>Who</th><th>App</th><th>Connected</th><th>Last used</th><th></th></tr>${MCP.connections.map((c) => `<tr><td>${mcpEsc(c.who)}</td><td>${mcpEsc(c.app)}${c.files_requests ? "" : ' <span class="sub">(reads only)</span>'}</td><td>${mcpWhen(c.connected)}</td><td>${mcpWhen(c.last_used)}</td><td><button class="quiet" onclick="mcpDisconnect(${Number(c.id)})">Disconnect</button></td></tr>`).join("")}</table>`;
+  } else h += `<div class="sub" style="margin-top:6px">No app is connected.</div>`;
+  if (MCP.calls.length) h += `<details style="margin-top:8px"><summary class="sub">The last ${MCP.calls.length} things connected apps did</summary><table class="acc">${MCP.calls.map((c) => `<tr><td>${mcpWhen(c.at)}</td><td>${mcpEsc(c.who || "")}</td><td>${mcpEsc(c.app || "")}</td><td>${mcpEsc(c.tool)}${c.ok ? "" : ' <span class="sub">(refused)</span>'}</td></tr>`).join("")}</table></details>`;
+  body.innerHTML = h;
+}
+async function mcpRecords(on, step) {
+  const box = document.getElementById("mcp-rec"), ok = document.getElementById("mcp-ok"), st = document.getElementById("mcp-step");
+  if (on && !step) {
+    // a fresh check first: the code from the authenticator app, or a passkey
+    const pk = window.Passkey && Passkey.supported() && MCP_ME && MCP_ME.passkeys > 0;
+    st.style.display = "";
+    st.innerHTML = `<div class="sub">Confirm it is you.</div>${MCP_ME && MCP_ME.app ? `<input id="mcp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="a fresh 6 digit code" style="font-size:15px;padding:7px;border:1px solid var(--line);border-radius:7px;width:180px;margin-top:4px"> <button class="primary" onclick="mcpRecords(true, { code: document.getElementById('mcp-code').value.trim() })">Turn on</button>` : ""}${pk ? `<button class="${MCP_ME && MCP_ME.app ? "quiet" : "primary"}" onclick="mcpPasskey()">Turn on with my passkey</button>` : ""}<button class="quiet" onclick="loadMcp()">Cancel</button><div class="sub" id="mcp-err" style="color:#b3261e"></div>`;
+    box.checked = false; return;
+  }
+  box.disabled = true; ok.textContent = "";
+  const r = await fetch(`/api/c/${SLUG}/mcp/records`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on, ...(step || {}) }) });
+  const j = await r.json().catch(() => ({}));
+  box.disabled = false;
+  if (!r.ok) { const e = document.getElementById("mcp-err"); if (e) e.textContent = j.error || "That did not work."; else ok.textContent = j.error || "That did not work."; box.checked = !on; return; }
+  ok.textContent = on ? "Saved: connected apps may read your records." : "Saved: connected apps may not read your records.";
+  loadMcp();
+}
+async function mcpPasskey() {
+  const out = await Passkey.stepUp();
+  if (out.passkey) return mcpRecords(true, { passkey: out.passkey });
+  if (!out.cancelled) { const e = document.getElementById("mcp-err"); if (e) e.textContent = out.error || "The passkey did not work."; }
+}
+async function mcpDisconnect(id) {
+  const r = await fetch(`/api/c/${SLUG}/mcp/grants/${Number(id)}/disconnect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  document.getElementById("mcp-ok").textContent = r.ok ? "Disconnected." : (j.error || "That did not work.");
+  loadMcp();
+}
 function signIn(me) {
   if (!me || me.role !== "manager") return;
   document.getElementById("pk-card").style.display = "";

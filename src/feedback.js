@@ -369,7 +369,8 @@ router.get("/api/c/:slug/board", async (req, res) => {
             (SELECT o.message FROM platform.feedback o WHERE o.id=f.follow_up_of) AS follow_up_words,
             (SELECT o.manager_answer FROM platform.feedback o WHERE o.id=f.follow_up_of) AS follow_up_origin,
             (SELECT c.id FROM platform.feedback c WHERE c.follow_up_of=f.id ORDER BY c.id DESC LIMIT 1) AS follow_up_id,
-            (SELECT a.id FROM platform.attachments a WHERE a.feedback_id=f.id ORDER BY a.id LIMIT 1) AS photo_id
+            (SELECT a.id FROM platform.attachments a WHERE a.feedback_id=f.id ORDER BY a.id LIMIT 1) AS photo_id,
+            (SELECT g.client_name FROM platform.mcp_grants g WHERE f.source='mcp' AND g.id=f.source_ref) AS source_app
        FROM platform.feedback f
        LEFT JOIN LATERAL (SELECT * FROM platform.proposals WHERE feedback_id=f.id ORDER BY id DESC LIMIT 1) p ON true
       WHERE f.company=$1
@@ -866,6 +867,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   for (const c of (await selfserve.adminView()).companies) selfServe[c.slug] = c;
   const managersBy = {};
   for (const c of companies) { const ms = await selfserve.managers(c.slug); if (ms.length) managersBy[c.slug] = ms; }
+  const mcpBy = await require("./mcp-company").adminSummary();   // connected AI apps, the records switch and Anetix's lock (src/mcp-company.js)
   res.json({
     companies: companies.map((c) => ({
       ...c,
@@ -883,6 +885,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       ...datawall.status(c),
       credit: selfServe[c.slug] || null,
       managers: managersBy[c.slug] || [],   // manager accounts (email, authenticator app): self-serve companies (src/selfserve.js)
+      mcp: mcpBy[c.slug] || null,
     })),
     testFloors: Object.fromEntries(await Promise.all(companies.filter((c) => c.test_floor).map(async (c) => [c.slug, await testfloor.status(c.slug)]))),
     library: await libraryView(modules),
@@ -1209,6 +1212,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     await require("./sites").deleteCompany(co.slug);   // its row in the pipeline (src/sites.js)
     await require("./notices").deleteCompany(co.slug);   // its managers' notices
     await require("./assist").deleteCompany(co.slug);   // its Ask Anetix conversations and their audit (src/assist.js)
+    await require("./mcp-company").deleteCompany(co.slug);   // its connected apps' connections end (src/mcp-company.js)
     await require("./agreements").forget(co.slug);       // its acceptances of the Terms stay on record (the Terms, 10.7) and stop counting
     registry.unmountCompany(co.slug);
     for (const m of mods) {

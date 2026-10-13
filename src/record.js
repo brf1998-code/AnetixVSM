@@ -34,6 +34,9 @@
 //   intake_sent, intake_taken_over (Anetix through a connected app, src/mcp-intake.js: a round sent to the agent; a
 //   manager's unfinished request taken over). An answer written that way is an intake_answered row with actor_role
 //   admin and the account's name.
+//   mcp_connected, mcp_disconnected, mcp_records_on, mcp_records_off (the manager's switch), mcp_records_locked,
+//   mcp_records_unlocked (Anetix's lock), mcp_request_released (a manager's tap let the AI read a request a connected
+//   app filed; that filing is a feedback_filed row with detail.via "mcp"), src/mcp-company.js
 //   doc_saved (before/after an agent doc), doc_deleted, models_changed
 //   label_set (the checks log), chat_question, chat_answer (a module's chat persona)
 const { q, pool } = require("./db");

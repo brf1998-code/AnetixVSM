@@ -155,10 +155,11 @@ async function ask(name = "Claude", redirect = CLAUDE) {
   const five = await ask("Claude for a manager");
   await page.goto(five.consent); await page.waitForURL(/\/login\?staff=1&next=/);
   await signIn(MANAGER, MPW, mSecret);
-  await page.waitForURL(/\/c\/demo\//);
-  await page.goto(five.consent); await page.waitForSelector(".note.bad");
+  // the sign-in sends a manager back to the page that asked (it used to land them on their board, phase 2 of docs/MCP.md)
+  await page.waitForURL(/\/oauth\/consent\?req=/); await page.waitForSelector(".note.bad");
+  t("a manager's sign-in goes back to the consent page", /\/oauth\/consent\?req=/.test(page.url()));
   const mtext = await page.locator("#card").innerText();
-  t("a manager account sees why it cannot connect an app here, and no Allow", /cannot connect an app here/.test(mtext) && /not open yet/.test(mtext) && (await page.locator("#yes").count()) === 0 && (await page.locator("#code").count()) === 0, mtext);
+  t("a manager account sees why it cannot connect an app here, and no Allow", /cannot connect an app here/.test(mtext) && /Anetix.s own accounts/.test(mtext) && (await page.locator("#yes").count()) === 0 && (await page.locator("#code").count()) === 0, mtext);
   await page.click("#no"); await page.waitForSelector("#app");
   t("its way out goes back to the app with a no", /error=access_denied/.test(landed[landed.length - 1]));
   // the manager's board: the request Anetix started and filled in, said to be Anetix's, with the manager's own buttons
