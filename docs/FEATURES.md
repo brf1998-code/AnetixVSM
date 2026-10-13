@@ -3681,3 +3681,34 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Known limits.* Change it is not tried against the real model yet. The audit reads a paying site only up to the
     day it went live unless it opted in to learning (the Terms, 10.2); none are subscribed yet.
 
+- **Notices fold into one line; switch a site on by hand, payment to follow** (2026-10-13; `src/notices.js`,
+  `public/index.html`, `src/activate.js` switchOn/switchOff, `src/kind.js`, `public/assets/admin-sites.js`). Brendan,
+  looking at seven "Anetix put a change live" cards stacked on Chelsea Clock's board: "These notifications should not
+  be taking up so much space, when there is more than one it looks terrible and we should be able to clear it. Also
+  chelsea should not longer be on the demo view even though the payment has not processed yet as we need to start
+  rolling it out on the floor, I will need to have the option to activate companies on my own."
+  - *Notices.* However many there are, one slim line: the newest, cut to one line, with "N updates from Anetix", Show
+    all (a list that scrolls past six) and Clear all (`POST /api/c/:slug/notices/seen-all`). One notice is one line
+    with a close mark. A manager OR an admin closes them now (Anetix runs some boards itself for now); `seen_by` keeps
+    who. The Terms' 9.1 duty is to tell the manager: on a customer's board, Anetix should leave a notice their manager
+    has not read alone.
+  - *Switch on by hand.* The Sites tab, on any company that is not paying: "Switch on now, payment to follow" (a fresh
+    code or passkey, an optional note, sample data out by default). `platform.sites.switched_on` `{ at, by, note }`;
+    `kind.isSite` and `agent.subscribedSite` read it, so the company is a site at once: no sample data or its links,
+    the floor's wording, its managers can add managers, Ask Anetix in live mode, no company cap, out of the replays
+    and the Demos tab's learning (`checks.js`, `assess.js`), refused by delete. `converted_at` marks where the plant's
+    data starts. The rollover runs WITHOUT the floor-password step: the floor keeps the password it has, nobody is
+    signed out. The stage is not touched, so the pilot offer stands and the payment comes by the usual road (order,
+    signature, card, Activate). `finish()` clears `switched_on` and keeps the rollover's marks (`paid_at` added), so
+    Activate never hands the floor a second new password; its plan says so. "Switch back to a trial" undoes it while
+    nothing is paid (`POST /api/admin/sites/:slug/switch-off`); a paying site ends through its subscription. The Sites
+    tab's stage reads "On, payment to follow". `kind.standardize` leaves a switched-on company alone.
+  - *Found on the way.* The rollover's sample step called `sample.clear`, which refuses a company that already counts
+    as a site, so Activate could log "not cleared" and leave made-up rows on a paying floor. `clear(..., { goingLive })`
+    skips that check for the rollover only.
+  - *Tests:* `scripts/e2e/switchon.js` (29: switch on, the floor still signed in, sample data out, the offer standing,
+    switch off and on again, then the order, card and Activate with the floor's password kept; seven notices, one
+    closed, Clear all, the floor refused). `stage3.js`'s notice case is the new rule. pricing (82), stage3 (116),
+    billing (50), sample (41), managers (40), standardize (19) pass.
+  - *Known limits.* A site on by hand has no end date: nothing sends it back to a trial if the payment never comes,
+    that is Anetix's call on the Sites tab. Its fair-use line does not apply until Activate (no period yet).

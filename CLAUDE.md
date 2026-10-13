@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-10-12)
+# Symbiotic OS: Workspace Guide (current as of 2026-10-13)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -175,6 +175,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Every AI failure reaches the phones (2026-10-08)
 - Ask Anetix: the assistant on the board (2026-10-08)
 - Change it at the gate, Ask Anetix in demos, and the audit tools (2026-10-12)
+- Notices fold into one line; switch a site on by hand, payment to follow (2026-10-13)
 
 ## What this is
 

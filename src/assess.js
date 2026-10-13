@@ -138,7 +138,8 @@ async function init() {
 // Never a paying site's work (stage 3, 2026-09-26): its data is used for other customers only with the learning opt-in
 // (the Terms, 10.2), and a trial's cost is metered under the company, so it would count against the site's fair-use
 // line. PAYING: the SQL that keeps a company whose site is switching on or subscribed out.
-const PAYING = (col) => `NOT EXISTS (SELECT 1 FROM platform.sites st WHERE st.company = ${col} AND st.stage IN ('activating','subscribed'))`;
+// (a site switched on by hand counts too, src/activate.js switchOn: its data is a real floor's)
+const PAYING = (col) => `NOT EXISTS (SELECT 1 FROM platform.sites st WHERE st.company = ${col} AND (st.stage IN ('activating','subscribed') OR st.switched_on IS NOT NULL))`;
 async function sources(kind, company, limit) {
   const co = company || null, n = Math.max(1, Math.min(MAX_CASES, Number(limit) || MAX_CASES));
   if (kind === "crosscheck") return (await q(`

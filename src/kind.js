@@ -6,8 +6,8 @@
 // creation. Only companies made on anetix.ai after the demo workflow (2026-09-25) carry it, so a company added by hand on
 // /admin (the Demo Company among them) and the few made on anetix.ai before that never got those features.
 //
-// One distinction now decides the features: a PAID SITE (Stripe switched it on, platform.sites.stage 'subscribed') or
-// not. A paid site has a real floor, so nothing made up goes into its tables and its words are the floor's. Every other
+// One distinction now decides the features: a PAID SITE (Stripe switched it on, platform.sites.stage 'subscribed', or an
+// admin switched it on by hand with the payment to follow, platform.sites.switched_on, 2026-10-13) or not. A paid site has a real floor, so nothing made up goes into its tables and its words are the floor's. Every other
 // company is a trial and gets every trial feature, however and whenever it was made. companies.demo keeps its narrower
 // job: a company that came in from anetix.ai with credit and one manager account (the credit line, Go live, the DEMO
 // strip, Settings without the floor's cards, the refund of a stopped build).
@@ -24,7 +24,7 @@ async function isSite(company) {
   const hit = memo.get(company);
   if (hit && Date.now() - hit.at < MEMO_MS) return hit.site;
   let site = false;
-  try { site = SITE_STAGES.includes(((await q("SELECT stage FROM platform.sites WHERE company=$1", [company])).rows[0] || {}).stage); }
+  try { const r = (await q("SELECT stage, switched_on FROM platform.sites WHERE company=$1", [company])).rows[0] || {}; site = SITE_STAGES.includes(r.stage) || Boolean(r.switched_on); }
   catch (e) { return false; }   // no sites table yet (a first boot): nothing is a paid site
   if (memo.size > 2000) memo.clear();
   memo.set(company, { site, at: Date.now() });
@@ -40,7 +40,7 @@ async function standardize() {
   const demos = (await q(
     `UPDATE platform.companies c SET demo=true FROM platform.self_serve s
       WHERE s.company=c.slug AND c.demo=false
-        AND NOT EXISTS (SELECT 1 FROM platform.sites t WHERE t.company=c.slug AND t.stage IN ('subscribed','activating'))
+        AND NOT EXISTS (SELECT 1 FROM platform.sites t WHERE t.company=c.slug AND (t.stage IN ('subscribed','activating') OR t.switched_on IS NOT NULL))
       RETURNING c.slug`)).rows.map((r) => r.slug);
   for (const slug of demos) console.log(`[standardize] ${slug}: came in from anetix.ai before demos were marked; it is a demo now, like every other`);
   // a company with no sign-in of its own is named every boot until an admin gives it one (it leans on the shared password

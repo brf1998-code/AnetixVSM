@@ -699,7 +699,9 @@ async function monthlySpend(company) {
 // "Subscribed is the test" wherever the code asks whether a site pays (docs/PAID-SITES.md).
 async function subscribedSite(company) {
   if (!company) return false;
-  return ((await q("SELECT stage FROM platform.sites WHERE company=$1", [company]).catch(() => ({ rows: [] }))).rows[0] || {}).stage === "subscribed";
+  // (or switched on by hand with the payment to follow, src/activate.js switchOn: a real floor, so no company cap either)
+  const r = (await q("SELECT stage, switched_on FROM platform.sites WHERE company=$1", [company]).catch(() => ({ rows: [] }))).rows[0] || {};
+  return r.stage === "subscribed" || Boolean(r.switched_on);
 }
 // A company's own monthly AI budget (platform.companies.monthly_cap_usd); 0 = none.
 async function companyCap(company) {

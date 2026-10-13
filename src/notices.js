@@ -9,7 +9,12 @@
 // Plain text, never anything secret (the floor password of a new site has its own once-only handout, src/activate.js).
 //
 // Table (in the backup, gone with the company): platform.notices
-// Routes: POST /api/c/:slug/notices/:id/seen (managers; the id must be this company's)
+// Routes: POST /api/c/:slug/notices/:id/seen   one notice (managers and admins; the id must be this company's)
+//         POST /api/c/:slug/notices/seen-all     every open one at once
+// 2026-10-13 (Brendan, seven "Anetix put a change live" lines stacked on Chelsea's board): "These notifications should not
+// be taking up so much space ... we should be able to clear it." The board folds them into one line with a count, and
+// an admin can close them too: Anetix runs some companies' boards itself for now (Chelsea Clock), so the admin is often
+// the only one there to read them. Who closed one is kept (seen_by).
 const express = require("express");
 const { q } = require("./db");
 
@@ -31,24 +36,33 @@ const clean = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().s
 async function add(company, kind, text, detail = null, db = { query: q }) {
   await db.query("INSERT INTO platform.notices (company, kind, text, detail) VALUES ($1,$2,$3,$4)", [company, kind, clean(text, 1000), detail ? JSON.stringify(detail) : null]);
 }
-// The board's list: a manager's open notices, newest first; an admin sees them too (and cannot close them for the manager).
+// The board's list: the open notices, newest first, for managers and admins.
 async function forBoard(company, role) {
   if (!["manager", "admin"].includes(role)) return [];
   return (await q("SELECT id, kind, text, created_at FROM platform.notices WHERE company=$1 AND seen_at IS NULL ORDER BY id DESC LIMIT 20", [company])).rows;
 }
+const closer = (req) => (req.sosAccount ? req.sosAccount.login : req.sosRole === "admin" ? "admin" : "manager");
 async function seen(req, slug, id) {
-  if (req.sosRole !== "manager") return { status: 403, body: { error: "the company's manager closes its notices" } };
-  const who = req.sosAccount ? req.sosAccount.login : "manager";
-  const r = await q("UPDATE platform.notices SET seen_at=now(), seen_by=$3 WHERE id=$1 AND company=$2 AND seen_at IS NULL RETURNING id", [Number(id) || 0, slug, who]);
+  if (!["manager", "admin"].includes(req.sosRole)) return { status: 403, body: { error: "a manager closes the company's notices" } };
+  const r = await q("UPDATE platform.notices SET seen_at=now(), seen_by=$3 WHERE id=$1 AND company=$2 AND seen_at IS NULL RETURNING id", [Number(id) || 0, slug, closer(req)]);
   return r.rows[0] ? { status: 200, body: { ok: true } } : { status: 404, body: { error: "no such notice" } };
+}
+async function seenAll(req, slug) {
+  if (!["manager", "admin"].includes(req.sosRole)) return { status: 403, body: { error: "a manager closes the company's notices" } };
+  const r = await q("UPDATE platform.notices SET seen_at=now(), seen_by=$2 WHERE company=$1 AND seen_at IS NULL", [slug, closer(req)]);
+  return { status: 200, body: { ok: true, closed: r.rowCount } };
 }
 async function deleteCompany(company) { await q("DELETE FROM platform.notices WHERE company=$1", [company]); }
 
 const router = express.Router();
 const requireManager = (req, res, next) => require("./auth").requireManager(req, res, next);
+router.post("/api/c/:slug/notices/seen-all", requireManager, async (req, res) => {
+  try { const r = await seenAll(req, String(req.params.slug || "").toLowerCase()); res.status(r.status).json(r.body); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 router.post("/api/c/:slug/notices/:id(\\d{1,9})/seen", requireManager, async (req, res) => {
   try { const r = await seen(req, String(req.params.slug || "").toLowerCase(), req.params.id); res.status(r.status).json(r.body); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-module.exports = { init, SCHEMA, add, forBoard, seen, deleteCompany, router };
+module.exports = { init, SCHEMA, add, forBoard, seen, seenAll, deleteCompany, router };

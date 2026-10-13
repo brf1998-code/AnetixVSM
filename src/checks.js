@@ -73,8 +73,8 @@ async function diffForRun(run) {
 async function replayRun(runId, model) {
   // not on a paying site's run (stage 3): its data is used for other customers only with the learning opt-in, and the
   // replay's cost is metered under the company, against its fair-use line (the same rule as src/assess.js sources)
-  const paying = (await q("SELECT st.stage FROM platform.build_runs r JOIN platform.sites st ON st.company = r.company WHERE r.id=$1", [runId])).rows[0];
-  if (paying && ["activating", "subscribed"].includes(paying.stage)) throw Object.assign(new Error("replays are not run on a paying site's builds: their data is theirs, and the cost would count against their fair-use line"), { status: 409 });
+  const paying = (await q("SELECT st.stage, st.switched_on FROM platform.build_runs r JOIN platform.sites st ON st.company = r.company WHERE r.id=$1", [runId])).rows[0];
+  if (paying && (["activating", "subscribed"].includes(paying.stage) || paying.switched_on)) throw Object.assign(new Error("replays are not run on a paying site's builds: their data is theirs, and the cost would count against their fair-use line"), { status: 409 });
   const run = (await q("SELECT * FROM platform.build_runs WHERE id=$1", [runId])).rows[0];
   if (!run) throw new Error("run not found");
   if (!run.to_version) throw new Error("this run never built a version, nothing to review");

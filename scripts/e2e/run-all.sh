@@ -135,6 +135,8 @@ run billing                env $S4 node scripts/e2e/billing.js
 S5="SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test WWW_INTERNAL_URL=http://127.0.0.1:4013 WWW_INTERNAL_KEY=e2e-internal-key-0123456789abcdef NTFY_URL=http://127.0.0.1:4013 NTFY_TOPIC=e2e-topic SOS_REPRICE_DELAY_MS=50"
 fresh; start "SOS_BROWSER=off $S5"
 run pricing                env $S5 node scripts/e2e/pricing.js
+fresh; start "SOS_BROWSER=off $S5"
+run switchon               env $S5 node scripts/e2e/switchon.js
 
 # 2026-10-06: a manager added to a company that already exists, and a company added by hand put on the Sites tab
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"

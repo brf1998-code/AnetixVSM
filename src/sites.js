@@ -623,6 +623,7 @@ function stable(v) {
 async function deleteRefusal(slug) {
   const s = await siteRow(slug);
   if (s && ["activating", "subscribed"].includes(s.stage)) return `${slug} is a paying site. End its subscription first, so the card stops being billed.`;
+  if (s && s.switched_on) return `${slug} is switched on as a site. Switch it back to a trial on the Sites tab first.`;
   return null;
 }
 // The site's row goes with the company; its orders stay, keyed by the site's id, because they are the contract record
@@ -684,7 +685,9 @@ function rowOut(r, { book, tools, credit, last, fair }) {
     pilot, fee,
     slug: r.slug, name: r.name, demo: Boolean(r.demo), site_id: r.site_id || null,
     // a company that did not come in on a pin (a pilot made on the admin page, say) has not been a demo: "Not ordered yet"
-    stage, stage_label: stage === "demo" && !r.demo ? "Not ordered yet" : STAGE_LABEL[stage] || stage, standing: r.standing || null, standing_label: r.standing ? STANDING_LABEL[r.standing] || r.standing : null,
+    // switched on by hand (src/activate.js switchOn, 2026-10-13): a site on the floor, its payment still to come by the usual road
+    switched_on: r.switched_on && stage !== "subscribed" ? r.switched_on : null,
+    stage, stage_label: r.switched_on && stage !== "subscribed" ? `On, payment to follow${stage === "demo" ? "" : ` (${(STAGE_LABEL[stage] || stage).toLowerCase()})`}` : stage === "demo" && !r.demo ? "Not ordered yet" : STAGE_LABEL[stage] || stage, standing: r.standing || null, standing_label: r.standing ? STANDING_LABEL[r.standing] || r.standing : null,
     cancel_at: r.cancel_at || null,
     site_name: r.site_name || null, legal_name: r.legal_name || null, site_address: r.site_address || null, address_line: addressLine(r.site_address),
     plant_manager: r.plant_manager || null, headcount: r.headcount == null ? null : Number(r.headcount), sqft: r.sqft == null ? null : Number(r.sqft),
@@ -710,7 +713,7 @@ async function pipeline() {
            st.id AS site_id, st.stage, st.standing, st.cancel_at, st.price_book, st.site_name, st.legal_name, st.site_address,
            st.plant_manager, st.headcount, st.sqft, st.deal, st.note, st.updated_at, st.updated_by, st.billing, st.stripe_customer,
            st.stripe_subscription, st.activated_at, st.period_start, st.period_end, st.band AS site_band, st.price_usd AS site_price_usd,
-           st.learning_opt_in, st.tenancy_note, st.attention AS site_attention, st.offer,
+           st.learning_opt_in, st.tenancy_note, st.attention AS site_attention, st.offer, st.switched_on,
            lo.*
       FROM platform.companies c
       LEFT JOIN platform.self_serve s ON s.company=c.slug

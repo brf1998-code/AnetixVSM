@@ -726,8 +726,11 @@ async function takeOut(schema, f) {
   finally { client.release(); }
   return { deleted, kept };
 }
-async function clear(company, mod, who) {
-  if (!(await isDemo(company))) throw fail(404, "sample data is not used on a live site: it would put made-up rows on the floor");
+// opts.goingLive: the rollover taking it out as the company becomes a site (src/activate.js). By then the company already
+// counts as a site, so the trial check would refuse the one clear that matters (found 2026-10-13: Activate's sample step
+// could log "not cleared" and move on, leaving made-up rows on a paying floor).
+async function clear(company, mod, who, opts = {}) {
+  if (!opts.goingLive && !(await isDemo(company))) throw fail(404, "sample data is not used on a live site: it would put made-up rows on the floor");
   const f = await current(company, mod);
   if (!f || f.status !== "in") throw fail(409, "This tool has no sample data to clear.");
   const a = await takeOut(migrate.liveSchema(company, mod), f);

@@ -253,6 +253,7 @@
         <div class="foot" style="margin-top:8px">${o && o.state !== "draft" ? '<button class="quiet" id="sf-text" onclick="AdminSites.orders()">Show the signed order form</button>' : ""}<button class="quiet" id="sf-golive" onclick="AdminSites.openGoLive()">${r.order_open && o.kind !== "preview" ? "Look at their order on anetix.ai" : "Open go-live as their manager"}</button>${r.order_open && ["draft", "signed"].includes(o.state) ? `<button class="quiet" id="sf-void" onclick="AdminSites.voidOrder()">${o.kind === "preview" ? "Void your preview" : "Withdraw this order"}</button>` : ""}</div>
         <div id="sf-orders"></div></div>
       <div id="sf-act"></div>
+      <div id="sf-switch"></div>
       <div id="sf-offer"></div>
       <h3>The site</h3><div class="fgrid">
         ${field("sf-site", "Site name (what their people call it)", r.site_name)}${field("sf-legal", "Company's legal name", r.legal_name)}
@@ -279,7 +280,49 @@
     document.getElementById("sf-save").onclick = save;
     (factsLocked ? document.getElementById("sf-note") : document.getElementById("sf-site")).focus();
     actPanel(r);
+    switchPanel(r);
     offerPanel(r);
+  }
+  // ---- switch on by hand, payment to follow (src/activate.js switchOn, 2026-10-13) -------------------------------------
+  // Brendan: "I will need to have the option to activate companies on my own." The company is a site from now (no sample
+  // data, no demo wording, the floor keeps its password); the order, signature, card and Activate still take the payment.
+  function switchPanel(r) {
+    const into = document.getElementById("sf-switch"); if (!into) return;
+    if (r.stage === "subscribed" || (r.order && r.order.state === "activating")) { into.innerHTML = ""; return; }
+    if (r.switched_on) {
+      const s = r.switched_on;
+      into.innerHTML = `<div class="act"><b>Switched on by hand</b> by ${esc(s.by || "admin")} on ${esc(day(s.at))}${s.note ? ` (${esc(s.note)})` : ""}. It is a site on the floor: no sample data, no demo wording, the floor's password as it was.
+        <br><span class="sub">The payment still comes the usual way: their order on anetix.ai, signed with a card, then Activate here. Activate keeps the floor's password.</span>
+        <div class="foot"><input inputmode="numeric" id="sf-offcode" placeholder="authenticator code, or empty for your passkey" autocomplete="one-time-code" maxlength="10"><button class="quiet" id="sf-off" onclick="AdminSites.switchOff()">Switch back to a trial</button></div><div class="err" id="sf-offerr"></div></div>`;
+      return;
+    }
+    into.innerHTML = `<div class="act"><b>Switch on now, payment to follow</b>
+      <br><span class="sub">For a site going onto the floor before its payment has gone through. It becomes a site at once: the sample data comes out, the demo wording and Sample data links go, its managers can add managers, and its data stops feeding the Demos tab and the replays. The floor keeps the password it has. Nothing is charged; their order, card and Activate still do that, and the pilot offer stays standing.</span>
+      <label class="check" style="margin-top:6px"><input type="checkbox" id="sf-onclear" checked> Take the sample data out of their tools</label>
+      <div class="foot"><input type="text" id="sf-onnote" placeholder="a note for the record (optional)" style="flex:1;min-width:200px">
+        <input inputmode="numeric" id="sf-oncode" placeholder="authenticator code, or empty for your passkey" autocomplete="one-time-code" maxlength="10">
+        <button class="go" id="sf-on" onclick="AdminSites.switchOn()">Switch on now</button></div><div class="err" id="sf-onerr"></div></div>`;
+  }
+  async function switchOn() {
+    const r = DATA && DATA.rows.find((x) => x.slug === EDIT); if (!r) return;
+    const btn = document.getElementById("sf-on"), err = document.getElementById("sf-onerr");
+    if (!confirm(`Switch ${r.name} on as a site now, before any payment? ${document.getElementById("sf-onclear").checked ? "The sample data comes out of their tools. " : ""}Nothing is charged.`)) return;
+    const step = await stepFrom(val("sf-oncode").trim(), err); if (!step) return;
+    btn.disabled = true; btn.textContent = "Switching on…"; err.textContent = "";
+    const res = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/switch-on`, { ...step, note: val("sf-onnote"), clear_sample: document.getElementById("sf-onclear").checked });
+    if (!res.ok) { err.textContent = res.json.error || "that did not work"; btn.disabled = false; btn.textContent = "Switch on now"; return; }
+    if (res.json.rollover_error) alert(`It is switched on, but a step stopped partway (${res.json.rollover_error}). It finishes on its own within 15 minutes.`);
+    const slug = EDIT; await show(); edit(slug);
+  }
+  async function switchOff() {
+    const r = DATA && DATA.rows.find((x) => x.slug === EDIT); if (!r) return;
+    const btn = document.getElementById("sf-off"), err = document.getElementById("sf-offerr");
+    if (!confirm(`Switch ${r.name} back to a trial? Sample data taken out stays out and the floor keeps its password.`)) return;
+    const step = await stepFrom(val("sf-offcode").trim(), err); if (!step) return;
+    btn.disabled = true; err.textContent = "";
+    const res = await send(`/api/admin/sites/${encodeURIComponent(EDIT)}/switch-off`, step);
+    if (!res.ok) { err.textContent = res.json.error || "that did not work"; btn.disabled = false; return; }
+    const slug = EDIT; await show(); edit(slug);
   }
   // ---- a pilot offer (src/pilot.js, 2026-10-05): a fixed fee for a fixed number of months that ends on its own, with
   // lines of its own, offered to this one company. Its manager sees "Review your pilot" on the board; the rest is the
@@ -503,5 +546,5 @@
       if (n && window.AdminShell && AdminShell.setBadge) AdminShell.setBadge("sites", { n, level: "amber" });
     } catch (e) {}
   }
-  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder, termsToggle, activate, decline, sendBack, stopActivating, lift, sweep, endSite, saveOffer, clearOffer };
+  window.AdminSites = { show, badge, edit, close, toggle, orders, openGoLive, voidOrder, termsToggle, activate, decline, sendBack, stopActivating, lift, sweep, endSite, saveOffer, clearOffer, switchOn, switchOff };
 })();

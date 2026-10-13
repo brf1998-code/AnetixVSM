@@ -37,6 +37,17 @@
 // THE SWEEP (tidy): cards Stripe still holds for orders that will never be activated (a withdrawal, a decline, a
 // deleted company: orders.stripe.detach_pending) are removed over the channel, at boot, every 15 minutes and on demand.
 //
+// SWITCH ON BY HAND (2026-10-13). Brendan: "chelsea should no longer be on the demo view even though the payment has not
+// processed yet as we need to start rolling it out on the floor, I will need to have the option to activate companies on
+// my own." An admin makes a company a real site now and the payment follows through the usual road (the order signed on
+// anetix.ai, the card, Activate). What it does: platform.sites.switched_on is set, so src/kind.js counts the company a
+// site (no sample data, the floor's wording, more managers, Ask Anetix in live mode, no company cap, no replays or
+// Demos-tab learning from its data), converted_at marks where the plant's data starts, and the rollover runs WITHOUT the
+// floor-password step (the floor keeps the password it has, so nobody is signed out the day it goes on the floor). The
+// stage is NOT touched: Stripe's road (offer, order, signature, card, Activate) is exactly as before, and when Activate
+// finishes, switched_on is cleared and the rollover's marks are kept, so the floor is not given a second new password.
+// Switch back to a trial undoes it while no payment has gone through. Needs the step-up code, like Activate.
+//
 // The channel (docs/PAID-SITES.md "The internal routes are a second listener"): anetix.ai opens a second port with no
 // public domain, reached over Railway's private network at WWW_INTERNAL_URL (http://anetix-www.railway.internal:4001)
 // with WWW_INTERNAL_KEY, a key of its own in this direction. Without both, Activate says so and does nothing.
@@ -48,6 +59,8 @@
 //            POST /api/admin/sites/:slug/decline         { reason }
 //            POST /api/admin/sites/:slug/send-back       { note }
 //            POST /api/admin/sites/:slug/lift            { note }   the fair-use line, for the rest of the period
+//            POST /api/admin/sites/:slug/switch-on       { code, note, clear_sample }   a site now, payment to follow
+//            POST /api/admin/sites/:slug/switch-off      { code }   back to a trial (only while it is on by hand)
 //            POST /api/admin/stripe-sweep                remove the cards of withdrawn orders now
 //   www:     POST /api/www/billing-events                a Stripe event anetix.ai re-read (the shared key)
 //   manager: POST /api/c/:slug/welcome                   the floor's new password, once (managers only)
@@ -74,6 +87,7 @@ ALTER TABLE platform.sites ADD COLUMN IF NOT EXISTS tenancy_note TEXT;
 ALTER TABLE platform.sites ADD COLUMN IF NOT EXISTS attention JSONB;
 ALTER TABLE platform.sites ADD COLUMN IF NOT EXISTS welcome_enc BYTEA;         -- the floor's first password, encrypted, until the manager collects it once
 ALTER TABLE platform.sites ADD COLUMN IF NOT EXISTS rollover JSONB;            -- which steps of the rollover are done
+ALTER TABLE platform.sites ADD COLUMN IF NOT EXISTS switched_on JSONB;         -- { at, by, note }: on by hand, payment to follow (2026-10-13)
 CREATE TABLE IF NOT EXISTS platform.billing_events (
   stripe_event  TEXT PRIMARY KEY,
   type          TEXT NOT NULL,
@@ -185,10 +199,12 @@ async function rolloverPlan(slug, o, { clear_sample = true } = {}) {
   const book = await sites.bookFor(o.price_book);
   const amt = await amountFor(slug, o), fee = amt.cents / 100, P = require("./pilot");
   const pilot = P.isPilot(band) ? band.pilot : null;
+  const byHand = Boolean(((await sites.siteRow(slug)) || {}).switched_on);   // on already (switchOn): the floor keeps its password
   return [
+    byHand ? "It is switched on by hand already, so the floor keeps the password it has and the sample data is already out. This takes the payment." : null,
     `The DEMO strip and the credit line come off the board, and new AI work has no credit to run out of: the fair-use line is ${usd(fee * book.fair_use_share)} a month.`,
     f.site_name && f.site_name !== co.name ? `The company shows as ${f.site_name} instead of ${co.name} (its address stays /c/${co.slug}/).` : null,
-    "The floor gets its own password, shown once to the manager on the board.",
+    byHand ? null : "The floor gets its own password, shown once to the manager on the board.",
     fills.length ? (clear_sample ? `The sample data comes out of ${fills.length} tool${fills.length === 1 ? "" : "s"} (${fills.join(", ")}).` : `The sample data stays in ${fills.join(", ")}, as you chose.`) : "No tool has sample data in it.",
     pilot ? `A pilot: ${sites.pilotLine({ monthly_usd: band.monthly_usd, months: pilot.months })}. ${usd(fee)} is charged now${pilot.months > 1 ? `, and ${usd(fee)} on the same day of ${pilot.months === 2 ? "next month" : `each of the next ${pilot.months - 1} months`}` : ""}. Stripe ends it on its own ${pilot.months} month${pilot.months === 1 ? "" : "s"} from today and nothing is charged after that. On that day the site goes back to a demo and the floor's sign-in closes, unless you have agreed what comes next and activated it.`
       : amt.plan === "tools" ? `${band.name} site on price book ${o.price_book}: ${usd(band.per_tool_usd)} a tool, ${amt.tools} live today, so ${usd(fee)} is charged now. From each next bill the fee follows the tools live on the floor, never above the ${usd(band.monthly_usd)} cap. Both prices are locked while the subscription runs.`
@@ -405,7 +421,10 @@ async function finish(orderId, sub, via) {
     await c.query(`UPDATE platform.sites SET stage='subscribed', standing='good', cancel_at=$11, attention=NULL, stripe_subscription=$2, order_id=$3,
                      period_start=$4, period_end=$5, activated_at=now(), converted_at=COALESCE(converted_at, now()), returned_at=NULL,
                      band=$6, price_usd=$7, price_book=$8, learning_opt_in=$9, fair_use_lift=NULL, offer=NULL,
-                     rollover=jsonb_build_object('clear_sample', $10::boolean, 'started_at', now()), updated_at=now(), updated_by='platform' WHERE id=$1`,
+                     -- a site switched on by hand already had its rollover (the floor kept its password): keep the marks
+                     rollover=CASE WHEN switched_on IS NOT NULL AND rollover ? 'done_at' THEN rollover || jsonb_build_object('paid_at', now())
+                                   ELSE jsonb_build_object('clear_sample', $10::boolean, 'started_at', now()) END,
+                     switched_on=NULL, updated_at=now(), updated_by='platform' WHERE id=$1`,
     [site.id, sub.id || null, o.id, ps, pe, band ? JSON.stringify(band) : null, charged, o.price_book, o.learning_opt_in === true,
       ((o.stripe || {}).activate || {}).clear_sample !== false, endsAt]);
     return { fresh: true, slug: site.company, order: o, charged, band, ends_at: endsAt };
@@ -435,7 +454,7 @@ async function rolloverSteps(slug) {
 }
 async function rolloverStepsLocked(slug) {
   const site = await sites.siteRow(slug);   // read again inside the lock: another runner may have done the steps
-  if (!site || site.stage !== "subscribed") return;
+  if (!site || (site.stage !== "subscribed" && !site.switched_on)) return;
   const ro = site.rollover || {};
   if (ro.done_at) return;
   const mark = (k) => q("UPDATE platform.sites SET rollover = COALESCE(rollover, '{}'::jsonb) || jsonb_build_object($2::text, now()) WHERE id=$1", [site.id, k]);
@@ -443,7 +462,7 @@ async function rolloverStepsLocked(slug) {
   if (!ro.sample_at) {
     if (ro.clear_sample !== false) {
       for (const mod of await sampleFillsIn(slug)) {
-        await require("./sample").clear(slug, mod, { role: "platform", name: "Anetix (going live)" }).catch((e) => console.error(`[activate] ${slug}/${mod}: sample data not cleared: ${e.message}`));
+        await require("./sample").clear(slug, mod, { role: "platform", name: "Anetix (going live)" }, { goingLive: true }).catch((e) => console.error(`[activate] ${slug}/${mod}: sample data not cleared: ${e.message}`));
       }
     }
     await mark("sample_at");
@@ -468,8 +487,49 @@ async function rolloverStepsLocked(slug) {
 }
 // At boot: a subscribed site whose rollover a restart cut short.
 async function finishPending() {
-  const rows = (await q("SELECT company FROM platform.sites WHERE stage='subscribed' AND (rollover IS NULL OR NOT rollover ? 'done_at')")).rows;
+  const rows = (await q("SELECT company FROM platform.sites WHERE (stage='subscribed' OR switched_on IS NOT NULL) AND (rollover IS NULL OR NOT rollover ? 'done_at')")).rows;
   for (const r of rows) await rolloverSteps(r.company).catch((e) => console.error(`[activate] ${r.company}: rollover:`, e.message));
+}
+
+// ---- Switch on by hand, payment to follow ------------------------------------------------------------------------------
+async function switchOn(slug, { note, clear_sample = true } = {}, by) {
+  slug = String(slug || "").toLowerCase();
+  if (!SLUG.test(slug) || !(await q("SELECT 1 FROM platform.companies WHERE slug=$1", [slug])).rows[0]) throw fail(404, "no such company");
+  const site0 = await golive().ensureSite(slug);
+  const words = clean(note, 300);
+  await lockSite(site0.id, async (c, site) => {
+    if (["activating", "subscribed"].includes(site.stage)) throw fail(409, "This site is paying already.");
+    if (site.switched_on) throw fail(409, "This site is switched on already.");
+    await c.query(`UPDATE platform.sites SET switched_on=$2, converted_at=COALESCE(converted_at, now()), returned_at=NULL,
+                     rollover=jsonb_build_object('clear_sample', $3::boolean, 'started_at', now(), 'by_hand', true, 'floor_at', now(), 'floor_kept', true),
+                     updated_at=now(), updated_by=$4 WHERE id=$1`,
+    [site.id, JSON.stringify({ at: new Date().toISOString(), by: by || "admin", note: words || null }), clear_sample !== false, by || "admin"]);
+  });
+  require("./kind").forget(slug);
+  await logEvent("site_switched_on", slug, { by: by || null, note: words || null, clear_sample: clear_sample !== false });
+  await require("./record").record("site_switched_on", { company: slug, actor: { role: "admin", name: by || "Anetix" }, after: `Switched on by Anetix, payment to follow${words ? ` (${words})` : ""}. The demo's data is before this line; the plant's is after it.`, detail: { by: by || null } }).catch((e) => console.error("[activate] record:", e.message));
+  let rollover_error = null;
+  try { await rolloverSteps(slug); }
+  catch (e) { rollover_error = e.message; console.error(`[activate] ${slug}: the rollover stopped partway (${e.message}); it finishes on the next sweep`); }
+  return { ok: true, switched_on: true, ...(rollover_error ? { rollover_error } : {}) };
+}
+// Back to a trial: only a site on by hand with no payment through (a paying site ends through Stripe, src/billing.js).
+// The sample data taken out stays out, and the floor keeps its password; the company is a trial again.
+async function switchOff(slug, by) {
+  slug = String(slug || "").toLowerCase();
+  const site0 = SLUG.test(slug) ? await sites.siteRow(slug) : null;
+  if (!site0) throw fail(404, "no such site");
+  await lockSite(site0.id, async (c, site) => {
+    if (["activating", "subscribed"].includes(site.stage)) throw fail(409, "This site is paying, so it ends through its subscription, not here.");
+    if (!site.switched_on) throw fail(409, "This site was not switched on by hand.");
+    await c.query("UPDATE platform.sites SET switched_on=NULL, rollover=NULL, converted_at=NULL, updated_at=now(), updated_by=$2 WHERE id=$1", [site.id, by || "admin"]);
+    // a company that came in from anetix.ai is a demo again (src/kind.js standardize would do it at the next boot)
+    await c.query("UPDATE platform.companies SET demo=true WHERE slug=$1 AND EXISTS (SELECT 1 FROM platform.self_serve WHERE company=$1)", [slug]);
+  });
+  require("./kind").forget(slug);
+  await logEvent("site_switched_off", slug, { by: by || null });
+  await require("./record").record("site_switched_off", { company: slug, actor: { role: "admin", name: by || "Anetix" }, after: "Switched back to a trial by Anetix." }).catch((e) => console.error("[activate] record:", e.message));
+  return { ok: true, switched_on: false };
 }
 
 // ---- Stop switching on -------------------------------------------------------------------------------------------------
@@ -736,6 +796,18 @@ router.post("/api/admin/sites/:slug/stop-activating", requireAdmin, json, async 
   if (!gate.ok) return res.status(403).json({ error: gate.error, code: "step_up" });
   return guard(() => stopActivating(req.params.slug, who(req)))(req, res);
 });
+router.post("/api/admin/sites/:slug/switch-on", requireAdmin, json, async (req, res) => {
+  const b = req.body || {};
+  const gate = await require("./auth").checkAdminCode(req, { code: b.code, password: b.password }, `switch_on_site:${String(req.params.slug || "").toLowerCase()}`);
+  if (!gate.ok) return res.status(403).json({ error: gate.error, code: "step_up" });
+  return guard(() => switchOn(req.params.slug, { note: b.note, clear_sample: b.clear_sample !== false }, who(req)))(req, res);
+});
+router.post("/api/admin/sites/:slug/switch-off", requireAdmin, json, async (req, res) => {
+  const b = req.body || {};
+  const gate = await require("./auth").checkAdminCode(req, { code: b.code, password: b.password }, `switch_off_site:${String(req.params.slug || "").toLowerCase()}`);
+  if (!gate.ok) return res.status(403).json({ error: gate.error, code: "step_up" });
+  return guard(() => switchOff(req.params.slug, who(req)))(req, res);
+});
 router.post("/api/admin/sites/:slug/decline", requireAdmin, json, guard((b, req) => decline(req.params.slug, b, who(req))));
 router.post("/api/admin/sites/:slug/send-back", requireAdmin, json, guard((b, req) => sendBack(req.params.slug, b, who(req))));
 router.post("/api/admin/sites/:slug/lift", requireAdmin, json, guard((b, req) => require("./fairuse").lift(String(req.params.slug || "").toLowerCase(), b, who(req))));
@@ -749,5 +821,5 @@ wwwRouter.post("/api/www/billing-events", json, guard((b) => billingEvent(b)));
 
 module.exports = {
   init, SCHEMA, channelProblem, channel, www, checks, activate, run, finish, amountFor, rolloverSteps, finishPending, rolloverPlan, refundableCents,
-  decline, sendBack, stopActivating, tidy, billingEvent, forBoard, collectWelcome, siteForSettings, setLearning, router, wwwRouter,
+  decline, sendBack, stopActivating, switchOn, switchOff, tidy, billingEvent, forBoard, collectWelcome, siteForSettings, setLearning, router, wwwRouter,
 };

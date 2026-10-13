@@ -247,7 +247,8 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   const c2 = await www("/api/www/golive/card", { order: SC.order, setup_session: "cs_stubC2", stripe_customer: sC.stripe_customer, payment_method: pm2, card: { brand: "mastercard", last4: "4444", exp_month: 1, exp_year: 2031 } });
   t("another card moves it back to Signed, ready for Activate", c2.json.applied === true && (await site(C.slug)).stage === "signed" && (await order(SC.order)).payment_method === pm2, c2.json);
   const nC = bC.notices.find((n) => n.kind === "card_declined");
-  t("an admin cannot close the manager's notice; the manager can", (await admin.post(`/api/c/${C.slug}/notices/${nC.id}/seen`, {})).status === 403 && (await C.mgr.post(`/api/c/${C.slug}/notices/${nC.id}/seen`, {})).status === 200 && !(await C.mgr.get(`/api/c/${C.slug}/board`)).json.notices.some((n) => n.id === nC.id));
+  // since 2026-10-13 an admin closes notices too (Anetix runs some companies' boards itself); who closed it is kept
+  t("the manager closes the notice, and it is gone; closing it again is a 404", (await C.mgr.post(`/api/c/${C.slug}/notices/${nC.id}/seen`, {})).status === 200 && !(await C.mgr.get(`/api/c/${C.slug}/board`)).json.notices.some((n) => n.id === nC.id) && (await admin.post(`/api/c/${C.slug}/notices/${nC.id}/seen`, {})).status === 404);
   t("another company's notice cannot be closed from here", (await C.mgr.post(`/api/c/${C.slug}/notices/999999/seen`, {})).status === 404);
 
   // ---- Send back, Decline, the sweep ----------------------------------------------------------------------------------------

@@ -130,6 +130,19 @@
   .paid .tick { display:flex; gap:8px; align-items:flex-start; margin:8px 0 0; font-size:13.5px; } .paid .tick input { margin-top:3px; }
   .paid .pw { font:700 20px ui-monospace,Menlo,monospace; letter-spacing:.04em; background:var(--fog, #f4f6f8); border-radius:8px; padding:8px 12px; margin:8px 0 4px; display:inline-block; }
   .paid .err { color:var(--red); margin:6px 0 0; }
+  /* notices from Anetix (2026-10-13): one slim line however many there are, opened on demand, cleared in one press */
+  .notes { background:#fff; border:1px solid var(--line); border-left:4px solid var(--steel); border-radius:10px; margin:0 0 12px; font-size:13px; }
+  .notes .nhead { display:flex; align-items:center; gap:10px; padding:6px 8px 6px 12px; min-height:34px; }
+  .notes .nsum { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--steel); }
+  .notes .nsum b { color:var(--ink, #1b2733); margin-right:6px; }
+  .notes button { margin:0; min-height:28px; padding:3px 10px; font-size:12.5px; }
+  .notes .nx { background:none; border:none; color:var(--steel); font-size:18px; line-height:1; padding:2px 8px; min-height:28px; cursor:pointer; }
+  .notes .nx:hover { color:var(--ink, #1b2733); }
+  .notes .nlist { border-top:1px solid var(--line); max-height:240px; overflow-y:auto; }
+  .notes .nrow { display:flex; align-items:baseline; gap:8px; padding:5px 8px 5px 12px; border-bottom:1px solid var(--line); }
+  .notes .nrow:last-child { border-bottom:none; }
+  .notes .nrow .t { flex:1; min-width:0; line-height:1.4; } .notes .nrow small { color:var(--steel); white-space:nowrap; }
+  @media (max-width: 640px) { .notes .nhead { flex-wrap:wrap; } .notes .nsum { flex-basis:100%; white-space:normal; } }
   .approvenote { font-size:12px; color:var(--steel); margin:6px 0 0; }
   /* a build waiting for the OK: the next step is the top of the card (Brendan, 2026-09-27) */
   .gatetop { background:var(--greenSoft); border:2px solid var(--green); border-radius:9px; padding:10px; margin:8px 0 6px; }
@@ -1494,7 +1507,7 @@ function applyBrand(b, iconV) {
 // ---- stage 3 (src/activate.js, src/agreements.js, src/notices.js) -----------------------------------------------------
 // The Terms' box while a demo's manager has not agreed (new AI work waits for it), a new site's welcome with the floor's
 // password (shown once: the board stops refreshing while it is on screen), the fair-use line when it is reached, and
-// notices from Anetix (a tool changed, a card declined, an order sent back), each closed by the manager.
+// notices from Anetix (a tool changed, a card declined, an order sent back), folded into one line, closed by a manager or an admin.
 let TERMS_TICK = false;
 const linkTerms = (html, url) => html.replace("Anetix Terms of Service", `<a href="${esc(url)}" target="_blank" rel="noopener">Anetix Terms of Service</a>`);
 function renderPaid() {
@@ -1514,8 +1527,28 @@ function renderPaid() {
   if (DATA.fair_use && DATA.fair_use.over) out.push(`<div class="paid amber"><div class="grow">${esc(DATA.fair_use.message)}</div></div>`);
   // stage 4 (src/billing.js): a payment that failed, a site that is unpaid, a cancel date. Managers and admins only.
   if (DATA.billing && DATA.billing.text) out.push(`<div class="paid ${DATA.billing.level === "red" ? "red" : DATA.billing.level === "note" ? "note" : "amber"}" id="billingline"><div class="grow">${esc(DATA.billing.text)}</div>${DATA.role === "manager" ? `<a class="btn quiet" href="/c/${SLUG}/settings#billing">Manage billing</a>` : ""}</div>`);
-  for (const n of DATA.notices || []) out.push(`<div class="paid note" data-notice="${n.id}"><div class="grow">${esc(n.text)} <small>${esc(new Date(n.created_at).toLocaleDateString([], { month: "short", day: "numeric" }))}</small></div>${DATA.role === "manager" ? `<button class="quiet" onclick="seenNotice(${n.id})">Close</button>` : ""}</div>`);
+  out.push(noticesHtml(DATA.notices || []));
   box.innerHTML = out.join("");
+}
+// Notices from Anetix (2026-10-13, Brendan: "These notifications should not be taking up so much space, when there is
+// more than one it looks terrible and we should be able to clear it"). However many there are, they are one slim line:
+// the newest, with a count when there are more, Show all to read them, and Clear all. A manager or an admin closes them.
+let NOTES_OPEN = false;
+const noteDay = (d) => new Date(d).toLocaleDateString([], { month: "short", day: "numeric" });
+function noticesHtml(list) {
+  if (!list.length) { NOTES_OPEN = false; return ""; }
+  const can = ["manager", "admin"].includes(DATA.role), n = list.length, top = list[0];
+  if (n === 1) return `<div class="notes" data-notice="${top.id}"><div class="nhead"><span class="nsum" title="${esc(top.text)}"><b>From Anetix</b>${esc(top.text)} · ${esc(noteDay(top.created_at))}</span>${can ? `<button class="nx" title="Close" aria-label="Close" onclick="seenNotice(${top.id})">&times;</button>` : ""}</div></div>`;
+  const rows = list.map((x) => `<div class="nrow" data-notice="${x.id}"><span class="t">${esc(x.text)}</span><small>${esc(noteDay(x.created_at))}</small>${can ? `<button class="nx" title="Close" aria-label="Close" onclick="seenNotice(${x.id})">&times;</button>` : ""}</div>`).join("");
+  return `<div class="notes" id="notesbox"><div class="nhead"><span class="nsum"><b>${n} updates from Anetix</b>${NOTES_OPEN ? "" : `${esc(top.text)} · ${esc(noteDay(top.created_at))}`}</span>
+    <button class="quiet" onclick="toggleNotes()">${NOTES_OPEN ? "Hide" : "Show all"}</button>${can ? `<button class="quiet" id="notes-clear" onclick="seenAllNotices()">Clear all</button>` : ""}</div>
+    ${NOTES_OPEN ? `<div class="nlist">${rows}</div>` : ""}</div>`;
+}
+function toggleNotes() { NOTES_OPEN = !NOTES_OPEN; renderPaid(); }
+async function seenAllNotices() {
+  const b = document.getElementById("notes-clear"); if (b) b.disabled = true;
+  await fetch(`/api/c/${SLUG}/notices/seen-all`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  NOTES_OPEN = false; load();
 }
 async function acceptTerms() {
   const tm = DATA.terms, err = document.getElementById("terms-err");
@@ -1536,6 +1569,8 @@ async function collectWelcome() {
   btn.textContent = "Done, I wrote it down"; btn.disabled = false; btn.onclick = () => { EDITING = null; load(); };
 }
 async function seenNotice(id) {
+  // gone from the screen at once; the refresh confirms it
+  DATA.notices = (DATA.notices || []).filter((x) => x.id !== id); renderPaid();
   await fetch(`/api/c/${SLUG}/notices/${id}/seen`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   load();
 }
