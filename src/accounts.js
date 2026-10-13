@@ -97,10 +97,18 @@ CREATE TABLE IF NOT EXISTS platform.auth_events (
   detail     JSONB
 );
 CREATE INDEX IF NOT EXISTS auth_events_at ON platform.auth_events (at DESC);
+-- sessions someone logged out of (src/auth.js revoke; the outside audit 1A, S1-03). Not a company's, never in a backup.
+CREATE TABLE IF NOT EXISTS platform.revoked_sessions (
+  sid        TEXT PRIMARY KEY,
+  expires_at TIMESTAMPTZ,                          -- when no copy of that cookie could live anyway; NULL = keep
+  why        TEXT,
+  at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 async function init() {
   await q(SCHEMA);
   await q("DELETE FROM platform.auth_events WHERE at < now() - ($1 || ' days')::interval", [String(EVENT_DAYS)]);
+  await q("DELETE FROM platform.revoked_sessions WHERE expires_at < now()");
   if (twoFaOff()) console.warn("[accounts] SOS_ADMIN_2FA=off: admin accounts sign in with a password alone. Take the variable back out as soon as the authenticator is set up again.");
 }
 
@@ -365,6 +373,67 @@ async function passkeyEnrolled(account, ip) {
   return codes;
 }
 
+// ---- a further factor on an account that has one (the outside audit 1A, S1-02, 2026-10-13) ----------------------------
+// Before this, any live session of an enrolled account could add a passkey: a stolen cookie became a way in of its own
+// that outlived the session, and answered for the step-up on admin actions. Now adding a factor to an account that
+// already has one takes a fresh proof of one it has (a passkey, or a code from the app; the password under break
+// glass), in the same request that begins the adding, and what that proof allows is bound to this session and used
+// once (src/passkeys.js keeps the session's id with the challenge; the app's setup keeps it below until its code is
+// checked). The one exception: the next factor added in the ten minutes after the first one was set up, from the
+// browser that set it up (the passkey offered right after the app), since that browser proved a factor a moment ago.
+const GRANT_MS = 10 * 60e3;
+const grants = new Map();   // session id -> { account, generation, at }
+function grantNewFactor(sid, st) {
+  if (!sid || !st) return;
+  if (grants.size > 5000) grants.clear();
+  grants.set(sid, { account: st.id, generation: st.generation, at: Date.now() });
+}
+function takeGrant(sid, st) {
+  const g = sid ? grants.get(sid) : null;
+  if (g) grants.delete(sid);
+  return Boolean(g && g.account === st.id && g.generation === st.generation && Date.now() - g.at < GRANT_MS);
+}
+// What a proof may be for this account, for the page to ask the right thing.
+const proofVia = (st) => ({ passkey: st.passkeys > 0, code: Boolean(st.app), recovery: true, password: twoFaOff() });
+// -> true when this request may begin adding a factor; otherwise it has answered 403 { step_up, via }.
+async function proveForNewFactor(req, res, what) {
+  if (authLib().OPEN) return true;
+  const me = req.sosAccount;
+  if (!me || !me.id) { res.status(400).json({ error: "this is for a personal account (an email)" }); return false; }
+  forget(me.id);
+  const st = await sessionState(me.id);
+  if (!st) { res.status(401).json({ error: "login required" }); return false; }
+  if (!st.enrolled) return true;   // the first factor: nothing to prove yet (and the session is enrollment-only)
+  const sid = req.sosSession && req.sosSession.sid;
+  if (takeGrant(sid, st)) { await event("new_factor_after_enroll", { account_id: st.id, login: st.login, ip: edge.clientIp(req), detail: { what } }); return true; }
+  const b = req.body || {};
+  const via = proofVia(st);
+  if (!b.passkey && !String(b.code || "").trim() && !String(b.password || "").trim()) {
+    res.status(403).json({ error: "Confirm it is you first, with a passkey this account already has, a fresh code from its authenticator app or one of its recovery codes.", step_up: true, via });
+    return false;
+  }
+  // one of the account's recovery codes is a factor it has too (a manager on passkeys whose phone is gone, adding the app)
+  const typed = String(b.code || "").trim();
+  if (!b.passkey && typed && !/^[\d\s]+$/.test(typed)) {
+    const a = await byId(st.id);
+    if (a && !lockedFor(a) && await useRecoveryCode(st.id, typed)) { await event("recovery_used", { account_id: st.id, login: st.login, ip: edge.clientIp(req), detail: { at: "new_factor", what } }); return true; }
+    if (a) await noteFail(a, "step_up_fail", edge.clientIp(req), { what, kind: "recovery" });
+    res.status(403).json({ error: "that recovery code did not match", step_up: true, via });
+    return false;
+  }
+  const r = await stepUp(me, { code: b.code, password: b.password, passkey: b.passkey }, edge.clientIp(req), what, req);
+  if (!r.ok) { res.status(403).json({ error: r.error, step_up: true, via }); return false; }
+  return true;
+}
+// The app's setup on an account that has a passkey already (a manager adding the app from Settings): the start was
+// proved, and its code is checked only from the same session within the same ten minutes.
+const appStarts = new Map();   // account id -> { sid, at }
+function appStartOk(req, st) {
+  const s = appStarts.get(st.id);
+  const sid = req.sosSession && req.sosSession.sid;
+  return Boolean(s && sid && s.sid === sid && Date.now() - s.at < GRANT_MS);
+}
+
 // ---- enrollment ------------------------------------------------------------------------------------------
 async function enrollStart(account, ip, origin) {
   if (!keyPinned()) throw new Error("SOS_CONNECTION_KEY is not set on this instance. Set it first (any long random string): without it the authenticator secrets would be encrypted under SESSION_SECRET, and rotating that would lock every admin out.");
@@ -505,6 +574,7 @@ router.post("/api/admin/accounts/me/enroll/verify", (req, res, next) => authLib(
   if (!mine(req, res)) return;
   const codes = await enrollVerify(req.sosAccount, (req.body || {}).code, edge.clientIp(req));
   if (!codes) return res.status(401).json({ error: "that code did not match. Check the phone's clock is set automatically, then type the code it shows now." });
+  await authLib().finishEnrollment(req, res);   // this browser proved the factor: its enrollment-only session becomes a full one
   res.set("Cache-Control", "no-store");
   res.json({ ok: true, recovery_codes: codes });
 }));
@@ -535,14 +605,24 @@ router.get("/api/c/:slug/me", (req, res, next) => authLib().requireManager(req, 
   if (me) { const st = await sessionState(me.id); if (st) { me.app = st.app; me.passkeys = st.passkeys; } }
   res.set("Cache-Control", "no-store").json({ me, role: req.sosRole, company: req.sosCompany, enroll_required: Boolean(me && me.role === "manager" && !me.enrolled && !twoFaOff()), key_pinned: keyPinned(), two_fa_off: twoFaOff() });
 }));
+// A manager who signs in with a passkey and adds the app (Settings): the passkey (or a recovery code) is proved first, as
+// for any further factor (S1-02), and the app's code is checked only from the session that started the setup.
 router.post("/api/c/:slug/me/enroll/start", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
   if (!mineManager(req, res)) return;
+  if (!(await proveForNewFactor(req, res, "add_app"))) return;
+  const st = await sessionState(req.sosAccount.id);
+  if (st && st.enrolled) appStarts.set(st.id, { sid: req.sosSession && req.sosSession.sid, at: Date.now() });
   res.set("Cache-Control", "no-store").json(await enrollStart(req.sosAccount, edge.clientIp(req), req.headers.origin || req.headers.host));
 }));
 router.post("/api/c/:slug/me/enroll/verify", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
   if (!mineManager(req, res)) return;
+  forget(req.sosAccount.id);
+  const st = await sessionState(req.sosAccount.id);
+  if (st && st.enrolled && !appStartOk(req, st)) return res.status(403).json({ error: "Start the app's setup again (it asks for your passkey first).", step_up: true });
   const codes = await enrollVerify(req.sosAccount, String((req.body || {}).code || ""), edge.clientIp(req));
   if (!codes) return res.status(401).json({ error: "that code did not match. Wait for the app to show the next one and try again." });
+  if (st) appStarts.delete(st.id);
+  await authLib().finishEnrollment(req, res);   // a first factor: this browser's enrollment-only session becomes a full one
   res.set("Cache-Control", "no-store").json({ ok: true, recovery_codes: codes });
 }));
 router.post("/api/c/:slug/me/password", (req, res, next) => authLib().requireManager(req, res, next), json, guard(async (req, res) => {
@@ -586,6 +666,7 @@ router.post("/api/admin/accounts/:id(\\d{1,9})/:action", (req, res, next) => aut
 
 module.exports = {
   managersOf, makePassword,
+  grantNewFactor, proveForNewFactor,
   init, router, signIn, stepUp, sessionState, legacyOpen, forget, twoFaOff, keyPinned, event, list, create,
   enrollStart, enrollVerify, passkeyEnrolled, livePasskeys, useCode, useRecoveryCode, signOutEverywhere, setStatus, resetFactor, setPassword, remove,
   cleanLogin, validLogin, passwordProblem, makeRecoveryCodes, recoveryHash, MAX_FAILS, LOCK_MINUTES,

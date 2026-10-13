@@ -3745,3 +3745,46 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     The golden questions were not rerun (no API key in the sandbox); run them on /admin, Health, since HELP.md
     changed. Nothing here has met the real Claude on the company address yet. Writing records is the next step Brendan
     named, and needs his word on decision 2.
+- **The outside audit 1A: sign-in fixes (2026-10-13)** (`src/auth.js`, `src/accounts.js`, `src/passkeys.js`,
+  `src/mcpauth.js`, `public/assets/passkey.js`, `public/enroll.html`). Astra's Phase 1A report
+  (`Audit/findings/1A.md`, on `a404a46`) found company isolation sound and three sign-in holes. All three were
+  replayed with copied cookies before the fix (they reproduce) and after it (closed).
+  - *S1-01, Critical: a password-only session became a full one.* An account with no second factor signed in with the
+    password alone into a session that was restricted only by the account's CURRENT state, so a session someone got
+    with a known password became a full admin or manager session the moment the real person finished the setup in
+    another browser. Now the cookie has a seventh part, a tag (`n` full, `e` enrollment-only, then a random nonce,
+    inside the signature). A password, a sign-in ticket or an invitation on an account with no factor gives an
+    enrollment-only session: the setup pages only, 60 minutes from sign-in (`auth.ENROLL_MINUTES`), never refreshed,
+    and over the moment the account has a factor, whichever browser set it up. The browser that proves the factor (the
+    app's first code, or a manager's first passkey) gets a full session in the same answer (`auth.finishEnrollment`),
+    and the enrollment-only one it held is revoked.
+  - *S1-02, High: a stolen session could add its own passkey.* Any live session of an enrolled account could register
+    a passkey, which then signed in on its own, survived Sign out everywhere and answered admin step-ups. Now adding
+    a factor to an account that has one (a passkey; the app on a passkey-only manager) takes a fresh proof of a factor
+    it already has, in the request that begins the adding: its passkey (`/api/me/passkeys/step-up/options`), a fresh
+    code from the app, one of its recovery codes, or its password under break glass
+    (`accounts.proveForNewFactor`). The permission is bound to the session and used once: the passkey's challenge
+    carries the session's id and `register` refuses another session; the app's setup remembers which session started
+    it for ten minutes and `enroll/verify` refuses another. One exception, so the setup flow stays one step: the next
+    factor added within ten minutes of the first setup, from the browser that did it (the passkey offered right after
+    the app), needs no second proof (`accounts.grantNewFactor`, once). The pages ask on their own: `Passkey.add()` and
+    the "Add the authenticator app" page call `Passkey.confirm(via)`, which uses the passkey when there is one and
+    otherwise asks for a code (or a recovery code) in a prompt.
+  - *S1-03, Medium: logging out left copies of the cookie working.* `/logout` only told the browser to drop it; a copy
+    kept working up to its cap (30 days admin, 180 floor and manager). Now a session has an id (`sid`: a hash of role,
+    slot, generation, issued and the nonce, the same through every refresh), `/logout` writes it to
+    `platform.revoked_sessions` (kept until the cap, forever when there is none; pruned at boot), and the middleware,
+    `currentSession` (anetix.ai's who-am-I) and the consent page's `mcpauth.accountOf` refuse it. Remembered ten
+    seconds per id in other processes, at once in the one that wrote it. A cookie from before this change has an empty
+    nonce and an id of the same kind, so nobody was signed out by the deploy and logging out still ends its copies.
+    Only that session ends: the account's other sessions and a company's other floor devices carry on.
+  - *Tests:* `scripts/e2e/audit-1a.js` (46, in run-all as audit-1a: each finding replayed as the report did it; on the
+    code before the fix 22 of them fail, including every "the finding: 200"), `scripts/test-accounts.js` (+14: the
+    tag, enrollment-only lifetime, the id through a refresh and from a six part cookie), `scripts/e2e/passkeys-browser.js`
+    (now proves a factor before a second passkey, answers the code prompt, and checks that adding the app on a
+    passkey phone asks for the passkey first).
+  - *Known limits.* A person who knows an account's password before its first factor exists can still race the real
+    person to set one up (the report names that prerequisite; the cure is not handing out passwords for accounts
+    that are not set up, which the sign-in ticket and invitation flows already avoid). The prompt for a code is the
+    browser's own box. Revocations are checked against the database every ten seconds per session in a second
+    process, so a logout reaches another process within ten seconds.

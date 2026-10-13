@@ -45,6 +45,9 @@ run accounts-breakglass    node scripts/e2e/accounts.js breakglass
 stop; ( env -u SOS_ADMIN_PASSWORD SOS_BROWSER=off nohup node server.js > "$LOG/server.log" 2>&1 & ); sleep 6
 run accounts-noadminvar    env -u SOS_ADMIN_PASSWORD node scripts/e2e/accounts.js noadminvar
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off"; run accounts-browser node scripts/e2e/accounts-browser.js; }
+# the outside audit's sign-in findings (Audit/findings/1A.md: S1-01, S1-02, S1-03), replayed with copied cookies
+fresh; start "SOS_BROWSER=off"
+run audit-1a               node scripts/e2e/audit-1a.js
 
 # requests, models and chamber walk the requirement gate, which is off by default since 2026-10-01: they turn it on
 fresh; start "SOS_BROWSER=off SOS_REQUIREMENT_GATE=on"

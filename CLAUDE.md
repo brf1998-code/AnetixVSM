@@ -180,6 +180,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Change it at the gate, Ask Anetix in demos, and the audit tools (2026-10-12)
 - Notices fold into one line; switch a site on by hand, payment to follow (2026-10-13)
 - The company MCP (2026-10-13)
+- The outside audit 1A: sign-in fixes (2026-10-13)
 
 ## What this is
 
@@ -497,7 +498,10 @@ Passwords live only in Railway; never commit them.
   change toward the floor takes `people.requireFreshPin` after
   `requireManager`. A new admin
   route that an account with no authenticator must reach goes in
-  `auth.ENROLL_PATHS`, and that list stays as short as it is. Anything that
+  `auth.ENROLL_PATHS`, and that list stays as short as it is. A session made from a password alone is enrollment-only
+  (`startAccountSession({ enroll: true })`) and never becomes a full one; a new way to set up a first factor ends with
+  `auth.finishEnrollment`, and a new way to add a further factor starts with `accounts.proveForNewFactor`. A new
+  place that reads the session cookie itself checks `auth.isRevoked(sid)` and refuses `enroll`. Anything that
   throttles, locks or logs by address reads it through `edge.clientIp`.
 - Module code reaches nothing but `ctx`. The module gate holds agent builds
   and repo imports to the same rule. If a library module needs something new

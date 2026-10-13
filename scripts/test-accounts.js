@@ -13,7 +13,7 @@ const craft = (role, company, gen, ageMs) => { const p = `${role}.${company}.${g
 
 // ---- the admin cookie
 const tok = auth.signAdmin(7, 3);
-t("an admin cookie is admin.*<account>.<generation>.<issued>.<refreshed>.<mac>, six parts like every other", /^admin\.\*7\.3\.[0-9a-z]+\.[0-9a-z]+\.[^.]+$/.test(tok) && tok.split(".").length === 6, tok);
+t("an admin cookie is admin.*<account>.<generation>.<issued>.<refreshed>.<tag>.<mac>, seven parts like every other (2026-10-13)", /^admin\.\*7\.3\.[0-9a-z]+\.[0-9a-z]+\.n[0-9a-z]+\.[^.]+$/.test(tok) && tok.split(".").length === 7, tok);
 const v = auth.verify(tok);
 t("it verifies to the account, its generation, and every company", v && v.role === "admin" && v.account === 7 && v.gen === 3 && v.company === auth.ALL, JSON.stringify(v));
 t("a fresh cookie is not due a refresh and is not the old shape", v && v.refresh === false && v.legacy === false && v.issued === v.refreshed);
@@ -68,6 +68,36 @@ t("no Secure without https", !/Secure/.test(auth.cookieHeader({ headers: {} }, "
 t("alive() is the rule: generation is the middleware's business, the cookie only carries it", auth.alive("admin", NOW - H, NOW - H, NOW) && !auth.alive("admin", NOW - 8 * D, NOW - 8 * D, NOW) && !auth.alive("floor", NaN, NOW, NOW));
 t("hoursVar: blank or junk is the default, 0 is the default for an idle window and 0 for a cap that allows it", auth.hoursVar("SOS_X_NOT_SET", 5) === 5 && (process.env.SOS_X_JUNK = "abc", auth.hoursVar("SOS_X_JUNK", 5) === 5) && (process.env.SOS_X_ZERO = "0", auth.hoursVar("SOS_X_ZERO", 5) === 5 && auth.hoursVar("SOS_X_ZERO", 5, { zeroOk: true }) === 0) && (process.env.SOS_X_TWO = "2", auth.hoursVar("SOS_X_TWO", 5) === 2));
 t("SOS_ADMIN_SESSION_HOURS and SOS_SESSION_DAYS are retired", auth.RETIRED_ENV.join(",") === "SOS_ADMIN_SESSION_HOURS,SOS_SESSION_DAYS");
+
+
+// ---- the outside audit 1A (2026-10-13): enrollment-only sessions (S1-01) and a session's id for logout (S1-03)
+{
+  const N = Date.now();
+  const full = auth.verify(auth.signAdmin(7, 3, null, N), N);
+  t("a full session is not enrollment-only and has an id", full && full.enroll === false && /^[0-9a-f]{40}$/.test(full.sid));
+  const e = auth.signAdmin(7, 3, { tag: "e1a2b3c4d5e6" }, N);
+  const ev = auth.verify(e, N);
+  t("an enrollment-only admin cookie verifies as enrollment-only and is never due a refresh", ev && ev.enroll === true && ev.refresh === false && ev.account === 7, JSON.stringify(ev));
+  const em = auth.signManager(9, "demo", 2, { tag: "eabc123" }, N);
+  t("an enrollment-only manager cookie verifies as enrollment-only", (auth.verify(em, N) || {}).enroll === true);
+  t("an enrollment-only cookie is nobody after ENROLL_MINUTES", auth.verify(e, N + auth.ENROLL_MINUTES * 60e3 + 1000) === null && auth.verify(e, N + (auth.ENROLL_MINUTES - 1) * 60e3) !== null);
+  t("an enrollment-only cookie never slides: one with a later refreshed is nobody", auth.verify(auth.signAdmin(7, 3, { issued: N - 60e3, refreshed: N, tag: "e1a2b3" }, N), N) === null);
+  t("a shared password's cookie is never enrollment-only", auth.verify(auth.sign("manager", "demo", 1, { tag: "e1a2b3" }, N), N) === null && auth.verify(auth.sign("floor", "demo", 1, { tag: "e1a2b3" }, N), N) === null);
+  t("the shared admin password's session (account 0) is never enrollment-only", auth.verify(auth.signAdmin(0, 0, { tag: "e1a2b3" }, N), N) === null);
+  const ep = e.split(".");
+  t("turning an enrollment-only cookie into a full one breaks it", auth.verify([...ep.slice(0, 5), "n" + ep[5].slice(1), ep[6]].join("."), N) === null);
+  t("a tag in a made-up shape is nobody even with a good mac", (() => { const pl = `admin.*7.3.${N.toString(36)}.${N.toString(36)}.x123`; return auth.verify(`${pl}.${auth.hmac(pl)}`, N) === null; })());
+  // the id: the same through every refresh, different for every sign-in, and the same for a cookie from before the tag
+  const a1 = auth.signAdmin(7, 3, null, N - 5 * D), v1 = auth.verify(a1, N);
+  const again = auth.verify(auth.sign("admin", "*7", 3, { issued: v1.issued, refreshed: N, tag: v1.tag }, N), N);
+  t("a refreshed cookie keeps its session's id", again && again.sid === v1.sid);
+  t("two sign-ins in the same millisecond still get two ids", auth.verify(auth.signAdmin(7, 3, null, N), N).sid !== auth.verify(auth.signAdmin(7, 3, null, N), N).sid);
+  const sixPayload = `floor.demo.1.${(N - D).toString(36)}.${(N - D).toString(36)}`;
+  const six = auth.verify(`${sixPayload}.${auth.hmac(sixPayload)}`, N);
+  const upgraded = auth.verify(auth.sign("floor", "demo", 1, { issued: six.issued, refreshed: N, tag: six.tag }, N), N);
+  t("a six part cookie from before the tag verifies, with an id", six && /^[0-9a-f]{40}$/.test(six.sid) && six.enroll === false);
+  t("and refreshed into the seven part shape it keeps that id, so logging out ends its copies too", upgraded && upgraded.sid === six.sid, JSON.stringify([six && six.sid, upgraded && upgraded.sid]));
+}
 
 // ---- what an account without an authenticator may reach
 const E = auth.ENROLL_PATHS;

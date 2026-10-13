@@ -246,7 +246,8 @@ async function init() {
 async function accountOf(req) {
   if (auth.OPEN) return null;   // local work with no sign-in has no accounts to connect an app to
   const s = auth.verify(auth.parseCookies(req)[auth.COOKIE]);
-  if (!s || !s.account) return null;
+  // an enrollment-only session connects nothing, and a logged out one is nobody (the outside audit 1A, S1-01 and S1-03)
+  if (!s || !s.account || s.enroll || (await auth.isRevoked(s.sid))) return null;
   const st = await accounts.sessionState(s.account);
   if (!st || st.role !== s.role || st.status !== "active" || st.generation !== s.gen) return null;
   if (st.role === "manager" && st.company !== s.company) return null;

@@ -96,7 +96,17 @@ function appIntro(adding, passkeyToo) {
   if (alt) alt.onclick = (e) => { e.preventDefault(); usePasskey(); };
 }
 async function start() {
-  const j = await post(`/api/c/${SLUG}/me/enroll/start`, {}); if (!j) return;
+  // adding the app to an account that signs in with a passkey: the passkey (or a recovery code) first (the outside audit 1A, S1-02)
+  const url = `/api/c/${SLUG}/me/enroll/start`;
+  let r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  let j = await r.json().catch(() => ({}));
+  if (r.status === 403 && j.step_up && window.Passkey) {
+    const c = await Passkey.confirm(j.via || {}, "add the authenticator app");
+    if (!c.proof) { if (c.error) alert(c.error); return; }
+    r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c.proof) });
+    j = await r.json().catch(() => ({}));
+  }
+  if (!r.ok) { alert(j.error || "failed"); return; }
   const key = j.secret.replace(/\s/g, "");
   // on the phone that will hold the app, a QR code on its own screen cannot be scanned: a link that opens the app with
   // the account, and the key with a Copy button (the launch audit 1.2)

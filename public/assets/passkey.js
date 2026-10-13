@@ -6,6 +6,8 @@
 //   Passkey.add({ label })                      -> { ok, passkey } | { cancelled } | { error }   (signed in already)
 //   Passkey.signIn({ email, conditional, signal }) -> the /login answer plus passkey: true | { cancelled } | { error }
 //   Passkey.stepUp()                            -> { passkey } | { cancelled } | { error }   a fresh check for an admin action
+//   Passkey.confirm(via, what)                  -> { proof } | { cancelled } | { error }   proof of a factor the account has,
+//                                               before it adds another (2026-10-13, the outside audit 1A, S1-02)
 (function () {
   const b2u = (buf) => { const a = new Uint8Array(buf); let s = ""; for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
   const u2b = (s) => { s = String(s).replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; const bin = atob(s); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a.buffer; };
@@ -15,9 +17,33 @@
   const cancelled = (e) => e && (e.name === "NotAllowedError" || e.name === "AbortError");
   const said = async (r) => { const j = await r.json().catch(() => ({})); return j.error || `the platform answered ${r.status}`; };
 
+  // An account that has a factor proves one before it adds another: its passkey when it has one, else a fresh code
+  // from its app (or one of its recovery codes; its password while 2FA is switched off on the instance).
+  async function confirm(via = {}, what = "add a passkey") {
+    if (via.passkey && supported()) {
+      const out = await stepUp();
+      if (out.passkey) return { proof: { passkey: out.passkey } };
+      if (!via.code && !via.recovery) return out.cancelled ? { cancelled: true } : { error: out.error };
+    }
+    if (via.password && !via.code) {
+      const pw = prompt(`To ${what}, type your password.`);
+      return pw ? { proof: { password: pw } } : { cancelled: true };
+    }
+    const ask = via.code ? `To ${what}, confirm it is you: type a fresh 6 digit code from your authenticator app (or one of your recovery codes).` : `To ${what}, confirm it is you: type one of your recovery codes.`;
+    const code = prompt(ask);
+    return code && code.trim() ? { proof: { code: code.trim() } } : { cancelled: true };
+  }
+
   async function add({ label } = {}) {
     if (!supported()) return { error: "this browser cannot make passkeys" };
-    const r = await fetch("/api/me/passkeys/options", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    let r = await fetch("/api/me/passkeys/options", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    if (r.status === 403) {
+      const j = await r.json().catch(() => ({}));
+      if (!j.step_up) return { error: j.error || `the platform answered ${r.status}` };
+      const c = await confirm(j.via || {});
+      if (!c.proof) return c;
+      r = await fetch("/api/me/passkeys/options", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c.proof) });
+    }
     if (!r.ok) return { error: await said(r) };
     const o = await r.json();
     let cred;
@@ -105,5 +131,5 @@
       await panel(el, { onChange }); if (onChange) onChange();
     }; });
   }
-  window.Passkey = { supported, platform, conditionalOk, add, signIn, panel, stepUp };
+  window.Passkey = { supported, platform, conditionalOk, add, signIn, panel, stepUp, confirm };
 })();

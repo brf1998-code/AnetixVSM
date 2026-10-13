@@ -51,6 +51,15 @@
 //   both windows, and re-issued in the new shape on the first request seen, so
 //   the deploy signed nobody out. SOS_ADMIN_SESSION_HOURS and SOS_SESSION_DAYS
 //   are no longer read (boot says so if they are set).
+//   Since 2026-10-13 (the outside audit 1A, findings S1-01 and S1-03) the cookie has a seventh part, a tag: "n"
+//   or "e" and a random nonce. The tag names the session: its id (sid) is a hash of role, slot, generation, issued
+//   and nonce, the same through every refresh, and /logout writes it to platform.revoked_sessions so a copy of the
+//   cookie stops working too. A cookie from before (five or six parts) has an empty nonce and the same kind of id,
+//   so logging out ends it and its copies as well, and nobody was signed out by the change. "e" is an
+//   ENROLLMENT-ONLY session: what a password gives an account with no second factor yet (a password, a sign-in
+//   ticket, an invitation). It reaches the setup pages and nothing else, lives ENROLL_MINUTES from sign-in and never
+//   slides, and ends the moment the account has a factor, whichever browser set it up. The browser that proves the
+//   factor gets a full session in the same answer (finishEnrollment).
 //   For floor and manager the generation is the company's password generation. Changing a company's password raises its generation, which
 //   signs everyone at that company out (the reason to change one is usually
 //   that somebody who knew it should no longer get in). `companyGuard` is the
@@ -87,6 +96,13 @@ const WINDOWS = {
 const RETIRED_ENV = ["SOS_ADMIN_SESSION_HOURS", "SOS_SESSION_DAYS"];
 for (const name of RETIRED_ENV) if (process.env[name] !== undefined) console.warn(`[auth] ${name} is no longer read (sessions slide since 2026-09-24: SOS_ADMIN_IDLE_HOURS / SOS_ADMIN_CAP_HOURS, SOS_SESSION_IDLE_HOURS / SOS_SESSION_CAP_HOURS). Take it out of Railway.`);
 const windowFor = (role) => (role === "admin" ? WINDOWS.admin : WINDOWS.device);
+// An enrollment-only session (see the top): long enough to scan a code and save the recovery codes, no longer.
+const ENROLL_MINUTES = 60;
+const ENROLL_MS = ENROLL_MINUTES * 60e3;
+// The seventh part of a cookie: "n" (a full session) or "e" (enrollment-only), then a random nonce.
+const newTag = (enroll = false) => `${enroll ? "e" : "n"}${crypto.randomBytes(6).toString("hex")}`;
+// The session's id: stable through every refresh (issued, slot and generation never change; the nonce rides along).
+const sidOf = (role, slot, gen, issued, nonce) => crypto.createHash("sha256").update(`${role}.${slot}.${Number(gen) || 0}.${issued}.${nonce || ""}`).digest("hex").slice(0, 40);
 // failed logins per client IP before /login answers 429 for the rest of the window
 const LOGIN_MAX_FAILS = Number(process.env.SOS_LOGIN_MAX_FAILS || 10);
 const LOGIN_WINDOW_MS = Number(process.env.SOS_LOGIN_WINDOW_MIN || 15) * 60 * 1000;
@@ -193,12 +209,14 @@ async function dropManagerPassword(slug) {
 }
 
 // ---- the session cookie -------------------------------------------------------------------
-// role.company.generation.issued.refreshed.mac (times in base 36 ms). `times` carries a session on: the same
-// issued, a new refreshed. Without it both are now (a sign-in). `now` is for the unit cases only.
+// role.company.generation.issued.refreshed.tag.mac (times in base 36 ms). `times` carries a session on: the same
+// issued, a new refreshed, the same tag. Without it both are now and the tag is new (a sign-in); times.tag alone
+// picks the kind of a new session ("e..." enrollment-only). `now` is for the unit cases only.
 function sign(role, company, gen, times, now = Date.now()) {
   const issued = times && Number.isFinite(times.issued) ? times.issued : now;
   const refreshed = times && Number.isFinite(times.refreshed) ? times.refreshed : now;
-  const payload = `${role}.${company}.${Number(gen) || 0}.${issued.toString(36)}.${refreshed.toString(36)}`;
+  const tag = times && typeof times.tag === "string" && /^[ne][0-9a-z]{0,16}$/.test(times.tag) ? times.tag : newTag(false);
+  const payload = `${role}.${company}.${Number(gen) || 0}.${issued.toString(36)}.${refreshed.toString(36)}.${tag}`;
   const mac = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
   return `${payload}.${mac}`;
 }
@@ -224,40 +242,50 @@ function alive(role, issued, refreshed, now = Date.now()) {
 // cookie in the old one-time shape (so it takes the new shape on the first request seen).
 const refreshDue = (role, refreshed, legacy, now = Date.now()) => legacy || now - refreshed > (windowFor(role).idle * 3600e3) / 2;
 // Max-Age for the cookie: the idle window, or what is left of the cap if that comes first (seconds, never below 60).
-function maxAgeFor(role, issued, now = Date.now()) {
+function maxAgeFor(role, issued, now = Date.now(), enroll = false) {
+  if (enroll) return Math.max(60, Math.round((issued + ENROLL_MS - now) / 1000));
   const w = windowFor(role);
   let s = w.idle * 3600;
   if (w.cap) s = Math.min(s, (issued + w.cap * 3600e3 - now) / 1000);
   return Math.max(60, Math.round(s));
 }
 
-// -> { role, company, gen, account?, slot, issued, refreshed, refresh, legacy } or null
+// -> { role, company, gen, account?, slot, issued, refreshed, refresh, legacy, tag, sid, enroll } or null
 function verify(token, now = Date.now()) {
   if (!token) return null;
-  const parts = token.split(".");
-  // five parts: the shape before sliding windows (one time); six: issued and refreshed. Anything else is nobody
-  // (cookies from before sessions carried a company had four).
-  if (parts.length !== 5 && parts.length !== 6) return null;
+  const parts = String(token).split(".");
+  // five parts: the shape before sliding windows (one time); six: issued and refreshed; seven: and the tag (2026-10-13).
+  // Anything else is nobody (cookies from before sessions carried a company had four).
+  if (parts.length < 5 || parts.length > 7) return null;
   const legacy = parts.length === 5;
-  const [role, company, gen, ts1, ts2] = legacy ? [parts[0], parts[1], parts[2], parts[3], parts[3]] : parts;
+  const [role, company, gen] = parts;
+  const ts1 = parts[3], ts2 = legacy ? parts[3] : parts[4];
+  const tag = parts.length === 7 ? parts[5] : "";
   const mac = parts[parts.length - 1];
-  const payload = legacy ? `${role}.${company}.${gen}.${ts1}` : `${role}.${company}.${gen}.${ts1}.${ts2}`;
+  const payload = parts.slice(0, -1).join(".");
   const expect = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
   if (mac.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
   if (!["admin", "manager", "floor"].includes(role)) return null;
   if (!/^[0-9a-z]{1,12}$/.test(ts1) || !/^[0-9a-z]{1,12}$/.test(ts2)) return null;
+  if (tag && !/^[ne][0-9a-z]{0,16}$/.test(tag)) return null;
+  const enroll = tag.charAt(0) === "e";
   const issued = parseInt(ts1, 36), refreshed = parseInt(ts2, 36);
-  if (!alive(role, issued, refreshed, now)) return null;   // expired, or a forged time
-  const times = { slot: company, issued, refreshed, legacy, refresh: refreshDue(role, refreshed, legacy, now) };
+  if (enroll) {
+    // enrollment-only: from its sign-in, ENROLL_MINUTES, and it never slides
+    if (!Number.isFinite(issued) || issued > now || refreshed !== issued || now - issued > ENROLL_MS) return null;
+  } else if (!alive(role, issued, refreshed, now)) return null;   // expired, or a forged time
+  const times = { slot: company, issued, refreshed, legacy, refresh: !enroll && refreshDue(role, refreshed, legacy, now),
+    tag: tag || "n", enroll, sid: sidOf(role, company, gen, issued, tag.slice(1)) };
   if (role !== "admin") {
-    if (SLUG.test(company)) return { role, company, gen: Number(gen) || 0, ...times };
+    if (SLUG.test(company)) return enroll ? null : { role, company, gen: Number(gen) || 0, ...times };   // a shared password never enrolls
     // a manager ACCOUNT (2026-09-25, self-serve companies): "<slug>~<account id>", gen = the account's generation
     const a = role === "manager" ? /^([a-z0-9][a-z0-9-]{1,40})~(\d{1,9})$/.exec(company) : null;
     return a ? { role, company: a[1], gen: Number(gen) || 0, account: Number(a[2]), ...times } : null;
   }
   // admin: "*<account id>". The admin cookie from before named accounts ("*" alone) is no longer accepted: sign in again.
   const m = /^\*(\d{1,9})$/.exec(company);
-  return m ? { role, company: ALL, gen: Number(gen) || 0, account: Number(m[1]), ...times } : null;
+  if (!m || (enroll && Number(m[1]) === 0)) return null;   // the shared admin password's session is never enrollment-only
+  return { role, company: ALL, gen: Number(gen) || 0, account: Number(m[1]), ...times };
 }
 // The cookie value for an admin session. accountId 0: the shared admin password's session.
 function signAdmin(accountId, gen, times, now) { return sign("admin", `${ALL}${Number(accountId) || 0}`, gen, times, now); }
@@ -271,7 +299,7 @@ function cookieHeader(req, value, maxAge) {
 // The cookie again, with refreshed = now and the same issued, under the same attributes. Appended, so a route
 // that sets its own cookies (the person cookie, the device id) keeps them; the logout route replaces the header.
 function reissue(req, res, session, now = Date.now()) {
-  const value = sign(session.role, session.slot, session.gen, { issued: session.issued, refreshed: now }, now);
+  const value = sign(session.role, session.slot, session.gen, { issued: session.issued, refreshed: now, tag: session.tag }, now);
   res.append("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, session.issued, now)));
 }
 
@@ -329,16 +357,22 @@ function middleware(req, res, next) {
   if (req.headers["x-sos-internal"] === INTERNAL) { req.sosRole = "admin"; req.sosCompany = ALL; req.sosInternal = true; return next(); }   // the platform's own calls; never the accounts (src/accounts.js)
   const session = verify(parseCookies(req)[COOKIE]);
   if (!session) return toLogin(req, res, 401, "login required");
+  // a session someone logged out of is over, for every copy of its cookie (the outside audit 1A, S1-03)
+  isRevoked(session.sid).then((gone) => (gone ? toLogin(req, res, 401, "login required") : admit(req, res, next, session, p))).catch(next);
+}
+function admit(req, res, next, session, p) {
   // the session slides: once it has verified, a cookie past half its idle window (or in the old shape) goes back refreshed
-  const accept = () => { req.sosRole = session.role; req.sosCompany = session.company; req.sosSession = { issued: session.issued, refreshed: session.refreshed }; if (session.refresh) reissue(req, res, session); next(); };
+  const accept = () => { req.sosRole = session.role; req.sosCompany = session.company; req.sosSession = { issued: session.issued, refreshed: session.refreshed, sid: session.sid, enroll: session.enroll }; if (session.refresh) reissue(req, res, session); next(); };
   if (session.role === "admin") {
     // the shared admin password's session ends the moment that password stops opening admin
     if (!session.account) return accounts.legacyOpen().then((open) => (open ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
     // a named account: still there, still switched on, and not signed out everywhere since this cookie was made
     return accounts.sessionState(session.account).then((st) => {
       if (!st || st.role !== "admin" || st.status !== "active" || st.generation !== session.gen) return toLogin(req, res, 401, "login required");
+      // an enrollment-only session ends once the account has its factor, whoever set it up (S1-01)
+      if (session.enroll && (st.enrolled || accounts.twoFaOff())) return toLogin(req, res, 401, "login required");
       req.sosAccount = { id: st.id, login: st.login, name: st.name, role: "admin", enrolled: st.enrolled };
-      if (!st.enrolled && !accounts.twoFaOff() && !ENROLL_PATHS.test(p)) {
+      if ((session.enroll || (!st.enrolled && !accounts.twoFaOff())) && !ENROLL_PATHS.test(p)) {
         if (req.method === "GET" && !/(^|\/)api\//.test(p)) return res.redirect("/admin");
         return res.status(403).json({ error: "set up your authenticator app first", enroll_required: true });
       }
@@ -349,8 +383,9 @@ function middleware(req, res, next) {
     // a manager account: still there, switched on, a manager of this company, not signed out everywhere since
     return accounts.sessionState(session.account).then((st) => {
       if (!st || st.role !== "manager" || st.company !== session.company || st.status !== "active" || st.generation !== session.gen) return toLogin(req, res, 401, "login required");
+      if (session.enroll && (st.enrolled || accounts.twoFaOff())) return toLogin(req, res, 401, "login required");
       req.sosAccount = { id: st.id, login: st.login, name: st.name, role: "manager", company: st.company, enrolled: st.enrolled };
-      if (!st.enrolled && !accounts.twoFaOff() && !managerEnrollPath(p, session.company)) {
+      if ((session.enroll || (!st.enrolled && !accounts.twoFaOff())) && !managerEnrollPath(p, session.company)) {
         if (req.method === "GET" && !/(^|\/)api\//.test(p)) return res.redirect(`/c/${session.company}/enroll`);
         return res.status(403).json({ error: "set up your authenticator app first", enroll_required: true, enroll_url: `/c/${session.company}/enroll` });
       }
@@ -360,6 +395,31 @@ function middleware(req, res, next) {
   // a company's password changed since this cookie was signed: sign in again
   generationOf(session.company).then((gen) => (gen && gen === session.gen ? accept() : toLogin(req, res, 401, "login required"))).catch(next);
 }
+
+// ---- logged out sessions (the outside audit 1A, S1-03, 2026-10-13) -----------------------------------------------------
+// Before this, /logout only told the browser to drop its cookie: a copy of it kept working until its cap (30 days for
+// an admin, 180 for a manager or a floor device). Now /logout writes the session's id here, and every request checks
+// it. A row is kept as long as a copy of that cookie could otherwise live (its cap; forever when there is none).
+// Remembered ten seconds per id like the account state, and at once in the process that wrote it.
+const revokedCache = new Map();   // sid -> { gone, at }
+async function isRevoked(sid) {
+  if (!sid) return false;
+  const hit = revokedCache.get(sid);
+  if (hit && (hit.gone || Date.now() - hit.at < 10000)) return hit.gone;
+  const gone = (await q("SELECT 1 FROM platform.revoked_sessions WHERE sid=$1", [sid])).rows.length > 0;
+  if (revokedCache.size > 20000) revokedCache.clear();
+  revokedCache.set(sid, { gone, at: Date.now() });
+  return gone;
+}
+async function revoke(session, why = "logout") {
+  if (!session || !session.sid) return;
+  const w = windowFor(session.role);
+  const until = session.enroll ? session.issued + ENROLL_MS : w.cap ? session.issued + w.cap * 3600e3 : null;
+  await q("INSERT INTO platform.revoked_sessions (sid, expires_at, why) VALUES ($1, $2, $3) ON CONFLICT (sid) DO NOTHING",
+    [session.sid, until ? new Date(until) : null, why]);
+  revokedCache.set(session.sid, { gone: true, at: Date.now() });
+}
+
 // Who this browser is signed in as, without sending it anywhere: the same checks the middleware makes, answered as data
 // (null for nobody). anetix.ai asks it (GET /login/session, server.js) so its front door can say "you are still signed
 // in" instead of showing a sign-in box to someone whose session here is alive (2026-10-01: a demo manager left the
@@ -367,16 +427,19 @@ function middleware(req, res, next) {
 async function currentSession(req) {
   if (OPEN) return { role: "admin", company: null };
   const s = verify(parseCookies(req)[COOKIE]);
-  if (!s) return null;
+  if (!s || (await isRevoked(s.sid))) return null;
   if (s.role === "admin") {
     if (!s.account) return (await accounts.legacyOpen()) ? { role: "admin", company: null } : null;   // the shared admin password, while it still opens admin
     const st = await accounts.sessionState(s.account);
-    return st && st.role === "admin" && st.status === "active" && st.generation === s.gen ? { role: "admin", company: null } : null;
+    if (!st || st.role !== "admin" || st.status !== "active" || st.generation !== s.gen) return null;
+    if (s.enroll && (st.enrolled || accounts.twoFaOff())) return null;
+    return { role: "admin", company: null };
   }
   if (s.role === "manager" && s.account) {
     const st = await accounts.sessionState(s.account);
     if (!st || st.role !== "manager" || st.company !== s.company || st.status !== "active" || st.generation !== s.gen) return null;
-    return { role: "manager", company: s.company, enroll: !st.enrolled && !accounts.twoFaOff() };
+    if (s.enroll && (st.enrolled || accounts.twoFaOff())) return null;
+    return { role: "manager", company: s.company, enroll: s.enroll || (!st.enrolled && !accounts.twoFaOff()) };
   }
   const gen = await generationOf(s.company);
   return gen && gen === s.gen ? { role: s.role, company: s.company } : null;
@@ -577,20 +640,46 @@ async function ticketHandler(req, res) {
 
 // The session a named account gets, however it proved who it is (password and code here, a passkey in
 // src/passkeys.js): the cookie, and the answer the sign-in pages act on.
+// enroll: the account has no second factor yet, so the session is ENROLLMENT-ONLY (see the top; the outside audit 1A,
+// S1-01): it reaches the setup and nothing else, for ENROLL_MINUTES, and it never becomes a full session, not even once
+// the account is set up. The browser that sets the factor up gets a full one then (finishEnrollment).
 function startAccountSession(req, res, account, { enroll = false, extraCookies = [], now = Date.now() } = {}) {
   const manager = account.role === "manager";
-  const set = [manager
-    ? cookieHeader(req, signManager(account.id, account.company, account.generation, null, now), maxAgeFor("manager", now, now))
-    : cookieHeader(req, signAdmin(account.id, account.generation, null, now), maxAgeFor("admin", now, now)), ...extraCookies];
-  res.set("Set-Cookie", set);
-  return { ok: true, role: manager ? "manager" : "admin", company: manager ? account.company : null, enroll: Boolean(enroll), enroll_url: manager && enroll ? `/c/${account.company}/enroll` : undefined };
+  const times = { tag: newTag(Boolean(enroll)) };
+  const role = manager ? "manager" : "admin";
+  const value = manager ? signManager(account.id, account.company, account.generation, times, now) : signAdmin(account.id, account.generation, times, now);
+  res.set("Set-Cookie", [cookieHeader(req, value, maxAgeFor(role, now, now, Boolean(enroll))), ...extraCookies]);
+  return { ok: true, role, company: manager ? account.company : null, enroll: Boolean(enroll), enroll_url: manager && enroll ? `/c/${account.company}/enroll` : undefined };
+}
+// After a factor is set up (the app's first code checked, or a manager's first passkey saved): this browser proved it,
+// so its enrollment-only session becomes a full one, in the same answer. Any other enrollment-only session of the
+// account ends by itself (the middleware). Then the next factor this browser adds in the following minutes (the
+// passkey offered right after the app) needs no second proof: accounts.grantNewFactor.
+async function finishEnrollment(req, res) {
+  const id = req.sosAccount && req.sosAccount.id;
+  if (!id || !req.sosSession || !req.sosSession.enroll) return;
+  accounts.forget(id);
+  const a = (await q("SELECT * FROM platform.accounts WHERE id=$1", [id])).rows[0];
+  const st = a ? await accounts.sessionState(id) : null;
+  if (!a || !st || !st.enrolled || a.status !== "active") return;
+  const now = Date.now();
+  const value = a.role === "manager" ? signManager(a.id, a.company, a.generation, null, now) : signAdmin(a.id, a.generation, null, now);
+  res.append("Set-Cookie", cookieHeader(req, value, maxAgeFor(a.role, now, now)));
+  await revoke({ ...req.sosSession, role: a.role }, "enrolled");
+  accounts.grantNewFactor(verify(value, now).sid, st);
 }
 
 // Signing out of a named account (an admin, a demo's manager) lands on the account sign-in, not on the company
 // password box, which a demo does not have (Brendan, 2026-09-25: "it takes you to a pin only enter, then it errors").
-function logoutHandler(req, res) {
+// The session is revoked on the server too (the outside audit 1A, S1-03): a copy of the cookie stops working with it.
+// Only this session: the account's others, and a company's other floor devices, carry on.
+async function logoutHandler(req, res) {
   let account = false;
-  try { const v = verify(parseCookies(req)[COOKIE]); account = Boolean(v && v.account); } catch (e) {}
+  try {
+    const v = verify(parseCookies(req)[COOKIE]);
+    account = Boolean(v && v.account);
+    if (v) await revoke(v, "logout");
+  } catch (e) { console.error("[auth] logout:", e.message); }
   res.set("Set-Cookie", `${COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
   res.redirect(account ? "/login?staff=1" : "/login");
 }
@@ -604,7 +693,7 @@ async function loginMode(slug) {
   return row && !row.floor_hash && !row.manager_hash && !row.legacy_login ? "account" : "password";
 }
 
-module.exports = { startAccountSession, loginBlocked, noteLoginFail,
+module.exports = { startAccountSession, finishEnrollment, isRevoked, revoke, ENROLL_MINUTES, loginBlocked, noteLoginFail,
   middleware, currentSession, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
   setPasswords, accountsOnly, dropManagerPassword, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, ticketHandler, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,

@@ -64,8 +64,11 @@ const code = async (secret) => {
   t("the hint cookie is set for the wall", (await ctx.cookies(WWW)).some((c) => c.name === "anx_pk"));
   await page.goto(`${SOS}/c/${SLUG}/`); await page.waitForTimeout(1500);
   t("with a passkey, the board makes no offer", !(await page.isVisible("#pknudge")));
-  const second = await page.request.post(SOS + "/api/me/passkeys/options", { data: {} });
-  t("adding again names the passkey it has, so the same device is not asked twice", second.ok() && (await second.json()).excludeCredentials.length === 1);
+  // the first passkey right after the app's setup needed no second proof; any other asks for one (the outside audit 1A, S1-02)
+  const bare = await page.request.post(SOS + "/api/me/passkeys/options", { data: {} });
+  t("adding another with the session alone asks for a proof first", bare.status() === 403 && (await bare.json()).step_up === true);
+  const second = await page.request.post(SOS + "/api/me/passkeys/options", { data: { code: await code(es.secret) } });
+  t("with a fresh code, adding again names the passkey it has, so the same device is not asked twice", second.ok() && (await second.json()).excludeCredentials.length === 1);
 
   // ---- signed out: anetix.ai. First the email box's own passkey list (the browser's autofill): the virtual authenticator
   // picks the passkey the way a person taps it in the list, and that alone signs in
@@ -116,8 +119,13 @@ const code = async (secret) => {
   await page.goto(`${SOS}/c/${SLUG}/settings`);
   await page.waitForSelector("#pk-card button[data-add]", { timeout: 8000 });
   await cdp.send("WebAuthn.clearCredentials", { authenticatorId });
+  // no passkey left on the account, so Add a passkey asks for a fresh code from the app first (S1-02)
+  const fresh = await code(es.secret);
+  let asked = "";
+  page.once("dialog", async (d) => { asked = d.message(); await d.accept(fresh); });
   await page.click("#pk-card button[data-add]");
   await page.waitForSelector("#pk-card table.acc", { timeout: 8000 });
+  t("Add a passkey asked for a fresh code from the app first", /6 digit code/.test(asked), asked);
   const acct = (await q("SELECT id FROM platform.accounts WHERE login=$1", [EMAIL])).rows[0].id;
   const reset = await admin.request.post(`${SOS}/api/admin/accounts/${acct}/reset-factor`, { data: {} });
   const left = (await q("SELECT count(*)::int AS n FROM platform.account_passkeys WHERE account_id=$1 AND removed_at IS NULL", [acct])).rows[0].n;
@@ -177,6 +185,12 @@ const code = async (secret) => {
   await pp.goto(`${SOS}/login?account=${encodeURIComponent(EMAIL2)}`); await pp.waitForTimeout(500);
   await Promise.all([pp.waitForURL(new RegExp(`^${SOS}/c/${SLUG2}/`), { timeout: 10000 }), pp.click("#pk")]);
   t("and the passkey alone signs in on the phone", pp.url().startsWith(`${SOS}/c/${SLUG2}/`));
+  // adding the app to a passkey account asks for the passkey first (the outside audit 1A, S1-02); the screen lock answers
+  await pp.goto(`${SOS}/c/${SLUG2}/enroll?app=1`); await pp.waitForSelector("#body button.go", { timeout: 8000 }).catch(() => {});
+  await pp.click("#body button.go"); await pp.waitForSelector("#codeform", { timeout: 10000 }).catch(() => {});
+  t("adding the app on a passkey account confirms with the passkey, then shows the app's setup", await pp.isVisible("#codeform"));
+  const sev = (await q("SELECT detail FROM platform.auth_events WHERE login=$1 AND event='step_up_ok' ORDER BY id DESC LIMIT 1", [EMAIL2])).rows[0];
+  t("the proof was the passkey, for adding the app, on the record", sev && sev.detail && sev.detail.via === "passkey" && sev.detail.what === "add_app", sev);
   // the wall at anetix.ai, the same way
   await pp.goto(`${SOS}/logout`);
   await pp.goto(`${WWW}/#signin`); await pp.waitForTimeout(600);

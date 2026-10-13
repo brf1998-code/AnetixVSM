@@ -136,7 +136,7 @@ async function handleFor(account) {
   await q("UPDATE platform.accounts SET passkey_handle=$2 WHERE id=$1 AND passkey_handle IS NULL", [account.id, h]);
   return (await q("SELECT passkey_handle FROM platform.accounts WHERE id=$1", [account.id])).rows[0].passkey_handle;
 }
-async function registrationOptions(req, account) {
+async function registrationOptions(req, account, sid) {
   const have = await live(account.id);
   if (have.length >= MAX_PER_ACCOUNT) throw Object.assign(new Error(`this account has ${MAX_PER_ACCOUNT} passkeys, the most it can; remove one first`), { status: 400 });
   const rp = rpId(req);
@@ -150,13 +150,16 @@ async function registrationOptions(req, account) {
     supportedAlgorithmIDs: [-7, -257],   // ES256, RS256: every platform authenticator in use
   });
   sweep(regChallenges);
-  regChallenges.set(account.id, { challenge: options.challenge, at: Date.now(), rp });
+  regChallenges.set(account.id, { challenge: options.challenge, at: Date.now(), rp, sid });   // bound to the session that proved it may
   return options;
 }
 async function register(req, account, { response, label } = {}) {
   const pending = regChallenges.get(account.id);
   regChallenges.delete(account.id);
   if (!pending || Date.now() - pending.at > CHALLENGE_MS) throw Object.assign(new Error("that took too long; press Add a passkey again"), { status: 400 });
+  // the challenge belongs to the session that began (and, on an account with a factor, proved) the adding (S1-02)
+  const sid = req.sosSession && req.sosSession.sid;
+  if (!pending.sid || pending.sid !== sid) throw Object.assign(new Error("that passkey was begun from another sign-in; press Add a passkey again"), { status: 403 });
   let v;
   try {
     v = await lib().verifyRegistrationResponse({ response, expectedChallenge: pending.challenge, expectedOrigin: origins(req, pending.rp), expectedRPID: pending.rp, requireUserVerification: true });
@@ -288,16 +291,20 @@ router.get("/api/me/passkeys", guard(async (req, res) => {
   if (!named(req, res)) return;
   res.set("Cache-Control", "no-store").json({ passkeys: await listFor(req.sosAccount.id), max: MAX_PER_ACCOUNT, login: req.sosAccount.login });
 }));
+// Adding a passkey to an account that has a factor already takes a fresh proof of one in this request's body
+// ({ passkey } from step-up/options, { code } from the app or a recovery code): the outside audit 1A, S1-02.
 router.post("/api/me/passkeys/options", json, guard(async (req, res) => {
   if (!named(req, res)) return;
-  res.set("Cache-Control", "no-store").json(await registrationOptions(req, req.sosAccount));
+  if (!(await accounts.proveForNewFactor(req, res, "add_passkey"))) return;
+  res.set("Cache-Control", "no-store").json(await registrationOptions(req, req.sosAccount, req.sosSession && req.sosSession.sid));
 }));
 router.post("/api/me/passkeys", json, guard(async (req, res) => {
   if (!named(req, res)) return;
   const row = await register(req, req.sosAccount, req.body || {});
   // a manager's first passkey with no app behind it is the account's first factor (1.3): the recovery codes, once
   const codes = await accounts.passkeyEnrolled(req.sosAccount, edge.clientIp(req));
-  res.set("Set-Cookie", hintCookie(req, rpId(req)));
+  await authLib().finishEnrollment(req, res);   // a first factor: this browser's enrollment-only session becomes a full one (S1-01)
+  res.append("Set-Cookie", hintCookie(req, rpId(req)));
   res.set("Cache-Control", "no-store").json({ ok: true, passkey: row, ...(codes ? { first_factor: true, recovery_codes: codes } : {}) });
 }));
 router.post("/api/me/passkeys/:id(\\d{1,9})/remove", json, guard(async (req, res) => {
