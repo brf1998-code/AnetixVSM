@@ -36,7 +36,12 @@ const REQ = new URLSearchParams(location.search).get("req") || "";
 const HEAD = `<h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:9px">Connect an app</h1>`;
 // what each address lets an app do, in the words the person agreeing reads
 const CAN = {
-  admin: ["Read demos, sites, loop health, AI spend, requests to Anetix and build runs, across every company.", "It cannot change anything.", "It never gets a record from a company's tools."],
+  admin: ["Read demos, sites, loop health, AI spend, requests to Anetix, build runs and new tool requests, across every company.", "It never gets a record from a company's tools."],
+};
+// what the tick adds, and what it never does (src/mcp-intake.js)
+const WRITE = {
+  admin: { label: "Let it start and fill in new tool requests", can: ["Start a new tool request for any company, as Anetix, and write its answers.", "Send the answers to the agent and ask it for design changes. That spends the company's AI credit."],
+    never: "It cannot confirm a design, build, put anything on a floor, withdraw a request, or change anything else. Without the tick it cannot change anything at all." },
 };
 let INFO = null, busy = false;
 function stop(message) { card.innerHTML = `${HEAD}<div class="note bad">${esc(message)}</div><p class="sub" style="margin-top:12px">You can close this page.</p>`; }
@@ -59,7 +64,9 @@ function draw() {
     document.getElementById("no").onclick = () => decide(false, {});
     return;
   }
-  html += `<p style="margin:14px 0 0"><b>What it will be able to do</b></p><ul>${can.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
+  const w = i.can_write ? WRITE[i.surface] : null;
+  html += `<p style="margin:14px 0 0"><b>What it will be able to do</b></p><ul>${can.map((c) => `<li>${esc(c)}</li>`).join("")}${w ? "" : "<li>It cannot change anything.</li>"}</ul>
+    ${w ? `<label class="who" style="display:block;cursor:pointer"><input type="checkbox" id="writes" style="width:auto;margin-right:8px;vertical-align:middle"><b>${esc(w.label)}</b><ul>${w.can.map((c) => `<li>${esc(c)}</li>`).join("")}</ul><span class="sub">${esc(w.never)}</span></label>` : ""}
     <div class="note${i.app.this_computer ? " warn" : ""}">${i.app.this_computer
       ? `If you allow it, the answer goes to <b>a program on this computer</b> (${esc(i.app.sends_to)}). Allow it only if you started connecting an app on this computer just now.`
       : `If you allow it, this browser goes back to <b>${esc(i.app.sends_to)}</b>. Allow it only if you started connecting an app there just now.`}</div>
@@ -89,6 +96,8 @@ async function withPasskey() {
 }
 async function decide(allow, step) {
   if (busy) return; busy = true;
+  const tick = document.getElementById("writes");
+  if (allow && tick && tick.checked) step = { ...step, writes: true };
   for (const b of card.querySelectorAll("button")) b.disabled = true;
   try {
     const r = await fetch("/oauth/consent/decide", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ req: REQ, allow, ...step }) });

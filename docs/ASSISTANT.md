@@ -241,6 +241,9 @@ written for the tools people ask about.
 
 ### In a demo
 
+*Changed 2026-10-12: a demo answers for real, from the demo's own credit (Taylor's request, Brendan's call). The set
+answers below are kept behind `SOS_ASSIST_DEMO=scripted`.*
+
 On any company that is not a paid site (`kind.isSite` false), the panel, the chips and the starter prompts all show,
 so the demo user sees the shape. Sending anything returns a set answer for the chip picked, with no model call and no
 credit used. Each set answer is three parts: what the assistant does in that scope, one example exchange marked

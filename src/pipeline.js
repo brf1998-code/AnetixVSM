@@ -407,10 +407,10 @@ async function advance(runId) {
       await assertUnderCap(company, { started: true });   // startRun checked the credit; a build that started finishes
       const ev0 = run.evidence || {};
       let draft;
-      if (ev0.fix_round && run.to_version) {
-        // fix round: keep working in the same draft version
+      if ((ev0.fix_round || ev0.findings_from === "manager") && run.to_version) {
+        // fix round, or the manager's change after looking at the preview: keep working in the same draft version
         draft = { version: run.to_version, dir: await registry.materialize(company, mod, run.to_version) };
-        await log(runId, { step: "build", note: `fix round ${ev0.fix_round}: agent revises v${draft.version} against the reviewer's findings` });
+        await log(runId, { step: "build", note: ev0.fix_round ? `fix round ${ev0.fix_round}: agent revises v${draft.version} against the reviewer's findings` : `the agent reworks v${draft.version} with the manager's change` });
         // After a stop by the module gate, the platform puts back the files a
         // lane rule says must not change (a new agent session cannot know what
         // they looked like), and the agent gets the gate's own wording.
@@ -430,7 +430,8 @@ async function advance(runId) {
       const nChanges = ownIds(run).length;
       const capUsd = runCapUsd(nChanges);
       const req = (run.requirement ? `\n\nConfirmed requirement:\n${run.requirement}` : "")
-        + (ev0.fix_round && ev0.findings
+        + (ev0.findings_from === "manager" && ev0.findings && !ev0.fix_round ? reworkBrief(ev0.findings)
+          : ev0.fix_round && ev0.findings
           ? (ev0.gate && ev0.gate.ok === false ? `\n\n${ev0.findings}`
             : ev0.findings_from === "checks" ? `\n\nThe platform ran its checks against your previous attempt in this directory and these did not pass. Fix exactly these, keep everything else as it is:\n${ev0.findings}`
             : ev0.findings_from === "campaign" ? `\n\nThe manager's test campaign ran against your previous attempt in this directory, on the company's test floor beside its other tools, and these did not pass. Fix exactly these, keep everything else as it is:\n${ev0.findings}`
@@ -914,6 +915,45 @@ async function fix(runId, opts = {}) {
   if (!busy) advance(runId).catch((e) => failRun(runId, e));
 }
 
+// Change it (Taylor's request on the Chelsea Clock board, 2026-10-12: "Allow me to edit and rebuild a built change,
+// instead of having to simply discard it if it's not right"). Brendan's call: the manager says what is off and the
+// agent reworks the preview it already built, in the same draft version, keeping what was right; the platform's checks
+// and the second review run again and it comes back to the gate. Discard stays for a build that went the wrong way.
+// The manager's words are added to the requirement, so the reviewer holds the reworked build to them too. It needs
+// credit like a new build (it is one more agent run), and a fresh set of automatic fix rounds.
+const MAX_REWORKS = Number(process.env.SOS_MAX_REWORKS || 5);
+async function rework(runId, words, actor) {
+  const text = String(words || "").replace(/\s+$/g, "").trim().slice(0, 2000);
+  if (text.length < 3) throw Object.assign(new Error("say what should be different"), { status: 400 });
+  const run = await getRun(runId);
+  if (!run || run.step !== "await_deploy" || run.status !== "waiting" || !run.to_version) throw Object.assign(new Error("only a build waiting for the OK can be changed"), { status: 409 });
+  const modRow = await registry.getModule(run.company, run.module);
+  if (!modRow || Number(modRow.staged_version) !== Number(run.to_version)) throw Object.assign(new Error("another build has the preview now; discard this one instead"), { status: 409 });
+  const ev = run.evidence || {};
+  const round = (ev.rework_round || 0) + 1;
+  if (round > MAX_REWORKS) throw Object.assign(new Error(`this build was already changed ${MAX_REWORKS} times; discard it and adjust the request instead`), { status: 409 });
+  await require("./selfserve").assertCredit(run.company);
+  // a new tool's version lives on disk while it is built; bring it back if a restart cleared it
+  if (run.lane === "module") await registry.materialize(run.company, run.module, run.to_version);
+  // claim it from the gate in one statement: a change being added on top of the preview (joinPreview) claims it the
+  // same way, and only one of the two may win
+  const claimed = await q("UPDATE platform.build_runs SET step='build', status='running', fence=$2, updated_at=now() WHERE id=$1 AND step='await_deploy' AND status='waiting' AND (fence IS NULL OR fence <= $2) RETURNING id", [runId, FENCE]);
+  if (!claimed.rowCount) throw Object.assign(new Error("this build is not waiting for the OK any more"), { status: 409 });
+  const by = (actor && actor.name) || "the manager";
+  const reworks = [...(Array.isArray(ev.reworks) ? ev.reworks : []), { round, words: text, by, at: new Date().toISOString(), what_was: String(ev.what_changed || ev.build_summary || "").slice(0, 600) || null }];
+  if (run.requirement) await q("UPDATE platform.build_runs SET requirement=$2 WHERE id=$1", [runId, `${run.requirement}\n\nChanged after ${by} looked at the preview (change ${round}): ${text}`]);
+  await setRun(runId, { evidence: { ...ev, rework_round: round, reworks, findings: text, findings_from: "manager", fix_round: undefined,
+    cross_check: undefined, test_run: undefined, visual_check: undefined, checks: undefined, campaign: undefined, gate: undefined } });
+  await log(runId, { step: "build", note: `${by} looked at the preview and asked for a change (${round} of ${MAX_REWORKS}): the agent reworks v${run.to_version}, then the checks run again` });
+  await logEvent("run_reworked", runId, { company: run.company, module: run.module, round });
+  advance(runId).catch((e) => failRun(runId, e));
+  return { ok: true, round, max: MAX_REWORKS };
+}
+// What the agent is told in a rework (the build step of a change and of a new tool both use it).
+function reworkBrief(words) {
+  return `\n\nThe manager opened the preview of your previous attempt in this directory and asked for this to be different:\n${words}\nMake that change on top of what is here and keep everything else that already works as it is. Your final bullet list covers everything this version changes compared with the version it started from, your earlier work included, not only this last change.`;
+}
+
 // Manager overrides a failed cross-check: the change still has to pass the
 // internal tests, then waits at the deploy gate like any other build. The
 // override is recorded on the run.
@@ -1019,7 +1059,7 @@ async function sweepOrphans() {
 }
 
 module.exports = { requirementGate,
-  startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, AUTO_FIX_ROUNDS, autoFix, toGate,
+  startRun, confirmRequirement, deploy, rollbackRun, retry, cancel, fix, rework, reworkBrief, MAX_REWORKS, override, retirePromise, getRun, smokeCheck, runChecks, checksLine, checksForAgent, recordAdded, kickQueue, sweepOrphans, MAX_FIX_ROUNDS, AUTO_FIX_ROUNDS, autoFix, toGate,
   ownIds, chainBelow, stackedRun, joinPreview,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
   setRun, log, addCost, failRun, activeRun, shutdown, FENCE, runStructuredCrossCheck, plainSummary, ACTIVE, advance,

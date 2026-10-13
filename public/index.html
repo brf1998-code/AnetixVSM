@@ -343,7 +343,7 @@ const CAMP_DROP = new Set();   // "runId:caseId" the manager unticked on a propo
 const CAMP_DATA = new Map();   // runId -> "floor" | "made"
 const CAMP_NOTRIGHT = new Set();   // "runId:case:n" whose "not right" box is open
 let DATA = null;
-let EDITING = null;            // proposal id being adjusted, "req:<runId>" while a requirement is being edited, or "left:<feedbackId>" while the manager writes what is left; pauses the reload
+let EDITING = null;            // proposal id being adjusted, "req:<runId>" while a requirement is being edited, "left:<feedbackId>" while the manager writes what is left, or "rework:<runId>" while the manager says what to change in a preview; pauses the reload
 const OPEN_STOPS = new Set();   // stopped builds whose "and N more" is open; kept across the 4 s redraw
 const OPEN_ASKED = new Set();   // cards whose "asked N times" list is open; kept across the 4 s redraw
 const OPEN_BATCH = new Set();   // batch tiles whose "See the N changes" is open; kept across the 4 s redraw
@@ -511,7 +511,7 @@ async function declineReview(id) {
 // Every button click is acknowledged at once: the card it belongs to greys out
 // with a "working" line until the server answers, and the header shows a pill.
 const PENDING = new Map(); // key ("fb:12" or "run:7") -> label
-const ACTION_LABELS = { campaign: "Working on the test campaign", answer: "Passing the answer to the proposer", unlink: "Putting it back as its own request", closeout: "Closing it out", retire: "Retiring the promise and checking the build again", review: "Sending to the AI for a proposal", decide: "Recording your decision", confirm: "Confirming, the agent starts building", deploy: "Deploying to the floor", cancel: "Cancelling", retry: "Restarting the build", fix: "Sending the findings back to the agent", override: "Overriding the review, running tests", rollback: "Rolling back", plusone: "Counting it again", close: "Closing", batch: "Starting the build" };
+const ACTION_LABELS = { rework: "Sending your change to the AI", campaign: "Working on the test campaign", answer: "Passing the answer to the proposer", unlink: "Putting it back as its own request", closeout: "Closing it out", retire: "Retiring the promise and checking the build again", review: "Sending to the AI for a proposal", decide: "Recording your decision", confirm: "Confirming, the agent starts building", deploy: "Deploying to the floor", cancel: "Cancelling", retry: "Restarting the build", fix: "Sending the findings back to the agent", override: "Overriding the review, running tests", rollback: "Rolling back", plusone: "Counting it again", close: "Closing", batch: "Starting the build" };
 function pendingKey(url) {
   let m;
   if ((m = /\/api\/feedback\/(\d+)\/(\w+)/.exec(url))) return ["fb:" + m[1], ACTION_LABELS[m[2]] || "Working"];
@@ -934,7 +934,7 @@ function batchCard(run) {
     if (MGR()) html += actions(pk, "", [`<button class="quiet" onclick="act('/api/runs/${run.id}/cancel')">Cancel</button>`]);
     return html + "</div>";
   }
-  if (["running", "waiting", "failed"].includes(run.status)) html += stepsHtml(run);
+  if (["running", "waiting", "failed"].includes(run.status)) html += stepsHtml(run) + reworkingHtml(run);
   if (run.step === "confirm_requirement" && run.status === "waiting") html += reqHtml(run, false);
   else if (!["deployed", "rolled_back", "cancelled"].includes(run.status)) html += reqShownHtml(run);
   if (run.step === "campaign" && run.status !== "failed") html += campaignHtml(run);
@@ -981,7 +981,38 @@ function gateTopHtml(run, fb) {
     + `<a class="demo" href="/c/${SLUG}/staging/m/${esc(run.module)}/" target="_blank">${preview}</a>`
     + ((((DATA.pages || {})[run.module] || {}).staged || []).length > 1 ? `<br><a class="demo" href="#" onclick="openScreens('${esc(run.module)}','staged');return false">See every screen of the preview</a>` : "")
     + (TRIAL() ? `<br><a class="demo" href="#" onclick="openSample('${esc(run.module)}');return false">Try the preview with sample data</a>` : "")
+    + reworkHtml(run)
     + `</div>`;
+}
+// Change it (Taylor, 2026-10-12: "edit and rebuild a built change, instead of having to simply discard it"): the
+// manager says what is off in the preview and the agent reworks that same preview; the checks run again and it comes
+// back here. Discard stays further down the card for a build that went the wrong way.
+function reworkHtml(run) {
+  const ev = run.evidence || {}, n = ev.rework_round || 0, max = DATA.maxReworks || 5;
+  if (EDITING === "rework:" + run.id) {
+    return `<div class="edit" style="margin-top:8px"><label>What should be different in the preview? The AI changes this build and keeps the rest; then the checks run again and it comes back here.</label>
+      <textarea id="rework-${run.id}" style="min-height:64px" maxlength="2000" placeholder="Say it the way you would tell the person building it"></textarea>
+      <div><button class="go small" onclick="submitRework(${run.id})">Change it</button><button class="quiet small" onclick="EDITING=null;load()">Cancel</button></div></div>`;
+  }
+  if (n >= max) return `<div class="meta" style="margin-top:6px">Changed ${n} times already. If it is still not right, discard it and adjust the request.</div>`;
+  return `<div style="margin-top:6px"><a class="leftlink" data-rework="${run.id}" href="#" onclick="openRework(${run.id});return false" title="Say what is off. The AI reworks this preview instead of starting over.">Not right? Change it</a>${n ? `<span class="meta"> · changed ${n} time${n === 1 ? "" : "s"}</span>` : ""}</div>`;
+}
+function openRework(id) {
+  EDITING = "rework:" + id;   // pauses the reload while the box is open
+  render();
+  const ta = document.getElementById("rework-" + id); if (ta) ta.focus();
+}
+function submitRework(id) {
+  const ta = document.getElementById("rework-" + id), words = ta ? ta.value.trim() : "";
+  if (words.length < 3) { if (ta) { ta.style.borderColor = "var(--red)"; ta.placeholder = "A few words on what should be different"; ta.focus(); } return; }
+  EDITING = null;
+  act(`/api/runs/${id}/rework`, { words });
+}
+// While the agent reworks a preview: the manager's own words on the card, so it is clear what it is doing.
+function reworkingHtml(run) {
+  const ev = run.evidence || {}, last = (ev.reworks || []).slice(-1)[0];
+  if (!last || ev.findings_from !== "manager" || ["deployed", "rolled_back", "cancelled"].includes(run.status) || atGate(run)) return "";
+  return `<div class="meta stacknote">Reworking the preview with ${esc(last.by || "the manager")}'s change: "${esc(last.words)}"</div>`;
 }
 // a tool request's name, whichever words the server used ("New tool: ..." now, "New module: ..." on older rows)
 const toolName = (fb) => String(fb.message || "").replace(/^New (module|tool): /, "");
@@ -1022,6 +1053,7 @@ function requestCard(fb) {
   }
   switch (it.status) {
     case "answering":
+      if (it.via === "anetix") html += `<div class="stat"><b>Anetix wrote these answers from a conversation with you.</b> Read them over and fix anything that is off before you send them.</div>`;
       html += `<div class="stat">${it.round > 1 ? `<b>The agent has ${it.round_total} more question${it.round_total === 1 ? "" : "s"}</b> (round ${it.round} of 3). ` : ""}${it.round_answered} of ${it.round_total} answered${it.round_done ? ", ready to send to the agent" : ""}.</div>`;
       html += actions(pk, openBtn(it.round_answered ? "Continue" : "Start answering"), [withdraw]);
       break;
@@ -1058,7 +1090,7 @@ function runBlock(fb, run) {
     if (MGR()) html += actions(pk, "", [`<button class="quiet" onclick="act('/api/runs/${run.id}/cancel')">Cancel</button>`]);
     return html;
   }
-  html += stepsHtml(run);
+  html += stepsHtml(run) + reworkingHtml(run);
   if (run.step === "confirm_requirement" && run.status === "waiting") html += reqHtml(run, true);
   else if (!["deployed", "rolled_back", "cancelled"].includes(run.status)) html += reqShownHtml(run);
   if (run.step === "campaign" && run.status !== "failed") html += campaignHtml(run);

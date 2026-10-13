@@ -16,6 +16,9 @@
 //   - A tool's answer is JSON as text, at most SOS_MCP_MAX_CHARS (120000) characters; past that the app is told
 //     it was cut and to ask for less. A tool that throws answers "that did not work" with the error's words only
 //     when the tool marked them as fit to read (err.say); the Railway log has the rest.
+//   - A tool marked readOnly: false changes something (2026-10-06, src/mcp-intake.js). It runs only on a connection
+//     whose person ticked "let it write" on the consent page (who.writes, mcp_grants.writes); on any other it answers
+//     in words that say to connect the app again, and is logged as refused. Nothing a tool here does is destructive.
 //
 // Where this sits in server.js: mount() is called after edge.gate (so a call still has to come through Cloudflare)
 // and BEFORE auth.middleware (an app carries a token, not a cookie). Nothing mounted here trusts a cookie apart
@@ -83,12 +86,17 @@ async function logCall(who, tool, args, { ok, ms, chars = null, error = null }) 
       [who.grant || null, (who.account && who.account.id) || null, who.surface, who.company || null, tool, JSON.stringify(clipArgs(args)), ok, ms, chars, error ? String(error).slice(0, 300) : null]);
   } catch (e) { console.error("[mcp] could not log a call:", e.message); }
 }
+const READ_ONLY = "This connection is read only, so nothing was changed. To let this app write, disconnect it and connect it again, and tick \"Let it start and fill in new tool requests\" on the page that asks. Whoever connected it does that, with their passkey or code.";
 // A server object for one request, offering this surface's tools as this caller.
 function serverFor(surface, tools, who) {
   const server = new McpServer({ name: surface.server, title: surface.title, version: VERSION }, { instructions: surface.instructions });
   for (const t of tools) {
     server.registerTool(t.name, { title: t.title, description: t.description, inputSchema: t.input || {}, annotations: { readOnlyHint: t.readOnly !== false, destructiveHint: false, openWorldHint: false } }, async (args) => {
       const started = Date.now();
+      if (t.readOnly === false && who.writes !== true) {
+        await logCall(who, t.name, args, { ok: false, ms: 0, error: "read-only connection" });
+        return { isError: true, content: [{ type: "text", text: READ_ONLY }] };
+      }
       try {
         const out = result(await t.run(args || {}, who));
         await logCall(who, t.name, args, { ok: true, ms: Date.now() - started, chars: out.chars });
@@ -161,4 +169,4 @@ function mount(app, surfaces) {
   return true;
 }
 
-module.exports = { init, mount, serverFor, endpoint, oauthMetadata, toText, clipArgs, logCall, MAX_CHARS, SCHEMA };
+module.exports = { init, mount, READ_ONLY, serverFor, endpoint, oauthMetadata, toText, clipArgs, logCall, MAX_CHARS, SCHEMA };

@@ -73,6 +73,7 @@ through the repo, not the in-app agent.
 - `src/review.js` — whole-module system review by a frontier model, filed as held proposals
 - `src/diagrams.js` — Mermaid data-flow and workflow diagrams drawn after every deploy, per version
 - `src/mcpauth.js`, `src/mcp.js`, `src/mcp-admin.js`: connector sign-in (OAuth on the named accounts), the MCP address, and the admin tools (`docs/MCP.md`)
+- `src/mcp-intake.js`: the admin MCP's new tool request tools, four of which write (start, answer, send to the agent, change the design); confirm stays on the board
 - `public/index.html` — the improvement board (module strip, KPIs, four columns, platform requests)
 - `public/agents.html`, `public/admin.html`, `public/diagrams.html` — per-company agent settings, instance admin, diagram viewer
 - `principles/` — PRINCIPLES, GUARDRAILS, STYLE, DIAGRAMS + per-module reference formats (fed to every agent run)

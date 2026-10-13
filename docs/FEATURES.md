@@ -3406,6 +3406,39 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     using its shared manager password to start an order.
   - *Tests:* `scripts/test-managers.js` (9), `scripts/e2e/managers.js` (40), `scripts/e2e/managers-browser.js` (14),
     and the by-hand company's pilot through to Activate in `scripts/e2e/pricing.js` (82).
+- **The admin MCP writes new tool requests** (2026-10-06; `src/mcp-intake.js`, `docs/MCP.md` "Write tools").
+  Brendan: "add much more write capability to the MCP so that we can write in a tooling request automatically from a
+  call transcript or tour transcript ... instead of going to handjam it all." After a call or a plant walk the answers
+  to the new-tool questions are in a chat; the connected app now writes them in.
+  - *Six tools on `/mcp/admin`.* Two read: `list_tool_requests`, `get_tool_request` (every question with what it takes
+    and its choices, the answers, what is missing, the agent's follow-up round, the design, what to do next). Four
+    write: `start_tool_request` (as Anetix, for any company), `answer_tool_request` (any number of answers in one
+    call), `send_tool_request` (the open round to the agent), `change_tool_request_design` (changes to named points or
+    additions, through the agent). They call `src/intake.js`, the same functions the board's routes call, so one
+    unfinished request at a time, the name being free, credit and fair use all hold as they do for a person.
+  - *What it cannot do.* Confirm a design, build, make anything live, withdraw a request, add a file, or change
+    anything that is not a new tool request. The manager confirms on the board with their PIN, as before.
+  - *A connection writes only when the person ticked it.* The consent page has a tick, off by default, "Let it start
+    and fill in new tool requests" (`mcp_codes.writes` -> `mcp_grants.writes`, never changed afterwards). A connection
+    without it, every one made before this change included, is told to connect again and changes nothing
+    (`src/mcp.js`, logged as "read-only connection"). The Accounts tab says which each is.
+  - *Whose request it is.* An app writes only to a request Anetix started through a connector
+    (`module_intakes.via = 'anetix'`). A manager's own unfinished request is read for a trial and taken over only with
+    `use_open` (on the record as `intake_taken_over`). A paying site that did not opt in to learning keeps its own
+    request to itself: status only, never taken over.
+  - *Answers are checked.* The board's page is trusted to send the right shape; an app is not. `normalize` brings each
+    answer to its question's shape (option and group ids or the words on them, lengths, counts) or refuses it with
+    what the question takes. One refused answer does not lose the others.
+  - *On the board.* The tile says "started by Anetix", and while it is being answered: "Anetix wrote these answers
+    from a conversation with you. Read them over and fix anything that is off before you send them."
+  - *On the record.* Every answer, send and design change carries the account's name: "Brendan Finn (Anetix, through
+    Claude)", role admin. New kinds: `intake_sent`, `intake_taken_over`.
+  - *The pace.* Sends and design changes spend AI: `SOS_MCP_AI_STARTS_PER_HOUR` (30) per account, counted from
+    `platform.mcp_calls`. 0 = no limit.
+  - *Known limits.* No files through the connector (a photo of the whiteboard and the starting spreadsheet are added
+    on the board). The transcript itself is not stored: the app distills it into the answers. No tool makes a company.
+    A request Anetix sends for a walled-off company is read by the agent like any typed answer.
+  - *Tests:* `scripts/test-mcp.js` (58), `scripts/e2e/mcp.js` (135), `scripts/e2e/mcp-browser.js` (31).
 
 - **Safeguards for a company that keeps contract information here, and the upload scanner** (2026-10-08;
   `src/safeguards.js`, `src/scan.js`, `docs/SAFEGUARDS.md`, `docs/UPDATES.md`, `.github/dependabot.yml`; in the www
@@ -3621,3 +3654,30 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     instance first. No streaming of the words themselves (the steps show as they happen). No memory across
     conversations. No idea cards on the board yet (v2). The tool pages carry no link to it (the widget does not know
     who is signed in); the band's Ask link per tool stands in.
+
+- **Change it at the gate, Ask Anetix in demos, and the audit tools (2026-10-12).** Two requests from Taylor on the
+  boards, and Brendan's ask for a review every four hours.
+  - *Change it* (`pipeline.rework`, `POST /api/runs/:id/rework`, the board's "Not right? Change it" under the preview
+    link). Taylor, Chelsea Clock: "Allow me to edit and rebuild a built change, instead of having to simply discard it
+    if it's not right." Brendan's call: the manager says what is off and the agent reworks the preview it already
+    built. The run is claimed from the gate in one statement (so it cannot race a change joining the preview), goes
+    back to the build step in the SAME draft version (`evidence.findings_from = "manager"`, the words in
+    `evidence.reworks`), the platform checks, the second review and the tests run again, and it comes back to the
+    gate. The words are added to the requirement, so the reviewer holds the reworked build to them. It needs credit
+    like a new build, resets the automatic fix rounds, and is capped at `SOS_MAX_REWORKS` (5) per build. Works on a
+    change, a change on top of a preview, and a brand-new tool (`modulebuild` reworks version 1 in place; a Retry
+    still starts a new tool over from the skeleton). On the record as `run_reworked` (before = what the preview did,
+    after = the manager's words). Discard is unchanged. Tests: `scripts/e2e/rework.js` (41).
+  - *Ask Anetix answers in demos* (`src/assist.js`). Taylor, from the Pearlman LLC admin page: "Make the Anetix
+    chatbot helper available in demo deployments as well as live, operational deployments." Brendan reversed the
+    10/08 call (set answers only) and chose to pay for it from the demo's own credit: the turn is metered as
+    `assistant` in `ai_usage`, which the credit counts. A demo whose credit is used up gets a 402 in words before
+    anything is stored or run. `SOS_ASSIST_DEMO=scripted` brings the set answers back. Conversations keep
+    `demo = true`. Tests: `scripts/e2e/assist.js`, `assist-browser.js`.
+  - *The audit tools* on the admin MCP: `activity_since`, `list_assistant_conversations`, `list_board_requests` (see
+    `docs/MCP.md`). A scheduled review calls them at 7, 11, 3, 7 and 11 Eastern and pushes a summary to Brendan's
+    phone every run. Report only: the MCP still changes nothing. Tests: `scripts/test-mcp.js`, `scripts/e2e/mcp.js`
+    (canaries for an assistant answer that read records, a check's words, a chat persona's answer).
+  - *Known limits.* Change it is not tried against the real model yet. The audit reads a paying site only up to the
+    day it went live unless it opted in to learning (the Terms, 10.2); none are subscribed yet.
+

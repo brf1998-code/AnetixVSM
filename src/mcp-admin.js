@@ -1,6 +1,10 @@
 // The admin MCP: what Anetix's own connected AI app can read (2026-10-05, docs/MCP.md; Brendan chose "operations,
 // read only"). Each tool is a thin wrapper over what a tab of /admin already reads, so there is one formula for a
-// number wherever it is shown. Nothing here changes anything.
+// number wherever it is shown. Nothing in THIS file changes anything.
+//
+// Since 2026-10-06 the address also carries the new tool request tools of src/mcp-intake.js, four of which write
+// (Brendan: write a tooling request in from a call or tour transcript). They are the only tools that change
+// anything, they run only on a connection that was allowed to write, and the rules below still hold for every one.
 //
 // What a tool here never returns, and why:
 //   - a row from a company's tool, an upload, a photo, an attachment: this is operations, and what lands in an AI
@@ -27,7 +31,7 @@ const pick = (o, keys) => { const out = {}; for (const k of keys) if (o && o[k] 
 
 const surface = {
   server: "anetix-admin", title: "Anetix admin",
-  instructions: "Anetix's own view across every company on this instance: demos, paying sites, loop health, AI spend, requests to Anetix and build runs. Read only: nothing here changes anything. It never returns a record from a company's tools. Dollar figures are AI spend unless they say otherwise. Why a build stopped is given as a kind, never the failing line.",
+  instructions: "Anetix's own view across every company on this instance: demos, paying sites, loop health, AI spend, requests to Anetix, build runs, and for a review of the last few hours: everything done on the boards (activity_since), the requests on them (list_board_requests) and Ask Anetix conversations (list_assistant_conversations). Read only, with one exception: the new tool request tools (start_tool_request, answer_tool_request, send_tool_request, change_tool_request_design) start and fill in a company's new tool request from a call or a plant walk, when the connection was allowed to write. Fill a request only from what the conversation settled, in the company's own words, and say what is missing instead of making an answer up. Nothing here confirms a design, builds, or puts anything on a floor: a manager does that on the board. It never returns a record from a company's tools. Dollar figures are AI spend unless they say otherwise. Why a build stopped is given as a kind, never the failing line.",
 };
 
 // ---- pure: what leaves --------------------------------------------------------------------------------------------
@@ -61,6 +65,36 @@ function runOut(r, health) {
     id: r.id, company: r.company, module: r.module, lane: r.lane, step: r.step, status: r.status, model: r.model, from_version: r.from_version, to_version: r.to_version,
     cost_usd: money(r.cost_usd), created_at: r.created_at, updated_at: r.updated_at, title: ev.title || null, what_changed: ev.what_changed || null,
     ready_at: times.ready, deployed_at: times.deployed, rolled_back_at: times.rolledBack, stops: times.stops,
+  };
+}
+
+
+// ---- the audit (2026-10-12, Brendan: "review all changes made across all boards, including any feedback or things to
+// change. Audit of chatbot notes and all that stuff ... I need a way to stay very close on what inputs are being made
+// and immediately addressing any challenges"). Three tools a scheduled review calls every few hours. The same lines
+// hold as above: words people typed into the loop come back, a tool's records, a failed check's words, a tool's code
+// and a system review's findings do not. A paying site that did not opt in to learning stops at the day it went live.
+const WORDLESS = new Set(["check_verdict", "review_findings", "doc_saved"]);   // the kind and who, never the words
+const NEVER = ["chat_question", "chat_answer"];                               // a chat persona can quote a tool's records; Ask Anetix has its own tool below
+const RECORD_TOOLS = new Set(["read_records", "summarize_records"]);         // an Ask Anetix answer after one of these can quote records
+const cut = (v, n = 1200) => (v == null ? null : String(v).length > n ? String(v).slice(0, n) + " [cut]" : String(v));
+function sinceArg(since, hours, fallbackHours) {
+  if (since) { const d = new Date(since); if (isNaN(d)) throw say("since is a date and time, like 2026-10-12T15:00:00Z."); return d; }
+  return new Date(Date.now() - (hours || fallbackHours) * 3600e3);
+}
+// a paying site with no learning opt-in: the day it went live, after which its activity is its own
+async function untilBySlug() {
+  const rows = (await q("SELECT company, converted_at FROM platform.sites WHERE converted_at IS NOT NULL AND NOT COALESCE(learning_opt_in, false)").catch(() => ({ rows: [] }))).rows;
+  return new Map(rows.map((r) => [r.company, r.converted_at]));
+}
+const keep = (until, slug, at) => { const u = until.get(slug); return !u || new Date(at) < new Date(u); };
+const DETAIL_KEYS = ["round", "verdict", "by", "decision", "answer", "scope", "lane", "from", "to", "via", "follow_up_id", "asked_by", "kind", "rules"];
+function activityOut(r) {
+  const words = !WORDLESS.has(r.kind);
+  return {
+    id: r.id, at: r.created_at, company: r.company, tool: r.module, kind: r.kind, who: r.actor_name || r.actor_role || null, role: r.actor_role,
+    feedback_id: r.feedback_id, proposal_id: r.proposal_id, run_id: r.run_id, intake_id: r.intake_id, version: r.version,
+    before: words ? cut(r.before, 600) : null, words: words ? cut(r.after) : null, detail: pick(r.detail || {}, DETAIL_KEYS),
   };
 }
 
@@ -189,6 +223,104 @@ const tools = [
       return { runs: rows.map((r) => runOut(r, health)) };
     },
   },
+  {
+    name: "activity_since", title: "Everything since",
+    description: "Every step taken on every company's board since a time, oldest first, from the interaction record: requests filed in the words written, proposals the AI drafted and how managers edited, approved or declined them, requirements, builds finished and summarized, Change it on a preview with the manager's words, checks (verdict only, never the words), what went live or was rolled back, the floor's 'did it fix it' and the manager's close-out, new-tool intakes, questions the AI asked and the answers. Ask Anetix conversations are in list_assistant_conversations. Use it to review what happened in the last few hours.",
+    input: {
+      since: z.string().optional().describe("A date and time (ISO 8601). Leave out to use hours."),
+      hours: z.number().int().min(1).max(168).optional().describe("How far back, when since is left out. Default 6."),
+      company: z.string().optional().describe("A company's slug; leave out for every company"),
+      limit: z.number().int().min(1).max(2000).optional().describe("The most lines. Default 300; when more is true, ask again with since set to the last line's at."),
+    },
+    async run({ since, hours, company, limit }) {
+      const from = sinceArg(since, hours, 6), slug = company ? slugArg(company) : null, max = limit || 300;
+      const until = await untilBySlug();
+      const rows = (await q(`SELECT r.*, c.name AS company_name FROM platform.record r LEFT JOIN platform.companies c ON c.slug=r.company
+                               WHERE r.created_at >= $1 AND ($2::text IS NULL OR r.company=$2) AND r.kind <> ALL($3::text[]) ORDER BY r.id LIMIT $4`, [from, slug, NEVER, max + 1])).rows
+        .filter((r) => keep(until, r.company, r.created_at));
+      const more = rows.length > max, lines = rows.slice(0, max);
+      const byCompany = {};
+      for (const r of lines) { const b = byCompany[r.company] || (byCompany[r.company] = { company: r.company, name: r.company_name, lines: 0, kinds: {} }); b.lines++; b.kinds[r.kind] = (b.kinds[r.kind] || 0) + 1; }
+      return { since: from, lines: lines.length, more, companies: Object.values(byCompany), activity: lines.map(activityOut),
+        left_out: "Ask Anetix (list_assistant_conversations); a chat persona's questions and answers; the words of checks, system reviews and saved agent docs; a paying site's activity after it went live without the learning opt-in" };
+    },
+  },
+  {
+    name: "list_assistant_conversations", title: "Ask Anetix conversations",
+    description: "What people asked Ask Anetix, the assistant on the board, and what it answered, since a time, by conversation: who, which company, the scope (Anetix help, one tool, the whole company), demo or live, every question in the words typed, each answer with the tools it used, the request card it drafted and whether it was sent to Reviewing, thumbs up or down with the reason, failures, and the AI spend. An answer that read a tool's records is withheld (the tools it used still show); read it on the board's admin view if needed.",
+    input: {
+      since: z.string().optional().describe("A date and time (ISO 8601). Leave out to use hours."),
+      hours: z.number().int().min(1).max(168).optional().describe("How far back, when since is left out. Default 6."),
+      company: z.string().optional().describe("A company's slug; leave out for every company"),
+      limit: z.number().int().min(1).max(200).optional().describe("The most conversations. Default 60."),
+    },
+    async run({ since, hours, company, limit }) {
+      const from = sinceArg(since, hours, 6), slug = company ? slugArg(company) : null;
+      const until = await untilBySlug();
+      const convs = (await q(`SELECT c.id, c.company, co.name AS company_name, c.owner_name, c.owner_role, c.scope_kind, c.scope_module, c.title, c.demo, c.created_at, c.updated_at, m.title AS tool_title
+                                FROM platform.assist_conversations c LEFT JOIN platform.companies co ON co.slug=c.company LEFT JOIN platform.modules m ON m.company=c.company AND m.name=c.scope_module
+                               WHERE c.owner_key <> 'eval' AND ($2::text IS NULL OR c.company=$2)
+                                 AND EXISTS (SELECT 1 FROM platform.assist_messages x WHERE x.conversation_id=c.id AND x.created_at >= $1)
+                               ORDER BY c.updated_at DESC LIMIT $3`, [from, slug, limit || 60]).catch(() => ({ rows: [] }))).rows.filter((c) => keep(until, c.company, c.created_at));
+      if (!convs.length) return { since: from, conversations: [], totals: { conversations: 0, questions: 0, thumbs_down: 0, failed: 0, cards_sent: 0 } };
+      const ids = convs.map((c) => c.id);
+      const msgs = (await q(`SELECT id, conversation_id, role, text, status, card, thumbs, thumbs_reason, scripted, cost_usd, created_at FROM platform.assist_messages
+                               WHERE conversation_id = ANY($1::int[]) AND created_at >= $2 ORDER BY id`, [ids, from])).rows;
+      const calls = (await q("SELECT message_id, tool, ok FROM platform.assist_calls WHERE conversation_id = ANY($1::int[]) AND at >= $2 ORDER BY id", [ids, from])).rows;
+      const used = new Map();
+      for (const k of calls) { const l = used.get(k.message_id) || []; l.push(k.ok ? k.tool : `${k.tool} (refused)`); used.set(k.message_id, l); }
+      const totals = { conversations: convs.length, questions: 0, thumbs_down: 0, failed: 0, cards_sent: 0, ai_usd: 0 };
+      const out = convs.map((c) => ({
+        id: c.id, company: c.company, company_name: c.company_name, person: c.owner_name, role: c.owner_role, demo: c.demo,
+        scope: c.scope_kind === "tool" ? `tool: ${c.tool_title || c.scope_module}` : c.scope_kind === "help" ? "Anetix help" : "whole company", started: c.created_at,
+        messages: msgs.filter((m) => m.conversation_id === c.id).map((m) => {
+          if (m.role === "user") { totals.questions++; return { at: m.created_at, asked: cut(m.text, 2000) }; }
+          const tools = used.get(m.id) || [], withheld = tools.some((x) => RECORD_TOOLS.has(String(x).split(" ")[0]));
+          if (m.thumbs === -1) totals.thumbs_down++;
+          if (m.status === "failed") totals.failed++;
+          if (m.card && m.card.state === "filed") totals.cards_sent++;
+          totals.ai_usd += Number(m.cost_usd || 0);
+          return { at: m.created_at, status: m.status, answered: withheld ? null : cut(m.text, 2000), withheld: withheld ? "it read the tool's records" : undefined, set_answer: m.scripted || undefined, tools,
+            card: m.card ? { tool: m.card.tool_title || m.card.tool, what: cut(m.card.what, 600), state: m.card.state, feedback_id: m.card.feedback_id || null } : null,
+            thumbs: m.thumbs === 1 ? "up" : m.thumbs === -1 ? "down" : null, thumbs_reason: m.thumbs_reason || null, cost_usd: money(m.cost_usd) };
+        }),
+      }));
+      totals.ai_usd = money(totals.ai_usd);
+      return { since: from, totals, conversations: out };
+    },
+  },
+  {
+    name: "list_board_requests", title: "Requests on the boards",
+    description: "The requests on companies' improvement boards (changes to their own tools and new-tool requests, not requests to Anetix): the words written, who sent it and from which screen, where it is (new, reviewing, in progress, done, declined), what came of it, a question the AI is waiting on, a duplicate or follow-up it is tied to, whether the floor said it fixed it and the manager's close-out. Open ones by default, oldest waiting first, so what is stuck shows at the top.",
+    input: {
+      status: z.enum(["open", "new", "reviewing", "in_progress", "done", "declined", "all"]).optional().describe("Default open (new, reviewing and in progress)"),
+      company: z.string().optional().describe("A company's slug; leave out for every company"),
+      days: z.number().int().min(1).max(365).optional().describe("Only requests touched in the last N days. Default 30."),
+      limit: z.number().int().min(1).max(500).optional().describe("Default 150."),
+    },
+    async run({ status, company, days, limit }) {
+      const slug = company ? slugArg(company) : null, st = status || "open";
+      const want = st === "open" ? ["new", "reviewing", "in_progress"] : st === "all" ? null : [st];
+      const until = await untilBySlug();
+      const rows = (await q(`SELECT f.id, f.company, co.name AS company_name, f.module, m.title AS tool_title, f.screen, f.kind, f.message, f.name, f.status, f.outcome, f.recurrence, f.source,
+                                    f.follow_up_of, f.duplicate_of, f.triage, f.question, f.floor_answer, f.manager_answer, f.shipped_version, f.created_at, f.updated_at
+                               FROM platform.feedback f LEFT JOIN platform.companies co ON co.slug=f.company LEFT JOIN platform.modules m ON m.company=f.company AND m.name=f.module
+                              WHERE f.module IS DISTINCT FROM 'platform' AND ($1::text[] IS NULL OR f.status = ANY($1::text[])) AND ($2::text IS NULL OR f.company=$2)
+                                AND f.updated_at > now() - make_interval(days => $3::int)
+                              ORDER BY ${st === "open" ? "f.updated_at ASC" : "f.id DESC"} LIMIT $4`, [want, slug, days || 30, limit || 150])).rows.filter((r) => keep(until, r.company, r.created_at));
+      const counts = {};
+      for (const r of rows) { const c = counts[r.company] || (counts[r.company] = { company: r.company, name: r.company_name, new: 0, reviewing: 0, in_progress: 0, done: 0, declined: 0 }); if (c[r.status] !== undefined) c[r.status]++; }
+      return { status: st, counts: Object.values(counts), requests: rows.map((r) => ({
+        id: r.id, company: r.company, tool: r.tool_title || r.module, screen: r.screen, kind: r.kind, words: cut(r.message, 2000), from: r.name || null, via: r.source || "board",
+        status: r.status, outcome: cut(r.outcome, 600), times_asked: r.recurrence, follow_up_of: r.follow_up_of, duplicate_of: r.duplicate_of, triage: r.triage,
+        waiting_on_an_answer: r.question && r.question.text && !r.question.answer ? cut(r.question.text, 400) : null,
+        floor_said: r.floor_answer, manager_said: r.manager_answer, shipped_version: r.shipped_version, filed: r.created_at, last_moved: r.updated_at,
+      })) };
+    },
+  },
 ];
 
-module.exports = { surface, tools, demoOut, demoRunOut, siteOut, runOut, SITE_KEYS };
+// the new tool request tools: two that read, four that write (src/mcp-intake.js)
+tools.push(...require("./mcp-intake").tools);
+
+module.exports = { surface, tools, demoOut, demoRunOut, siteOut, runOut, SITE_KEYS, activityOut, WORDLESS, NEVER, RECORD_TOOLS };

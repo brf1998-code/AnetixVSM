@@ -436,7 +436,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
     fakeAgent: agent.fakeMode(),
     maxRunUsd: agent.MAX_RUN_USD,
     maxBatchUsd: agent.MAX_BATCH_USD,
-    maxFixRounds: pipeline.MAX_FIX_ROUNDS,
+    maxFixRounds: pipeline.MAX_FIX_ROUNDS, maxReworks: pipeline.MAX_REWORKS,
   });
 });
 
@@ -615,6 +615,17 @@ router.post("/api/runs/:id(\\d{1,9})/deploy", requireManager, freshPin, async (r
 router.post("/api/runs/:id(\\d{1,9})/fix", requireManager, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.fix(Number(req.params.id)); if (x) await record("run_fixed", { ...x.ids, actor: actor(req), before: ((x.run.evidence || {}).cross_check || {}).summary || null, detail: { round: ((x.run.evidence || {}).fix_round || 0) + 1 } }); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
+});
+// Change it: the manager looked at the preview and says what is off; the agent reworks that preview (pipeline.rework).
+router.post("/api/runs/:id(\\d{1,9})/rework", requireManager, async (req, res) => {
+  try {
+    const x = await runIds(req.params.id);
+    const words = String((req.body || {}).words || "");
+    const out = await pipeline.rework(Number(req.params.id), words, actor(req));
+    if (x) await record("run_reworked", { ...x.ids, actor: actor(req), before: String(((x.run.evidence || {}).what_changed) || ((x.run.evidence || {}).build_summary) || "").slice(0, 2000) || null, after: words.trim().slice(0, 2000), detail: { round: out.round, lane: x.run.lane } });
+    res.json(out);
+  }
+  catch (e) { res.status(e.status || 400).json({ error: e.message, code: e.code, topup_url: e.topup_url }); }
 });
 router.post("/api/runs/:id(\\d{1,9})/override", requireManager, freshPin, async (req, res) => {
   try { const x = await runIds(req.params.id); await pipeline.override(Number(req.params.id)); if (x) await record("run_overridden", { ...x.ids, actor: actor(req), before: ((x.run.evidence || {}).cross_check || {}).summary || null }); res.json({ ok: true }); }

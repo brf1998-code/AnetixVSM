@@ -46,10 +46,10 @@ const register = (extra = {}) => raw("POST", "/oauth/register", { body: { client
 const authorizeUrl = (app, p, extra = {}) => `/oauth/authorize?${new URLSearchParams({ response_type: "code", client_id: app.client_id, redirect_uri: app.redirect_uris[0], code_challenge: p.challenge, code_challenge_method: "S256", state: "st-123", resource: ADDRESS, ...extra })}`;
 const reqOf = (location) => new URL(location, BASE).searchParams.get("req");
 // The whole dance for a signed-in admin browser: -> { app, tokens, p }
-async function connect(browser, secret, { name = "Claude" } = {}) {
+async function connect(browser, secret, { name = "Claude", writes = false } = {}) {
   const app = (await register({ client_name: name })).json, p = pkce();
   const a = await raw("GET", authorizeUrl(app, p));
-  const d = await browser.post("/oauth/consent/decide", { req: reqOf(a.location), allow: true, code: await freshCode(ADMIN, secret) });
+  const d = await browser.post("/oauth/consent/decide", { req: reqOf(a.location), allow: true, code: await freshCode(ADMIN, secret), ...(writes ? { writes: true } : {}) });
   if (d.status !== 200) throw new Error(`consent failed: ${d.text}`);
   const back = new URL(d.json.redirect);
   const tok = await raw("POST", "/oauth/token", { form: { grant_type: "authorization_code", client_id: app.client_id, code: back.searchParams.get("code"), code_verifier: p.verifier, redirect_uri: CLAUDE, resource: ADDRESS } });
@@ -227,16 +227,29 @@ async function main() {
     JSON.stringify([{ t: new Date().toISOString(), step: "error", note: `platform checks failed: the answer held ${MARKER2}` }])]);
   await floor.post("/api/feedback", { company: "demo", module: "platform", page: "/c/demo/", message: "Please add a dark screen for the night shift" });
 
+  // the audit tools (2026-10-12): an Ask Anetix answer that read the tool's records (it carries MARKER) must be withheld,
+  // and the words of a check, a system review, a saved agent doc and a chat persona's answer must stay out
+  const askA = async (text) => {
+    const conv = (await sharedMgr.post("/api/c/demo/assist/conversations", { scope: { kind: "tool", module: "paperline" } })).json.conversation;
+    const sent = (await sharedMgr.post(`/api/c/demo/assist/conversations/${conv.id}/messages`, { text })).json;
+    return waitFor("the assistant's answer", async () => { const j = (await sharedMgr.get(`/api/c/demo/assist/conversations/${conv.id}`)).json; const m = j.messages.find((x) => x.id === sent.assistant.id); return m && m.status !== "running" ? { conv, m } : null; });
+  };
+  const readAns = await askA(`Which stations are there? [[read_records {"table":"stations"}]]`);
+  t("setup: the assistant's answer read the station named with the canary", (readAns.m.text || "").includes(MARKER), (readAns.m.text || "").slice(0, 200));
+  const plainAns = await askA("What tools do we have? [[list_tools]]");
+  for (const kind of ["check_verdict", "review_findings", "doc_saved", "chat_answer"]) await q("INSERT INTO platform.record (company, module, kind, actor_role, after) VALUES ('demo','paperline',$1,'agent',$2)", [kind, `the words held ${kind === "check_verdict" ? MARKER2 : MARKER}`]);
   const c = await mcp(AT);
   const listed = await c.listTools();
   const names = listed.tools.map((x) => x.name).sort();
-  t("the address offers the nine admin tools", names.join() === ["ai_spend", "get_demo", "list_companies", "list_demos", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "loop_health"].join(), names);
-  t("every one says it only reads, and has a description", listed.tools.every((x) => x.annotations && x.annotations.readOnlyHint === true && x.annotations.destructiveHint === false && x.description.length > 40));
+  const WRITERS = ["answer_tool_request", "change_tool_request_design", "send_tool_request", "start_tool_request"];
+  t("the address offers the twelve operations tools and the six new tool request tools", names.join() === ["activity_since", "ai_spend", "answer_tool_request", "change_tool_request_design", "get_demo", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "send_tool_request", "start_tool_request"].join(), names);
+  t("four say they write, every other one says it only reads, none is destructive, each has a description", listed.tools.every((x) => x.annotations && x.annotations.readOnlyHint === !WRITERS.includes(x.name) && x.annotations.destructiveHint === false && x.description.length > 40));
   t("the server says what it is", /read only/i.test(c.getInstructions() || "") && c.getServerVersion().name === "anetix-admin");
   const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); let data = null; try { data = JSON.parse(textOf(r)); } catch (e) {} return { r, data, text: textOf(r) }; };
   const all = {};
   for (const [name, args] of [["list_companies", {}], ["list_demos", {}], ["list_sites", {}], ["loop_health", {}], ["loop_health", { days: 7, company: "demo" }], ["ai_spend", {}], ["list_requests_to_anetix", {}],
-    ["list_requests_to_anetix", { status: "all", limit: 5 }], ["list_stopped_builds", {}], ["list_runs", {}], ["list_runs", { company: "demo", days: 1, limit: 5 }]]) all[`${name} ${JSON.stringify(args)}`] = await call(name, args);
+    ["list_requests_to_anetix", { status: "all", limit: 5 }], ["list_stopped_builds", {}], ["list_runs", {}], ["list_runs", { company: "demo", days: 1, limit: 5 }], ["list_tool_requests", {}], ["list_tool_requests", { company: "demo", open_only: false }],
+    ["activity_since", {}], ["activity_since", { hours: 24, company: "demo", limit: 5 }], ["list_assistant_conversations", {}], ["list_board_requests", {}], ["list_board_requests", { status: "all", company: "demo" }]]) all[`${name} ${JSON.stringify(args)}`] = await call(name, args);
   t("every tool answers with JSON and no error", Object.values(all).every((x) => !x.r.isError && x.data), Object.entries(all).filter(([, x]) => x.r.isError || !x.data).map(([k, x]) => [k, x.text.slice(0, 200)]));
   const co = all["list_companies {}"].data.companies.find((x) => x.slug === "demo");
   t("list_companies: the demo company, its tools and counts", co && co.kind === "trial" && co.tools.some((x) => x.name === "paperline" && x.live_version >= 1) && co.requests.total >= 2 && co.builds.builds >= 1 && co.walled_off_from_ai === false, co);
@@ -245,6 +258,21 @@ async function main() {
   t("list_requests_to_anetix: the request to Anetix, in the words written", all["list_requests_to_anetix {}"].data.requests.some((x) => /dark screen for the night shift/.test(x.message) && x.company === "demo"));
   t("loop_health: the fleet and the companies; with a company, only that one", all["loop_health {}"].data.fleet && all["loop_health {}"].data.companies.length >= 1 && all['loop_health {"days":7,"company":"demo"}'].data.companies.length === 1 && all['loop_health {"days":7,"company":"demo"}'].data.window_days === 7);
   t("ai_spend: this month and the thresholds", typeof all["ai_spend {}"].data.this_month_usd === "number" && Boolean(all["ai_spend {}"].data.alert_thresholds));
+  const act = all["activity_since {}"].data;
+  t("activity_since: the request filed, in the words written, with who and the tool", act.activity.some((x) => x.kind === "feedback_filed" && /release button bigger/.test(x.words || "") && x.tool === "paperline" && x.company === "demo"), act.activity.map((x) => x.kind));
+  t("activity_since: a check's verdict shows, its words do not", act.activity.some((x) => x.kind === "check_verdict" && x.words === null));
+  t("activity_since: a chat persona's lines are left out, and it says what it leaves out", !act.activity.some((x) => /^chat_/.test(x.kind)) && /Ask Anetix/.test(act.left_out));
+  t("activity_since: grouped by company, and the limit says there is more", act.companies.some((x) => x.company === "demo" && x.lines > 0) && all['activity_since {"hours":24,"company":"demo","limit":5}'].data.more === true && all['activity_since {"hours":24,"company":"demo","limit":5}'].data.activity.length === 5);
+  const asst = all["list_assistant_conversations {}"].data;
+  const convOf = (id) => asst.conversations.find((x) => x.id === id);
+  const rc = convOf(readAns.conv.id), pc = convOf(plainAns.conv.id);
+  t("list_assistant_conversations: who asked, where, and the question in the words typed", rc && rc.role === "manager" && rc.scope === "tool: Paper Airplane Line" && rc.messages.some((x) => /Which stations are there/.test(x.asked || "")), rc);
+  t("an answer that read the tool's records is withheld, with the tool it used", rc && rc.messages.some((x) => x.withheld && x.answered === null && x.tools.includes("read_records")), rc && rc.messages);
+  t("an answer that read no records comes back in full", pc && pc.messages.some((x) => /Paper Airplane Line/.test(x.answered || "") && x.tools.includes("list_tools")), pc && pc.messages);
+  t("the totals count the questions", asst.totals.questions >= 2 && asst.totals.conversations >= 2, asst.totals);
+  const br = all["list_board_requests {}"].data;
+  t("list_board_requests: the open request in its words; a request to Anetix is not a board request", br.requests.some((x) => x.id === fb.id && /release button bigger/.test(x.words)) && !br.requests.some((x) => /dark screen/.test(x.words)), br.requests.map((x) => x.words));
+  t("list_board_requests: counts by company", br.counts.some((x) => x.company === "demo"));
   const everything = Object.values(all).map((x) => x.text).join("\n");
   t("no answer carries a record from a company's tool", !everything.includes(MARKER));
   t("no answer carries the words of a failed check", !everything.includes(MARKER2));
@@ -259,7 +287,12 @@ async function main() {
   t("an argument outside what a tool takes is refused", overLimit || (over && over.isError === true), over && textOf(over));
   let noTool = null; try { const r = await c.callTool({ name: "delete_company", arguments: {} }); noTool = r.isError ? "error" : "answered"; } catch (e) { noTool = "error"; }
   t("a tool that does not exist is not there", noTool === "error");
+  // this connection was allowed with no tick: it reads, and a write tool changes nothing
+  const ro = await call("start_tool_request", { company: "demo" });
+  t("a connection allowed without the tick cannot write: the tool says so and nothing is started", ro.r.isError === true && /read only/.test(ro.text) && /connect it again/.test(ro.text) && (await q("SELECT count(*)::int AS n FROM platform.module_intakes")).rows[0].n === 0, ro.text);
+  t("and the refusal is in the call log as one that did not work", (await q("SELECT ok, error FROM platform.mcp_calls WHERE tool='start_tool_request' ORDER BY id DESC LIMIT 1")).rows[0].error === "read-only connection");
   await c.close();
+  await writeTools({ admin, secret, sharedMgr, shared, adminId });
 
   // ---- the same, with nothing done by hand: the MCP SDK's own OAuth client finds its way from the 401 alone
   // (discovery, registration, PKCE, the trade, a refresh), the way Claude's does. Only the person's part is played here.
@@ -298,7 +331,8 @@ async function main() {
   // ---- the call log
   const calls = (await q("SELECT * FROM platform.mcp_calls ORDER BY id")).rows;
   t("every tool call is one row: who, which app, which tool, whether it worked", calls.length >= 13 && calls.every((r) => r.account_id === adminId && r.surface === "admin" && r.grant_id) && calls.some((r) => r.tool === "get_demo" && r.ok === false) && calls.filter((r) => r.ok).every((r) => r.chars > 0 && r.ms >= 0), calls.slice(-3));
-  t("it keeps what was asked, never what was answered", calls.some((r) => r.tool === "list_runs" && r.args && r.args.company === "demo") && !JSON.stringify(calls).includes("paperline") && !JSON.stringify(calls).includes(MARKER));
+  t("it keeps what was asked, never what was answered", calls.some((r) => r.tool === "list_runs" && r.args && r.args.company === "demo") && !JSON.stringify(calls).includes("paperline") && !JSON.stringify(calls).includes(MARKER) && !JSON.stringify(calls).includes("status_means"));
+  t("a long answer written through a tool is cut in the log", calls.filter((r) => r.tool === "answer_tool_request").every((r) => JSON.stringify(r.args).length < 700));
   const evs = (await q("SELECT event FROM platform.auth_events WHERE account_id=$1 AND event LIKE 'mcp_%'", [adminId])).rows.map((r) => r.event);
   t("connecting is on the sign-in log: the yes, the no, the connection, the code used twice", ["mcp_consent_yes", "mcp_consent_no", "mcp_connected", "mcp_code_reuse"].every((e) => evs.includes(e)), evs);
 
@@ -352,5 +386,143 @@ async function main() {
   const left = (await require("../../src/mcpauth").grantsView()).grants;
   t("and the admin page lists none of its connections any more", left.length === 0, left);
 }
+
+// ---- the write tools: a new tool request started and filled in by Anetix's own app (src/mcp-intake.js) -----------------
+async function writeTools({ admin, secret, sharedMgr, shared, adminId }) {
+  const intake = require("../../src/intake");
+  // the consent page offers the tick, and only the tick makes a connection that writes
+  const app = (await register({ client_name: "Claude writer" })).json, p = pkce();
+  const az = await raw("GET", authorizeUrl(app, p));
+  const info = await admin.get(`/oauth/consent/info?req=${encodeURIComponent(reqOf(az.location))}`);
+  t("the consent page is told this address has something to write", info.json.can_write === true, info.text);
+  const w = await connect(admin, secret, { name: "Claude writer", writes: true });
+  const grants = (await q("SELECT client_name, writes FROM platform.mcp_grants WHERE revoked_at IS NULL ORDER BY id")).rows;
+  t("only the connection that was ticked may write, and the admin page says which", grants.find((g) => g.client_name === "Claude writer").writes === true && grants.filter((g) => g.client_name !== "Claude writer").every((g) => g.writes === false)
+    && (await admin.get("/api/admin/mcp")).json.grants.find((g) => g.client_name === "Claude writer").writes === true, grants);
+  t("the sign-in log says the yes included writing", (await q("SELECT detail FROM platform.auth_events WHERE event='mcp_consent_yes' ORDER BY id DESC LIMIT 1")).rows[0].detail.writes === true);
+  const c = await mcp(w.tokens.access_token);
+  const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); let data = null; try { data = JSON.parse(textOf(r)); } catch (e) {} return { r, data, text: textOf(r) }; };
+  const texts = [];
+  const keep = (x) => { texts.push(x.text); return x; };
+
+  // ---- start
+  t("a company that is not there: words, and nothing made", (await call("start_tool_request", { company: "no-such-co" })).r.isError === true && (await q("SELECT count(*)::int AS n FROM platform.module_intakes")).rows[0].n === 0);
+  const st = keep(await call("start_tool_request", { company: "demo" }));
+  const id = st.data && st.data.request.id;
+  t("start_tool_request: a request for the company, started by Anetix, with every question and what each takes", !st.r.isError && id > 0 && st.data.carried_on === false && st.data.request.status === "answering" && st.data.request.writable_here === true && /by Anetix/.test(st.data.request.started)
+    && st.data.request.questions.length >= 12 && st.data.request.questions.every((x) => x.takes.length > 20 && x.answered === false) && st.data.request.missing.includes("name") && st.data.request.board === `${BASE}/c/demo/`, st.text.slice(0, 400));
+  const b1 = await board(sharedMgr);
+  const tile = b1.feedback.find((f) => f.intake_id === id);
+  t("the board shows it as a new tool request started by Anetix", tile && tile.kind === "module_request" && tile.name === "Anetix" && b1.intakes[id].via === "anetix" && b1.intakes[id].status === "answering", tile);
+  const again = await call("start_tool_request", { company: "demo" });
+  t("starting again carries on with the same request: one at a time", again.data.carried_on === true && again.data.request.id === id && (await q("SELECT count(*)::int AS n FROM platform.module_intakes")).rows[0].n === 1);
+
+  // ---- answers
+  const early = await call("send_tool_request", { id });
+  t("sending before the needed answers are in is refused, and says which are missing", early.r.isError === true && /still missing/.test(early.text) && /name/.test(early.text) && (await intake.getIntake(id)).status === "answering", early.text);
+  const a1 = keep(await call("answer_tool_request", { id, answers: {
+    name: "Rework board", purpose: "The lead logs a part that failed inspection and the bench tech picks it up. " + "Detail. ".repeat(60), who: { floor: "12", "Leads or supervisors": "2" },
+    devices: { floor: ["A tablet"], office: ["desk"] }, thing: "rework ticket", today: { picks: ["A whiteboard", "a notebook at the bench"] }, stages: "1. Found\n2. At the bench\n3. Fixed\n4. Back on the line",
+    wrong: ["Parts sit at the bench for days", "Nobody knows who has it"], never: "A part goes back on the line before it is checked.", numbers: { picks: ["how_long", "how_many"], note: "days at the bench" },
+    works_with: { picks: ["erp", "scanners"], names: { erp: "Epicor" } }, favourite_colour: "blue" } }));
+  const notSaved = (a1.data && a1.data.not_saved) || [];
+  t("answer_tool_request: every answer that fits is saved in one call", !a1.r.isError && ["name", "purpose", "who", "thing", "today", "stages", "wrong", "never", "numbers", "works_with"].every((k) => a1.data.saved.includes(k)), a1.text.slice(0, 500));
+  t("one that does not fit is reported with why, and does not lose the rest; a question that is not there is named", notSaved.length === 2 && /not a group in the "who" answer/.test(notSaved.find((x) => x.question === "devices").why) && /no question by that id/.test(notSaved.find((x) => x.question === "favourite_colour").why) && a1.data.request.missing.join() === "devices", notSaved);
+  const row1 = await intake.getIntake(id);
+  t("what is kept is in the shapes the board's own page writes", row1.name === "Rework board" && row1.slug === "rework-board" && JSON.stringify(row1.answers.who) === JSON.stringify({ floor: "12", leads: "2" }) && row1.answers.today.picks.join() === "whiteboard" && row1.answers.today.other === "a notebook at the bench"
+    && row1.answers.stages.join("|") === "Found|At the bench|Fixed|Back on the line" && row1.answers.works_with.names.erp === "Epicor" && row1.answers.devices === undefined, row1.answers);
+  t("the board's tile carries the tool's name", (await board(sharedMgr)).feedback.find((f) => f.intake_id === id).message === "New tool: Rework board");
+  const rec = (await q("SELECT actor_role, actor_name, detail FROM platform.record WHERE intake_id=$1 AND kind='intake_answered' ORDER BY id", [id])).rows;
+  t("every answer is on the record under the account's name, as Anetix through the app", rec.length === 10 && rec.every((r) => r.actor_role === "admin" && r.actor_name === "Brendan MCP (Anetix, through Claude writer)"), rec.slice(0, 2));
+  const taken = await call("answer_tool_request", { id, answers: { name: "Paper Airplane Line" } });
+  t("a name another tool of the company has is refused in the intake's own words, and the name stays", taken.data.not_saved.length === 1 && /already the name of a tool here/.test(taken.data.not_saved[0].why) && (await intake.getIntake(id)).name === "Rework board", taken.text.slice(0, 300));
+  const a2 = await call("answer_tool_request", { id, answers: { devices: { floor: ["tablet"], leads: ["phone", "desk"] } } });
+  t("the missing one answered: nothing is missing and the next step is to send", a2.data.saved.join() === "devices" && a2.data.request.missing.length === 0 && /send_tool_request/.test(a2.data.request.next), a2.data && a2.data.request.next);
+  t("the company's manager reads the same answers on the board's own page", (await sharedMgr.get(`/api/intakes/${id}`)).json.answers.thing === "rework ticket");
+
+  // ---- send, the agent's follow-up round, the design
+  const sent = keep(await call("send_tool_request", { id }));
+  t("send_tool_request: the round goes to the agent", !sent.r.isError && sent.data.sent === true && ["thinking", "answering"].includes(sent.data.request.status), sent.text.slice(0, 300));
+  const r2 = await waitFor("the agent's follow-up round", async () => { const x = await call("get_tool_request", { id }); return x.data.status === "answering" && x.data.round === 2 ? keep(x) : null; });
+  const q2 = r2.data.questions.filter((x) => x.round === 2);
+  t("get_tool_request: the agent's own questions, with their choices and what is missing", q2.length === 3 && q2[0].options.length === 3 && /One pick/.test(q2[0].takes) && r2.data.missing.join() === "r2q1,r2q2,r2q3" && r2.data.questions.find((x) => x.id === "name").answer === "Rework board", q2);
+  const a3 = await call("answer_tool_request", { id, answers: { r2q1: "Only leads and managers", r2q2: { picks: ["o1", "What is at each stage"] }, r2q3: "Fixed and checked. It stays in view for a day." } });
+  t("the follow-up round is answered the same way, a choice by the words on it", a3.data.saved.length === 3 && a3.data.request.missing.length === 0 && (await intake.getIntake(id)).answers.r2q1.picks.join() === "o2", a3.text.slice(0, 300));
+  await call("send_tool_request", { id });
+  const d1 = await waitFor("the design", async () => { const x = await call("get_tool_request", { id }); return x.data.status === "design" ? keep(x) : null; });
+  t("the design comes back as points, a reference and the next step: the manager confirms on the board", d1.data.design.points.length === 5 && d1.data.design.points[0].id === "p1" && /Rework board/.test(d1.data.design.reference) && /confirms on the board/.test(d1.data.next) && d1.data.next.includes(`${BASE}/c/demo/`), d1.data.design && d1.data.design.points);
+  const closed = await call("answer_tool_request", { id, answers: { thing: "something else" } });
+  t("once the design is written the answers are closed", closed.r.isError === true && /not taking answers/.test(closed.text) && (await intake.getIntake(id)).answers.thing === "rework ticket");
+
+  // ---- changes to the design, through the agent
+  const lost = await call("change_tool_request_design", { id, changes: [{ point: "p99", text: "x" }] });
+  t("a point the design does not have is refused", lost.r.isError === true && /no point p99/.test(lost.text));
+  const ch = await call("change_tool_request_design", { id, changes: [{ point: "p3", text: "Only a lead may send a part back to the line." }, { text: "Show how many days each ticket has sat." }] });
+  t("change_tool_request_design: the changes go to the agent", !ch.r.isError && ch.data.asked === 2, ch.text.slice(0, 300));
+  const d2 = await waitFor("the changed design", async () => { const x = await call("get_tool_request", { id }); return x.data.status === "design" && !x.data.design.change_in_progress && x.data.design.points.length === 6 ? x : null; });
+  const pts = d2.data.design.points;
+  t("the named point changed, the new one was added, every other point is word for word", pts.find((x) => x.id === "p3").mark === "changed" && pts.find((x) => x.mark === "new").summary === "Show how many days each ticket has sat."
+    && ["p1", "p2", "p4", "p5"].every((k) => pts.find((x) => x.id === k).summary === d1.data.design.points.find((x) => x.id === k).summary && !pts.find((x) => x.id === k).mark), pts);
+  t("the change is on the record under the same name", (await q("SELECT actor_name FROM platform.record WHERE intake_id=$1 AND kind='intake_revised'", [id])).rows[0].actor_name === "Brendan MCP (Anetix, through Claude writer)"
+    && (await q("SELECT count(*)::int AS n FROM platform.record WHERE intake_id=$1 AND kind='intake_sent'", [id])).rows[0].n === 2);
+
+  // ---- what an app cannot do: confirm, build, withdraw
+  let none = 0;
+  for (const name of ["confirm_tool_request", "build_tool_request", "withdraw_tool_request", "abandon_tool_request", "deploy", "make_it_live"]) { try { const r = await c.callTool({ name, arguments: { id } }); if (r.isError) none++; } catch (e) { none++; } }
+  const still = await intake.getIntake(id);
+  t("no tool confirms, builds or withdraws: the request waits at its design, with no build and no tool", none === 6 && still.status === "design" && !still.run_ids && (await q("SELECT count(*)::int AS n FROM platform.modules WHERE company='demo' AND name='rework-board'")).rows[0].n === 0);
+
+  // ---- a request the company's manager started is the manager's
+  t("(setup: a second company)", (await admin.post("/api/admin/companies", { slug: "acme", name: "Acme Machining" })).status === 200);
+  const theirs = await intake.create("acme", "manager");
+  await intake.answer(theirs.id, "name", "Tool crib");
+  await intake.answer(theirs.id, "thing", "ZZ-THEIR-OWN-WORDS gauge");
+  const l1 = keep(await call("list_tool_requests", { company: "acme" }));
+  t("list_tool_requests: a trial's own request is listed, as started on the board and not writable here", l1.data.requests.length === 1 && l1.data.requests[0].id === theirs.id && l1.data.requests[0].name === "Tool crib" && l1.data.requests[0].writable_here === false && /on the board/.test(l1.data.requests[0].started), l1.data);
+  const g1 = await call("get_tool_request", { id: theirs.id });
+  t("a trial's own request is read (the words get_demo carries)", g1.data.questions.find((x) => x.id === "thing").answer === "ZZ-THEIR-OWN-WORDS gauge" && g1.data.writable_here === false);
+  const w1 = await call("answer_tool_request", { id: theirs.id, answers: { thing: "overwritten" } });
+  const w2 = await call("send_tool_request", { id: theirs.id });
+  t("but never written to or sent from here", w1.r.isError === true && /started on the board/.test(w1.text) && w2.r.isError === true && (await intake.getIntake(theirs.id)).answers.thing === "ZZ-THEIR-OWN-WORDS gauge" && (await intake.getIntake(theirs.id)).status === "answering", [w1.text, w2.text]);
+  const s2 = await call("start_tool_request", { company: "acme" });
+  t("starting one for that company is refused, naming the manager's unfinished one and the way on", s2.r.isError === true && /Tool crib/.test(s2.text) && /use_open/.test(s2.text) && /Nothing was changed/.test(s2.text) && (await q("SELECT count(*)::int AS n FROM platform.module_intakes WHERE company='acme'")).rows[0].n === 1, s2.text);
+
+  // ---- a paying site that did not opt in to learning keeps its own request to itself
+  await q("INSERT INTO platform.sites (id, company, stage) VALUES (gen_random_uuid(), 'acme', 'subscribed') ON CONFLICT (company) DO UPDATE SET stage='subscribed'");
+  const l2 = keep(await call("list_tool_requests", { company: "acme" }));
+  const g2 = keep(await call("get_tool_request", { id: theirs.id }));
+  t("a paying site's own request: how far it got, and nothing it said", l2.data.requests[0].name === null && l2.data.requests[0].status === "answering" && g2.data.status === "answering" && g2.data.questions === undefined && !/Tool crib|ZZ-THEIR-OWN-WORDS/.test(l2.text + g2.text), g2.text);
+  const s3 = await call("start_tool_request", { company: "acme", use_open: true });
+  t("and it cannot be taken over, even when asked", s3.r.isError === true && /paying site's own request/.test(s3.text) && (await intake.getIntake(theirs.id)).via === null, s3.text);
+  await q("UPDATE platform.sites SET stage='demo' WHERE company='acme'");
+  const s4 = keep(await call("start_tool_request", { company: "acme", use_open: true }));
+  t("a trial's unfinished request is taken over when the person asks: the same request, now writable, and on the record", !s4.r.isError && s4.data.took_over === true && s4.data.request.id === theirs.id && s4.data.request.writable_here === true
+    && (await q("SELECT actor_name FROM platform.record WHERE intake_id=$1 AND kind='intake_taken_over'", [theirs.id])).rows.length === 1, s4.text.slice(0, 300));
+  const w3 = await call("answer_tool_request", { id: theirs.id, answers: { thing: "gauge" } });
+  t("and then it is written to", w3.data.saved.join() === "thing" && (await intake.getIntake(theirs.id)).answers.thing === "gauge");
+  await q("UPDATE platform.sites SET stage='subscribed' WHERE company='acme'");
+  const g3 = await call("get_tool_request", { id: theirs.id });
+  t("a request Anetix started or took over is read in full whatever the company is", g3.data.questions.find((x) => x.id === "thing").answer === "gauge" && g3.data.writable_here === true);
+  await q("DELETE FROM platform.sites WHERE company='acme'");
+
+  // ---- the pace: an app in a loop stops
+  await q(`INSERT INTO platform.mcp_calls (account_id, surface, tool, ok, at) SELECT $1, 'admin', 'send_tool_request', true, now() - interval '5 minutes' FROM generate_series(1, 30)`, [adminId]);
+  const paced = await call("change_tool_request_design", { id, changes: [{ text: "One more thing." }] });
+  t("past thirty sends to the agent in an hour the next is refused, and nothing is sent", paced.r.isError === true && /in the last hour/.test(paced.text) && (await intake.getIntake(id)).status === "design", paced.text);
+  await q("DELETE FROM platform.mcp_calls WHERE grant_id IS NULL AND tool='send_tool_request'");
+
+  // ---- what never leaves, still
+  const everything = texts.join("\n");
+  t("no answer of these tools carries a record from a company's tool or a secret", !everything.includes(MARKER) && !/password_hash|anx_(at|rt|ac)_|secret_enc/.test(everything));
+  t("no words of these tools carry an em or en dash", !/[\u2013\u2014]/.test(everything + ro_words(await c.listTools())));
+
+  // ---- the manager's part is still the manager's: confirm on the board starts the build
+  const conf = await sharedMgr.post(`/api/intakes/${id}/confirm`, {});
+  t("the manager confirms on the board, and only then is anything built", conf.status === 200 && ["confirmed", "building", "done"].includes(conf.json.status), conf.text.slice(0, 300));
+  const after = await call("get_tool_request", { id });
+  t("and the app sees it move on, with nothing left for it to do", ["confirmed", "building", "done"].includes(after.data.status) && /on the board|Built/.test(after.data.next), after.data.next);
+  await c.close();
+}
+const ro_words = (listed) => listed.tools.map((x) => `${x.title} ${x.description}`).join("\n");
 
 (process.argv[2] === "off" ? off() : main()).then(() => pool.end()).then(() => R.done()).catch((e) => R.abort(e));

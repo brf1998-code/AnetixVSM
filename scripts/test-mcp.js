@@ -70,8 +70,18 @@ t("the sign-in server's description: every path under /oauth/, PKCE S256 only, p
 // ---- what leaves the admin tools
 const A = require("../src/mcp-admin");
 const names = A.tools.map((x) => x.name);
-t("nine tools, each with a name, a description and a run", names.length === 9 && new Set(names).size === 9 && A.tools.every((x) => /^[a-z_]+$/.test(x.name) && x.description.length > 40 && typeof x.run === "function" && x.readOnly !== false));
+const WRITERS = ["answer_tool_request", "change_tool_request_design", "send_tool_request", "start_tool_request"];
+t("eighteen tools, each with a name, a description and a run", names.length === 18 && new Set(names).size === 18 && A.tools.every((x) => /^[a-z_]+$/.test(x.name) && x.description.length > 40 && typeof x.run === "function"));
+t("four of them write, all about a new tool request, and every other one only reads", A.tools.filter((x) => x.readOnly === false).map((x) => x.name).sort().join() === WRITERS.join());
+t("no tool confirms a design, builds, deploys, withdraws or deletes", !names.some((n) => /^(confirm|build|deploy|withdraw|abandon|delete|remove|approve)_|make_.*live/.test(n)));
+t("the instructions say which tools write, and that a manager confirms on the board", /Read only, with one exception/.test(A.surface.instructions) && WRITERS.every((n) => A.surface.instructions.includes(n)) && /a manager does that on the board/.test(A.surface.instructions));
 t("no tool's words carry an em or en dash", !/[\u2013\u2014]/.test(JSON.stringify(A.tools.map((x) => [x.title, x.description])) + A.surface.instructions));
+// the audit tools (2026-10-12): what a line of the record carries
+const line = (kind, after) => A.activityOut({ id: 1, kind, company: "acme", module: "count", actor_role: "manager", actor_name: "Maria", before: "was", after, detail: { round: 2, cost_usd: 1.2, prompt: "x" }, created_at: new Date() });
+t("a request's line carries the words written, who and a small detail", line("feedback_filed", "make the button bigger").words === "make the button bigger" && line("feedback_filed", "x").who === "Maria" && line("feedback_filed", "x").detail.round === 2 && line("feedback_filed", "x").detail.prompt === undefined && line("feedback_filed", "x").detail.cost_usd === undefined);
+t("a check, a system review and a saved doc carry no words", ["check_verdict", "review_findings", "doc_saved"].every((k) => line(k, "CANARY").words === null && line(k, "CANARY").before === null));
+t("a chat persona's lines never leave, and the record tools of Ask Anetix are named", A.NEVER.includes("chat_answer") && A.NEVER.includes("chat_question") && A.RECORD_TOOLS.has("read_records") && A.RECORD_TOOLS.has("summarize_records"));
+t("a long line is cut and says so", /\[cut\]$/.test(line("feedback_filed", "x".repeat(5000)).words));
 const demo = A.demoOut({ slug: "acme", pin: { id: 4, label: "Acme, from the trade show", shown: "ABCD-EFGH" }, money: { paid_usd: 20 } });
 t("a demo leaves without its access pin, keeping whose it was", demo.pin.label === "Acme, from the trade show" && demo.pin.id === 4 && !JSON.stringify(demo).includes("ABCD") && demo.money.paid_usd === 20 && A.demoOut({ slug: "x", pin: null }).pin === null);
 const stopKind = require("../src/health").stopKind;
@@ -90,6 +100,48 @@ const run = A.runOut({ id: 5, company: "acme", module: "orders", lane: "ui", ste
   evidence: { title: "Bigger button", what_changed: "The release button is bigger.", error: "cross-check failed: the row for Acme Corp", diff: "- a\n+ b" }, log: [{ t: "2026-10-05T10:01:00Z", step: "error", note: "cross-check failed: the row for Acme Corp" }] }, health);
 t("a build run leaves with where it is, what it cost, the change in plain words and each stop as a kind; no log line, no diff",
   run.cost_usd === 0.31 && run.title === "Bigger button" && run.stops.length === 1 && run.stops[0].kind === "reviewer" && !/Acme Corp|diff|"log"|"evidence"/.test(JSON.stringify(run)), JSON.stringify(run));
+
+// ---- the new tool request tools: an answer is brought to its question's shape, or refused in words
+const I = require("../src/mcp-intake"), IQ = require("../src/intake-questions");
+const F = Object.fromEntries(IQ.FIXED.map((x) => [x.id, x]));
+const refused = (fn) => { try { fn(); return null; } catch (e) { return e.say ? e.message : `THREW ${e.message}`; } };
+t("text: trimmed, cut at the question's length, one line where the question is one line", I.normalize(F.name, "  Rework\nboard  ") === "Rework board" && I.normalize(F.purpose, "a\nb") === "a\nb" && I.normalize(F.name, "x".repeat(500)).length === 80 && I.normalize(F.thing, 42) === "42");
+t("text: empty, or not text, is refused", /empty/.test(refused(() => I.normalize(F.name, "   "))) && /plain text/.test(refused(() => I.normalize(F.name, { a: 1 }))) && /no answer/.test(refused(() => I.normalize(F.name, null))));
+const today = I.normalize(F.today, { picks: ["A whiteboard", "SPREADSHEET", "a notebook at the bench"], other: "sticky notes" });
+t("choice: picks by id or by the words on the option; what matches nothing goes to other", today.picks.join() === "whiteboard,spreadsheet" && today.other === "sticky notes; a notebook at the bench");
+t("choice: a bare string or a list is taken as the picks", I.normalize(F.today, "paper").picks.join() === "paper" && I.normalize(F.today, ["paper", "head"]).picks.join() === "paper,head" && I.normalize(F.today, "we shout across the floor").other === "we shout across the floor");
+const ww = I.normalize(F.works_with, { picks: ["erp", "scanners"], names: { erp: "Epicor", "Barcode or QR scanners": "Zebra", machine: "Haas" }, note: "ignored here" });
+t("choice: a name is kept only for a picked option that takes one, a note only where the question has one", JSON.stringify(ww) === JSON.stringify({ picks: ["erp", "scanners"], names: { erp: "Epicor" } }) && I.normalize(F.numbers, { picks: ["how_late"], note: "late orders per week" }).note === "late orders per week");
+const peers = { id: "peers", kind: "choice", multi: true, other: false, options: [{ id: "orders", label: "Orders" }, { id: "none", label: "No" }] };
+const one = { id: "r2q1", kind: "choice", multi: false, other: true, options: [{ id: "o1", label: "Anyone" }, { id: "o2", label: "Only leads" }] };
+t("choice: a question with no free text refuses what is not a choice, and names the choices", /not one of its choices.*orders \(Orders\)/.test(refused(() => I.normalize(peers, ["Inventory"]))) && I.normalize(peers, ["Orders"]).picks.join() === "orders");
+t("choice: a one-pick question refuses two, and takes one by its words", /one pick/.test(refused(() => I.normalize(one, ["o1", "o2"]))) && I.normalize(one, "only leads").picks.join() === "o2" && /nothing was picked/.test(refused(() => I.normalize(one, { picks: [] }))));
+t("roles: group ids or their words, a headcount as text; an unknown group is refused", JSON.stringify(I.normalize(F.who, { floor: 12, "Leads or supervisors": " 2 " })) === JSON.stringify({ floor: "12", leads: "2" }) && JSON.stringify(I.normalize(F.who, ["floor"])) === JSON.stringify({ floor: "" })
+  && /not one of its groups/.test(refused(() => I.normalize(F.who, { welders: "4" }))) && /takes/.test(refused(() => I.normalize(F.who, {}))));
+t("devices: only for a group in the who answer, by id or words", JSON.stringify(I.normalize(F.devices, { floor: ["A tablet", "phone", "phone"], leads: "desk" }, { who: { floor: "12", leads: "2" } })) === JSON.stringify({ floor: ["tablet", "phone"], leads: ["desk"] })
+  && /not a group in the "who" answer/.test(refused(() => I.normalize(F.devices, { office: ["desk"] }, { who: { floor: "" } }))) && /needs the "who" answer first/.test(refused(() => I.normalize(F.devices, { floor: ["phone"] }, {})))
+  && /not one of its devices/.test(refused(() => I.normalize(F.devices, { floor: ["a pager"] }, { who: { floor: "" } }))));
+t("a list: lines in order, numbering and bullets taken off, blanks dropped", I.normalize(F.stages, "1. Found\n2) At the bench\n\n- Fixed").join("|") === "Found|At the bench|Fixed" && I.normalize(F.wrong, [" a ", "", "b"]).join() === "a,b");
+t("a list: more than the question takes is refused, never silently cut", /at most 5 lines; 6 were given/.test(refused(() => I.normalize(F.wrong, ["a", "b", "c", "d", "e", "f"]))) && /at most 16/.test(refused(() => I.normalize(F.stages, Array.from({ length: 17 }, (_, i) => `s${i}`))))
+  && I.listLimits({ kind: "order", max: 6000, maxItems: 10 }).count === 10 && /empty/.test(refused(() => I.normalize(F.stages, []))));
+t("a file question takes a note, never a file", I.normalize(F.starting_list, { note: "the parts list" }).note === "the parts list" && I.normalize(F.starting_list, "the parts list").note === "the parts list" && /added on the board/.test(refused(() => I.normalize(F.starting_list, {}))));
+t("every fixed question says what it takes", IQ.FIXED.every((x) => I.takes(x).length > 20) && /names: \{ option id/.test(I.takes(F.works_with)) && /One pick/.test(I.takes(one)) && /2 to 16/.test(I.takes(F.stages)));
+const ord = I.inOrder(IQ.FIXED, { devices: 1, nope: 2, who: 3, name: 4 });
+t("answers are applied in the question order (the name first, who before devices), and an unknown id is set aside", ord.known.join() === "name,who,devices" && ord.unknown.join() === "nope");
+const view = { id: 7, company: "acme", status: "answering", via: "anetix", name: "Rework board", slug: "rework-board", round: 1, round_why: "", missing: ["stages"], cost_usd: "0.123", error: null, attachments: [{ question_id: "today", filename: "board.jpg", bytes: "SECRET-BYTES" }],
+  answers: { name: "Rework board", who: { floor: "12" } }, questions: IQ.FIXED.map((x) => ({ ...x, round: 1 })), design: null };
+const ro = I.requestOut(view, { boardUrl: "https://app.anetix.ai/c/acme/" });
+t("a request as an app reads it: each question with what it takes and its answer, what is missing, what to do next, the board's address", ro.writable_here === true && ro.questions.length === IQ.FIXED.length && ro.questions[0].answer === "Rework board" && ro.questions[0].answered === true
+  && ro.questions.find((x) => x.id === "stages").answered === false && ro.questions.find((x) => x.id === "who").options.length === 5 && /stages/.test(ro.next) && /never|do not make an answer up/.test(ro.next) && ro.board === "https://app.anetix.ai/c/acme/" && ro.ai_cost_usd === 0.12);
+t("a file on the board is named, never carried", ro.files_on_the_board[0].name === "board.jpg" && !JSON.stringify(ro).includes("SECRET-BYTES"));
+const hid = I.requestOut({ ...view, via: null, design: { bluf: "SECRET-DESIGN", items: [] } }, { full: false });
+t("a paying site's own request leaves as how far it got and nothing it said", hid.status === "answering" && hid.writable_here === false && hid.name === null && hid.questions === undefined && hid.design === undefined && !/Rework|SECRET|floor/.test(JSON.stringify(hid)));
+const des = I.requestOut({ ...view, status: "design", missing: [], design: { bluf: "A board.", items: [{ id: "p1", kind: "rule", summary: "One at a time.", mark: "changed" }], reference_md: "# Ref", flags: [], estimate_usd: 9, model: "claude-fable-5-1" } }, { boardUrl: "https://app.anetix.ai/c/acme/" });
+t("a design leaves as its points and reference, and the next step is the manager's on the board", des.design.points[0].id === "p1" && des.design.points[0].mark === "changed" && des.design.reference === "# Ref" && /manager reads and confirms on the board/.test(des.next) && /not available here/.test(des.next));
+t("whoever writes is on the record by name, as Anetix through the app", I.byOf({ account: { name: "Brendan Finn", login: "b@anetix.ai" }, app: "Claude" }).name === "Brendan Finn (Anetix, through Claude)" && I.byOf({ account: { login: "b@anetix.ai" }, app: "Claude" }).role === "admin");
+t("a write tool on a connection that may not write is told how to get there", /read only/.test(mcp.READ_ONLY) && /connect it again/.test(mcp.READ_ONLY) && !/[\u2013\u2014]/.test(mcp.READ_ONLY));
+const consent = require("fs").readFileSync(path.resolve(__dirname, "../public/connect.html"), "utf8");
+t("the consent page's tick is off until the person ticks it, and says what it never does", /id="writes"/.test(consent) && !/id="writes"[^>]*checked/.test(consent) && /cannot confirm a design, build, put anything on a floor/.test(consent));
 
 // ---- the backup: never in the file, and a restore clears what points at the accounts
 const backup = require("fs").readFileSync(path.resolve(__dirname, "../src/backup.js"), "utf8");

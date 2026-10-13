@@ -70,7 +70,8 @@ async function ask(name = "Claude", redirect = CLAUDE) {
   t("and signing in comes straight back to it", /\/oauth\/consent\?req=/.test(page.url()));
   const text = await page.locator("#card").innerText();
   t("it names the app, the address, who is signed in and where the answer goes", /Claude is asking to connect to Anetix admin/.test(text.replace(/\s+/g, " ")) && text.includes(ADDRESS) && text.includes(ADMIN) && /goes back to claude\.ai/.test(text), text);
-  t("it says what the app can do, that it cannot change anything, and that it gets no record from a company's tools", /Read demos, sites, loop health/.test(text) && /cannot change anything/.test(text) && /never gets a record from a company's tools/.test(text));
+  t("it says what the app can read, that without the tick it cannot change anything, and that it gets no record from a company's tools", /Read demos, sites, loop health/.test(text) && /Without the tick it cannot change anything at all/.test(text) && /never gets a record from a company's tools/.test(text));
+  t("the tick for writing is there, off, and says what it adds and what it never does", (await page.locator("#writes").count()) === 1 && !(await page.locator("#writes").isChecked()) && /Let it start and fill in new tool requests/.test(text) && /spends the company's AI credit/.test(text) && /cannot confirm a design, build, put anything on a floor/.test(text));
   t("it says how long the connection lasts and where to end it", /up to 30 days/.test(text) && /after 7 days unused/.test(text) && /under Accounts/.test(text));
   t("with no passkey on the account it asks for the code, and offers no passkey button", await page.locator("#code").isVisible() && (await page.locator("#pk").count()) === 0 && /^Allow$/.test((await page.locator("#yes").innerText()).trim()));
   t("no em or en dash anywhere on it", !/[\u2013\u2014]/.test(await page.content()));
@@ -123,7 +124,7 @@ async function ask(name = "Claude", redirect = CLAUDE) {
   const block = await page.locator("#acc-mcp").innerText();
   t("the Accounts tab shows the address to give an app, and how a connection ends", (await page.locator("#mcp-address").innerText()) === ADDRESS && /ends after 7 days unused/.test(block) && /after 30 days whatever its use/.test(block) && /an app on your own computer/.test(block), block.slice(0, 500));
   const row = await page.locator("#mcp-grants tr[data-grant]").first().innerText();
-  t("and the connected app: its name, where its answers go, whose it is, its calls", (await page.locator("#mcp-grants tr[data-grant]").count()) === 1 && /Claude/.test(row) && /claude\.ai/.test(row) && row.includes(ADMIN) && /\b1\b/.test(row), row);
+  t("and the connected app: its name, where its answers go, whose it is, that it only reads, its calls", (await page.locator("#mcp-grants tr[data-grant]").count()) === 1 && /Claude/.test(row) && /claude\.ai/.test(row) && row.includes(ADMIN) && /Reads only/.test(row) && /\b1\b/.test(row), row);
   await page.locator("#acc-mcp summary").click();
   const callsText = await page.locator("#mcp-calls").innerText();
   t("what the apps asked: the tool and who, never the answer", /list_companies/.test(callsText) && callsText.includes(ADMIN) && !/paperline/.test(callsText), callsText);
@@ -132,6 +133,22 @@ async function ask(name = "Claude", redirect = CLAUDE) {
   await page.waitForSelector("#mcp-none");
   const after = await post("/mcp/admin", { headers: { Authorization: `Bearer ${tok.json.access_token}`, Accept: "application/json, text/event-stream" }, body: { jsonrpc: "2.0", id: 8, method: "tools/list" } });
   t("Disconnect takes the app off the list and its token stops at once", /No app is connected/.test(await page.locator("#acc-mcp").innerText()) && after.status === 401);
+
+  // ---- the tick: a connection that may write new tool requests (src/mcp-intake.js)
+  const six = await ask("Claude writer");
+  await page.goto(six.consent); await page.waitForSelector("#writes");
+  await page.check("#writes");
+  await page.fill("#code", await fresh(ADMIN, secret)); await page.click("#yes");
+  await page.waitForSelector("#app");
+  const wBack = new URL(landed[landed.length - 1]);
+  const wTok = await post("/oauth/token", { form: { grant_type: "authorization_code", client_id: six.app.client_id, code: wBack.searchParams.get("code"), code_verifier: six.p.verifier, redirect_uri: CLAUDE } });
+  const tool = (name, args) => post("/mcp/admin", { headers: { Authorization: `Bearer ${wTok.json.access_token}`, Accept: "application/json, text/event-stream" }, body: { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } } });
+  const started = await tool("start_tool_request", { company: "demo" });
+  const reqId = (() => { try { return JSON.parse(started.json.result.content[0].text).request.id; } catch (e) { return 0; } })();
+  t("ticked on the page, the connection writes: it starts a new tool request", wTok.status === 200 && started.status === 200 && reqId > 0 && (await q("SELECT writes FROM platform.mcp_grants ORDER BY id DESC LIMIT 1")).rows[0].writes === true, started.text.slice(0, 300));
+  await page.goto(BASE + "/admin#accounts"); await page.waitForSelector("#mcp-grants tr[data-grant]");
+  t("the Accounts tab says that connection reads and writes new tool requests", /Reads, and writes new tool requests/.test(await page.locator("#mcp-grants tr[data-grant]").first().innerText()));
+  await tool("answer_tool_request", { id: reqId, answers: { name: "Rework board", thing: "rework ticket" } });
 
   // ---- a manager account: told this address is not for it
   await ctx.clearCookies();
@@ -144,6 +161,10 @@ async function ask(name = "Claude", redirect = CLAUDE) {
   t("a manager account sees why it cannot connect an app here, and no Allow", /cannot connect an app here/.test(mtext) && /not open yet/.test(mtext) && (await page.locator("#yes").count()) === 0 && (await page.locator("#code").count()) === 0, mtext);
   await page.click("#no"); await page.waitForSelector("#app");
   t("its way out goes back to the app with a no", /error=access_denied/.test(landed[landed.length - 1]));
+  // the manager's board: the request Anetix started and filled in, said to be Anetix's, with the manager's own buttons
+  await page.goto(BASE + "/c/demo/"); await page.waitForSelector(".card.request");
+  const tile = await page.locator(".card.request").first().innerText();
+  t("the manager's board shows the request as started by Anetix, and says to read the answers over before sending", /New tool: Rework board/.test(tile) && /started by Anetix/.test(tile) && /Anetix wrote these answers from a conversation with you/.test(tile) && /Continue/.test(tile) && !/[\u2013\u2014]/.test(tile), tile);
 
   t("no script error on any page", errors.length === 0, errors);
   await browser.close();

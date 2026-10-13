@@ -38,6 +38,11 @@
 //     anyway, so every app is connected again.
 //   - A token, a code or a client secret is never logged and never returned apart from the one answer that hands it
 //     to the app it is for.
+//   - A connection reads, and writes only when the person ticked that on the consent page (2026-10-06, mcp_grants.writes;
+//     Brendan: "add much more write capability to the MCP so that we can write in a tooling request automatically from
+//     a call transcript"). The tick travels with the code into the connection and is never changed afterwards: a
+//     connection made before the write tools existed, or made without the tick, stays read only until the app is
+//     connected again. src/mcp.js refuses a write tool on a connection without it.
 const crypto = require("crypto");
 const express = require("express");
 const { q } = require("./db");
@@ -174,7 +179,11 @@ CREATE TABLE IF NOT EXISTS platform.mcp_codes (
   grant_id     INTEGER,                            -- the connection it became, so a second use can end it
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE platform.mcp_grants ADD COLUMN IF NOT EXISTS writes BOOLEAN NOT NULL DEFAULT false;   -- may it use the write tools (the consent page's tick)
+ALTER TABLE platform.mcp_codes  ADD COLUMN IF NOT EXISTS writes BOOLEAN NOT NULL DEFAULT false;
 `;
+// Which addresses have write tools at all: the consent page offers the tick only for these.
+const WRITES = { admin: true };
 async function sweep() {
   await q("DELETE FROM platform.mcp_codes WHERE expires_at < now() - interval '1 day'");
   await q("DELETE FROM platform.mcp_tokens WHERE expires_at < now() - interval '1 day'");
@@ -293,11 +302,11 @@ const provider = {
     const account = await liveAccount(c.account_id, c.surface, c.generation);
     if (!account) throw new InvalidGrantError("the account can no longer connect an app");
     const w = windowsFor(SURFACES[c.surface].role);
-    const grant = (await q(`INSERT INTO platform.mcp_grants (account_id, client_id, client_name, redirect_host, surface, company, generation, expires_at)
-                            VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::int > 0 THEN now() + make_interval(secs => $8::int) ELSE NULL END) RETURNING *`,
-      [account.id, client.client_id, cleanName(client.client_name) || "An app", hostOf(c.redirect_uri), c.surface, c.surface === "admin" ? null : account.company, account.generation, w.cap])).rows[0];
+    const grant = (await q(`INSERT INTO platform.mcp_grants (account_id, client_id, client_name, redirect_host, surface, company, generation, expires_at, writes)
+                            VALUES ($1,$2,$3,$4,$5,$6,$7, CASE WHEN $8::int > 0 THEN now() + make_interval(secs => $8::int) ELSE NULL END, $9) RETURNING *`,
+      [account.id, client.client_id, cleanName(client.client_name) || "An app", hostOf(c.redirect_uri), c.surface, c.surface === "admin" ? null : account.company, account.generation, w.cap, Boolean(c.writes && WRITES[c.surface])])).rows[0];
     await q("UPDATE platform.mcp_codes SET grant_id=$2 WHERE code_hash=$1", [hash, grant.id]);
-    await accounts.event("mcp_connected", { account_id: account.id, login: account.login, detail: { grant: grant.id, app: grant.client_name, to: grant.redirect_host, surface: grant.surface } });
+    await accounts.event("mcp_connected", { account_id: account.id, login: account.login, detail: { grant: grant.id, app: grant.client_name, to: grant.redirect_host, surface: grant.surface, writes: grant.writes } });
     return issue(grant);
   },
 
@@ -336,7 +345,7 @@ const provider = {
     if (!t.last_used_at || Date.now() - new Date(t.last_used_at).getTime() > 60e3) q("UPDATE platform.mcp_grants SET last_used_at=now() WHERE id=$1", [t.id]).catch(() => {});
     return {
       token, clientId: t.client_id, scopes: [], expiresAt: Math.floor(new Date(t.token_expires_at).getTime() / 1000), resource: new URL(resourceOf(t.surface)),
-      extra: { grant: t.id, surface: t.surface, company: t.company || null, app: t.client_name, account: { id: account.id, login: account.login, name: account.name, role: account.role } },
+      extra: { grant: t.id, surface: t.surface, company: t.company || null, app: t.client_name, writes: t.writes === true, account: { id: account.id, login: account.login, name: account.name, role: account.role } },
     };
   },
 
@@ -362,7 +371,7 @@ async function consentInfo(req, res) {
   res.json({
     account: { login: account.login, name: account.name, role: account.role, passkeys: account.passkeys || 0 },
     app: { name: cleanName(client.client_name) || "An app", sends_to: hostOf(o.r), this_computer: isLoopback(o.r) },
-    address: resourceOf(o.f), surface: o.f, surface_name: SURFACES[o.f] ? SURFACES[o.f].name : null,
+    address: resourceOf(o.f), surface: o.f, surface_name: SURFACES[o.f] ? SURFACES[o.f].name : null, can_write: Boolean(WRITES[o.f]),
     allowed: !why, why: why || null, step_up: accounts.twoFaOff() ? "password" : "code",
     lasts: SURFACES[o.f] ? { idle_days: Math.round(windowsFor(SURFACES[o.f].role).idle / 86400), cap_days: Math.round(windowsFor(SURFACES[o.f].role).cap / 86400) || null } : null,
   });
@@ -394,16 +403,17 @@ async function consentDecide(req, res) {
   const step = await accounts.stepUp(account, { code: body.code, password: body.password, passkey: body.passkey }, ip, `mcp_connect:${o.f}`, req);
   if (!step.ok) return res.status(403).json({ error: step.error, step_up: true });
   const code = mint("anx_ac");
-  await q("INSERT INTO platform.mcp_codes (code_hash, client_id, account_id, generation, surface, redirect_uri, challenge, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8))",
-    [hashToken(code), client.client_id, account.id, account.generation, o.f, o.r, String(o.ch), CODE_S]);
-  await accounts.event("mcp_consent_yes", { account_id: account.id, login: account.login, ip, detail: { app: cleanName(client.client_name), to: hostOf(o.r), surface: o.f } });
+  const writes = body.writes === true && Boolean(WRITES[o.f]);   // only the page's own tick, and only where there is something to write
+  await q("INSERT INTO platform.mcp_codes (code_hash, client_id, account_id, generation, surface, redirect_uri, challenge, expires_at, writes) VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(secs => $8), $9)",
+    [hashToken(code), client.client_id, account.id, account.generation, o.f, o.r, String(o.ch), CODE_S, writes]);
+  await accounts.event("mcp_consent_yes", { account_id: account.id, login: account.login, ip, detail: { app: cleanName(client.client_name), to: hostOf(o.r), surface: o.f, writes } });
   back.searchParams.set("code", code);
   res.json({ redirect: back.href });
 }
 
 // ---- /admin: the connected apps (after sign-in, admin only) -----------------------------------------------------
 async function grantsView() {
-  const rows = (await q(`SELECT g.id, g.account_id, a.login, a.display_name, g.client_name, g.redirect_host, g.surface, g.company, g.created_at, g.expires_at, g.last_used_at,
+  const rows = (await q(`SELECT g.id, g.account_id, a.login, a.display_name, g.client_name, g.redirect_host, g.surface, g.company, g.writes, g.created_at, g.expires_at, g.last_used_at,
                                 (SELECT count(*)::int FROM platform.mcp_calls c WHERE c.grant_id=g.id) AS calls
                            FROM platform.mcp_grants g JOIN platform.accounts a ON a.id=g.account_id
                           WHERE g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at > now())
@@ -428,6 +438,6 @@ router.post("/api/admin/mcp/grants/:id(\\d{1,9})/disconnect", requireAdmin, asyn
 
 module.exports = {
   init, sweep, enabled, provider, clientsStore, router, consentInfo, consentDecide, json, accountOf, endGrant, grantsView,
-  PUBLIC, SURFACES, resourceOf, surfaceOf, publicUrl, redirectList, redirectAllowed, isLoopback, sealRequest, openRequest, refusal, hashToken, windowsFor,
+  PUBLIC, SURFACES, WRITES, resourceOf, surfaceOf, publicUrl, redirectList, redirectAllowed, isLoopback, sealRequest, openRequest, refusal, hashToken, windowsFor,
   ACCESS_S, CODE_S, CONSENT_S, REUSE_GRACE_S, CALL_DAYS, DEFAULT_REDIRECTS,
 };

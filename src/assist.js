@@ -5,7 +5,7 @@
 // engineer, and for someone with owner privileges it will have full company access." Later the same evening: "this
 // can write proposal that will go straight to under review based on the chat discussion." His decisions on the design:
 // every manager gets the whole-company scope (no new owner role); managers only in v1; the baseline model for every
-// scope at first; a demo gets set answers only.
+// scope at first; a demo gets set answers only (reversed 2026-10-12: a demo answers for real, from its credit).
 //
 // What this file is:
 //   - the conversations (platform.assist_conversations, platform.assist_messages) and the audit of every tool call
@@ -19,9 +19,11 @@
 //   - the request card: draft_request only DRAFTS; the manager's tap on Send to Reviewing files it (feedback.source =
 //     'assistant', source_ref = the conversation) and the proposer reads it at once, whatever the company's "read it at
 //     once" switch says, so it lands in Reviewing; the manager's gate is where it always was;
-//   - the demo: a company that is not a paid site (src/kind.js) gets the panel, the chips and the starters, and a SET
-//     answer for each scope: no model call, no credit, nothing read. What a demo user typed is kept like every other
-//     interaction, for the Demos tab;
+//   - a demo answers for real (2026-10-12, Taylor's request from the Pearlman LLC admin page: "Make the Anetix chatbot
+//     helper available in demo deployments as well as live, operational deployments"; Brendan: paid from the demo's own
+//     credit). It used to give a SET answer per scope (no model, no credit, nothing read); SOS_ASSIST_DEMO=scripted
+//     brings that back. A demo whose credit is used up is told so before anything runs. Conversations still carry
+//     demo = true, so the Demos tab tells them apart;
 //   - managers and Anetix admins only: a floor session gets 403 on every route here, and the board shows it nothing.
 //
 // Where it is safe to be: under /api/c/:slug/assist, a path the tool pages' policy does not open
@@ -107,8 +109,11 @@ async function init() {
 const INTERRUPTED = "Anetix restarted while I was answering, so this answer was lost. Ask again and I'll pick it up.";
 
 // ---- what a company gets -------------------------------------------------------------------------------------------
-// live: a paid site. demo: everyone else (src/kind.js reads what the company is NOW).
+// live: a paid site. demo: everyone else (src/kind.js reads what the company is NOW). Both answer for real since
+// 2026-10-12; scripted() says whether a demo still gets the set answers (SOS_ASSIST_DEMO=scripted, the old way).
 async function mode(company) { return (await require("./kind").isSite(company)) ? "live" : "demo"; }
+function scripted() { return String(process.env.SOS_ASSIST_DEMO || "live").toLowerCase() === "scripted"; }
+async function setAnswersFor(company) { return scripted() && (await mode(company)) === "demo"; }
 
 const STARTERS = {
   help: ["How do I get a change made to one of my tools?", "What happens after I approve a change?", "How do I start a new tool?"],
@@ -121,8 +126,9 @@ const INTRO = {
   company: "Ask about the whole plant: every tool, the board's history, and what to improve next.",
 };
 
-// A demo's set answers (Brendan: "when someone tries to use it in a demo, it just gives a scripted explanation of what
-// it does and is not available in Demo"). The same words for every question in that scope; nothing is read.
+// A demo's set answers, only with SOS_ASSIST_DEMO=scripted since 2026-10-12 (Brendan, 2026-10-08: "when someone tries
+// to use it in a demo, it just gives a scripted explanation of what it does and is not available in Demo"). The same
+// words for every question in that scope; nothing is read.
 function setAnswer(kind, title) {
   const off = "I'm not switched on in a demo, so this is a set answer.";
   if (kind === "tool") return {
@@ -399,7 +405,7 @@ router.get(P, async (req, res) => {
   res.json({
     mode: m, walled: await require("./datawall").isWalled(company),
     chips: [{ kind: "help", label: "Anetix help" }, ...mods.map((x) => ({ kind: "tool", module: x.name, label: x.title })), { kind: "company", label: "Whole company" }],
-    starters: STARTERS, intro: INTRO, demo_line: m === "demo" ? DEMO_LINE : null,
+    starters: STARTERS, intro: INTRO, demo_line: m === "demo" && scripted() ? DEMO_LINE : null,
     disclosure: "You're talking to Anetix's AI. It can be wrong; check numbers on the tool's own screen.",
   });
 });
@@ -442,11 +448,20 @@ router.post(`${P}/conversations/:id(\\d{1,9})/messages`, async (req, res) => {
   const today = Number((await q(`SELECT count(*) FROM platform.assist_messages m JOIN platform.assist_conversations c ON c.id=m.conversation_id
                                    WHERE c.company=$1 AND c.owner_key=$2 AND m.role='user' AND m.created_at > now() - interval '24 hours'`, [c.company, c.owner_key])).rows[0].count);
   if (today >= TURNS_DAY) throw fail(429, "That's a lot of questions for one day. Pick it up again tomorrow, or write to brendan@anetix.ai if you need more today.");
+  // a demo pays for its answers from its credit (2026-10-12): used up, it is told before anything is stored or run.
+  // A paid site is never refused here (its fair use is the platform's business, src/fairuse.js, via assertUnderCap).
+  if (!(await setAnswersFor(c.company))) {
+    try { await require("./selfserve").assertCredit(c.company); }
+    catch (e) {
+      if (e.code === "credit_out") throw Object.assign(fail(402, "Your demo's AI credit is used up, so I can't answer right now. Add credit from the link at the top of the board, then ask again."), { code: "credit_out" });
+      throw fail(e.status || 400, e.message);
+    }
+  }
   const user = (await q("INSERT INTO platform.assist_messages (conversation_id, company, role, text) VALUES ($1,$2,'user',$3) RETURNING " + MSG_COLS, [c.id, c.company, text])).rows[0];
   await q("UPDATE platform.assist_conversations SET updated_at=now(), title=COALESCE(title, $2) WHERE id=$1", [c.id, text.replace(/\s+/g, " ").slice(0, 80)]);
   await record("chat_question", { company: c.company, module: c.scope_module || null, actor: { role: req.sosRole, name: me.name, person: req.sosPersonId || null }, after: text, detail: { via: "assistant", conversation: c.id, message: user.id, scope: c.scope_kind, demo: c.demo || undefined } });
-  // a demo (a company that is not a paid site, read now): the set answer, no model, nothing read
-  if ((await mode(c.company)) === "demo") {
+  // the old demo answer (SOS_ASSIST_DEMO=scripted): the set answer, no model, nothing read
+  if (await setAnswersFor(c.company)) {
     const title = c.scope_module ? ((await q("SELECT title FROM platform.modules WHERE company=$1 AND name=$2", [c.company, c.scope_module])).rows[0] || {}).title : null;
     const a = setAnswer(c.scope_kind, title);
     const answer = (await q("INSERT INTO platform.assist_messages (conversation_id, company, role, text, scripted, finished_at) VALUES ($1,$2,'assistant',$3,true,now()) RETURNING " + MSG_COLS, [c.id, c.company, a.text])).rows[0];
@@ -597,4 +612,4 @@ async function deleteCompany(company) {
   await tools.dropPool(company);
 }
 
-module.exports = { init, router, adminRouter, runTurn, mode, ownerOf, setAnswer, historyFor, stepLabel, lookedAt, withCacheMark, plainBlocks, scrubText, staticSystem, dynamicSystem, deleteCompany, STARTERS, INTRO, DEMO_LINE, MAX_STEPS, SCHEMA };
+module.exports = { init, router, adminRouter, runTurn, mode, scripted, setAnswersFor, ownerOf, setAnswer, historyFor, stepLabel, lookedAt, withCacheMark, plainBlocks, scrubText, staticSystem, dynamicSystem, deleteCompany, STARTERS, INTRO, DEMO_LINE, MAX_STEPS, SCHEMA };

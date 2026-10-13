@@ -3,7 +3,7 @@
 //   node scripts/e2e/assist-browser.js            (SOS_SHOTS=<dir> also saves screenshots of each state)
 // What a manager sees: the button in the band, the chips, the starters filling the box, an answer with its steps,
 // Looked at line and Show me button, the request card sent to Reviewing and the chip on the board's card; a phone;
-// a demo's set answer; and that the floor sees none of it.
+// a demo answering for real; and that the floor sees none of it.
 const fs = require("fs");
 const path = require("path");
 const { BASE, PW, runner, login, waitFor, board } = require("./lib");
@@ -119,12 +119,12 @@ const shot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursiv
   await dp.waitForSelector("#ax-btn");
   await dp.click("#ax-btn");
   await dp.waitForSelector(".ax:not([hidden]) .ax-note");
-  t("a demo's panel says it gives set answers", /Demo: set answers/.test(await dp.locator(".ax-note").innerText()));
-  await dp.fill(".ax-f textarea", "What should we improve next?");
+  t("a demo's panel no longer says set answers", !/set answers/i.test(await dp.locator(".ax-note").innerText()), await dp.locator(".ax-note").innerText());
+  await dp.fill(".ax-f textarea", "What tools do we have? [[list_tools]]");
   await dp.keyboard.press("Enter");
-  await dp.waitForSelector(".ax-set");
-  t("a demo's answer is marked as a set answer and says what it would do", /SET ANSWER/.test(await dp.locator(".ax-a").last().innerText()) && /not switched on in a demo/.test(await dp.locator(".ax-a").last().innerText()));
-  t("a set answer has no rating buttons", (await dp.locator(".ax-a").last().locator("[data-up]").count()) === 0);
+  await dp.waitForSelector(".ax-a [data-up]", { timeout: 20000 });
+  t("a demo's answer is a real one, with no set-answer mark", !(await dp.locator(".ax-set").count()) && /Paper Airplane Line/.test(await dp.locator(".ax-a").last().innerText()));
+  t("and it can be rated like a live answer", (await dp.locator(".ax-a").last().locator("[data-up]").count()) === 1);
   await shot(dp, "5-demo");
 
   // ---- the floor ---------------------------------------------------------------------------------------------

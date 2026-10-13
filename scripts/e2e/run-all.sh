@@ -91,6 +91,9 @@ run datawall               env SOS_PROMPT_LOG=$LOG/prompts.jsonl node scripts/e2
 # out the newest, one deploy puts them all live, a new tool's preview takes changes before it has ever been live
 fresh; start "SOS_BROWSER=off SOS_REQUIREMENT_GATE=on"
 run chamber                node scripts/e2e/chamber.js
+# Change it at the gate (2026-10-12): the manager says what is off and the agent reworks the same preview
+fresh; start "SOS_BROWSER=off"
+run rework                 node scripts/e2e/rework.js
 # outside connections are off until Anetix turns them on per tool; "connect Epicor" goes to the integration team
 fresh; rm -f "$LOG/outside-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl"
 run outside                env SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl node scripts/e2e/outside.js
@@ -194,7 +197,7 @@ fresh; start "SOS_BROWSER=off"
 run safeguards-noscanner   node scripts/e2e/safeguards.js noscanner
 
 # 2026-10-08: Ask Anetix, the assistant on the board (docs/ASSISTANT.md): managers only, one company, one tool, the wall
-# (the prompt log), a demo's set answer, the read-only role, the card filing nothing until the tap; the panel in a
+# (the prompt log), a demo answering from its credit, the read-only role, the card filing nothing until the tap; the panel in a
 # browser; and the requests a real turn sends, against a stand-in for the Messages API the script serves on 3998
 fresh; rm -f "$LOG/assist-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/assist-prompts.jsonl"
 run assist                 env SOS_PROMPT_LOG=$LOG/assist-prompts.jsonl node scripts/e2e/assist.js

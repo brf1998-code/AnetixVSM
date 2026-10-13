@@ -89,7 +89,7 @@ async function view(intake) {
   const lastRound = (intake.rounds || [])[roundsDone - 1];
   return {
     id: intake.id, company: intake.company, feedback_id: intake.feedback_id, status: intake.status, name: intake.name, slug: intake.slug,
-    answers: intake.answers || {}, questions, attachments: files, design: intake.design ? { ...intake.design, items: withIds(intake.design.items || []) } : null, model: intake.model || null,
+    via: intake.via || null, answers: intake.answers || {}, questions, attachments: files, design: intake.design ? { ...intake.design, items: withIds(intake.design.items || []) } : null, model: intake.model || null,
     cost_usd: Number(intake.cost_usd || 0), error: intake.error || null,
     round: state.round, round_answered: state.answered, round_total: state.total, round_done: state.done, missing: state.missing.map((m) => m.id),
     round_why: ((intake.rounds || []).find((r) => r.round === state.round) || {}).why || "",
@@ -99,31 +99,38 @@ async function view(intake) {
 }
 
 // ---- lifecycle ------------------------------------------------------------------
-async function create(company, role) {
+// The company's unfinished new-tool request, if it has one: still being answered, thought about or waiting at its design.
+async function openFor(company) {
+  return (await q(`SELECT i.* FROM platform.module_intakes i JOIN platform.feedback f ON f.id=i.feedback_id
+    WHERE i.company=$1 AND i.status IN ('answering','failed','thinking','design') AND f.status NOT IN ('declined','done') ORDER BY i.id DESC LIMIT 1`, [company])).rows[0] || null;
+}
+// opts (2026-10-06, the admin connector's write tools, src/mcp-intake.js): name = who the board says started it
+// (default: the role), via = 'anetix' when Anetix started it through a connected app.
+async function create(company, role, opts = {}) {
   // one unfinished new-tool request at a time (the launch audit 1.5, 2026-09-27: each tap on "New tool" started another
   // request): while one is still being answered, thought about or waiting at its design, New tool opens that one again
-  const open = (await q(`SELECT i.* FROM platform.module_intakes i JOIN platform.feedback f ON f.id=i.feedback_id
-    WHERE i.company=$1 AND i.status IN ('answering','failed','thinking','design') AND f.status NOT IN ('declined','done') ORDER BY i.id DESC LIMIT 1`, [company])).rows[0];
+  const open = await openFor(company);
   // starting a module needs credit (asked on a reopen too, so New tool says so the same way); once started, its rounds,
   // design and build go through to the end (the generateRound / generateDesign gates pass started: true)
   await require("./selfserve").assertCredit(company);
   if (open) return Object.assign(open, { reopened: true });
   const fb = (await q(
     `INSERT INTO platform.feedback (company, module, page, screen, message, name, status, kind) VALUES ($1,NULL,$2,'New tool request','New tool',$3,'new','module_request') RETURNING id`,
-    [company, `/c/${company}/`, role || "manager"])).rows[0];
+    [company, `/c/${company}/`, String(opts.name || role || "manager").slice(0, 80)])).rows[0];
   const pick = await agent.pickModel(company, "design", null);
   const it = (await q(
-    `INSERT INTO platform.module_intakes (company, feedback_id, started_by, model) VALUES ($1,$2,$3,$4) RETURNING *`,
-    [company, fb.id, role || "manager", pick.model])).rows[0];
+    `INSERT INTO platform.module_intakes (company, feedback_id, started_by, model, via) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [company, fb.id, role || "manager", pick.model, opts.via || null])).rows[0];
   if (pick.arm) await agent.keepArm("design", company, `intake:${it.id}`, pick.model);
   await q("UPDATE platform.feedback SET intake_id=$2 WHERE id=$1", [fb.id, it.id]);
-  await logEvent("intake_started", it.id, { company, role });
+  await logEvent("intake_started", it.id, { company, role, ...(opts.via ? { via: opts.via } : {}) });
   return it;
 }
 
 const { record } = require("./record");
 
-async function answer(id, qid, value) {
+// by: who is answering, for the record (default: the manager). The admin connector passes Anetix's named account.
+async function answer(id, qid, value, by) {
   const it = await getIntake(id);
   if (!it) throw new Error("intake not found");
   if (!["answering", "failed"].includes(it.status)) throw new Error(`answers are closed while the intake is ${it.status}`);
@@ -148,7 +155,7 @@ async function answer(id, qid, value) {
   if (it.status === "failed") { fields.status = "answering"; fields.error = null; }
   const before = (it.answers || {})[qid];
   if (JSON.stringify(before) !== JSON.stringify(qid === "name" ? answers.name : value))
-    await record("intake_answered", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, before: before == null ? null : (typeof before === "string" ? before : JSON.stringify(before)), after: typeof value === "string" ? value : JSON.stringify(value), detail: { question: qid, text: qn.text } });
+    await record("intake_answered", { company: it.company, module: it.slug || null, actor: by || "manager", intake_id: id, feedback_id: it.feedback_id, before: before == null ? null : (typeof before === "string" ? before : JSON.stringify(before)), after: typeof value === "string" ? value : JSON.stringify(value), detail: { question: qid, text: qn.text } });
   return setIntake(id, fields);
 }
 
@@ -480,7 +487,7 @@ function fakeRevision({ current, changes }) {
   return design;
 }
 // The manager's changes from the confirm screen: one agent pass for all of them, the rest of the design kept.
-async function revise(id, rawChanges) {
+async function revise(id, rawChanges, by) {
   const it = await getIntake(id);
   if (!it || it.status !== "design" || !it.design) throw new Error("there is no design to change right now");
   const current = { ...it.design, items: withIds(it.design.items || []) };
@@ -496,7 +503,7 @@ async function revise(id, rawChanges) {
       const cur = await getIntake(id);
       await setIntake(id, { design, status: "design", cost_usd: Number(cur.cost_usd || 0) + Number(design.cost_usd || 0) });
       await logEvent("intake_revised", id, { changes: changes.length, model: design.model, costUsd: design.cost_usd });
-      await record("intake_revised", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, before: JSON.stringify(current.items.map((p) => p.summary)), after: JSON.stringify(design.items.map((p) => p.summary)), detail: { changes, removed: design.removed || [], model: design.model, cost_usd: design.cost_usd } });
+      await record("intake_revised", { company: it.company, module: it.slug || null, actor: by || "manager", intake_id: id, feedback_id: it.feedback_id, before: JSON.stringify(current.items.map((p) => p.summary)), after: JSON.stringify(design.items.map((p) => p.summary)), detail: { changes, removed: design.removed || [], model: design.model, cost_usd: design.cost_usd } });
     } catch (e) {
       console.error(`intake ${id} revise failed:`, e);
       await setIntake(id, { status: "design", design: current, error: String(e.message || e).slice(0, 500) });
@@ -598,7 +605,7 @@ async function boardIntakes(company) {
     const st = roundState(questions, it.answers || {});
     const last = (it.rounds || [])[(it.rounds || []).length - 1];
     out[it.id] = {
-      id: it.id, feedback_id: it.feedback_id, status: it.status, name: it.name, slug: it.slug, cost_usd: Number(it.cost_usd || 0), error: it.error,
+      id: it.id, feedback_id: it.feedback_id, status: it.status, name: it.name, slug: it.slug, cost_usd: Number(it.cost_usd || 0), error: it.error, via: it.via || null,
       round: st.round, round_answered: st.answered, round_total: st.total, round_done: st.done, rounds_generated: (it.rounds || []).length,
       why: last ? last.why : "", bluf: it.design ? it.design.bluf : null, points: it.design ? (it.design.items || []).length : 0, estimate_usd: it.design ? it.design.estimate_usd : null, flags: it.design ? (it.design.flags || []).length : 0,
       run_id: (it.run_ids || []).slice(-1)[0] || null,
@@ -688,4 +695,4 @@ router.get("/api/attachments/:id(\\d{1,9})", requireManager, async (req, res) =>
   res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
 });
 
-module.exports = { router, create, answer, next, think, adjust, revise, mergeRevision, cleanChanges, withIds, POINT_KINDS, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief };
+module.exports = { router, create, openFor, slugTaken, answer, next, think, adjust, revise, mergeRevision, cleanChanges, withIds, POINT_KINDS, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief };

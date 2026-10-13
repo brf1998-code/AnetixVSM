@@ -230,6 +230,9 @@ CREATE TABLE IF NOT EXISTS platform.module_intakes (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- via: 'anetix' when Anetix started the request through a connected app (src/mcp-intake.js, 2026-10-06); NULL = on the board
+ALTER TABLE platform.module_intakes ADD COLUMN IF NOT EXISTS via TEXT;
+
 -- Checks log (docs/CHECKS-CAMPAIGN.md): the manager's verdict on each
 -- automated verdict, the labeled set the cross-check is tuned against.
 CREATE TABLE IF NOT EXISTS platform.check_labels (

@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-10-08)
+# Symbiotic OS: Workspace Guide (current as of 2026-10-12)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -57,7 +57,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
 - `/mcp/admin` is the admin MCP address (a connected AI app's calls, bearer token only) and `/oauth/*` the sign-in
   an app goes through to reach it, both mounted BEFORE the sign-in middleware and both a 404 until `SOS_PUBLIC_URL`
   is set (see "Connector sign-in and the admin MCP"; the design, and the company MCP that is not built, are
-  `docs/MCP.md`).
+  `docs/MCP.md`). Since 2026-10-06 a connection that was ticked to write can start and fill in a company's new tool
+  request and send it to the agent (`src/mcp-intake.js`, "The admin MCP writes new tool requests").
 
 Index of `docs/FEATURES.md`, in its order:
 
@@ -169,9 +170,11 @@ Index of `docs/FEATURES.md`, in its order:
 - Connector sign-in and the admin MCP (2026-10-05)
 - Price book 2 (by the tool live on the floor), the pilot offer, and the board link on every page (2026-10-05)
 - Adding a manager to a company that already exists; a company added by hand on the Sites tab (2026-10-06)
+- The admin MCP writes new tool requests (2026-10-06, shipped 2026-10-12)
 - Safeguards for a company that keeps contract information here, and the upload scanner (2026-10-08)
 - Every AI failure reaches the phones (2026-10-08)
 - Ask Anetix: the assistant on the board (2026-10-08)
+- Change it at the gate, Ask Anetix in demos, and the audit tools (2026-10-12)
 
 ## What this is
 
@@ -338,7 +341,8 @@ tool list, 401 from the API) proves the CLI itself starts.
   `https://claude.ai/api/mcp/auth_callback,loopback`): where a sign-in answer may be sent; `loopback` is an app on
   the person's own computer (Claude Code). An address an app asks for that is not on the list is left out (an app
   with none left is refused) and named in the log. `SOS_MCP_ACCESS_MIN` (60), `SOS_MCP_MAX_CHARS` (120000: the most text one tool answer carries),
-  `SOS_MCP_CALL_DAYS` (400: how long the call log is kept). A connection's idle and cap windows are the admin
+  `SOS_MCP_CALL_DAYS` (400: how long the call log is kept), `SOS_MCP_AI_STARTS_PER_HOUR` (30: how many times an hour
+  one account's connected apps may send a new tool request to the agent or ask for a design change; 0 = no limit). A connection's idle and cap windows are the admin
   cookie's (`SOS_ADMIN_IDLE_HOURS`, `SOS_ADMIN_CAP_HOURS`).
 - `SOS_SCAN_HOST` (clamav.railway.internal: the upload scanner's private address, `src/scan.js`; the service is
   `clamav` in the same project, image `clamav/clamav:stable`, a volume at `/var/lib/clamav`, `FRESHCLAM_CHECKS=4`,
@@ -350,7 +354,9 @@ tool list, 401 from the API) proves the CLI itself starts.
 - Ask Anetix (`src/assist.js`): `SOS_ASSIST_STEPS` (8: model calls in one answer), `SOS_ASSIST_MAX_TOKENS` (1500 a
   call), `SOS_ASSIST_HISTORY` (20: earlier messages the model sees), `SOS_ASSIST_TURNS_DAY` (120 questions a person a
   day, a loop guard), `SOS_ASSIST_FILES_DAY` (20 requests sent to Reviewing a person a day), `SOS_ASSIST_TOOL_CHARS`
-  (30000: the most text one tool answer carries). It uses the company's propose model and the instance's key.
+  (30000: the most text one tool answer carries), `SOS_ASSIST_DEMO` (`live` by default since 2026-10-12, a demo's
+  answers come out of its credit; `scripted` brings back the set answers). It uses the company's propose model and the
+  instance's key. `SOS_MAX_REWORKS` (5): how many times Change it may rework one build at the gate.
 - `SOS_CONNECTION_KEY` (REQUIRED; any long random string, `openssl rand -hex
   32`): the key every admin's and manager's authenticator secret, every ERP
   login, every company's welcome handout and the per-company database passwords
@@ -529,10 +535,16 @@ Passwords live only in Railway; never commit them.
 - The MCP addresses and `/oauth/*` sit before the sign-in middleware, so nothing mounted there may trust a cookie,
   apart from the consent page's two calls, which check the account themselves (`mcpauth.accountOf`) and take a fresh
   passkey or code before anything is allowed. An MCP address reads a bearer token and nothing else, and never sets a
-  cookie. A connector is never on by a missing variable. An admin MCP tool is read only and never returns a row
+  cookie. A connector is never on by a missing variable. An admin MCP tool never returns a row
   from a company's tool, an upload, a diff, a tool's code, a secret (a pin, a Stripe id, a card, a token), or the
   words of a failed check (its kind only): a new tool gets its case in `scripts/test-mcp.js` and its call in
-  `scripts/e2e/mcp.js`, where a canary row and a canary failure line must be in no answer. A new table that points
+  `scripts/e2e/mcp.js`, where a canary row and a canary failure line must be in no answer. An admin MCP tool is read
+  only unless it is marked `readOnly: false`, and the only ones that are start and fill in a new tool request
+  (`src/mcp-intake.js`). A write tool runs only on a connection whose person ticked writing on the consent page
+  (`who.writes`), goes through the same function the board's own route calls, writes under the account's name on the
+  record, and never moves anything toward the floor: no tool confirms a design, builds, deploys, withdraws or
+  deletes. An app writes only to a request Anetix started (`module_intakes.via`), and a paying site's own request is
+  neither read nor taken over. What an app sends is checked for shape before it is saved. A new table that points
   at `platform.accounts` goes in `backup.js` restore's TRUNCATE list, or a restore fails.
 - Free text (a company's name, a person's name, an email) never goes into a quoted argument of an inline `onclick`
   with `esc()` alone: an apostrophe ends the argument and the rest runs as script. On `/admin` it goes through

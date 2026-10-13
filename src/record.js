@@ -25,11 +25,15 @@
 //   requirement_drafted (agent), requirement_confirmed (before = drafted, after = confirmed)
 //   review_all (the manager sent every waiting request to the proposer: detail.asked, detail.started)
 //   build_finished (agent summary), build_summarized (platform plain summary), check_verdict (gate or reviewer)
-//   run_fixed, run_overridden, run_retried, run_cancelled
+//   run_fixed, run_overridden, run_retried, run_cancelled, run_reworked (Change it at the gate: before = what the preview
+//   did, after = the manager's words)
 //   deployed, rolled_back, version_switched
 //   review_started, review_findings (a system review)
 //   intake_answered, intake_round, intake_design, intake_adjusted (before/after), intake_revised (the points before/after,
 //   the changes asked for in detail), intake_confirmed, intake_abandoned
+//   intake_sent, intake_taken_over (Anetix through a connected app, src/mcp-intake.js: a round sent to the agent; a
+//   manager's unfinished request taken over). An answer written that way is an intake_answered row with actor_role
+//   admin and the account's name.
 //   doc_saved (before/after an agent doc), doc_deleted, models_changed
 //   label_set (the checks log), chat_question, chat_answer (a module's chat persona)
 const { q, pool } = require("./db");

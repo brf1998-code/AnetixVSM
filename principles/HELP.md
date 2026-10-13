@@ -46,6 +46,9 @@ assistant). Those go to the Anetix team, not to the plant's build loop, and the 
    preview has an amber bar on every screen, and the manager can open it and try it.
 5. **The manager puts it on the floor.** One button at the end of the In progress card ("Deploy to floor" with the
    version number; a trial company's says "Make it live"). Every open screen of that tool reloads to the new version.
+   If the preview is not right, **Not right? Change it** under the preview link takes a few words on what should be
+   different: the AI reworks that same preview and keeps the rest, the checks run again, and it comes back for the OK
+   (up to 5 times). **Discard** throws the build away and sends the request back to Reviewing.
 6. **The loop closes.** The person who asked sees that it went live and is asked whether it fixed it. On the shipped
    card the manager can press Done (the person who asked gets a check mark and a thank-you) or "a little left", which
    puts a follow-up back on the board.
@@ -105,4 +108,5 @@ something is on a screen (the Show me button opens the tool at that spot), say w
 asking for, and, when the data wall is down, read and add up a tool's records. It changes nothing by itself: when a
 change is talked through, it writes up a request card, the manager checks it and taps **Send to Reviewing**, and a
 draft of the change lands in Reviewing for approval as usual. It can be wrong; numbers are worth checking on the
-tool's own screen. In a trial company it gives set answers only; it turns on when the company is a live site.
+tool's own screen. It works the same in a demo, where its answers come out of the demo's AI credit like a build does;
+when the credit is used up it says so, and answers again once credit is added.

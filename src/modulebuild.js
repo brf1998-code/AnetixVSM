@@ -334,7 +334,7 @@ async function advance(runId) {
         const seed = skeleton({ slug, title: ev.module_title || slug, design, answers: (intake && intake.answers) || {}, startingRows: sheet ? sheet.parsed.rows : [], walled, sheetHeaders: sheet ? sheet.parsed.headers : null });
         fs.rmSync(dir, { recursive: true, force: true });
         for (const [f, content] of Object.entries(seed)) { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), content); }
-        if (ev.findings) await P.setRun(runId, { evidence: { ...ev, findings: undefined, fix_round: undefined } });
+        if (ev.findings) await P.setRun(runId, { evidence: { ...ev, findings: undefined, fix_round: undefined, findings_from: undefined } });
         await P.log(runId, { step: "build", note: "skeleton written from the design; the agent builds the first version on top of it" });
       }
       const guidance = await agent.guidanceFor(company, slug);
@@ -351,7 +351,9 @@ async function advance(runId) {
           : `Starting data from "${sheet.filename}" (${sheet.parsed.row_count} rows; columns: ${sheet.parsed.headers.join(" | ")}):\n${sheet.parsed.rows.slice(0, 200).map((r) => r.join(" | ")).join("\n")}`)
         : "No starting data was attached.";
       if (ev.fix_round && ev.gate && ev.gate.ok === false) ev.findings = gate.forAgent(ev.gate, []);
-      const findings = ev.fix_round && ev.findings
+      // the manager's change after looking at the preview (pipeline.rework): the agent reworks this version
+      const findings = !fresh && ev.findings_from === "manager" && ev.findings && !ev.fix_round ? P.reworkBrief(ev.findings)
+        : ev.fix_round && ev.findings
         ? (ev.gate && ev.gate.ok === false ? `\n\n${ev.findings}`
           : ev.findings_from === "checks" ? `\n\nThe platform ran its checks against your previous attempt in this directory and these did not pass. Fix exactly these, keep everything else as it is:\n${ev.findings}`
           : ev.findings_from === "campaign" ? `\n\nThe manager's test campaign ran against your previous attempt in this directory, on the company's test floor beside its other tools, and these did not pass. Fix exactly these, keep everything else as it is:\n${ev.findings}`

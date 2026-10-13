@@ -9,7 +9,7 @@
 //
 // The fake model (src/assist.js fakeStep) calls the tools a question names as [[tool {json}]] and then answers with
 // what came back, so this proves from outside what is held by code rather than by a model: managers only, one
-// company, one tool in a one-tool conversation, the wall, a demo's set answer with no model call, the read-only role,
+// company, one tool in a one-tool conversation, the wall, a demo answering from its own credit, the read-only role,
 // the card filing nothing until the tap, and the tap landing the request in Reviewing.
 const fs = require("fs");
 const { Client } = require("pg");
@@ -55,17 +55,26 @@ async function say(c, slug, conv, text) {
   t("another company's manager is turned away at the company guard", (await mgr.get("/api/c/demo/assist")).status === 403);
   t("a scope naming a tool the company does not have is refused", (await mgr.post("/api/c/plant/assist/conversations", { scope: { kind: "tool", module: "nope" } })).status === 400);
 
-  // ---- a demo: set answers, nothing read, no model --------------------------------------------------------------
+  // ---- a demo answers for real, from its own credit (2026-10-12; it gave set answers until then) -----------------
   const dcfg = (await demoMgr.get("/api/c/demo/assist")).json;
-  t("a trial company gets the demo panel, with the line that says so", dcfg.mode === "demo" && /live site/.test(dcfg.demo_line || ""), dcfg);
-  const before = Number((await q("SELECT count(*) FROM platform.ai_calls WHERE company='demo' AND kind LIKE '%assistant%'")).rows[0].count);
-  const d = await ask(demoMgr, "demo", { kind: "tool", module: "paperline" }, `Walk me through this tool [[list_tools]] ${CANARY}`);
-  t("a demo's answer comes back at once, marked as a set answer", d.first.assistant.scripted === true && d.first.assistant.status === "done", d.first);
-  t("it says what it would do and that it is not switched on", /not switched on in a demo/.test(d.answer.text) && /Paper Airplane Line/.test(d.answer.text), d.answer.text);
-  t("a demo's question calls no tool", Number((await q("SELECT count(*) FROM platform.assist_calls WHERE company='demo'")).rows[0].count) === 0);
-  t("and no model", Number((await q("SELECT count(*) FROM platform.ai_calls WHERE company='demo' AND kind LIKE '%assistant%'")).rows[0].count) === before);
-  t("what the demo user typed is kept, for the Demos tab", (await q("SELECT 1 FROM platform.assist_messages WHERE company='demo' AND role='user' AND text LIKE $1", [`%${CANARY}%`])).rows.length === 1);
-  t("a demo's set answers have no dashes and name no model", ["help", "tool", "company"].every((k) => { const a = require("../../src/assist").setAnswer(k, "X").text; return !/[\u2013\u2014]/.test(a) && !/claude|opus|sonnet|fable|anthropic/i.test(a); }));
+  t("a trial company gets the demo panel, with no set-answer line", dcfg.mode === "demo" && !dcfg.demo_line, dcfg);
+  const d = await ask(demoMgr, "demo", { kind: "tool", module: "paperline" }, `Walk me through this tool [[describe_tool {}]] ${CANARY}`);
+  t("a demo's answer runs behind the request like a live one, not as a set answer", d.first.assistant.scripted === false && d.first.assistant.status === "running" && d.answer.status === "done", d.first);
+  t("it read the tool", /"tables"/.test(d.answer.text) && /stations/.test(d.answer.text), (d.answer.text || "").slice(0, 300));
+  t("the demo's tool call is on the audit", Number((await q("SELECT count(*) FROM platform.assist_calls WHERE company='demo'")).rows[0].count) >= 1);
+  t("what the demo user typed is kept, for the Demos tab, marked as a demo", (await q("SELECT 1 FROM platform.assist_messages m JOIN platform.assist_conversations c ON c.id=m.conversation_id WHERE m.company='demo' AND m.role='user' AND m.text LIKE $1 AND c.demo", [`%${CANARY}%`])).rows.length === 1);
+  // a demo from anetix.ai with its credit used up is told so before anything runs
+  await q("INSERT INTO platform.self_serve (company, email, contact) VALUES ('demo', 'demo@e2e.test', 'Demo') ON CONFLICT (company) DO NOTHING");
+  const msgsBefore = Number((await q("SELECT count(*) FROM platform.assist_messages WHERE company='demo'")).rows[0].count);
+  const out = await say(demoMgr, "demo", d.conv, "and the next station?");
+  t("credit used up: refused with a 402 in plain words", out.status === 402 && /credit is used up/.test(out.error || "") && !/[\u2013\u2014]/.test(out.error || ""), out);
+  t("credit used up: nothing stored, nothing run", Number((await q("SELECT count(*) FROM platform.assist_messages WHERE company='demo'")).rows[0].count) === msgsBefore);
+  await q("INSERT INTO platform.credit_ledger (company, delta_usd, kind, note) VALUES ('demo', 10, 'grant', 'e2e')");
+  const back = await say(demoMgr, "demo", d.conv, "and the next station? [[list_tools]]");
+  t("with credit it answers again", back.status === 200 && back.answer.status === "done" && /Paper Airplane Line/.test(back.answer.text), back);
+  await q("DELETE FROM platform.credit_ledger WHERE company='demo' AND note='e2e'");
+  await q("DELETE FROM platform.self_serve WHERE company='demo'");
+  t("the set answers are still there behind SOS_ASSIST_DEMO=scripted, with no dashes and no model names", ["help", "tool", "company"].every((k) => { const a = require("../../src/assist").setAnswer(k, "X").text; return !/[\u2013\u2014]/.test(a) && !/claude|opus|sonnet|fable|anthropic/i.test(a); }));
   t("another company's conversation is not found from this one", (await mgr.get(`/api/c/plant/assist/conversations/${d.conv.id}`)).status === 404);
 
   // ---- a live answer ----------------------------------------------------------------------------------------------
