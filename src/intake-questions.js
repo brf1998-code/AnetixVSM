@@ -72,7 +72,7 @@ const FIXED = [
     options: [
       { id: "scanners", label: "Barcode or QR scanners" }, { id: "printer", label: "A label printer" }, { id: "spreadsheet", label: "A spreadsheet you keep" },
       { id: "erp", label: "Your ERP or scheduling system" }, { id: "machine", label: "A machine or a PLC" }, { id: "scale", label: "A scale" },
-      { id: "program", label: "Another program" }, { id: "nothing", label: "Nothing, it stands alone" },
+      { id: "web", label: "Websites (looking things up online)" }, { id: "program", label: "Another program" }, { id: "nothing", label: "Nothing, it stands alone" },
     ],
     text: "What does this need to work with that you already use?",
     hint: "The agent asks a short follow-up for each one you tick. For a system, tell me what you call it." },

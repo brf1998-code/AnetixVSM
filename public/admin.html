@@ -628,14 +628,14 @@ async function loadRequests() {
 }
 // An integration request (src/requests.js): the tool, the system, and the switch that lets the tool connect to it
 // (src/connections.js: outside connections are off until Anetix turns them on, one tool at a time).
-const OUTSIDE_WORD = { erp: "ERP", printer: "label printer" };
+const OUTSIDE_WORD = { erp: "ERP", printer: "label printer", web: "web" };
 function integrationLine(x) {
   const on = (x.turned_on || []).includes(x.about_kind);
   const can = OUTSIDE_WORD[x.about_kind];
   return `<div data-integration style="margin:4px 0;padding:6px 8px;border-radius:8px;background:#e7f4f1;color:#0f4d43"><b>Integration:</b> connect ${esc(x.about_system || "an outside system")}${can ? ` (${OUTSIDE_WORD[x.about_kind]})` : x.about_kind ? ` (${esc(x.about_kind)})` : ""} to ${esc(x.about_title || x.about_module || "a tool")}${x.triage_note ? `. <span class="sub">${esc(x.triage_note)}</span>` : ""}<br>`
     + (can ? (on ? `<b class="ok">${OUTSIDE_WORD[x.about_kind]} is turned on for this tool.</b> Its builds may declare it; set it up on the company's connections page. <button class="quiet" onclick="reqTurn(${x.id},'${x.about_kind}',false)">Turn it off</button>`
       : `The ${OUTSIDE_WORD[x.about_kind]} is off for this tool, so no build can reach for it. <button class="primary" onclick="reqTurn(${x.id},'${x.about_kind}',true)">Turn on ${OUTSIDE_WORD[x.about_kind]} for this tool</button>`)
-      : `<span class="sub">The platform has no ${esc(x.about_kind || "such")} connection yet; answer with a word back.</span>`) + `</div>`;
+      : `<span class="sub">The platform has no ${esc(x.about_kind || "such")} connection. If it is one the platform has, turn that on for this tool:</span> ${Object.keys(OUTSIDE_WORD).map((k) => `<button class="quiet" onclick="reqTurn(${x.id},'${k}',true)">Turn on ${OUTSIDE_WORD[k]}</button>`).join(" ")} <span class="sub">Otherwise answer with a word back.</span>`) + `</div>`;
 }
 async function reqTurn(id, kind, on) { await post(`/api/admin/requests/${id}/turn-on`, { kind, on }); loadRequests(); }
 async function setOutside(slug, mod, kind, on) { await post(`/api/admin/companies/${slug}/outside`, { module: mod, kind, on }); }
@@ -924,7 +924,7 @@ function companyCard(c) {
       <div class="sec wide"><h3>Modules</h3>
         ${c.modules.length ? `<table class="list"><tr><th>Module</th><th>On the floor</th><th title="Outside connections are off until Anetix turns them on for the tool">Outside</th><th></th></tr>${c.modules.map(m => `<tr><td><b>${esc(m.title)}</b> <small class="sub">(${esc(m.name)})</small></td>
           <td>${m.live_version ? `v${m.live_version}` : '<span class="warn">not live yet</span>'}${m.staged_version ? ` <small class="sub">v${m.staged_version} staged</small>` : ""}</td>
-          <td style="white-space:nowrap" data-outside="${esc(m.name)}">${["erp", "printer"].map(k => { const on = (m.outside_on || []).includes(k); return `<label style="margin-right:8px;font-size:12px" title="${on ? "Turned on: builds of this tool may connect to it" : "Off: no build of this tool may connect to it"}"><input type="checkbox" ${on ? "checked" : ""} onchange="setOutside('${c.slug}','${m.name}','${k}',this.checked)"> ${k === "erp" ? "ERP" : "Printer"}</label>`; }).join("")}</td>
+          <td style="white-space:nowrap" data-outside="${esc(m.name)}">${["erp", "printer", "web"].map(k => { const on = (m.outside_on || []).includes(k); return `<label style="margin-right:8px;font-size:12px" title="${on ? "Turned on: builds of this tool may connect to it" : "Off: no build of this tool may connect to it"}"><input type="checkbox" ${on ? "checked" : ""} onchange="setOutside('${c.slug}','${m.name}','${k}',this.checked)"> ${k === "erp" ? "ERP" : k === "web" ? "Web" : "Printer"}</label>`; }).join("")}</td>
           <td style="white-space:nowrap">${m.live_version ? `<a href="/c/${c.slug}/m/${m.name}/">Open</a>${hasTour(m.name) ? ` <a class="tourlink" style="margin-left:6px" href="/c/${c.slug}/m/${m.name}/?tour=1">Start tour</a>` : ""}` : ""}</td></tr>`).join("")}</table>` : '<div class="sub">None yet.</div>'}
       </div>
       <div class="sec"><h3>Sign-in</h3>${accessText(c)}${c.demo ? "" : `<br><button class="quiet" onclick="openAccess('${c.slug}', '${jss(c.name)}')">Set passwords</button>`}

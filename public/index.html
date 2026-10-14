@@ -1218,7 +1218,7 @@ const FLAG_WORDS = { not_this_tool: "NOT ABOUT THIS TOOL", new_tool: "A NEW TOOL
 // A request to Anetix (about the software itself): where it is, in the words src/requests.js stateOf uses.
 const ANETIX_LINE = { received: "Sent to Anetix, the people who make this software. Nobody has looked yet.", looking: "Anetix is looking at it.", working: "Anetix is working on it." };
 // an integration request (a tool to connect to an outside system): the same stages, the integration team's words
-const INTEGRATION_LINE = { received: "Sent to Anetix's integration team, who connect outside systems like your ERP or a label printer. Nobody has looked yet.", looking: "Anetix's integration team is looking at it.", working: "Anetix's integration team is setting it up." };
+const INTEGRATION_LINE = { received: "Sent to Anetix's integration team, who connect outside systems like your ERP, a label printer or the web. Nobody has looked yet.", looking: "Anetix's integration team is looking at it.", working: "Anetix's integration team is setting it up." };
 function anetixState(fb) {
   const note = fb.anetix_note ? ` ${fb.anetix_by || "Anetix"} says: "${String(fb.anetix_note).trim()}"` : "";
   const ig = fb.anetix_kind === "integration";

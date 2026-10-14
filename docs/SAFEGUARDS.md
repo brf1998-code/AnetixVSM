@@ -117,6 +117,7 @@ Everything the product connects to, and what decides whether a given company's i
 | The upload scanner | Every uploaded file's bytes, for the length of the scan | Always. Inside the private network, not outside |
 | The plant's own ERP (read only) | Queries the plant's tools ask of it | Off until Anetix turns it on, per tool |
 | A label printer on the plant's device | A label, from the browser to a program on the same device | Off until Anetix turns it on, per tool |
+| The public web, through the AI service's own search and page reading | The question a tool asks and the pages it names; Anthropic searches and reads on its side, so nothing is fetched from the instance | Off until Anetix turns it on, per tool; nothing when the company is walled off |
 | The public label renderer (Labelary) | A label's contents, to draw its preview | Label previews, per company; only when a printer is on |
 | Google or Apple speech recognition | The audio of someone talking into a text box | Talk instead of typing, per company |
 | ntfy (alerts to Anetix's phones) | The company's name, a site's name, a price band, what happened. Never a person's words or a file's name | Always |

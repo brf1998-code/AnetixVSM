@@ -18,6 +18,41 @@ const j = (x) => JSON.stringify(x);
   t("a table name that is not an identifier is refused", !c.declared({ connections: { a: { kind: "files", table: "inventory; drop", key: "id" } } }).ok);
 }
 
+// the web kind (2026-10-13)
+{
+  const d = c.declared({ connections: { web: { kind: "web", label: "Company websites" } } });
+  t("a web connection needs only a label", d.ok && d.connections.web.kind === "web" && d.connections.web.label === "Company websites", j(d));
+  t("a web connection carries no key or login", /carries no "api_key"/.test(c.declared({ connections: { web: { kind: "web", api_key: "x" } } }).errors[0] || ""));
+  t("the web reaches outside, so it is turned on per tool", c.OUTSIDE.includes("web") && /public web/.test(c.OUTSIDE_WORDS.web) && c.KIND_SHORT.web === "Web");
+  t("the builder is told not to reach for it while it is off", /"erp" or "printer" or "web"/.test(c.outsideBrief([], {})) && /look it up online/.test(c.outsideBrief([], {})));
+  t("and that it may declare it when it is on", /turned on for this tool: the public web/.test(c.outsideBrief(["web"], {})));
+  const o = c.webOpts({ urls: ["https://acme.com", "ftp://x", "not a url", "http://ok.example/a b"], json: 1, max_searches: 99, maxFetches: -3, guidance: "x".repeat(5000) });
+  t("look-up options: only http(s) addresses, sizes capped, guidance cut", o.urls.join(",") === "https://acme.com" && o.json === true && o.max_searches <= 8 && o.max_fetches === 5 && o.guidance.length === 4000, j(o));
+  t("a single url is taken as a list", c.webOpts({ url: "https://a.example/" }).urls[0] === "https://a.example/");
+  t("a failure reads in plain words, never a vendor's text", c.plainWebError("529 overloaded_error from api.anthropic.com") === "the look-up service is busy; ask again in a minute" && c.plainWebError("something odd") === "the look-up did not finish; ask again");
+  const stub = c.stubs({ connections: { web: { kind: "web" } } }).web;
+  t("the validator's stand-in has the same surface", typeof stub.start === "function" && typeof stub.result === "function" && typeof stub.research === "function" && typeof stub.status === "function");
+}
+{
+  const a = require("../src/agent");
+  const blocks = [
+    { type: "text", text: "Let me search." },
+    { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "acme" } },
+    { type: "web_search_tool_result", tool_use_id: "s1", content: [{ type: "web_search_result", url: "https://acme.com/", title: "Acme" }, { type: "web_search_result", url: "https://news.example/acme", title: "News" }] },
+    { type: "server_tool_use", id: "f1", name: "web_fetch", input: { url: "https://acme.com/about" } },
+    { type: "web_fetch_tool_result", tool_use_id: "f1", content: { type: "web_fetch_result", url: "https://acme.com/about", content: { type: "document", title: "About Acme" } } },
+    { type: "text", text: "Acme makes widgets ", citations: [{ type: "char_location", url: "https://acme.com/about", title: "About Acme" }] },
+    { type: "text", text: "in Ohio.\n```json\n{\"city\": \"Columbus\"}\n```" },
+  ];
+  const ans = a.webAnswer(blocks);
+  t("the answer is the text after the last tool result, without the 'let me search' line", ans.text.startsWith("Acme makes widgets in Ohio.") && !/Let me search/.test(ans.text), ans.text);
+  t("sources: cited first, then read, then found; one entry an address", ans.sources.map((x) => x.url).join(",") === "https://acme.com/about,https://acme.com/,https://news.example/acme", j(ans.sources));
+  const js = a.webJson(ans.text);
+  t("the JSON block comes out as data, and out of the words", js.data && js.data.city === "Columbus" && js.rest === "Acme makes widgets in Ohio.", j(js));
+  t("no JSON in the answer is data null", a.webJson("Nothing found.").data === null);
+  t("the basic server tools, no beta header needed", a.WEB_TOOLS.search === "web_search_20250305" && a.WEB_TOOLS.fetch === "web_fetch_20250910");
+}
+
 // column matching
 {
   const cols = [{ name: "id", type: "integer" }, { name: "item", type: "text", required: true }, { name: "location", type: "text", required: true }, { name: "qty", type: "integer" }];

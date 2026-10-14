@@ -3788,3 +3788,53 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     that are not set up, which the sign-in ticket and invitation flows already avoid). The prompt for a code is the
     browser's own box. Revocations are checked against the database every ten seconds per session in a second
     process, so a logout reaches another process within ten seconds.
+
+- **The web connection (2026-10-13)** (`src/connections.js` the web kind and `platform.web_jobs`, `src/agent.js runWeb`,
+  `src/runner-child.js` and `src/runner.js` conn.web.*, `principles/MODULE-CONTRACT.md` "web"). Brendan's own CRM
+  tool ("One lead", company Anetix Inc) asked for "an auto web scrub to fill initial information, maybe giving a few
+  different options" and a trigger line from the company's page. The platform had no way out to the web, so the
+  proposer filed it to the integration team as kind "other". Brendan: handle it on our end, no extra guard rails for
+  now. So the web is a fourth connection kind, owned by the platform like the others, and turned on per tool like the
+  ERP and the printer (`connections.OUTSIDE` is erp, printer, web): the builder is told, the module gate refuses a web
+  declaration a build adds while it is off, the proposer and the new tool design hand it off as kind `web`. Nothing
+  else holds it: no list of allowed sites, no approval per look-up, no limit beyond the company's AI budget.
+  - *How it reaches the web.* Through Anthropic's own server tools, `web_search_20250305` and `web_fetch_20250910`
+    (no beta header; `SOS_WEB_SEARCH_TOOL` / `SOS_WEB_FETCH_TOOL` to move to a newer version), on the company's propose
+    model. The searching and reading happen on Anthropic's side, so no address a tool names is ever fetched from this
+    instance and a tool cannot use the web to reach the private network (Postgres, the scanner, anetix-www). web_fetch
+    reads only an address that is in the question or came back from a search, so the tool's start pages (`urls`) go
+    in the question. A `pause_turn` is sent back unchanged to carry on (six calls at most). The answer is the text
+    after the last tool result; sources are what it cites, then what it read, then what the searches found (20 at
+    most). With `json: true` the system prompt asks for one fenced JSON value and it comes back as `data`.
+  - *The surface* (`ctx.connections.<name>`): `start(question, { urls, json, guidance, max_searches, max_fetches })`
+    answers `{ id, status: "running" }` at once; `result(id)` answers `{ id, status, answer, data, sources, searches,
+    pages_read, error, started_at, finished_at }`; `research(question, opts)` waits for the whole thing (in the tool's
+    process it starts and asks every 2 s, because a look-up can outlast both a tool request, `SOS_MODULE_TIMEOUT_MS`,
+    and one question on the private channel); `status()` answers `{ connected, last_used_at, error }`. A look-up runs
+    in the platform's process as a row of `platform.web_jobs` (in the backup, gone with a company's delete); a boot
+    marks one that was running as failed ("the platform restarted while this was being looked up; ask again"). A
+    failure reads in plain words (`plainWebError`), never the vendor's text.
+  - *Held by:* the per-tool switch (checked at every `start`, so turning it off stops look-ups at once, while the
+    declaration a tool already has stays, like the ERP), the data wall (a walled company's tools cannot look anything
+    up, the same as `ai.chat`), and the company's AI budget (`assertUnderCap` with `runtime: true`, like `ai.chat`).
+    Each look-up is on the meter as kind `web` (tokens plus `SOS_WEB_SEARCH_USD`, $0.01 a search), in `ai_usage` as
+    kind `web` and in the record as `web_lookup` (the question and the answer). Sizing: `SOS_WEB_SEARCHES` (8) and
+    `SOS_WEB_FETCHES` (8) the most one look-up may do (5 each by default), `SOS_WEB_MAX_TOKENS` (4000).
+  - *Admin.* The Companies tab's Outside column has Web. An integration request filed as "other" or "machine" offers
+    "Turn on web / ERP / label printer" on the Requests tab, and turning one on from a request rewrites the request's
+    `about_kind`, so its card reads as that kind from then on. The connections page shows a web card (on or off, the
+    last ten look-ups). The intake's "What does this need to work with" has "Websites (looking things up online)".
+    `docs/SAFEGUARDS.md` has its row (what leaves: the question and the pages it names).
+  - *Tests:* `scripts/e2e/web.js` (24, in run-all as web: off and refused at the gate with the builder told; a request
+    filed as "other" turned on as the web from the request; on, a change that declares it deploys and the tool's own
+    process starts a look-up and reads the answer, its sources and its JSON; no model or cost in the answer; the
+    prompt log shows the start page in the question; a failure in plain words; off again, refused), fake marker
+    `ADDWEB` / `ADDWEBALWAYS` (a change declares a web connection and two routes) and `INTEGRATIONWEB` (the proposer
+    hands it off as "other"), `FAILWEB` (the look-up fails). `scripts/test-connections.js` (+14: the declaration, the
+    options, the plain errors, the stand-in, the answer and sources from a real block layout, the JSON), and
+    `scripts/test-modulegate.js` (+1).
+  - *Known limits.* Not tried against the live API from the sandbox (no key there): the first real look-up on the
+    live instance is the test of the block shapes. web_fetch reads text, HTML and PDF, not pages drawn by script.
+    What a page says is passed to the model as information; the system prompt says a page's text is never an
+    instruction, and what comes back is shown in the tool as a suggestion a person accepts, never written straight
+    into a record (the contract tells the builder so).

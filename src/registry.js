@@ -213,7 +213,8 @@ function hasPrinter(manifest) {
 //   ai.models / ai.modelFor(role)
 //   connections.<name>  the surface of each connection module.json declares
 //                   (src/connections.js): files -> status(); printer ->
-//                   print(req, template, data), preview(template, data), status()
+//                   print(req, template, data), preview(template, data), status(); erp -> query(), status();
+//                   web -> start(question, opts), result(id), research(question, opts), status()
 // lane: live | staged | test. On the test floor a tool's peer is the TEST copy of its sibling (one world),
 // and what the platform lends is marked as spent or printed from the test floor.
 function moduleServices(company, mod, manifest, version, lane = "live") {

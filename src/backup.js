@@ -29,6 +29,7 @@ const PLATFORM_TABLES = [
   "price_books", "sites", "orders", "terms_versions",   // paid sites: the price book's versions, the pipeline (src/sites.js), the orders and the terms as signed (src/golive.js)
   "acceptances", "notices", "billing_events",   // stage 3: every acceptance of the Terms (src/agreements.js), the managers' notices (src/notices.js), Stripe's events as applied (src/activate.js)
   "connection_allowances",   // which outside connections Anetix turned on for which tool (src/connections.js)
+  "web_jobs",   // each look-up a tool asked of the web, and what came back (src/connections.js, the web kind)
   "assist_conversations", "assist_messages",   // Ask Anetix: what each manager asked and was answered, the request cards (src/assist.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup

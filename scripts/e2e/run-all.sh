@@ -100,6 +100,9 @@ run rework                 node scripts/e2e/rework.js
 # outside connections are off until Anetix turns them on per tool; "connect Epicor" goes to the integration team
 fresh; rm -f "$LOG/outside-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl"
 run outside                env SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl node scripts/e2e/outside.js
+# the web: on per tool, a look-up from the tool's own process, a request filed as "other" turned on as the web (2026-10-13)
+fresh; rm -f "$LOG/web-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/web-prompts.jsonl"
+run web                    env SOS_PROMPT_LOG=$LOG/web-prompts.jsonl node scripts/e2e/web.js
 # every company that is not a paid site gets the trial features, however it was made; a boot standardizes the rest
 fresh; start "SOS_BROWSER=off"
 run standardize            node scripts/e2e/standardize.js

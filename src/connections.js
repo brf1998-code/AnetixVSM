@@ -53,6 +53,13 @@
 //            draftLookups() has the model write what IT needs to build each
 //            lookup (for Epicor: SQL to paste into BAQ Designer's SQL import,
 //            Kinetic 2024.2 and later), wide on purpose.
+//   web      the public web (2026-10-13): look a company up, search, read a page. The platform asks the AI service
+//            with its own web search and web fetch tools turned on (Anthropic's server tools), so the searching and
+//            the fetching happen on Anthropic's side: no address a tool names is ever fetched from this instance,
+//            and nothing on the private network (the database, the scanner, anetix-www) can be reached through it.
+//            A tool asks start(question, { urls, json }) and gets an id at once, then result(id) until it is done
+//            (a look-up takes longer than a tool's request may: SOS_MODULE_TIMEOUT_MS), or research(...) in the
+//            background. Each ask is a row in platform.web_jobs. Surface: start(), result(), research(), status().
 //
 // Secrets: the ERP login lives in the secrets column, AES-256-GCM with a key
 // that lives only in the platform's env (SOS_CONNECTION_KEY, else derived
@@ -65,7 +72,7 @@ const migrate = require("./migrate");
 const attachments = require("./attachments");
 const { record } = require("./record");
 
-const KINDS = ["files", "printer", "erp"];
+const KINDS = ["files", "printer", "erp", "web"];
 const ERP_FLAVORS = ["sap_odata", "epicor_baq", "json"];
 const ERP_TRANSPORTS = ["direct", "bridge"];
 const ERP_MAX_ROWS = 5000;
@@ -75,6 +82,10 @@ const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
 const JOB_TTL_MS = 10 * 60e3;          // an unclaimed print job expires
 const PREVIEW_TTL_MS = 10 * 60e3;
 const LABELARY = process.env.SOS_LABELARY_URL || "https://api.labelary.com/v1/printers";
+// web: how much one look-up may do. Sizing, not a lock: a tool may ask for fewer, never more.
+const WEB_SEARCHES = Math.max(1, Number(process.env.SOS_WEB_SEARCHES || 8));     // searches in one look-up
+const WEB_FETCHES = Math.max(0, Number(process.env.SOS_WEB_FETCHES || 8));       // pages read in one look-up
+const WEB_MAX_TOKENS = Math.max(500, Number(process.env.SOS_WEB_MAX_TOKENS || 4000));
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS platform.connections (
@@ -146,8 +157,31 @@ CREATE TABLE IF NOT EXISTS platform.connection_allowances (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (company, module, kind)
 );
+CREATE TABLE IF NOT EXISTS platform.web_jobs (
+  id          SERIAL PRIMARY KEY,
+  company     TEXT NOT NULL,
+  module      TEXT NOT NULL,
+  connection  TEXT NOT NULL,
+  lane        TEXT NOT NULL DEFAULT 'live',
+  question    TEXT NOT NULL,
+  opts        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status      TEXT NOT NULL DEFAULT 'running',           -- running | done | failed
+  answer      TEXT,
+  data        JSONB,
+  sources     JSONB NOT NULL DEFAULT '[]'::jsonb,
+  searches    INTEGER NOT NULL DEFAULT 0,
+  fetches     INTEGER NOT NULL DEFAULT 0,
+  error       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS web_jobs_tool ON platform.web_jobs (company, module, id);
 `;
-async function init() { await q(SCHEMA); }
+async function init() {
+  await q(SCHEMA);
+  // a look-up runs in the platform's process: one that was running when it stopped never finishes, so it says so
+  await q("UPDATE platform.web_jobs SET status='failed', error='the platform restarted while this was being looked up; ask again', finished_at=now() WHERE status='running'");
+}
 
 // ---- outside connections are off until Anetix turns them on, one tool at a time (2026-09-28) ----------------------
 // Brendan, after a PE partner's demo tool grew a "Refresh from Epicor" button that could only ever answer "could not
@@ -160,9 +194,9 @@ async function init() { await q(SCHEMA); }
 // (src/intake.js), every build is told (buildPrompt, the module build), and the module gate refuses a declaration a
 // build ADDS that is not turned on (src/modulegate.js, rule connection-not-on). A declaration a tool already had is
 // left alone: it was there before this rule, and stopping every later build would not take it away.
-const OUTSIDE = ["erp", "printer"];
-const OUTSIDE_WORDS = { erp: "the company's ERP or scheduling system", printer: "a label printer" };
-const KIND_SHORT = { erp: "ERP", printer: "Label printer" };
+const OUTSIDE = ["erp", "printer", "web"];
+const OUTSIDE_WORDS = { erp: "the company's ERP or scheduling system", printer: "a label printer", web: "the public web (searching and reading websites)" };
+const KIND_SHORT = { erp: "ERP", printer: "Label printer", web: "Web" };
 async function allowances(company, mod = null) {
   const rows = (await q(`SELECT company, module, kind, system, note, by_name, created_at FROM platform.connection_allowances WHERE company=$1 ${mod ? "AND module=$2" : ""} ORDER BY module, kind`, mod ? [company, mod] : [company])).rows;
   return rows;
@@ -200,7 +234,7 @@ function outsideBrief(allowed, fromManifest) {
   const kept = outsideDeclared(fromManifest).filter((d) => !on.includes(d.kind));
   const off = OUTSIDE.filter((k) => !on.includes(k));
   let s = `Outside connections: ${on.length ? `turned on for this tool: ${on.map((k) => OUTSIDE_WORDS[k]).join(" and ")}. You may declare ${on.length === 1 ? "that kind" : "those kinds"} in module.json "connections".` : "none is turned on for this tool."}`;
-  if (off.length) s += ` Not turned on: ${off.map((k) => OUTSIDE_WORDS[k]).join(" and ")}. Anetix's integration team turns those on for each tool; until then do NOT declare a connection of kind ${off.map((k) => `"${k}"`).join(" or ")}, and do not add a screen, button or message that reaches for one (no "refresh from the ERP", no "print label"). Where a value would come from one of them, people type it in, scan it, or the manager loads a spreadsheet (a "files" connection, always allowed). The platform refuses a build that adds a connection that is not turned on.`;
+  if (off.length) s += ` Not turned on: ${off.map((k) => OUTSIDE_WORDS[k]).join(" and ")}. Anetix's integration team turns those on for each tool; until then do NOT declare a connection of kind ${off.map((k) => `"${k}"`).join(" or ")}, and do not add a screen, button or message that reaches for one (no "refresh from the ERP", no "print label", no "look it up online"). Where a value would come from one of them, people type it in, scan it, or the manager loads a spreadsheet (a "files" connection, always allowed). The platform refuses a build that adds a connection that is not turned on.`;
   if (kept.length) s += ` This tool already declares ${kept.map((d) => `"${d.name}" (${d.kind})`).join(", ")} from before this rule: leave the declaration as it is, and build nothing new that depends on it.`;
   return s;
 }
@@ -264,6 +298,9 @@ function declared(manifest) {
         n.queries[qn] = { params, fields, about: String(qd.about || "").slice(0, 200) };
       }
       for (const k of ["url", "base_url", "user", "password", "path", "host"]) if (d[k] != null) errors.push(`connection "${name}": a module never carries "${k}"; the admin enters where the ERP is and the login on the platform`);
+    }
+    if (d.kind === "web") {
+      for (const k of ["api_key", "key", "token", "password", "user", "proxy"]) if (d[k] != null) errors.push(`connection "${name}": a web connection carries no "${k}"; the platform does the searching and reading`);
     }
     out[name] = n;
   }
@@ -937,6 +974,86 @@ function demoEpicor(req, res) {
   res.set("Cache-Control", "no-store").json({ "@odata.context": "demo", value: out.slice(skip, skip + top) });
 }
 
+// ---- web: the public web, through the AI service's own search and fetch (2026-10-13) --------------------------------
+// Brendan's own CRM tool ("One lead") asked to fill a lead in from the company's website and draft a trigger line from
+// it. The platform had no way out to the web, so it went to the integration team; this is that way out. Turned on per
+// tool like the ERP and the printer (OUTSIDE above). Nothing else holds it: no list of allowed sites, no approval per
+// look-up. The searching and reading happen on Anthropic's side (web_search, web_fetch), never from this instance, so a
+// tool cannot use it to reach the private network. Cost: tokens plus the search fee, filed as ai_usage kind "web".
+const webRunning = new Map();   // job id -> promise, while it runs in this process
+function webOpts(opts) {
+  const o = opts && typeof opts === "object" ? opts : {};
+  const urls = (Array.isArray(o.urls) ? o.urls : o.url ? [o.url] : []).map((u) => String(u || "").trim()).filter((u) => /^https?:\/\/[^\s]+$/i.test(u) && u.length <= 250).slice(0, 10);
+  const num = (v, max, dflt) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.min(max, Math.floor(Number(v))) : dflt);
+  return {
+    urls,
+    json: Boolean(o.json),
+    guidance: o.guidance == null ? "" : String(o.guidance).slice(0, 4000),
+    max_searches: num(o.max_searches != null ? o.max_searches : o.maxSearches, WEB_SEARCHES, Math.min(5, WEB_SEARCHES)),
+    max_fetches: num(o.max_fetches != null ? o.max_fetches : o.maxFetches, WEB_FETCHES, Math.min(5, WEB_FETCHES)),
+  };
+}
+function webView(j) {
+  if (!j) return null;
+  return { id: j.id, status: j.status, question: j.question, answer: j.answer || null, data: j.data == null ? null : j.data, sources: j.sources || [],
+    searches: j.searches || 0, pages_read: j.fetches || 0, error: j.error || null, started_at: j.created_at, finished_at: j.finished_at || null };
+}
+async function webStart(company, mod, name, lane, question, opts) {
+  const text = String(question == null ? "" : question).trim();
+  if (!text) throw Object.assign(new Error("ask a question: what should be looked up"), { status: 400 });
+  if (text.length > 8000) throw Object.assign(new Error("the question is over 8,000 characters"), { status: 400 });
+  if (!(await allowedKinds(company, mod)).includes("web")) throw Object.assign(new Error("the web is not turned on for this tool yet: Anetix's integration team turns it on"), { status: 409 });
+  if (await require("./datawall").isWalled(company)) throw Object.assign(new Error("AI reading of the company's data is switched off for this company, so nothing can be looked up for it. Anetix can switch it on."), { status: 409 });
+  const agent = require("./agent");
+  await agent.assertUnderCap(company, { runtime: true });   // a live tool's own AI, like ai.chat
+  const o = webOpts(opts);
+  const j = (await q("INSERT INTO platform.web_jobs (company, module, connection, lane, question, opts) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
+    [company, mod, name, lane || "live", text, JSON.stringify(o)])).rows[0];
+  const p = runWebJob(j).finally(() => webRunning.delete(j.id));
+  webRunning.set(j.id, p);
+  p.catch(() => {});
+  return { id: j.id, status: "running" };
+}
+async function runWebJob(j) {
+  const agent = require("./agent");
+  const o = j.opts || {};
+  try {
+    const model = await agent.modelFor(j.company, "propose");
+    const out = await agent.runWeb({ model, company: j.company, question: j.question, urls: o.urls, json: o.json, guidance: o.guidance, maxSearches: o.max_searches, maxFetches: o.max_fetches, maxTokens: WEB_MAX_TOKENS });
+    await q("UPDATE platform.web_jobs SET status='done', answer=$2, data=$3, sources=$4, searches=$5, fetches=$6, finished_at=now() WHERE id=$1",
+      [j.id, out.text, out.data == null ? null : JSON.stringify(out.data), JSON.stringify(out.sources || []), out.searches || 0, out.fetches || 0]);
+    await agent.recordUsage(j.company, j.module, "web", model, out.costUsd, { job_id: j.id, searches: out.searches || 0, pages_read: out.fetches || 0, ...(j.lane === "test" ? { lane: "test" } : {}) });
+    await setStatus(j.company, j.module, j.connection, "connected", { detail: { last_used_at: new Date().toISOString() } });
+    await record("web_lookup", { company: j.company, module: j.module, actor: "agent", before: j.question.slice(0, 2000), after: String(out.text || "").slice(0, 2000), detail: { connection: j.connection, job_id: j.id, searches: out.searches || 0, pages_read: out.fetches || 0, sources: (out.sources || []).length, ...(j.lane === "test" ? { lane: "test" } : {}) } });
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 500);
+    await q("UPDATE platform.web_jobs SET status='failed', error=$2, finished_at=now() WHERE id=$1", [j.id, plainWebError(msg)]).catch(() => {});
+    if (e && e.costUsd) await agent.recordUsage(j.company, j.module, "web", null, e.costUsd, { job_id: j.id, failed: true }).catch(() => {});
+    await setStatus(j.company, j.module, j.connection, "error", { error: plainWebError(msg) }).catch(() => {});
+    console.error(`[web] ${j.company}/${j.module} job ${j.id}: ${msg}`);
+  }
+}
+// what the tool (and so the floor) reads when a look-up fails: never a vendor's error text
+function plainWebError(msg) {
+  if (/credit|cap|budget/i.test(msg)) return "the AI budget for this company is used up";
+  if (/overloaded|529|rate|429|timeout|connection/i.test(msg)) return "the look-up service is busy; ask again in a minute";
+  return "the look-up did not finish; ask again";
+}
+async function webResult(company, mod, name, id) {
+  if (!/^\d{1,9}$/.test(String(id))) throw Object.assign(new Error("which look-up?"), { status: 400 });
+  const j = (await q("SELECT * FROM platform.web_jobs WHERE id=$1 AND company=$2 AND module=$3 AND connection=$4", [Number(id), company, mod, name])).rows[0];
+  if (!j) throw Object.assign(new Error("no such look-up for this tool"), { status: 404 });
+  return webView(j);
+}
+async function webResearch(company, mod, name, lane, question, opts) {
+  const { id } = await webStart(company, mod, name, lane, question, opts);
+  await (webRunning.get(id) || Promise.resolve());
+  return webResult(company, mod, name, id);
+}
+async function webJobs(company, mod, name, limit = 10) {
+  return (await q("SELECT * FROM platform.web_jobs WHERE company=$1 AND module=$2 AND connection=$3 ORDER BY id DESC LIMIT $4", [company, mod, name, Math.min(100, Math.max(1, Number(limit) || 10))])).rows.map(webView);
+}
+
 // ---- the device cookie ------------------------------------------------------------------
 // Every browser that opens a module page or the connections page gets a
 // random device id, so a print job goes back to the device that asked for it.
@@ -975,6 +1092,7 @@ function surfaces(company, mod, version, manifest, lane = "live") {
       const det = (c && c.detail) || {};
       if (d.kind === "files") return { kind: "files", connected: Boolean(c && c.status === "connected"), table: d.table, last_loaded_at: det.last_loaded_at || null, rows: det.last_rows || null, filename: det.last_file || null };
       if (d.kind === "erp") { const s = erpSettings(c); const defined = {}; for (const qn of Object.keys(d.queries)) defined[qn] = Boolean(s.queries[qn] && s.queries[qn].path); return { kind: "erp", connected: Boolean(c && c.status === "connected"), queries: defined, last_fetched_at: det.last_fetched_at || null, error: (c && c.last_error) || null }; }
+      if (d.kind === "web") return { kind: "web", connected: (await allowedKinds(company, mod)).includes("web"), last_used_at: det.last_used_at || null, error: (c && c.status === "error" && c.last_error) || null };
       return { kind: "printer", connected: Boolean(c && c.status === "connected"), printers: det.printers || [], last_printed_at: det.last_printed_at || null, error: (c && c.last_error) || null };
     };
     if (d.kind === "erp") out[name] = {
@@ -985,6 +1103,12 @@ function surfaces(company, mod, version, manifest, lane = "live") {
       },
     };
     if (d.kind === "files") out[name] = { kind: "files", status };
+    if (d.kind === "web") out[name] = {
+      kind: "web", status,
+      start: (question, opts) => webStart(company, mod, name, lane, question, opts),
+      result: (id) => webResult(company, mod, name, id),
+      research: (question, opts) => webResearch(company, mod, name, lane, question, opts),
+    };
     if (d.kind === "printer") out[name] = {
       kind: "printer", status,
       async print(req, template, data) {
@@ -1013,14 +1137,21 @@ function stubs(manifest) {
     ? { kind: "printer", status: async () => ({ kind: "printer", connected: false, printers: [] }), print: async () => ({ job_id: 0, queued: false, device: false, zpl: "" }), preview: async () => ({ zpl: "", png: null }) }
     : d.kind === "erp"
     ? { kind: "erp", status: async () => ({ kind: "erp", connected: false, queries: {} }), query: async () => { throw new Error("not connected yet"); } }
+    : d.kind === "web"
+    ? webStub()
     : { kind: "files", status: async () => ({ kind: "files", connected: false, table: d.table }) };
   return out;
+}
+
+function webStub() {
+  return { kind: "web", status: async () => ({ kind: "web", connected: false }), start: async () => { throw new Error("not connected yet"); }, result: async () => ({ status: "failed", error: "not connected yet" }), research: async () => { throw new Error("not connected yet"); } };
 }
 
 // ---- the connections page's view of a company --------------------------------------------
 const KIND_TEXT = {
   files: { what: "A spreadsheet the company keeps, loaded into one of the module's tables. Upload it here whenever it changes; matching rows are replaced, the rest are added.", person: "Nothing to install. Keep the header row as it is so the columns match." },
   printer: { what: "Labels printed on a Zebra printer from the PC or tablet that asks for them. The module keeps the label layouts; the platform sends each label to the printer chosen on that device.", person: "On each PC or tablet that prints: install Zebra Browser Print (free, from zebra.com), open this page or a module screen, choose the printer when asked, print a test label." },
+  web: { what: "Looks things up on the public web for the tool: searches, and reads a company's website or another public page. Only the question the tool asks goes out; nothing is written anywhere.", person: "Nothing. Anetix turns it on for the tool." },
   erp: { what: "Read-only lookups in the company's ERP or scheduling system, a short fixed list the module names. The platform runs each lookup, keeps the answer for a few minutes, and shows the last good answer if the system is down. Nothing is ever written back.", person: "Send the note below to IT and get a read-only login. Anetix enters the login and the lookups on the platform; you press Test." },
 };
 // admin: the whole ERP card. Anyone else: the ERP stays on the admin side
@@ -1047,6 +1178,11 @@ async function companyView(company, { admin = false } = {}) {
         item.uploads = (await q("SELECT id, filename, row_count, status, loaded_rows, actor, created_at, loaded_at FROM platform.connection_uploads WHERE company=$1 AND module=$2 AND connection=$3 AND status='loaded' ORDER BY id DESC LIMIT 5", [company, m.name, name])).rows;
       }
       if (d.kind === "printer") { item.templates = d.templates; item.settings = printerSettings(c); item.jobs = await jobs(company, m.name, name, 10); }
+      if (d.kind === "web") {
+        const on = (await allowedKinds(company, m.name)).includes("web");
+        item.status = on ? (item.status === "error" ? "error" : "connected") : "not_connected";
+        item.lookups = (await webJobs(company, m.name, name, 10)).map((j) => ({ id: j.id, status: j.status, question: j.question.slice(0, 200), sources: j.sources.length, error: j.error, started_at: j.started_at }));
+      }
       if (d.kind === "erp" && !admin) {
         list.push({ name, kind: "erp", label: d.label, status: item.status, managed: true, text: { what: "What your ERP says, shown where the floor needs it. Read only: nothing is ever written back.", person: "Nothing. Anetix sets this up and keeps it working with your IT." } });
         continue;
@@ -1088,7 +1224,7 @@ async function testLabel(company, mod, name, req) {
   return { job_id: job.id, zpl };
 }
 async function deleteCompany(company) {
-  for (const t of ["print_jobs", "connection_uploads", "erp_cache", "connections", "connection_allowances"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
+  for (const t of ["print_jobs", "connection_uploads", "erp_cache", "connections", "connection_allowances", "web_jobs"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 
 module.exports = {
@@ -1099,4 +1235,5 @@ module.exports = {
   erpSettings, fillPath, rowsOf, mapRows, authHeaders, erpFetch, erpQuery, setErp, testErp, itNote, httpGet, ERP_FLAVORS, ERP_TRANSPORTS, demoErp, DEMO_ROWS,
   nextLink, autoNames, columnsOf, resolveFields, fieldAudit, auditLine, writeFieldsDoc, draftLookups, ERP_PAGE, demoEpicor, DEMO_JOBS,
   OUTSIDE, OUTSIDE_WORDS, KIND_SHORT, allowances, allowedKinds, setAllowed, outsideDeclared, outsideBrief,
+  webOpts, webStart, webResult, webResearch, webJobs, webStub, plainWebError,
 };

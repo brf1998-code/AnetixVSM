@@ -89,6 +89,22 @@ function services(mod, spec) {
       print: (req, template, data) => ask(mod, "conn.print", { name, template, data: data || {}, device: (req && req.headers && req.headers["x-sos-device"]) || null }),
       preview: (template, data) => ask(mod, "conn.preview", { name, template, data: data || {} }),
     };
+    else if (kind === "web") connections[name] = {
+      kind, status,
+      start: (question, opts) => ask(mod, "conn.web.start", { name, question, opts: opts || {} }),
+      result: (id) => ask(mod, "conn.web.result", { name, id }),
+      // the whole look-up, waited for here: started, then asked after every 2 s (a look-up can take longer than one
+      // question on the private channel may wait)
+      async research(question, opts) {
+        const { id } = await ask(mod, "conn.web.start", { name, question, opts: opts || {} });
+        const until = Date.now() + 10 * 60e3;
+        for (;;) {
+          const r = await ask(mod, "conn.web.result", { name, id });
+          if (!r || r.status !== "running" || Date.now() > until) return r;
+          await new Promise((res) => setTimeout(res, 2000));
+        }
+      },
+    };
     else connections[name] = { kind, status };
   }
   return {

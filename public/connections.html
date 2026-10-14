@@ -118,9 +118,15 @@ function card(m, c) {
       <div id="t-${id}"></div>
       <details style="margin-top:8px"><summary class="sub" style="cursor:pointer">The note to send IT (plain words, with the technical part filled in as far as it is known)</summary><pre class="note">${esc(c.it_note)}</pre></details>
       ${adminErp(m, c)}`;
+  } else if (c.kind === "web") {
+    const lk = c.lookups || [];
+    body = `
+      <div class="sub" style="margin-top:6px">${c.status === "not_connected" ? "<span class='warn'>Not turned on for this tool yet: Anetix turns it on.</span>" : c.detail.last_used_at ? `Last look-up ${when(c.detail.last_used_at)}.` : "Nothing looked up yet."}
+        ${c.last_error && c.status === "error" ? `<span class="bad">Last trouble: ${esc(c.last_error)}</span>` : ""}</div>
+      ${lk.length ? `<div class="tw"><table><tr><th>When</th><th>Asked</th><th>Sources</th><th>Result</th></tr>${lk.map(j => `<tr><td>${when(j.started_at)}</td><td>${esc(j.question)}</td><td>${j.sources}</td><td class="${j.status === "done" ? "ok" : j.status === "failed" ? "bad" : "warn"}">${esc(j.status)}${j.error ? `: ${esc(j.error)}` : ""}</td></tr>`).join("")}</table></div>` : ""}`;
   }
   return `<div class="card" id="c-${id}">
-    <div class="head"><b>${esc(c.label)}</b> ${status} <span class="kind">${c.kind === "files" ? "spreadsheet" : c.kind === "printer" ? "label printer" : "ERP, read only"}</span></div>
+    <div class="head"><b>${esc(c.label)}</b> ${status} <span class="kind">${c.kind === "files" ? "spreadsheet" : c.kind === "printer" ? "label printer" : c.kind === "web" ? "the web" : "ERP, read only"}</span></div>
     <div class="sub">${esc(c.text.what)} <b>What a person does:</b> ${esc(c.text.person)}</div>
     ${body}
   </div>`;

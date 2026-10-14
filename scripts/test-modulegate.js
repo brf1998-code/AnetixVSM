@@ -208,7 +208,13 @@ t("ordinary headers are fine", gate.check({ files: mod(wrap(`  router.get("/x.cs
   const cx = require("../src/connections");
   const brief = cx.outsideBrief([], { connections: erp });
   t("the builder's brief: nothing on, what not to build, and the old declaration left alone", /none is turned on for this tool/.test(brief) && /do NOT declare a connection of kind "erp" or "printer"/.test(brief) && /already declares "epicor" \(erp\)/.test(brief) && !/[\u2013\u2014]/.test(brief), brief);
-  t("the builder's brief when the ERP is on", /turned on for this tool: the company's ERP or scheduling system/.test(cx.outsideBrief(["erp"], null)) && /do NOT declare a connection of kind "printer",/.test(cx.outsideBrief(["erp"], null)));
+  t("the builder's brief when the ERP is on", /turned on for this tool: the company's ERP or scheduling system/.test(cx.outsideBrief(["erp"], null)) && /do NOT declare a connection of kind "printer" or "web",/.test(cx.outsideBrief(["erp"], null)));
+  t("a web declaration nobody turned on is refused, and passes once the web is on", (() => {
+    const files = { "module.json": JSON.stringify({ name: "t", connections: { web: { kind: "web", label: "Sites" } } }) };
+    const off = require("../src/modulegate").check({ files, fromFiles: { "module.json": "{}" }, outside: { allowed: [] } });
+    const on = require("../src/modulegate").check({ files, fromFiles: { "module.json": "{}" }, outside: { allowed: ["web"] } });
+    return off.violations.some((v) => v.rule === "connection-not-on" && /public web/.test(v.what)) && !on.violations.some((v) => v.rule === "connection-not-on");
+  })());
   const split = require("../src/intake").splitHandoffs({ connections: [{ kind: "erp", name: "Epicor", what_for: "late jobs" }, { kind: "scanners", name: "scanners" }, { kind: "printer", name: "Zebra" }], handoffs: [{ kind: "erp", system: "epicor", would_add: "x", until: "y" }] }, ["printer"]);
   t("a design keeps what is on and hands off the rest, once per system", split.connections.map((c) => c.kind).join(",") === "scanners,printer" && split.handoffs.length === 1 && split.handoffs[0].kind === "erp", split); }
 

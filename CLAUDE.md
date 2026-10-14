@@ -181,6 +181,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Notices fold into one line; switch a site on by hand, payment to follow (2026-10-13)
 - The company MCP (2026-10-13)
 - The outside audit 1A: sign-in fixes (2026-10-13)
+- The web connection (2026-10-13)
 
 ## What this is
 
@@ -360,6 +361,10 @@ tool list, 401 from the API) proves the CLI itself starts.
   (3310), `SOS_SCAN_TIMEOUT_MS` (20000), `SOS_SCAN_SWEEP_MIN` (60; 0 = no look-behind), `SOS_SCAN_RESCAN_DAYS` (7),
   `SOS_SCAN_STALE_DAYS` (3: signatures older than this are a fault). `SOS_LABELARY_URL` (the public label renderer;
   a stand-in in the tests only).
+- The web connection (`src/connections.js`, "The web connection"): `SOS_WEB_SEARCHES` (8) and `SOS_WEB_FETCHES` (8),
+  the most searches and pages one look-up may do; `SOS_WEB_MAX_TOKENS` (4000); `SOS_WEB_SEARCH_USD` (0.01, the search
+  fee on the meter); `SOS_WEB_SEARCH_TOOL` / `SOS_WEB_FETCH_TOOL` (the server tool versions, `web_search_20250305` and
+  `web_fetch_20250910`). None needs setting.
 - Ask Anetix (`src/assist.js`): `SOS_ASSIST_STEPS` (8: model calls in one answer), `SOS_ASSIST_MAX_TOKENS` (1500 a
   call), `SOS_ASSIST_HISTORY` (20: earlier messages the model sees), `SOS_ASSIST_TURNS_DAY` (120 questions a person a
   day, a loop guard), `SOS_ASSIST_FILES_DAY` (20 requests sent to Reviewing a person a day), `SOS_ASSIST_TOOL_CHARS`
@@ -539,7 +544,7 @@ Passwords live only in Railway; never commit them.
   addition only if a device-side program must be reached, and gate rules for
   its declaration. Never let module code hold a credential, a printer address
   or a file the platform did not hand it. A connection that reaches outside
-  (`connections.OUTSIDE`: erp, printer) is declared only once an admin has
+  (`connections.OUTSIDE`: erp, printer, web) is declared only once an admin has
   turned that kind on for that tool (`platform.connection_allowances`); the
   builder is told and the module gate refuses a new one that is not on. Never
   let a missing switch mean on, and a request to connect one goes to the

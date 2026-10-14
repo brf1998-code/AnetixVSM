@@ -94,8 +94,9 @@ things the apps did are listed.
 ## Outside systems
 
 Spreadsheets can be uploaded to a tool on the Printers and spreadsheets page, and barcode scanners work like a
-keyboard. A label printer or the company's ERP is connected by Anetix, one tool at a time: a request to connect one
-goes to the Anetix integration team rather than being built, and they set it up with the company.
+keyboard. A label printer, the company's ERP, or the web (looking a company up, reading its website) is connected by
+Anetix, one tool at a time: a request to connect one goes to the Anetix integration team rather than being built, and
+they set it up with the company. Once the web is on for a tool, a change to that tool can use it like any other change.
 
 ## Who sees what
 

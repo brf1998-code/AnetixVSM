@@ -21,6 +21,8 @@ try {
     ? { kind, status: async () => ({ kind, connected: false, printers: [] }), print: async () => ({ job_id: 0, queued: false, device: false, zpl: "" }), preview: async () => ({ zpl: "", png: null }) }
     : kind === "erp"
     ? { kind, status: async () => ({ kind, connected: false, queries: {} }), query: async () => { throw new Error("not connected yet"); } }
+    : kind === "web"
+    ? { kind, status: async () => ({ kind, connected: false }), start: async () => { throw new Error("not connected yet"); }, result: async () => ({ status: "failed", error: "not connected yet" }), research: async () => { throw new Error("not connected yet"); } }
     : { kind, status: async () => ({ kind, connected: false }) };
   const r = make({ express, db: async () => ({ rows: [] }), requireManager: (_req, _res, next) => next(), peer: () => null, agentDoc: async () => "", ai: { models: [], modelFor: async () => null, chat: async () => ({ text: "" }) }, manifest: spec.manifest || {}, moduleName: spec.slug, company: "check", connections });
   if (!r || typeof r !== "function") out({ ok: false, error: "routes.js did not return an express router" });

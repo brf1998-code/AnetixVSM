@@ -246,6 +246,8 @@ async function serve(rec, m) {
     else if (m.name === "conn.status") value = await conn(a.name).status();
     else if (m.name === "conn.query") value = await conn(a.name).query(a.qname, a.params);
     else if (m.name === "conn.preview") value = await conn(a.name).preview(a.template, a.data);
+    else if (m.name === "conn.web.start") value = await conn(a.name).start(a.question, a.opts);
+    else if (m.name === "conn.web.result") value = await conn(a.name).result(a.id);
     else if (m.name === "conn.print") value = await conn(a.name).print({ headers: { cookie: /^[a-f0-9]{24}$/.test(String(a.device || "")) ? `sos_device=${a.device}` : "" } }, a.template, a.data);
     else throw new Error("the platform lends no such thing");
     reply({ value: value === undefined ? null : JSON.parse(JSON.stringify(value)) });

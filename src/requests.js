@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS feedback_platform ON platform.feedback (status, id DE
 ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS anetix_kind TEXT;      -- NULL (the software itself) | integration
 ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS about_module TEXT;     -- integration: the tool it is for
 ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS about_system TEXT;     -- integration: the system, as the company calls it
-ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS about_kind TEXT;       -- integration: erp | printer | machine | scale | other
+ALTER TABLE platform.feedback ADD COLUMN IF NOT EXISTS about_kind TEXT;       -- integration: erp | printer | web | machine | scale | other
 `;
 async function init() { await q(SCHEMA); }
 
@@ -89,7 +89,7 @@ async function list(status = "open") {
   return { requests: rows.map((r) => ({ ...r, turned_on: r.turned_on || [], ...stateOf(r), stage: STAGES.includes(r.anetix_stage) ? r.anetix_stage : "received" })), open: counts.open, untouched: counts.untouched };
 }
 
-const IG_KINDS = ["erp", "printer", "machine", "scale", "other"];
+const IG_KINDS = ["erp", "printer", "web", "machine", "scale", "other"];
 const igKind = (k) => (IG_KINDS.includes(String(k || "")) ? String(k) : "other");
 // A request the proposer read as a connection to an outside system that is not turned on for its tool: it becomes a
 // request to Anetix's integration team. fb: the feedback row as it arrived. Returns the updated row.
@@ -183,6 +183,9 @@ router.post("/api/admin/requests/:id(\\d{1,9})/turn-on", requireAdmin, json, gua
   const kind = String((req.body || {}).kind || r.about_kind || "");
   const on = (req.body || {}).on !== false;
   const turned = await require("./connections").setAllowed(r.company, r.about_module, kind, on, { system: r.about_system, note: `request #${r.id}` }, who(req));
+  // a request the proposer filed as "other" (a kind the platform did not have then, like the web before 2026-10-13) is
+  // about the kind the integration team turned on for it, so its card reads that way from now on
+  if (on && kind !== r.about_kind) await q("UPDATE platform.feedback SET about_kind=$2 WHERE id=$1", [r.id, kind]);
   res.json({ ok: true, turned_on: turned.map((a) => a.kind) });
 }));
 

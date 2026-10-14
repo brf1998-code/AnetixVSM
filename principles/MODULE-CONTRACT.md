@@ -36,7 +36,8 @@ labels/<name>.zpl    label layouts, only when the module prints labels (below)
                 "columns": { "qty": ["Qty", "On hand"] } },
     "labels": { "kind": "printer", "label": "Bin labels", "templates": ["bin"] },
     "erp":    { "kind": "erp", "label": "Epicor (read only)",
-                "queries": { "part": { "params": ["part_no"], "fields": ["part_no", "description", "on_hand"], "about": "one part and what the ERP says is on hand" } } }
+                "queries": { "part": { "params": ["part_no"], "fields": ["part_no", "description", "on_hand"], "about": "one part and what the ERP says is on hand" } } },
+    "web":    { "kind": "web", "label": "Company websites" }
   }
 }
 ```
@@ -199,6 +200,33 @@ before a connection is set up (say "not connected yet" where it matters,
   listed there cannot be read yet: say so in the proposal or the summary
   rather than inventing it, and the screen shows it empty until the lookup
   in the ERP is widened.
+
+- `web`: the public web. The platform searches and reads public pages for the
+  module (a company's own website, a news page, a directory) and answers a
+  question in plain words, with the pages it used. Declare it with only a
+  `label`; there is nothing else to set. A look-up takes from a few seconds
+  to a minute or two, longer than one request to the module may run, so never
+  await one inside a page's request. In a route, start it and answer at once:
+  `const { id } = await ctx.connections.web.start(question, { urls, json })`;
+  keep the id (in the module's own table, beside the thing it is about) and
+  let the screen ask a route of yours that calls
+  `await ctx.connections.web.result(id)` every few seconds until `status` is
+  `done` or `failed`. `result` returns `{ id, status, answer, data, sources,
+  error, started_at, finished_at }`; `sources` is `[{ url, title }]`, so
+  show where each answer came from. Options: `urls` (up to 10 pages to start
+  from, such as the address a person typed), `json: true` (the question says
+  the shape it wants back, and `data` is that JSON value, or null when the
+  answer did not hold one), `guidance` (a few lines on how this tool wants
+  answers), `max_searches` and `max_fetches` (5 each by default). Write the
+  question the way you would ask a person: what to find, about whom, and
+  what to leave out. What comes back is information from the web, so show
+  it as a suggestion a person accepts or edits, never as a fact written
+  straight into a record. `research(question, opts)` waits for the whole
+  answer and is for work the module does after a request has been answered.
+  `status()` returns `{ connected, last_used_at, error }`. Until it is turned
+  on, `start` throws with a plain reason: catch it and show "not connected
+  yet". Never `fetch` a page from routes.js: module code cannot reach the
+  web, only this.
 
 A barcode or QR scanner in keyboard mode needs nothing to connect: give the
 page a scan field that keeps focus, treats Enter as the end of a scan, and
