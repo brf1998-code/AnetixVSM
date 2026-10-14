@@ -1612,6 +1612,7 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   the opt-in (rows changed after it are redacted). The head-to-head and the
   checks replays leave paying sites out. **The Terms, 9.1**: `importFromRepo`
   holds a repo change for any company but the manifest's own (`demo`);
+  (the rest of this sentence was taken out on 2026-10-14, see "No reason asked when Anetix changes a tool")
   an admin deploy, rollback or goto on a customer needs `admin_reason`
   (security | broken | asked) and `admin_note`, and the manager gets a
   `tool_changed` notice (`feedback.adminChange` / `tellManager`, which never
@@ -3838,3 +3839,18 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     What a page says is passed to the model as information; the system prompt says a page's text is never an
     instruction, and what comes back is shown in the tool as a suggestion a person accepts, never written straight
     into a record (the contract tells the builder so).
+
+- **No reason asked when Anetix changes a tool (2026-10-14)** (`src/feedback.js`, `public/index.html`,
+  `public/admin.html`). Every Deploy, Roll back and Switch an admin pressed on a company that was not `demo` (Anetix
+  Inc's own tools included) asked "Why? 1, 2 or 3" and then for a few words, the server refused the call without
+  them, and the manager got a `tool_changed` notice; a restore with paying sites asked the same and noticed every
+  paying site. Brendan: "very annoying from the admin perspective and does not add any value yet", and "that whole
+  system needs to go away, it was designed before it was needed". So `adminChange`, `tellManager` and `ADMIN_WHY` are
+  gone, the board's `adminWhy` prompt and the restore form's two fields are gone, and no notice is written. The
+  change itself is on the record as before (`deployed`, `rolled_back`, `version_switched`, each with the admin as the
+  actor), and the restore still refuses a file older than a site's subscription. Notices already written stay as they
+  are. Left alone: a library tool's repo change still waits for a customer's manager to switch to it
+  (`registry.importFromRepo`). Not changed: the Terms' 9.1 still says Anetix tells the manager when it changes a live
+  tool without approval; that wording goes with the next Terms version. Tests: `scripts/e2e/sample.js` (an admin's
+  deploy goes straight through and writes no notice), `scripts/e2e/stage3.js` (the two refusals out; a restore writes
+  no notice).

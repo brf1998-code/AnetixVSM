@@ -1481,8 +1481,7 @@ async function gotoVersion(version, restore) {
     ? `Put version ${version} on the floor AND replace the line's data with what it was when v${version} was last live? Everything recorded since then is set aside (the current state is saved first).`
     : `Put version ${version} on the floor, keeping today's data? Every open page reloads within a few seconds.`;
   if (!confirm(msg)) return;
-  const w = adminWhy(`Switching to version ${version}`); if (w === null) return;
-  const r = await fetch(`/api/c/${SLUG}/modules/${VMOD}/goto`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version, restore_data: restore, ...w }) });
+  const r = await fetch(`/api/c/${SLUG}/modules/${VMOD}/goto`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version, restore_data: restore }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { alert(j.error || "failed"); return; }
   await load();
@@ -1578,20 +1577,8 @@ async function seenNotice(id) {
   await fetch(`/api/c/${SLUG}/notices/${id}/seen`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   load();
 }
-// The Terms, 9.1: an admin putting a change live, rolling back or switching a version on a CUSTOMER's live tool says
-// why, and the manager is told (src/feedback.js adminChange). Anetix's own demo company asks nothing. null: cancelled.
-function adminWhy(what) {
-  if (!(DATA && DATA.role === "admin" && SLUG !== "demo")) return {};
-  const pick = prompt(`${what} on ${DATA.company.name}'s live tool, without their approval. Their manager is told. Why?\n1  a security fix\n2  a fix for an error that stops the tool working\n3  their manager asked me to\nType 1, 2 or 3:`, "");
-  if (pick === null) return null;
-  const why = { 1: "security", 2: "broken", 3: "asked" }[String(pick).trim()];
-  if (!why) { alert("Type 1, 2 or 3."); return null; }
-  const note = prompt("A few words on what changed. The manager reads them.", "");
-  if (note === null) return null;
-  return { admin_reason: why, admin_note: note };
-}
-function deployRun(id) { const w = adminWhy("Putting a change live"); if (w !== null) act(`/api/runs/${id}/deploy`, w); }
-function rollbackRun(id) { const w = adminWhy("Rolling back"); if (w !== null) act(`/api/runs/${id}/rollback`, w); }
+function deployRun(id) { act(`/api/runs/${id}/deploy`, {}); }
+function rollbackRun(id) { act(`/api/runs/${id}/rollback`, {}); }
 
 // The platform restarting (a push restarts it; Railway answers 502 for the half minute it takes) or the connection
 // dropping keeps the board on screen with one line saying so; the next refresh picks up where it was (the launch

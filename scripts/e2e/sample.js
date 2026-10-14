@@ -100,12 +100,10 @@ const count = async (schema, table) => Number((await q(`SELECT count(*)::int AS 
   // the deploy's migration, done by hand to match the preview; then the deploy carries the rest across
   await q(`ALTER TABLE ${LIVE}.travelers ADD COLUMN IF NOT EXISTS priority TEXT`);
   await q(`CREATE TABLE IF NOT EXISTS ${LIVE}.bins (id SERIAL PRIMARY KEY, traveler_id INTEGER, label TEXT NOT NULL)`);
-  // an admin putting a customer's change live says why, and the manager is told (the Terms, 9.1; src/feedback.js adminChange)
-  const noWhy = await admin.post(`/api/runs/${runId}/deploy`);
-  t("an admin's deploy on a customer's tool without a reason is refused", noWhy.status === 400 && noWhy.json.code === "admin_reason", noWhy.json);
-  await admin.post(`/api/runs/${runId}/deploy`, { admin_reason: "asked", admin_note: "the manager asked on a call" });
-  const told = (await q("SELECT text FROM platform.notices WHERE company=$1 AND kind='tool_changed' ORDER BY id DESC LIMIT 1", [A])).rows[0];
-  t("and the manager gets a notice saying Anetix put it live because they asked", told && /because your manager asked Anetix to: the manager asked on a call/.test(told.text), told);
+  // an admin puts a customer's change live like a manager, asked nothing and with no notice to the manager (2026-10-14)
+  const dep = await admin.post(`/api/runs/${runId}/deploy`);
+  t("an admin's deploy on a customer's tool goes straight through", dep.status === 200, dep.json);
+  t("and no notice is posted to the manager", !(await q("SELECT 1 FROM platform.notices WHERE company=$1 AND kind='tool_changed'", [A])).rows.length);
   await waitFor("the carry to live", async () => (await q("SELECT in_live, plan FROM platform.sample_fills WHERE id=$1", [fill2.id])).rows[0].plan.pending.length === 0, 15000);
   t("at deploy the bins went live with their keys", (await q(`SELECT id, traveler_id FROM ${LIVE}.bins ORDER BY id`)).rows.map((r) => r.id).join() === fill2.rows.bins.map((b) => b.id).sort((a, b) => a - b).join());
   t("and the new column was filled on the sample travelers", (await q(`SELECT count(*)::int AS n FROM ${LIVE}.travelers WHERE id = ANY($1) AND priority IS NOT NULL`, [ids2])).rows[0].n === ids2.length);

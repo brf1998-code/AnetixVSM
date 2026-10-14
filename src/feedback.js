@@ -179,33 +179,11 @@ router.get("/api/c/:slug/modules/:name/checks", requireManager, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// The Terms, 9.1 (2026-09-26): a change to a customer's live tool goes live only when someone with approval rights at
-// the customer approves it. Anetix changes a live tool without that only to fix a security problem or an error that
-// stops the tool working, and tells the customer's manager when it does. An admin pressing Deploy, Roll back or Switch
-// on a customer's board is Anetix doing it: the admin says which (or that the manager asked Anetix to put it live), and
-// the manager gets a notice on the board (src/notices.js). "demo" is Anetix's own company.
-const ANETIX_OWN = new Set(["demo"]);
-const ADMIN_WHY = { security: "to fix a security problem", broken: "to fix an error that stopped the tool working", asked: "because your manager asked Anetix to" };
-function adminChange(req, slug) {
-  if (req.sosRole !== "admin" || ANETIX_OWN.has(slug)) return { ok: true };
-  const b = req.body || {};
-  const why = String(b.admin_reason || ""), note = String(b.admin_note || "").replace(/\s+/g, " ").trim().slice(0, 300);
-  if (!ADMIN_WHY[why]) return { ok: false, error: "This is a customer's live tool. Say why Anetix is changing it: a security fix, a fix for an error that stops it working, or their manager asked. The manager is told either way.", code: "admin_reason" };
-  if (note.length < 3) return { ok: false, error: "Add a few words on what changed: the manager reads them.", code: "admin_reason" };
-  return { ok: true, why, note };
-}
-// Called after the change: the change has happened, so a notice that cannot be written is logged and never turns the
-// answer into an error (record() never throws, so the interaction record still carries it).
-async function tellManager(slug, what, gate) {
-  if (!gate || !gate.why) return;
-  try { await require("./notices").add(slug, "tool_changed", `Anetix ${what} ${ADMIN_WHY[gate.why]}: ${gate.note}`, { why: gate.why }); }
-  catch (e) { console.error(`[notices] ${slug}: the manager's notice could not be written (${e.message}); the change stands`); }
-  await record("tool_changed_by_anetix", { company: slug, actor: { role: "admin" }, after: `${what} ${ADMIN_WHY[gate.why]}: ${gate.note}`, detail: { why: gate.why } });
-}
+// An admin's Deploy, Roll back or Switch on a company's tool goes through like a manager's: no reason asked and no
+// notice to the manager. The "say why, and the manager is told" system (the Terms, 9.1, 2026-09-26) came out on
+// 2026-10-14, Brendan: "that whole system needs to go away, it was designed before it was needed".
 router.post("/api/c/:slug/modules/:name/goto", requireManager, freshPin, async (req, res) => {
   const { version, restore_data } = req.body || {};
-  const gate = adminChange(req, req.params.slug);
-  if (!gate.ok) return res.status(400).json({ error: gate.error, code: gate.code });
   const row = await registry.getModule(req.params.slug, req.params.name);
   if (!row) return res.status(404).json({ error: "unknown module" });
   const busy = (await q(
@@ -214,7 +192,6 @@ router.post("/api/c/:slug/modules/:name/goto", requireManager, freshPin, async (
   try {
     const out = await registry.goToVersion(req.params.slug, req.params.name, Number(version), { restoreData: !!restore_data });
     await record("version_switched", { company: req.params.slug, module: req.params.name, actor: actor(req), version: out.to, detail: { from: out.from, to: out.to, restored: out.restored } });
-    await tellManager(req.params.slug, `switched ${row.title || req.params.name} from v${out.from} to v${out.to}${out.restored ? " with its data as it was then" : ""}`, gate);
     res.json(out);
   }
   catch (e) { res.status(400).json({ error: e.message }); }
@@ -604,11 +581,8 @@ router.post("/api/runs/:id(\\d{1,9})/confirm", requireManager, freshPin, async (
 router.post("/api/runs/:id(\\d{1,9})/deploy", requireManager, freshPin, async (req, res) => {
   try {
     const x = await runIds(req.params.id);
-    const gate = x ? adminChange(req, x.run.company) : { ok: true };
-    if (!gate.ok) return res.status(400).json({ error: gate.error, code: gate.code });
     const out = await pipeline.deploy(Number(req.params.id));
     if (x) await record("deployed", { ...x.ids, actor: actor(req), version: out.to, detail: { from: out.from, to: out.to, lane: x.run.lane } });
-    if (x) await tellManager(x.run.company, `put a change live on ${x.run.module} (v${out.to})`, gate);
     res.json(out);
   }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -641,11 +615,8 @@ router.post("/api/runs/:id(\\d{1,9})/retire-check", requireManager, freshPin, as
 router.post("/api/runs/:id(\\d{1,9})/rollback", requireManager, freshPin, async (req, res) => {
   try {
     const x = await runIds(req.params.id);
-    const gate = x ? adminChange(req, x.run.company) : { ok: true };
-    if (!gate.ok) return res.status(400).json({ error: gate.error, code: gate.code });
     const out = await pipeline.rollbackRun(Number(req.params.id));
     if (x) await record("rolled_back", { ...x.ids, actor: actor(req), version: out.to, detail: { to: out.to } });
-    if (x) await tellManager(x.run.company, `rolled ${x.run.module} back to v${out.to}`, gate);
     res.json(out);
   }
   catch (e) { res.status(500).json({ error: e.message }); }
@@ -1253,22 +1224,17 @@ router.get("/api/admin/backup", requireAdmin, async (_req, res) => {
 });
 // Restore replaces everything and then exits the process (Railway restarts it;
 // boot rebuilds versions and mounts from the restored rows).
-// A paying site (subscribed or switching on) is a customer's live tools (the Terms, 9.1): the admin says why, and every
-// paying site in the restored data gets a notice on its board. A file older than a site's subscription would show a
+// A file older than a site's subscription would show a
 // paying site as a demo while Stripe keeps billing it, so that is refused unless the admin says restore anyway.
 const PAYING = ["subscribed", "activating"];
 router.post("/api/admin/restore", requireAdmin, express.json({ limit: "300mb" }), async (req, res) => {
   const { password, code, backup: doc, sites_ok } = req.body || {};
   // asked before the step-up, so a code is never spent on an answer that sends the admin back to the form
-  let why = null, behind = [];
+  let behind = [];
   if (doc && doc.format === "sos-backup-1" && doc.platform) {
     const payingHere = (await q("SELECT company, stage FROM platform.sites WHERE stage = ANY($1)", [PAYING]).catch(() => ({ rows: [] }))).rows;
     const fileSites = Array.isArray(doc.platform.sites) ? doc.platform.sites : [];
     behind = payingHere.filter((h) => !fileSites.some((s) => s.company === h.company && s.stage === h.stage)).map((h) => h.company);
-    if (payingHere.length || fileSites.some((s) => PAYING.includes(s.stage))) {
-      why = adminChange(req, "*");
-      if (!why.ok) return res.status(400).json({ error: "Paying sites' tools change with a restore. " + why.error, code: why.code });
-    }
     if (behind.length && sites_ok !== true) return res.status(409).json({ code: "sites_behind", sites: behind, error: `The file is from before ${behind.join(", ")} ${behind.length === 1 ? "was" : "were"} switched on as it is now: restoring it would show ${behind.length === 1 ? "that site" : "those sites"} as ${behind.length === 1 ? "it was" : "they were"} then while Stripe keeps billing. End the subscription on Stripe first, or restore a newer file.` });
   }
   const gate = await auth.checkAdminCode(req, { code, password }, "restore_backup");
@@ -1276,9 +1242,8 @@ router.post("/api/admin/restore", requireAdmin, express.json({ limit: "300mb" })
   const busy = (await q("SELECT count(*)::int AS n FROM platform.build_runs WHERE status='running'")).rows[0].n;
   if (busy) return res.status(409).json({ error: "a build is running; abort it first" });
   try {
-    const when = String(doc.taken_at || "").slice(0, 10) || "an earlier day";
-    const told = await backup.restore(doc, why && why.why ? { notice: { text: `Anetix put the platform back to a backup from ${when} ${ADMIN_WHY[why.why]}: ${why.note}. Your tools and their data are as they were then; anything changed after that is not in it.`, why: why.why }, paying: PAYING } : {});
-    await logEvent("backup_restored", null, { taken_at: doc.taken_at, by: req.sosAccount ? req.sosAccount.login : null, told: told.told || [], sites_behind: behind, why: why && why.why ? why.why : null });
+    await backup.restore(doc);
+    await logEvent("backup_restored", null, { taken_at: doc.taken_at, by: req.sosAccount ? req.sosAccount.login : null, sites_behind: behind });
     res.json({ ok: true, restarting: true });
     console.log("[backup] restored; exiting so the platform reboots on the restored data");
     setTimeout(() => process.exit(1), 800);

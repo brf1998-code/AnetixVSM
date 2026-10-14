@@ -182,6 +182,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The company MCP (2026-10-13)
 - The outside audit 1A: sign-in fixes (2026-10-13)
 - The web connection (2026-10-13)
+- No reason asked when Anetix changes a tool (2026-10-14)
 
 ## What this is
 

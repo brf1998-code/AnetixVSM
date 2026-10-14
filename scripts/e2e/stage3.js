@@ -363,8 +363,6 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   t("the preview's call was marked a preview, on its own Customer", callsTo("/internal/activate").some((c) => c.body.preview === true && /^cus_prev/.test(c.body.customer)));
 
   // ---- the Terms, 9.1: a customer's live tool ------------------------------------------------------------------------------------
-  const noWhy = await admin.post(`/api/c/${A.slug}/modules/kpis/goto`, { version: 1 });
-  t("an admin switching a customer's tool without saying why is refused", noWhy.status === 400 && noWhy.json.code === "admin_reason", noWhy.json);
   const addK = await admin.post(`/api/admin/companies/${A.slug}/modules`, { module: "kpis" });
   t("a library tool added to the customer goes live as version 1", addK.status === 200 && (await q("SELECT live_version FROM platform.modules WHERE company=$1 AND name='kpis'", [A.slug])).rows[0].live_version === 1, addK.json);
   await q("UPDATE platform.modules SET repo_hash='changed-since' WHERE company=$1 AND name='kpis'", [A.slug]);
@@ -381,22 +379,18 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   t("an acceptance and a Stripe event after the backup was taken", lateAcc.status === 200 && lateEv.status === 200);
   t("and the Terms' switch goes back off", (await admin.post("/api/admin/terms", { live: false })).json.live === false);
 
-  // ---- a restore keeps the evidence and tells the paying sites (the Terms, 10.7 and 9.1). The server exits after it, so last ---
+  // ---- a restore keeps the evidence (the Terms, 10.7). The server exits after it, so last ---
   const count = async (tb) => (await q(`SELECT count(*)::int AS n FROM platform.${tb}`)).rows[0].n;
   const nAcc = await count("acceptances"), nEv = await count("billing_events"), nTv = await count("terms_versions");
-  const noWhyR = await admin.post("/api/admin/restore", { password: PW.admin, backup: bk });
-  t("with paying sites a restore asks why first (the Terms, 9.1)", noWhyR.status === 400 && noWhyR.json.code === "admin_reason", noWhyR.json);
   const older = JSON.parse(JSON.stringify(bk));
   older.platform.sites = older.platform.sites.map((x) => (x.company === A.slug ? { ...x, stage: "demo" } : x));
-  const behindR = await admin.post("/api/admin/restore", { password: PW.admin, backup: older, admin_reason: "broken", admin_note: "e2e: a bad deploy" });
+  const behindR = await admin.post("/api/admin/restore", { password: PW.admin, backup: older });
   t("a file from before a site was switched on is refused unless the admin says restore anyway: Stripe would keep billing a demo", behindR.status === 409 && behindR.json.code === "sites_behind" && behindR.json.sites.includes(A.slug), behindR.json);
-  const rs = await admin.post("/api/admin/restore", { password: PW.admin, backup: bk, admin_reason: "broken", admin_note: "e2e: a bad deploy" });
+  const rs = await admin.post("/api/admin/restore", { password: PW.admin, backup: bk });
   t("the restore goes through", rs.status === 200 && rs.json.restarting === true, rs.json);
   t("the acceptances, Stripe's events and the terms versions are kept, none taken away and none doubled", (await count("acceptances")) === nAcc && (await count("billing_events")) === nEv && (await count("terms_versions")) === nTv
     && (await q("SELECT 1 FROM platform.acceptances WHERE ip='192.0.2.77'")).rows.length === 1 && (await q("SELECT 1 FROM platform.billing_events WHERE stripe_event='evt_stage3_after_backup'")).rows.length === 1, { nAcc, nEv, nTv });
-  const told = (await q("SELECT company, text FROM platform.notices WHERE detail->>'restore' = 'true'")).rows;
-  t("every paying site's manager is told on the board why, and no demo is", [A.slug, L.slug, F.slug].every((x) => told.some((n) => n.company === x)) && !told.some((n) => n.company === W.slug)
-    && told.every((n) => /^Anetix put the platform back to a backup from \d{4}-\d{2}-\d{2} to fix an error that stopped the tool working: e2e: a bad deploy\. Your tools and their data are as they were then/.test(n.text)), told);
+  t("no manager is sent a notice about the restore (2026-10-14)", !(await q("SELECT 1 FROM platform.notices WHERE detail->>'restore' = 'true'")).rows.length);
  } catch (e) { R.abort(e.stack || e); }
   server.close();
   R.done();
