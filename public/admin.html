@@ -61,6 +61,15 @@
   .mod .tour a, a.tourlink { background:var(--navy); color:#fff; text-decoration:none; border-radius:14px; padding:4px 10px; font-weight:700; font-size:12px; white-space:nowrap; }
   .chip { display:inline-block; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:700; vertical-align:2px; margin-left:6px; background:#e5e9ee; color:var(--steel); }
   .chip.own { background:#e6f1ea; color:var(--green); }
+  .chip.std { background:#e8eef7; color:var(--navy); }
+  .libsearch { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0 4px; }
+  .libsearch input { flex:1 1 260px; min-width:0; font-size:15px; padding:9px 12px; }
+  .mod .acts { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .mod .acts button, .mod .acts select { margin:0; min-height:30px; }
+  .finds { max-height:240px; overflow-y:auto; margin:8px 0; font-size:12.5px; line-height:1.45; }
+  .finds div { padding:5px 0; border-bottom:1px solid var(--line); } .finds small { color:var(--steel); display:block; overflow-wrap:anywhere; }
+  .pick { max-height:200px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:6px 8px; margin:6px 0; }
+  .pick label { display:block; font-size:13px; padding:3px 0; }
   .swatch { display:inline-block; width:14px; height:14px; border-radius:4px; vertical-align:-2px; border:1px solid rgba(0,0,0,.15); margin-right:3px; }
   .brand { font-size:12.5px; line-height:1.5; }
   .brand img { width:22px; height:22px; border-radius:5px; vertical-align:middle; margin-right:6px; background:#fff; }
@@ -199,10 +208,13 @@
 
   <!-- ================= Library: every separate module, then the instances of it ================= -->
   <section class="tabpanel" id="tab-library">
-    <div class="tabhead"><h2>Module library</h2><p class="sub">Every separate module on this instance, and under each one the companies running it. Start tour opens the module on a company's floor and walks a new operator through its screens, with the feedback button as the last stop.</p></div>
+    <div class="tabhead"><h2>Tool library</h2><p class="sub">Every tool on this instance, from every company, and the templates saved from them. Copy a tool to a demo company to show a prospect a working example, save one as a template to keep the framework apart from the company that made it, and mark templates Standard to make the standard package. A copy brings the code with empty tables, never the company's records.</p></div>
+    <div class="libsearch"><input id="lib-q" type="search" placeholder="Search every tool: CRM, dashboard, inventory, a company's name..." oninput="filterLibrary()" autocomplete="off"><span class="sub" id="lib-count"></span></div>
     <div id="library-card">
+      <div class="card" id="tpl-card"><h2>Templates <small>frozen copies of a tool, kept apart from the company that made it; Standard ones make up the standard package</small></h2><div class="lib" id="library-tpl"></div></div>
       <div class="card"><h2>Ships with the platform <small>in the repo; every company that adds one starts from it as version 1, then changes its own copy</small></h2><div class="lib" id="library"></div></div>
       <div class="card"><h2>Made by companies <small>built through module creation on a company's board; each lives at the company that made it</small></h2><div class="lib" id="library-own"></div></div>
+      <div class="card" id="copies-card"><details id="copies-more"><summary><h2 style="display:inline">Copies <small id="copies-n">tools copied from another company or a template; each one changes on its own from there</small></h2></summary><div class="lib" id="library-copies"></div></details></div>
     </div>
   </section>
 
@@ -855,12 +867,13 @@ function instanceRows(l) {
     <td>${i.live_version ? `v${i.live_version}` : '<span class="warn">not live yet</span>'}${i.staged_version ? ` <small class="sub">v${i.staged_version} staged</small>` : ""}</td>
     <td>${i.versions}${i.built ? ` <small class="sub">${i.built} built here</small>` : ""}</td>
     <td>${day(i.last_change)}</td>
-    <td style="white-space:nowrap">${i.live_version ? `<a href="/c/${i.company}/m/${l.name}/">Open</a>${l.tourSteps ? ` <a class="tourlink" href="/c/${i.company}/m/${l.name}/?tour=1" style="margin-left:6px">Start tour</a>` : ""}` : `<a href="/c/${i.company}/">On its board</a>`}</td></tr>`).join("")}</table></div>`;
+    <td style="white-space:nowrap">${i.live_version ? `<a href="/c/${i.company}/m/${l.name}/">Open</a>${l.tourSteps ? ` <a class="tourlink" href="/c/${i.company}/m/${l.name}/?tour=1" style="margin-left:6px">Start tour</a>` : ""}` : `<a href="/c/${i.company}/">On its board</a>`}${copiedFrom(i.company, l.name)}</td></tr>
+    ${i.live_version || i.staged_version ? `<tr><td colspan="5" style="padding-top:0"><button class="quiet" onclick="openCopy('${jss(i.company)}','${jss(l.name)}')" title="Put this tool on another company: the code, with empty tables">Copy to a company</button><button class="quiet" onclick="openSaveTemplate('${jss(i.company)}','${jss(l.name)}')" title="Keep a frozen copy as a template, apart from this company">Save as template</button></td></tr>` : ""}`).join("")}</table></div>`;
 }
 function modCard(l) {
   const without = l.origin === "repo" ? D.companies.filter(c => !l.instances.some(i => i.company === c.slug)) : [];
-  return `<div class="mod" data-module="${esc(l.key)}">
-    <h3>${esc(l.title)} <small class="sub">(${esc(l.name)})</small>${l.origin === "company" ? `<span class="chip own">made at ${esc(coName(l.made_at))}</span>` : ""}</h3>
+  return `<div class="mod" data-module="${esc(l.key)}" data-search="${esc(libText([l.title, l.name, l.description, l.screens.map(s => s.label), l.instances.map(i => [coName(i.company), i.company]), l.origin === "company" ? coName(l.made_at) : "platform repo"]))}">
+    <h3>${esc(l.title)} <small class="sub">(${esc(l.name)})</small>${l.origin === "company" ? ((D.copies || []).some(c => c.company === l.made_at && c.module === l.name) ? `<span class="chip">copy at ${esc(coName(l.made_at))}</span>` : `<span class="chip own">made at ${esc(coName(l.made_at))}</span>`) : ""}</h3>
     <div class="desc">${esc(l.description || (l.origin === "company" ? "No description in its module.json yet." : "No description in module.json yet."))}</div>
     <div class="facts">${l.screens.length} screen${l.screens.length === 1 ? "" : "s"} · ${l.migrations} migration file${l.migrations === 1 ? "" : "s"} · ${l.smoke} smoke check${l.smoke === 1 ? "" : "s"} · ${l.tourSteps ? `tour of ${l.tourSteps} steps` : "no tour.json yet"}</div>
     <div class="screens">${l.screens.map(s => `<span>${esc(s.label)}</span>`).join("")}</div>
@@ -870,9 +883,151 @@ function modCard(l) {
 }
 function drawLibrary() {
   const repo = D.library.filter(l => l.origin !== "company"), own = D.library.filter(l => l.origin === "company");
-  AdminShell.setBadge("library", { n: D.library.length });
+  AdminShell.setBadge("library", { n: D.library.length + (D.templates || []).length });
+  document.getElementById("library-tpl").innerHTML = (D.templates || []).map(tplCard).join("") || '<div class="sub">None yet. Save as template on any tool below keeps a frozen copy here.</div>';
   document.getElementById("library").innerHTML = repo.map(modCard).join("") || '<div class="sub">No modules in the repo library.</div>';
-  document.getElementById("library-own").innerHTML = own.map(modCard).join("") || '<div class="sub">None yet. A company makes one with New module, on its card under Companies or on its own board.</div>';
+  const isCopy = (l) => (D.copies || []).some(c => c.company === l.made_at && c.module === l.name);
+  document.getElementById("library-own").innerHTML = own.filter(l => !isCopy(l)).map(modCard).join("") || '<div class="sub">None yet. A company makes one with New module, on its card under Companies or on its own board.</div>';
+  const copies = own.filter(isCopy);
+  document.getElementById("copies-card").style.display = copies.length ? "" : "none";
+  document.getElementById("library-copies").innerHTML = copies.map(modCard).join("");
+  filterLibrary();
+}
+// ---- the tool library across companies (src/library.js, 2026-10-19) ----
+// what a card is found by: its title, address name, description, screens, and every company it is at or came from
+function libText(parts) { return parts.flat().filter(Boolean).join(" ").toLowerCase(); }
+function filterLibrary() {
+  const words = (document.getElementById("lib-q").value || "").toLowerCase().split(/\s+/).filter(Boolean);
+  let shown = 0, all = 0;
+  for (const el of document.querySelectorAll("#library-card .mod")) {
+    all++;
+    const hit = words.every(w => (el.dataset.search || "").includes(w));
+    el.style.display = hit ? "" : "none"; if (hit) shown++;
+  }
+  for (const card of document.querySelectorAll("#library-card > .card")) {
+    const mods = card.querySelectorAll(".mod");
+    card.style.display = words.length && mods.length && ![...mods].some(m => m.style.display !== "none") ? "none" : "";
+  }
+  const cm = document.getElementById("copies-more");
+  if (cm && words.length && [...cm.querySelectorAll(".mod")].some(m => m.style.display !== "none")) cm.open = true;
+  document.getElementById("lib-count").textContent = words.length ? `${shown} of ${all}` : `${all} tool${all === 1 ? "" : "s"} and templates`;
+}
+function copiedFrom(company, mod) {
+  const c = (D.copies || []).find(x => x.company === company && x.module === mod);
+  if (!c) return "";
+  const t = c.template_id && (D.templates || []).find(x => x.id === c.template_id);
+  return `<br><small class="sub">${t ? `from template ${esc(t.title)}` : c.from_company ? `copied from ${esc(coName(c.from_company))}` : "copied"}</small>`;
+}
+function companyOptions(exclude) {
+  const cs = D.companies.filter(c => c.slug !== exclude).sort((a, b) => (b.demo ? 1 : 0) - (a.demo ? 1 : 0) || a.name.localeCompare(b.name));
+  return cs.map(c => `<option value="${esc(c.slug)}">${esc(c.name)}${c.demo ? " (demo)" : ""}</option>`).join("");
+}
+function tplCard(t) {
+  const copies = t.copies || [];
+  return `<div class="mod" data-search="${esc(libText([t.title, t.name, t.description, t.screens.map(s => s.label), t.from_name, t.from_company, copies.map(c => coName(c.company)), t.standard ? "standard package" : "", "template"]))}">
+    <h3>${esc(t.title)} <small class="sub">(${esc(t.name)})</small><span class="chip">template</span>${t.standard ? '<span class="chip std">standard</span>' : ""}</h3>
+    <div class="desc">${esc(t.description || "No description yet.")}</div>
+    <div class="facts">Saved from ${esc(t.from_name || t.from_company || "a company since deleted")}, v${t.from_version || "?"}, ${day(t.created_at)}${t.saved_by ? ` by ${esc(t.saved_by)}` : ""} · ${t.screens.length} screen${t.screens.length === 1 ? "" : "s"} · ${t.migrations} migration file${t.migrations === 1 ? "" : "s"}${(t.findings || []).length ? ` · <span class="warn">${t.findings.length} thing${t.findings.length === 1 ? "" : "s"} of ${esc(t.from_name || "its company")}'s</span> <a href="#" onclick="showFindings(${t.id});return false">see</a>` : ""}</div>
+    <div class="screens">${t.screens.map(s => `<span>${esc(s.label)}</span>`).join("")}</div>
+    ${copies.length ? `<div class="facts" style="margin-top:6px">At: ${copies.map(c => `<a href="/c/${esc(c.company)}/m/${esc(c.module)}/">${esc(coName(c.company))}</a>`).join(", ")}</div>` : ""}
+    <div class="acts"><select id="tpladd-${t.id}">${companyOptions(null)}</select><button class="go" onclick="addTemplateTo(${t.id}, document.getElementById('tpladd-${t.id}').value)">Add to this company</button>
+      <label style="font-size:12.5px;margin-left:4px"><input type="checkbox" ${t.standard ? "checked" : ""} onchange="setStandard(${t.id}, this.checked)"> Standard package</label>
+      <button class="quiet" onclick="editTemplate(${t.id})">Rename</button><button class="quiet" onclick="deleteTemplate(${t.id})">Delete</button></div>
+  </div>`;
+}
+function findingsHtml(f, from) {
+  if (!f.length) return `<p class="ok" style="font-weight:400">Nothing found that is ${esc(from)}'s own: no name, contact details or rows.</p>`;
+  return `<p class="sub">Things in the code that may be ${esc(from)}'s own. Addresses are rewritten for the new company; names, contact details and rows are not. If one should not travel, have it changed on ${esc(from)}'s board first.</p>
+    <div class="finds">${f.map(x => `<div><b class="${["name", "contact", "rows"].includes(x.kind) ? "warn" : ""}">${esc(x.label)}</b> in ${esc(x.file)}${x.count > 1 ? ` (${x.count} times)` : ""}${x.sample ? `<small>${esc(x.sample)}</small>` : ""}</div>`).join("")}</div>`;
+}
+function showFindings(id) {
+  const t = D.templates.find(x => x.id === id); if (!t) return;
+  openModal(`<h2>${esc(t.title)}: what it carries</h2>${findingsHtml(t.findings || [], t.from_name || t.from_company)}<div><button class="quiet" onclick="closeModal()">Close</button></div>`);
+}
+async function libCheck(company, mod) {
+  const r = await fetch(`/api/admin/library/check?company=${encodeURIComponent(company)}&module=${encodeURIComponent(mod)}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "failed"); return null; }
+  return j;
+}
+async function openCopy(company, mod) {
+  openModal(`<h2>Copy a tool</h2><p class="sub">Reading it...</p>`);
+  const j = await libCheck(company, mod); if (!j) return closeModal();
+  openModal(`<h2>Copy ${esc(j.title)}</h2>
+    <p class="sub">From ${esc(j.company.name)}, ${j.live ? `v${j.version}, the one on its floor` : `v${j.version}, its preview (nothing is live yet)`}. It goes live at the company you pick as a new tool, version 1, with empty tables. Sample data on a demo fills it.</p>
+    ${findingsHtml(j.findings, j.company.name)}
+    <label class="sub">Copy to</label><select id="cp-to" style="width:100%;margin-top:4px">${companyOptions(company)}</select>
+    <div style="margin-top:12px"><button class="go" id="cp-go" onclick="doCopy('${jss(company)}','${jss(mod)}')">Copy it</button> <button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+}
+async function doCopy(company, mod) {
+  const to = document.getElementById("cp-to").value, btn = document.getElementById("cp-go");
+  btn.disabled = true; btn.textContent = "Copying...";
+  const j = await post("/api/admin/library/copy", { from_company: company, module: mod, to_company: to });
+  if (!j.ok) { btn.disabled = false; btn.textContent = "Copy it"; return; }
+  copiedNote(to, [j]);
+}
+function copiedNote(to, done) {
+  const c = D.companies.find(x => x.slug === to) || { name: to };
+  openModal(`<h2>On ${esc(c.name)}'s floor</h2><div class="finds">${done.map(d => d.error ? `<div><b class="fail">${esc(d.title || ("template " + d.id))}</b>: ${esc(d.error)}</div>` : d.skipped ? `<div>${esc(d.title || ("template " + d.id))}: ${esc(d.skipped)}</div>` : `<div><a href="/c/${esc(to)}/m/${esc(d.module)}/" target="_blank">${esc(d.title)}</a>${d.renamed ? ` <small class="sub">as ${esc(d.module)}, the name was taken there</small>` : ""}${d.restyle_run ? ` <small class="sub">restyle build #${d.restyle_run} started; deploy it from the board</small>` : ""}</div>`).join("")}</div>
+    <div><a class="btn" href="/c/${esc(to)}/">Open its board</a> <button class="quiet" onclick="closeModal()">Close</button></div>`);
+  load();
+}
+async function openSaveTemplate(company, mod) {
+  openModal(`<h2>Save as template</h2><p class="sub">Reading it...</p>`);
+  const j = await libCheck(company, mod); if (!j) return closeModal();
+  openModal(`<h2>Save ${esc(j.title)} as a template</h2>
+    <p class="sub">A frozen copy of v${j.version} from ${esc(j.company.name)}. It stays as it is when ${esc(j.company.name)} keeps building, and stays if the company goes.</p>
+    ${findingsHtml(j.findings, j.company.name)}
+    <label class="sub">Name</label><input id="tp-title" value="${esc(j.title)}">
+    <label class="sub" style="display:block;margin-top:8px">What it does</label><textarea id="tp-desc" rows="3" style="width:100%;margin-top:4px">${esc(j.description)}</textarea>
+    <label style="display:block;margin-top:8px;font-size:13px"><input type="checkbox" id="tp-std"> In the standard package</label>
+    <div style="margin-top:12px"><button class="go" id="tp-go" onclick="doSaveTemplate('${jss(company)}','${jss(mod)}')">Save template</button> <button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+}
+async function doSaveTemplate(company, mod) {
+  const btn = document.getElementById("tp-go"); btn.disabled = true;
+  const j = await post("/api/admin/library/templates", { from_company: company, module: mod, title: document.getElementById("tp-title").value, description: document.getElementById("tp-desc").value, standard: document.getElementById("tp-std").checked });
+  if (!j.ok) { btn.disabled = false; return; }
+  closeModal(); await load(); location.hash = "#library";
+}
+async function addTemplateTo(id, to) {
+  if (!to) return;
+  const t = D.templates.find(x => x.id === id), c = D.companies.find(x => x.slug === to);
+  if (c && !c.demo && !confirm(`${c.name} is not a demo. Put ${t ? t.title : "this template"} live on its floor?`)) return;
+  const j = await post(`/api/admin/library/templates/${id}/add`, { to_company: to });
+  if (j.ok) copiedNote(to, [j]);
+}
+async function setStandard(id, on) {
+  await fetch(`/api/admin/library/templates/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ standard: on }) });
+  load();
+}
+async function editTemplate(id) {
+  const t = D.templates.find(x => x.id === id); if (!t) return;
+  openModal(`<h2>Rename template</h2><label class="sub">Name</label><input id="te-title" value="${esc(t.title)}">
+    <label class="sub" style="display:block;margin-top:8px">What it does</label><textarea id="te-desc" rows="3" style="width:100%;margin-top:4px">${esc(t.description)}</textarea>
+    <p class="sub">Copies made from now on take the new name. Copies already made keep theirs.</p>
+    <div><button class="go" onclick="saveTemplateEdit(${id})">Save</button> <button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+}
+async function saveTemplateEdit(id) {
+  const r = await fetch(`/api/admin/library/templates/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: document.getElementById("te-title").value, description: document.getElementById("te-desc").value }) });
+  if (!r.ok) alert((await r.json().catch(() => ({}))).error || "failed");
+  closeModal(); load();
+}
+async function deleteTemplate(id) {
+  const t = D.templates.find(x => x.id === id); if (!t) return;
+  if (!confirm(`Delete the template ${t.title}? Companies that already have a copy keep it.`)) return;
+  const r = await fetch(`/api/admin/library/templates/${id}`, { method: "DELETE" });
+  if (!r.ok) alert((await r.json().catch(() => ({}))).error || "failed");
+  load();
+}
+// a company card: several templates at once (a sample package for a prospect), or the whole standard package
+async function addPackage(slug, standard) {
+  const ids = standard ? [] : [...document.querySelectorAll(`#pkg-${slug} input:checked`)].map(x => Number(x.value));
+  if (!standard && !ids.length) return alert("Tick the templates to add.");
+  const c = D.companies.find(x => x.slug === slug);
+  if (c && !c.demo && !confirm(`${c.name} is not a demo. Put ${standard ? "the standard package" : ids.length + " tool(s)"} live on its floor?`)) return;
+  const j = await post(`/api/admin/companies/${slug}/package`, { ids, standard });
+  if (!j.ok) return;
+  copiedNote(slug, j.results.map(r => ({ ...r, title: r.title || ((D.templates.find(t => t.id === r.id) || {}).title) })));
 }
 
 // ---- Companies tab: the list on the left, one company open on the right. Which one is the address:
@@ -936,7 +1091,12 @@ function companyCard(c) {
     <div class="secs">
       <div class="sec wide"><h3>Add a tool</h3><select id="lib-${c.slug}">${addable.map(l => `<option value="${l.name}">${esc(l.title)}</option>`).join("") || "<option value=''>all library modules added</option>"}</select>
           <button class="quiet" onclick="addModule('${c.slug}')">Add module from library</button>
-          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; the agent designs it">New module</button></div>
+          <button class="quiet" onclick="newModule('${c.slug}')" title="Describe a new module in plain words on the company's board; the agent designs it">New module</button>
+          ${(D.templates || []).length ? `<div style="margin-top:10px"><b>From templates</b> <span class="sub">(tick several for a sample package; each goes live with empty tables)</span>
+            <div class="pick" id="pkg-${c.slug}">${D.templates.map(t => `<label><input type="checkbox" value="${t.id}"> ${esc(t.title)}${t.standard ? ' <span class="chip std">standard</span>' : ""} <small class="sub">from ${esc(t.from_name || t.from_company || "")}</small></label>`).join("")}</div>
+            <button class="quiet" onclick="addPackage('${c.slug}', false)">Add the ticked templates</button>
+            ${D.templates.some(t => t.standard) ? `<button class="go" onclick="addPackage('${c.slug}', true)">Add the standard package (${D.templates.filter(t => t.standard).length})</button>` : ""}
+            <a href="#library" class="sub" style="margin-left:6px">Search every tool in the Library</a></div>` : `<div class="sub" style="margin-top:8px">Any company's tool can be copied here from the <a href="#library">Library</a>.</div>`}</div>
       <div class="sec"><h3>AI budget and models</h3>${c.monthly_cap_usd ? `$${Number(c.monthly_cap_usd).toFixed(2)} a month, its own` : "No budget of its own"}${D.monthlyCap ? ` · the whole instance stops at $${D.monthlyCap.toFixed(2)}` : ""}<br>
         <input id="cap-${c.slug}" type="number" min="0" step="1" placeholder="dollars a month" value="${c.monthly_cap_usd || ""}" style="width:150px;margin-top:6px"> <button class="quiet" onclick="setCap('${c.slug}')">Save</button>
         <div style="margin-top:8px">Propose ${esc(ml(c.models.propose))}, build ${esc(ml(c.models.build))}, review ${esc(ml(c.models.review))} <span class="sub">(${(c.models.pinned || []).length ? `pinned here: ${c.models.pinned.join(", ")}; ` : "all on the platform's models; "}change them on <a href="/c/${c.slug}/agents">agent settings</a>)</span></div></div>
@@ -1396,7 +1556,7 @@ async function enrollVerify(inCard) {
 }
 AdminShell.mount({
   title: "Admin",
-  tabs: [{ id: "demos", label: "Demos" }, { id: "pins", label: "Pins" }, { id: "sites", label: "Sites" }, { id: "requests", label: "Requests" }, { id: "health", label: "Health" }, { id: "companies", label: "Companies" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }, { id: "library", label: "Library", more: true }, { id: "models", label: "Models", more: true }],
+  tabs: [{ id: "demos", label: "Demos" }, { id: "pins", label: "Pins" }, { id: "sites", label: "Sites" }, { id: "requests", label: "Requests" }, { id: "health", label: "Health" }, { id: "companies", label: "Companies" }, { id: "accounts", label: "Accounts" }, { id: "instance", label: "Instance" }, { id: "library", label: "Library" }, { id: "models", label: "Models", more: true }],
   onShow(id, rest) { if (id === "companies") drawCompanies(); if (id === "requests" && REQ) loadRequests().catch(() => {}); if (id === "pins" && PINS) loadPins().catch(() => {}); if (id === "models" && window.AdminModels) AdminModels.show(rest); if (id === "demos" && window.AdminDemos) AdminDemos.show(rest); if (id === "sites" && window.AdminSites) AdminSites.show(rest); window.scrollTo(0, 0); },
 });
 load();

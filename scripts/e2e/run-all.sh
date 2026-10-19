@@ -148,6 +148,9 @@ run switchon               env $S5 node scripts/e2e/switchon.js
 fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
 run managers               env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/managers.js
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"; run managers-browser env SOS_WWW_KEY=e2e-www-key-0123456789abcdef node scripts/e2e/managers-browser.js; }
+# 2026-10-15: the record says which account acted (a server of its own: managers.js trips the failed-login limit on purpose)
+fresh; start "SOS_BROWSER=off"
+run whodid                 node scripts/e2e/whodid.js
 
 # the launch audit 0.1: bad values in every route's parameters, and another company by every spelling (no restart loop,
 # so a crash shows as a dead server)
@@ -220,5 +223,9 @@ run assist-api             node scripts/e2e/assist-api.js
 
 fresh; start "SOS_BROWSER=off"
 run runner-hostile         node scripts/e2e/runner-hostile.js
+
+# 2026-10-19: the tool library across companies (src/library.js): copy a tool, templates, the standard package, the check
+fresh; start "SOS_BROWSER=off"
+run library                node scripts/e2e/library.js
 stop
 echo "logs in $LOG"

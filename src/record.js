@@ -39,6 +39,13 @@
 //   app filed; that filing is a feedback_filed row with detail.via "mcp"), src/mcp-company.js
 //   doc_saved (before/after an agent doc), doc_deleted, models_changed
 //   label_set (the checks log), chat_question, chat_answer (a module's chat persona)
+//
+// Who (2026-10-15). actor_role is the session's role. actor_name is the person signed in on the device, else a name the
+// caller passed, else the named account behind the session. actor_account is that account's id whenever the session
+// has one. Until this date only a filed request carried the account's name (2026-09-26), so an approval, a deploy, a
+// close-out or a new tool request's answers made from a named manager or admin account went on the record with no name,
+// and a Chelsea Clock record of 718 rows could not say which manager had done what. A row with a human role and no
+// actor_account came from a shared password (or from before this date).
 const { q, pool } = require("./db");
 
 const SCHEMA = `
@@ -60,6 +67,7 @@ CREATE TABLE IF NOT EXISTS platform.record (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE platform.record ADD COLUMN IF NOT EXISTS actor_person INTEGER;
+ALTER TABLE platform.record ADD COLUMN IF NOT EXISTS actor_account INTEGER;
 CREATE INDEX IF NOT EXISTS record_company_time ON platform.record (company, created_at);
 CREATE INDEX IF NOT EXISTS record_feedback ON platform.record (feedback_id) WHERE feedback_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS record_run ON platform.record (run_id) WHERE run_id IS NOT NULL;
@@ -76,17 +84,17 @@ async function init() { await q(SCHEMA); }
 
 const clip = (s, n = 20000) => (s == null ? null : String(s).slice(0, n));
 
-// The one write. `actor` is { role, name } (from a request: actor(req)), or a
+// The one write. `actor` is { role, name, person, account, account_name } (from a request: actor(req)), or a
 // string role for the agent and the platform. Never throws.
 async function record(kind, fields = {}) {
   try {
     const actor = typeof fields.actor === "string" ? { role: fields.actor } : fields.actor || {};
     await q(
-      `INSERT INTO platform.record (company, module, kind, actor_role, actor_name, feedback_id, proposal_id, run_id, intake_id, version, before, after, detail, actor_person)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-      [fields.company, fields.module || null, kind, actor.role || null, clip(actor.name, 120),
+      `INSERT INTO platform.record (company, module, kind, actor_role, actor_name, feedback_id, proposal_id, run_id, intake_id, version, before, after, detail, actor_person, actor_account)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      [fields.company, fields.module || null, kind, actor.role || null, clip(actor.name || actor.account_name, 120),
        fields.feedback_id || null, fields.proposal_id || null, fields.run_id || null, fields.intake_id || null, fields.version || null,
-       clip(fields.before), clip(fields.after), JSON.stringify(fields.detail || {}), actor.person || null]);
+       clip(fields.before), clip(fields.after), JSON.stringify(fields.detail || {}), actor.person || null, actor.account || null]);
   } catch (e) {
     console.error(`[record] could not write ${kind} for ${fields.company}:`, e.message);
   }
@@ -97,8 +105,19 @@ async function record(kind, fields = {}) {
 // have an identity).
 // A person signed in on the device (src/people.js: name and PIN) wins over a
 // name typed into a box.
+// account / account_name (2026-10-15, see "Who" at the top of this file): the
+// named account behind the session (src/auth.js req.sosAccount), for the record
+// only. `name` is left as it was because callers show it to the company (a
+// close-out's "by" reads "The manager" or "Anetix" when it is empty).
 function actor(req, name) {
-  return { role: (req && req.sosRole) || null, name: (req && req.sosPerson) || name || null, person: (req && req.sosPersonId) || null };
+  const acct = (req && req.sosAccount) || null;
+  return {
+    role: (req && req.sosRole) || null,
+    name: (req && req.sosPerson) || name || null,
+    person: (req && req.sosPersonId) || null,
+    account: (acct && acct.id) || null,
+    account_name: (acct && (acct.name || acct.login)) || null,
+  };
 }
 
 // Read back: a company's record, newest first, optionally one kind or one

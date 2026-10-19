@@ -127,7 +127,7 @@ async function create(company, role, opts = {}) {
   return it;
 }
 
-const { record } = require("./record");
+const { record, actor } = require("./record");
 
 // by: who is answering, for the record (default: the manager). The admin connector passes Anetix's named account.
 async function answer(id, qid, value, by) {
@@ -205,7 +205,7 @@ async function think(id) {
 }
 
 // The manager edited the summary text: the agent re-issues the design against it.
-async function adjust(id, text) {
+async function adjust(id, text, by) {
   const it = await getIntake(id);
   if (!it || it.status !== "design") throw new Error("there is no design to adjust right now");
   await setIntake(id, { status: "thinking", error: null });
@@ -216,7 +216,7 @@ async function adjust(id, text) {
       design.adjustments = [...(prev.adjustments || []), { at: new Date().toISOString(), text: String(text || "").slice(0, 20000) }];
       const cur = await getIntake(id);
       await setIntake(id, { design, status: "design", cost_usd: Number(cur.cost_usd || 0) + design.cost_usd });
-      await record("intake_adjusted", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, before: prev.reference_md || null, after: design.reference_md, detail: { asked: String(text || "").slice(0, 20000), model: design.model, cost_usd: design.cost_usd } });
+      await record("intake_adjusted", { company: it.company, module: it.slug || null, actor: by || "manager", intake_id: id, feedback_id: it.feedback_id, before: prev.reference_md || null, after: design.reference_md, detail: { asked: String(text || "").slice(0, 20000), model: design.model, cost_usd: design.cost_usd } });
     } catch (e) {
       console.error(`intake ${id} adjust failed:`, e);
       await setIntake(id, { status: "design", error: String(e.message || e).slice(0, 500) });
@@ -225,14 +225,14 @@ async function adjust(id, text) {
   return getIntake(id);
 }
 
-async function confirm(id) {
+async function confirm(id, by) {
   const it = await getIntake(id);
   if (!it || it.status !== "design" || !it.design) throw new Error("there is no design to confirm");
   if (await slugTaken(it.company, it.slug, it.id, it.name)) throw new Error(`a tool named "${it.name}" now exists; rename this one first`);
   let out = await setIntake(id, { status: "confirmed" });
   await setFeedback(it, { status: "reviewing" });
   await logEvent("intake_confirmed", id, { company: it.company, slug: it.slug, estimate: it.design.estimate_usd });
-  await record("intake_confirmed", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, after: it.design.reference_md, detail: { estimate_usd: it.design.estimate_usd, adjustments: (it.design.adjustments || []).length } });
+  await record("intake_confirmed", { company: it.company, module: it.slug || null, actor: by || "manager", intake_id: id, feedback_id: it.feedback_id, after: it.design.reference_md, detail: { estimate_usd: it.design.estimate_usd, adjustments: (it.design.adjustments || []).length } });
   // each outside system the design could not connect goes to Anetix's integration team now (src/requests.js)
   for (const h of (it.design.handoffs || []).filter((x) => x && x.system)) {
     await require("./requests").handoffNew({ company: it.company, module: it.slug, title: it.name, kind: h.kind, system: h.system, would_give: h.would_add, intake_id: id })
@@ -262,14 +262,14 @@ async function restart(id) {
   return out;
 }
 
-async function abandon(id) {
+async function abandon(id, by) {
   const it = await getIntake(id);
   if (!it) throw new Error("intake not found");
   if (["building", "done"].includes(it.status)) throw new Error("this tool is already being built");
   const out = await setIntake(id, { status: "abandoned" });
   await setFeedback(it, { status: "declined", outcome: "Tool request withdrawn." });
   await logEvent("intake_abandoned", id, {});
-  await record("intake_abandoned", { company: it.company, module: it.slug || null, actor: "manager", intake_id: id, feedback_id: it.feedback_id, detail: { status_before: it.status } });
+  await record("intake_abandoned", { company: it.company, module: it.slug || null, actor: by || "manager", intake_id: id, feedback_id: it.feedback_id, detail: { status_before: it.status } });
   return out;
 }
 
@@ -625,7 +625,8 @@ router.post("/api/c/:slug/intakes", requireManager, json, async (req, res) => {
   try {
     const co = (await q("SELECT slug FROM platform.companies WHERE slug=$1", [req.params.slug])).rows[0];
     if (!co) return res.status(404).json({ error: "unknown company" });
-    const it = await create(co.slug, req.sosRole);
+    const who = actor(req);
+    const it = await create(co.slug, req.sosRole, { name: who.name || who.account_name || undefined });   // the tile says whose request it is (2026-10-15)
     res.json({ ...(await view(it)), reopened: Boolean(it.reopened) });
   } catch (e) { fail(res, e, 500); }
 });
@@ -635,7 +636,7 @@ router.get("/api/intakes/:id(\\d{1,9})", requireManager, async (req, res) => {
   res.json(await view(it));
 });
 router.post("/api/intakes/:id(\\d{1,9})/answer", requireManager, json, async (req, res) => {
-  try { res.json(await view(await answer(Number(req.params.id), String((req.body || {}).id || ""), (req.body || {}).value))); }
+  try { res.json(await view(await answer(Number(req.params.id), String((req.body || {}).id || ""), (req.body || {}).value, actor(req)))); }
   catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/next", requireManager, json, async (req, res) => {
@@ -643,14 +644,14 @@ router.post("/api/intakes/:id(\\d{1,9})/next", requireManager, json, async (req,
   catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/adjust", requireManager, json, async (req, res) => {
-  try { res.json(await view(await adjust(Number(req.params.id), (req.body || {}).text))); }
+  try { res.json(await view(await adjust(Number(req.params.id), (req.body || {}).text, actor(req)))); }
   catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/revise", requireManager, json, async (req, res) => {
-  try { res.json(await view(await revise(Number(req.params.id), (req.body || {}).changes))); } catch (e) { fail(res, e); }
+  try { res.json(await view(await revise(Number(req.params.id), (req.body || {}).changes, actor(req)))); } catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/confirm", requireManager, freshPin, json, async (req, res) => {
-  try { res.json(await view(await confirm(Number(req.params.id)))); }
+  try { res.json(await view(await confirm(Number(req.params.id), actor(req)))); }
   catch (e) { fail(res, e); }
 });
 // A confirmed design whose build never started (an older confirm, or a build
@@ -671,7 +672,7 @@ router.post("/api/intakes/:id(\\d{1,9})/restart", requireManager, json, async (r
   catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/abandon", requireManager, json, async (req, res) => {
-  try { res.json(await view(await abandon(Number(req.params.id)))); }
+  try { res.json(await view(await abandon(Number(req.params.id), actor(req)))); }
   catch (e) { fail(res, e); }
 });
 router.post("/api/intakes/:id(\\d{1,9})/attach", requireManager, bigJson, async (req, res) => {

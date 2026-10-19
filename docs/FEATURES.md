@@ -1954,7 +1954,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   Anetix uses it to improve that plant, anonymized cross-plant use is an
   opt-in clause; the cross-plant copy does not exist yet, and defense tenants
   stay out of it. Which person acted is recorded since operator identity
-  (`actor_person`, next bullet). Not recorded yet: a proposal's rationale edits. What it feeds next:
+  (`actor_person`, next bullet), and which named account since 2026-10-15 (`actor_account`, "The record says
+  which account acted"). Not recorded yet: a proposal's rationale edits. What it feeds next:
   per-plant memory (lessons from adjusted and declined proposals), prompt and
   brief regression, a failure taxonomy, intake tuning, the pattern library.
 - **Operator identity: a name and a PIN** (2026-09-19, `src/people.js`,
@@ -2693,6 +2694,19 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   returns `account: { name }` beside `me`, and the feedback button shows
   "Sending as <name>" and hides the name box for an account too. The floor's
   nameless path is unchanged.
+- **The record says which account acted** (2026-10-15, Brendan: Chelsea Clock's record export had 718 rows, the 545
+  answers to its BOM request and every approval, deploy and close-out among them with no name, so it could not say
+  whether Jackson, Arthur or Taylor had done what). The 2026-09-26 fix above named the account on a filed request only.
+  Now `record.actor(req)`, which nearly every request path already uses, also carries the named account behind the
+  session (`account`, `account_name`: `req.sosAccount.id` and its name, else its login). `record()` writes the account's
+  name as `actor_name` when no person is signed in on the device and no name was passed, and the account's id in
+  `platform.record.actor_account` (new column, added at boot) on every row made from a named sign-in. `actor().name` is
+  unchanged on purpose: callers show it to the company (a close-out's "by" stays "The manager" or "Anetix"), so this
+  changes the record and nothing on screen except the new tool request's tile. The new tool request's routes (`src/intake.js`: start, answer, adjust, revise, confirm, abandon) pass
+  `actor(req)` instead of a bare "manager", so an admin answering on a company's board reads as admin, and the request's
+  tile carries the account's name instead of "manager". A row with a human role and no `actor_account` is a shared
+  password (or older than this). Rows from before stay as they were: the record is insert-only and nothing else kept
+  which account made a request. Tests: `scripts/e2e/whodid.js`.
 - **Board band** (2026-09-19): one title row and one quiet module line
   (`.band`, `.modstrip`, `.modcard`), 70px on a desktop against roughly a
   third of the screen before. Module names are the filter toggles, versions
@@ -3854,3 +3868,47 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   tool without approval; that wording goes with the next Terms version. Tests: `scripts/e2e/sample.js` (an admin's
   deploy goes straight through and writes no notice), `scripts/e2e/stage3.js` (the two refusals out; a restore writes
   no notice).
+
+- **The tool library across companies: copy a tool, templates, the standard package (2026-10-19)** (`src/library.js`,
+  `platform.library_templates` and `platform.library_copies`, the Library tab and the company card's Add a tool on
+  `public/admin.html`). Brendan: two people in the pipeline wanted an example tool, and the examples were at other
+  companies (a CRM at Anetix Inc, a production dashboard somewhere else); he wanted every tool searchable, a sample
+  set sent to one prospect, and "a global that shows all tools that are just the framework, then we can make a
+  standard package of tooling, of the most common software solutions". Before this a company-made tool lived only
+  at the company that made it, and only the two repo modules could be added anywhere.
+  - *What it does.* The Library tab (out of More, a main tab now) has one search box over every tool and template:
+    title, address name, description, screen names, and every company it is at or came from. Under every instance of
+    a tool: Copy to a company, and Save as template. A copy is the version on the floor (else the preview) put on the
+    other company as a new tool, version 1, live, with EMPTY tables (source `copy`, the notes name where it came
+    from). A template is a frozen copy kept in `platform.library_templates`, apart from the company: it does not move
+    when that company keeps building and stays if the company is deleted. A template carries a title and a
+    description of its own and a Standard switch; the standard ones are the standard package. On a company card, under
+    More, Add a tool: tick several templates (a sample package for one prospect) or Add the standard package. A
+    template a company already has a live copy of is skipped. A company that is not a demo asks first.
+  - *Only code travels.* The Terms put it this way already: Anetix owns the modules, the company owns its data. A copy
+    never reads the source's tables; rows arrive only when a migration file itself inserts them. Not carried: outside
+    connection switches (off at the new company until Anetix turns them on), feedback, builds, the record, agent docs
+    other than the tool's own reference and personas. A company with a finished brand guide gets a restyle build, as a
+    repo tool does.
+  - *The check before anything leaves.* `library.check` (pure) reads every file for what is the source company's own:
+    its name (whole, and each word of five letters or more), email addresses (not example.com or anetix.ai), phone
+    numbers, rows a migration inserts, `ctx.peer` reads of another tool (it shows nothing unless that tool is at the new
+    company under the same name), and outside connections. The copy and save dialogs show the list before the button;
+    a template keeps the list it was saved with ("N things of X's, see"). Only addresses are changed on the way:
+    `/c/<from>/` and `/m/<old name>` become the new company's and the new name (`library.rewrite`). A name, a contact or
+    a row that should not travel is changed on the source company's board first. A Chelsea Clock or Habco tool is the
+    case to look at twice.
+  - *Names.* The tool's own address name, else -2, -3 where it is taken at that company, or its tables would clash
+    (`migrate.schemaClash`), or it is the name of a repo library tool (the boot import would otherwise bring the repo
+    copy over it: demo's evolved Paper Airplane Line copies as `paperline-2`).
+  - *The gate.* A copy is new code on a floor, so it is held to the module gate as a new build is; a tool whose old
+    code the gate refuses today is refused with the gate's words and nothing is half made (rows and tables go).
+  - *Admin only, on the record.* Every route is `requireAdmin`; `module_copied`, `template_saved`, `template_changed`,
+    `template_deleted` events and a `tool_copied` record line at the company. Both tables are in the backup. Deleting a
+    company deletes its copy history, never a template saved from it.
+  - *Tests.* `scripts/test-library.js` (15: the check and the rewrite), `scripts/e2e/library.js` (25: the check, a copy
+    live with empty tables and rewritten addresses, -2 and paperline-2, a standard template frozen against the source's
+    v4, the package and its skip, the gate refusal, delete keeps the copies), in `run-all.sh`.
+  - *Not done.* The module creation intake still starts blank (the 2026-09-17 decision); starting a new tool from a
+    template there is the next question. No AI pass that strips a company's words from a template; the check lists
+    them and a person decides. The admin MCP has no template tools yet.

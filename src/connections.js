@@ -1220,7 +1220,7 @@ async function testLabel(company, mod, name, req) {
   const co = (await q("SELECT name FROM platform.companies WHERE slug=$1", [company])).rows[0];
   const zpl = renderZpl(TEST_LABEL, { company: co ? co.name : company, when: new Date().toISOString().slice(0, 16).replace("T", " "), code: `TEST${Date.now().toString().slice(-6)}` });
   const job = await queueJob({ company, mod, name, device, template: "test", zpl, detail: { test: true } });
-  await record("connection_tested", { company, module: mod, actor: "manager", after: `test label queued for device ${device.slice(0, 6)}`, detail: { connection: name, job_id: job.id } });
+  await record("connection_tested", { company, module: mod, actor: require("./record").actor(req), after: `test label queued for device ${device.slice(0, 6)}`, detail: { connection: name, job_id: job.id } });
   return { job_id: job.id, zpl };
 }
 async function deleteCompany(company) {

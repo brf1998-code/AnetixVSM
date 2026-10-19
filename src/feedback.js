@@ -860,6 +860,8 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
     })),
     testFloors: Object.fromEntries(await Promise.all(companies.filter((c) => c.test_floor).map(async (c) => [c.slug, await testfloor.status(c.slug)]))),
     library: await libraryView(modules),
+    templates: await require("./library").list(),   // frozen copies of tools, apart from the company that made them; standard ones form the standard package (src/library.js)
+    copies: (await q("SELECT company, module, template_id, from_company, from_module, from_version, created_at FROM platform.library_copies")).rows,
     models: agent.MODELS,
     labels: agent.ALL_MODELS,   // every model a row may name, retired ones included, for labels only
     defaults: defs,
@@ -1176,6 +1178,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
   if (paying) return res.status(409).json({ error: paying });
   try {
     const mods = (await q("SELECT name FROM platform.modules WHERE company=$1", [co.slug])).rows.map((m) => m.name);
+    await require("./library").deleteCompany(co.slug);   // its copy history (templates saved from it stay: src/library.js)
     await testfloor.deleteCompany(co.slug);   // its test tables and its test_floors row (the third role goes with the runner below)
     await selfserve.deleteCompany(co.slug);   // its credit ledger, its self_serve row, its demo request and its pin (unless another company used the pin)
     await q("DELETE FROM platform.sample_fills WHERE company=$1", [co.slug]);   // what its sample fills put in (the rows go with the schemas below)

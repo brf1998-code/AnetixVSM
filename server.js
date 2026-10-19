@@ -67,6 +67,7 @@ async function main() {
   await require("./src/safeguards").init();  // safeguards for a company that keeps contract information here: the mic, label previews, scanned uploads, the plant's network (src/safeguards.js)
   await require("./src/scan").init();        // every file from outside is scanned for malware before it is kept (src/scan.js)
   await require("./src/assist").init();      // Ask Anetix, the assistant on the board: its conversations, the audit of its tool calls, feedback.source (src/assist.js, docs/ASSISTANT.md)
+  await require("./src/library").init();     // the tool library across companies: templates, copies, the standard package (src/library.js)
   await require("./src/mcp-company").init(); // the company MCP: the records switch, Anetix's lock, feedback.held for a request a connected app filed (src/mcp-company.js, docs/MCP.md)
 
   const app = express();
@@ -218,6 +219,7 @@ async function main() {
   app.use(require("./src/mcp-company").adminRouter);  // /api/admin/companies/:slug/mcp-lock: Anetix's lock over the records switch
   app.use(require("./src/selfserve").adminRouter);   // /api/admin/pins*, /api/admin/companies/:slug/credit: the Pins tab of /admin and the credit on a company's card
   app.use(require("./src/demorequests").router);     // /api/admin/demo-requests*: the requests on the Pins tab
+  app.use(require("./src/library").router);   // /api/admin/library*, /api/admin/companies/:slug/package: copy a tool between companies, templates, the standard package
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
   app.use(require("./src/sample").router);    // /api/c/:slug/modules/:mod/sample*: a demo's sample data (demo companies only)
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build

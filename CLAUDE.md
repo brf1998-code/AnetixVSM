@@ -27,7 +27,9 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   until the first authenticator is set up) lists companies, their modules,
   docs, spend, and adds companies or library modules to them. Its tabs since
   2026-09-28: Demos (the default), Pins, Sites, Requests, Health, Companies,
-  Accounts, Instance, and More (Library, Models); a header pill shows only when
+  Accounts, Instance, Library (out of More since 2026-10-19: every tool of every
+  company, searchable, copied between companies, templates and the standard
+  package, `src/library.js`), and More (Models); a header pill shows only when
   something wants a look (see "The launch audit's Phase 2").
 - Module schemas are `mod_<company>_<module>` / `stg_...` / `snap_...`. The
   first boot after this change renamed the old `mod_paperline` schema and
@@ -142,6 +144,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Phone layout of the board (2026-09-26)
 - System review lives on the settings page (2026-09-26)
 - A named account's requests carry its name (2026-09-26)
+- The record says which account acted (2026-10-15)
 - Board band (2026-09-19)
 - Board tiles fold (2026-09-17)
 - Module creation intake (2026-09-17)
@@ -183,6 +186,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The outside audit 1A: sign-in fixes (2026-10-13)
 - The web connection (2026-10-13)
 - No reason asked when Anetix changes a tool (2026-10-14)
+- The tool library across companies: copy a tool, templates, the standard package (2026-10-19)
 
 ## What this is
 
