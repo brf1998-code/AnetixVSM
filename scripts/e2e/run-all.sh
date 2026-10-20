@@ -103,6 +103,8 @@ run outside                env SOS_PROMPT_LOG=$LOG/outside-prompts.jsonl node sc
 # the web: on per tool, a look-up from the tool's own process, a request filed as "other" turned on as the web (2026-10-13)
 fresh; rm -f "$LOG/web-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/web-prompts.jsonl"
 run web                    env SOS_PROMPT_LOG=$LOG/web-prompts.jsonl node scripts/e2e/web.js
+fresh; rm -f "$LOG/judgment-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/judgment-prompts.jsonl"
+run judgment               env SOS_PROMPT_LOG=$LOG/judgment-prompts.jsonl node scripts/e2e/judgment.js
 # every company that is not a paid site gets the trial features, however it was made; a boot standardizes the rest
 fresh; start "SOS_BROWSER=off"
 run standardize            node scripts/e2e/standardize.js

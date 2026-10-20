@@ -259,6 +259,31 @@ async function joinPreview(top) {
   advance(lead.id).catch((e) => failRun(lead.id, e));
 }
 
+// How each change decides (proposals.approach, 2026-10-20), as the builder and the requirement read it.
+function approachLine(a) {
+  if (!a || !a.how) return "";
+  if (a.how === "rules") return "How it decides: fixed rules; every case is known ahead of time.\n";
+  const step = a.step ? ` The step: ${a.step}.` : "";
+  return a.how === "judgment"
+    ? `How it decides: the tool works this out each time with ctx.ai.judge, because the cases cannot be written down ahead of time.${step}\n`
+    : `How it decides: match once. The first time the tool meets a new one, it works out the match with ctx.ai.judge, shows it to the person to check or fix, saves it, and reuses the saved match by rules after that.${step}\n`;
+}
+const needsJudgment = (ps) => ps.some((p) => p.approach && (p.approach.how === "judgment" || p.approach.how === "match_once"));
+// What a change build is told about ctx.ai.judge when one of its changes needs it (a new tool's build reads the same
+// in MODULE-CONTRACT.md, "Steps that need judgment").
+function judgmentBrief(walled) {
+  return `\nSteps that need judgment. A change above says the tool must work something out that cannot be written down ahead of time. Do not stand in for that with a fixed list of other names, a fuzzy text score or keyword rules: they pass the one example and fail on the next file. Use the platform's judgment call, from routes.js only:
+  const { data } = await ctx.ai.judge({ task, input, answer })
+- task: what to decide, in plain words, as you would ask a careful clerk ("Match each heading of this sales report template to one of the CRM's fields. A heading with no field that means the same thing gets an empty field.").
+- input: what it needs, as text or a JSON value: for a file, its headings and three to five sample rows, never the whole file; plus the tool's own field names with a few words on each.
+- answer: a JSON schema of what comes back; data is in that shape. Keep it small and closed (enums for the tool's own fields), so the code can check it.
+- One judgment takes a few seconds to about twenty. Make one per new thing (one per upload), never one per row, never on a page load. Answer the request after it, and show "Working it out..." on the screen while it runs.
+- Match once (the usual case for a template, a sheet layout, a supplier's file): save the answer in the module's own table beside the thing it is about (a template's match beside the template), show it to the person as a list they can check and change with a plain select per line, and fill by rules from the saved match from then on. Ask again only when a new one arrives or the person presses a "Match again" button.
+- Treat what comes back as a suggestion: check every value against what the tool knows (a field it has, a row that exists) and drop what does not fit; never write it straight into a record without a person or a rule standing behind it.
+- It can fail or be switched off for the company (it throws with a plain sentence; status 409 means switched off): catch it, say so in one line, and let the person do the step by hand (the same select per line, starting empty). The tool must still work.
+- Checks never call a route that asks ctx.ai.judge; check the rule around it (the saved match is used, a bad match is refused).${walled ? "\nThis company is walled off from the AI reading its data, so ctx.ai.judge refuses here: build the by-hand path as the one that works today, with the judgment call in place for when Anetix switches it on." : ""}\n`;
+}
+
 // Text block describing every proposal in the run, for prompts.
 async function proposalsText(run) {
   const ps = await loadProposals(ownIds(run));
@@ -266,6 +291,7 @@ async function proposalsText(run) {
     `${ps.length > 1 ? `Change ${i + 1} of ${ps.length}` : "Approved proposal"} (${p.class})\n` +
     `Target file: ${p.target_file || "unspecified"}${p.screen ? ` (the "${p.screen}" screen)` : ""}\n` +
     `${p.body}\n` +
+    approachLine(p.approach) +
     `Original floor feedback: "${p.message}" (filed from ${p.screen || p.page || "an unknown screen"}, by ${p.reporter || "anonymous"})`
   ).join("\n\n");
 }
@@ -462,7 +488,7 @@ async function advance(runId) {
         signal: ctl.signal,
         system: guidance.text,
         dir: draft.dir,
-        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version, walled, outside, stack: ev0.stack || null }),
+        prompt: buildPrompt({ mod, isBatch, batch, req, lane: run.lane, version: draft.version, walled, outside, stack: ev0.stack || null, judgment: needsJudgment(await loadProposals(ownIds(run)).catch(() => [])) }),
 
         });
       } finally { ACTIVE.delete(runId); if (withheld.length) datawall.restore(draft.dir, fromFilesW, withheld); }
@@ -577,13 +603,13 @@ async function toGate(runId) {
 
 // The build agent's brief for a change (or a batch). A function of its own so the head-to-head assessment
 // (src/assess.js) hands both models exactly the prompt a real build gets.
-function buildPrompt({ mod, isBatch, batch, req, lane, version, walled = false, outside = "", stack = null }) {
+function buildPrompt({ mod, isBatch, batch, req, lane, version, walled = false, outside = "", stack = null, judgment = false }) {
   const onTop = stack ? `\n\nThis directory is NOT the live version. It is a copy of the preview v${stack.base}, which the manager is looking at and has not put live yet. It already carries ${(stack.carried || []).length === 1 ? "this change" : "these changes"}, which go live together with yours:\n${(stack.carried || []).map((c) => `- ${c.what_changed || c.title || `run #${c.run}`}`).join("\n")}\nBuild your change on top of them and keep every one of them working. Its migrations and checks are part of this version: never edit one, add the next number.` : "";
   return `You are implementing ${isBatch ? "a batch of approved changes" : "an approved change"} to the "${mod}" module of a factory operating system. Work only inside this directory; it is a full copy of the ${stack ? "preview" : "live"} module version and will become the next version.${walled ? `\n${require("./datawall").PROMPT_NOTE} Starting rows in the migrations are withheld here and are put back by the platform after you finish.` : ""}${onTop}
 
 ${batch}
 ${req}
-${outside ? `\n${outside}\n` : ""}
+${outside ? `\n${outside}\n` : ""}${judgment ? judgmentBrief(walled) : ""}
 Rules:
 - Each change names a Target file, which is the screen the feedback came from. Make the change in that file. Touch another file only if the change cannot work otherwise, and say so in your summary.
 - ${lane === "ui" ? "This is a UI-class change. Do NOT modify routes.js, the module.json smoke list or entry, or migrations. Touch pages/ and presentation only. The platform compares the files after you finish and stops a UI-class build that changed anything else; if the change cannot work without server logic, leave the server files alone and say so in your summary." : "This is a functionality-class change. If the data model must change, add a NEW migrations/NNN.sql file (additive only: CREATE TABLE / ALTER TABLE ADD COLUMN / CREATE INDEX / INSERT INTO table (columns) VALUES (...) seed rows; every statement ends in a semicolon; bare table names, no schema prefixes, no SELECT). Never edit an existing migration file."}
@@ -1064,5 +1090,5 @@ module.exports = { requirementGate,
   // shared with modulebuild.js (a brand-new module goes through the same runs table and the same gates)
   setRun, log, addCost, failRun, activeRun, shutdown, FENCE, runStructuredCrossCheck, plainSummary, ACTIVE, advance,
   // the cross-check brief, for the replay harness
-  crossCheckCall, crossCheckPrompt, crossCheckSystem, buildPrompt, proposalsText, loadProposals, modelForRun, CROSS_CHECK_SCHEMA, CROSS_CHECK_DIFF_CHARS, demote,
+  crossCheckCall, crossCheckPrompt, crossCheckSystem, buildPrompt, proposalsText, loadProposals, needsJudgment, approachLine, judgmentBrief, modelForRun, CROSS_CHECK_SCHEMA, CROSS_CHECK_DIFF_CHARS, demote,
 };

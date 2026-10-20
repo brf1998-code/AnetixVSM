@@ -211,10 +211,51 @@ function hasPrinter(manifest) {
 //   ai.chat(...)    a plain chat call through the platform's model runner,
 //                   under the monthly cap, cost recorded against the company
 //   ai.models / ai.modelFor(role)
+//   ai.judge({ task, input, answer }) a judgment the tool cannot write down ahead of time, answered in the shape
+//                   `answer` describes (a JSON schema); same cap, wall and usage record as chat
 //   connections.<name>  the surface of each connection module.json declares
 //                   (src/connections.js): files -> status(); printer ->
 //                   print(req, template, data), preview(template, data), status(); erp -> query(), status();
 //                   web -> start(question, opts), result(id), research(question, opts), status()
+// ctx.ai.judge: one judgment a tool hands the platform, answered in the shape the tool asked for.
+//   task    what to decide, in plain words (up to 4,000 characters)
+//   input   what the tool knows: text, or any JSON value (up to SOS_JUDGE_INPUT_CHARS, 60,000 by default, once
+//           written out; send the headings and a few rows, never a whole sheet)
+//   answer  a JSON schema of the answer (an object schema, up to 8,000 characters written out)
+// Returns { data } in that shape. Refused like chat when the company is walled off from the AI (409), and a
+// caller's mistake is a 400 in words the tool can show. Usage kind "judgment"; the record keeps the task and the
+// answer (cut), so Anetix can see what tools are asking.
+const JUDGE_SYSTEM = "You make one judgment for a tool in a factory operating system, inside the tool's own request. The task and the input come from the tool; answer only from the input, in the shape asked for. Where the input does not settle something, leave that value empty (an empty string, null, or out of a list) rather than guess, so the tool can ask a person. Never invent a record, a number or a name that is not in the input.";
+function judgeArgs(args) {
+  const bad = (m) => Object.assign(new Error(m), { status: 400 });
+  const task = String(args.task || "").trim();
+  if (!task) throw bad("ai.judge needs a task: what to decide, in plain words");
+  if (task.length > 4000) throw bad("ai.judge: the task is over 4,000 characters; say what to decide and put the material in input");
+  const input = typeof args.input === "string" ? args.input : JSON.stringify(args.input == null ? null : args.input);
+  const maxIn = Number(process.env.SOS_JUDGE_INPUT_CHARS || 60000);
+  if (input.length > maxIn) throw bad(`ai.judge: the input is ${input.length} characters, over ${maxIn}; send the headings and a few sample rows, not the whole file`);
+  const answer = args.answer;
+  if (!answer || typeof answer !== "object" || Array.isArray(answer) || !answer.type) throw bad("ai.judge needs answer: a JSON schema of what comes back, with a type");
+  if (JSON.stringify(answer).length > 8000) throw bad("ai.judge: the answer schema is over 8,000 characters; ask for less in one judgment");
+  return { task, input, answer, kind: String(args.kind || "judgment").slice(0, 40) };
+}
+async function judge(company, mod, onTest, args) {
+  const agent = require("./agent");
+  const a = judgeArgs(args);
+  if (await require("./datawall").isWalled(company)) throw Object.assign(new Error("AI reading of the company's data is switched off for this company, so this step cannot be worked out here. Anetix can switch it on."), { status: 409 });
+  await agent.assertUnderCap(company, { runtime: true });
+  const m = await agent.modelFor(company, "propose");
+  const maxTokens = Math.min(Number(process.env.SOS_JUDGE_MAX_TOKENS || 4000), 16000);
+  const { data, costUsd } = await agent.runStructured({
+    model: m, company, toolName: "judgment", maxTokens, system: JUDGE_SYSTEM,
+    prompt: `The task:\n${a.task}\n\nThe input:\n${a.input}`,
+    schema: { type: "object", properties: { answer: a.answer }, required: ["answer"] },
+  });
+  await agent.recordUsage(company, mod, "judgment", m, costUsd || 0, { persona: a.kind, ...(onTest ? { lane: "test" } : {}) });
+  await require("./record").record("judgment", { company, module: mod, actor: "agent", before: a.task.slice(0, 2000), after: JSON.stringify(data && data.answer !== undefined ? data.answer : null).slice(0, 2000), detail: { kind: a.kind, model: m, cost_usd: costUsd || 0, input_chars: a.input.length, ...(onTest ? { lane: "test" } : {}) } });
+  return { data: data ? data.answer : null };
+}
+
 // lane: live | staged | test. On the test floor a tool's peer is the TEST copy of its sibling (one world),
 // and what the platform lends is marked as spent or printed from the test floor.
 function moduleServices(company, mod, manifest, version, lane = "live") {
@@ -254,6 +295,14 @@ function moduleServices(company, mod, manifest, version, lane = "live") {
         await rec("chat_question", { company, module: mod, actor: "person", after: asked ? String(asked.content) : null, detail: { persona: kind || "chat", ...(onTest ? { lane: "test" } : {}) } });
         await rec("chat_answer", { company, module: mod, actor: "agent", after: out.text, detail: { persona: kind || "chat", model: m, cost_usd: out.costUsd || 0, ...(onTest ? { lane: "test" } : {}) } });
         return { text: out.text, model: LENT_MODELS[0].id, costUsd: 0 };
+      },
+      // Judgment at run time (2026-10-20): the step a tool cannot write down ahead of time (a template's headings that
+      // do not match the tool's fields by name, a customer's spreadsheet laid out its own way, notes typed in free
+      // text). The tool hands the step over with what it knows and the shape it wants back, and gets that shape back.
+      // Taylor's CRM asked seven times for "upload my sales report template and fill it", and every build matched
+      // headings with a fixed list of other names, which misses the next template. See judge() below.
+      async judge(args) {
+        return judge(company, mod, onTest, args || {});
       },
     },
   };
@@ -793,7 +842,7 @@ function attach(app) {
 }
 
 module.exports = {
-  LENT_MODELS,
+  LENT_MODELS, judgeArgs,
   locationOk, lockDown,
   MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, versionForPage, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,

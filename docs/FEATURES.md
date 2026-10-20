@@ -2909,7 +2909,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   doc, `ai.chat({model, system, messages, maxTokens, kind})` is a plain chat
   call through `agent.runChat` under the monthly cap with the cost written
   to `platform.ai_usage` (counted in `monthlySpend`), `ai.models`,
-  `ai.modelFor(role)`, `manifest`. A module declares chat personas in
+  `ai.modelFor(role)`, `ai.judge({ task, input, answer })` (one judgment in a
+  shape the module asks for, 2026-10-20, see "Steps that need judgment"), `manifest`. A module declares chat personas in
   module.json `agents: { id: { doc, label } }`; the doc file ships in the
   module, is seeded as an editable module doc (`seedModuleDocs`), and
   `guidanceFor` leaves it out of build prompts.
@@ -3952,3 +3953,55 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     both in `run-all.sh`; the module's own checks run against it (2 of 2).
   - *Rev 1 leaves out on purpose.* People and shifts as a constraint, material from purchase orders, an Epicor
     connection to read jobs and routings, setup times, splitting a job across machines. They come through feedback.
+- **Steps that need judgment: rules where the cases are known, the tool works it out where they are not (2026-10-20).**
+  Taylor's CRM (Pearlman LLC, company `demo`) asked seven times in one morning for "upload my sales report template
+  and fill it" (requests 270 to 279). Every build matched the template's headings with a fixed list of other names
+  ("Client" for company), which passed the example and missed the next template; four were cancelled and the fifth
+  waits at the gate. The platform has lent tools an AI call since 2026-09-27 (`ctx.ai.chat`), but the contract
+  described it only as a chat persona, the proposer never decided how a change should decide, and the builder always
+  reached for fixed rules. Brendan: "The default building goes to deterministic which often ends up being wrong. We
+  also do not want to make it too confusing to the operator."
+  - *The proposer decides, the manager never picks.* Every proposal now carries `approach` (`platform.proposals.approach`,
+    JSONB): `how` is `rules` (every case can be written down ahead of time), `judgment` (the tool reads something
+    new each time and decides) or `match_once` (the first time a new template, layout or file arrives the tool works
+    out the match, shows it to the person to check or fix, saves it, and fills by rules after that), with the `step`
+    that needs it and `why`. The test it is given: could a careful person write down every case ahead of time from
+    what the tool holds? Reading anything a person uploads, pastes or types in their own words and lining it up with
+    the tool's fields is never rules. `match_once` is preferred whenever the thing repeats (cheaper, steadier, a person
+    checks it once). A change with judgment or match once is always a functionality change. The proposal and rationale
+    say what the person will see ("the tool reads your template's headings and matches each one to a CRM field
+    itself, shows you the match to check once, then remembers it"), never the way it is built: the brief forbids the
+    words, and `deterministic`, `agentic` and `heuristic` joined the plain-words guard (`src/plainwords.js`,
+    `principles/PLAIN-WORDS.md`). The one question on arrival may never ask how to build; when the choice changes what
+    the person gets and their words do not say, it asks about what they will see ("When a heading in your template does
+    not match a CRM field by name, what should happen?").
+  - *What the build is told.* `pipeline.proposalsText` adds a "How it decides" line per change (the requirement and the
+    reviewer read it too), and a build with a judgment or match-once change gets `judgmentBrief`: use `ctx.ai.judge`,
+    never a list of other names, a fuzzy score or keywords; one call per new thing, never per row or page load; save a
+    match beside the thing it is about and show it with a select per line; treat the answer as a suggestion and check
+    it; catch a refusal and let the person do the step by hand. A walled company's build is told the by-hand path is
+    the one that works today. The head-to-head assessment builds with the same prompt.
+  - *`ctx.ai.judge({ task, input, answer })`* (`src/registry.js judge`, lent over the tool process's channel as
+    `ai.judge` in `src/runner.js` and `src/runner-child.js`). `task` is what to decide in plain words (4,000
+    characters), `input` text or JSON (60,000 written out, `SOS_JUDGE_INPUT_CHARS`; the refusal tells the tool to send
+    headings and a few rows), `answer` a JSON schema (8,000). It is one structured call on the company's propose model
+    (`SOS_JUDGE_MAX_TOKENS`, 4000), answers `{ data }` in that shape, refuses with a 409 and plain words while the
+    company is walled off from the AI, runs under the runtime cap like chat, is metered as usage kind `judgment`, and
+    goes on the record as `judgment` (the task and the answer, cut to 2,000). Fake mode answers the smallest value that
+    fits the schema (`agent.fakeFromSchema`). Checks never call it (GUARDRAILS.md).
+  - *New tools.* The design brief (`intake.js JUDGMENT_DESIGN`) says where the tool works something out, in what the
+    manager sees; the question rounds never ask the manager to choose between fixed rules and the tool working it out.
+    `principles/MODULE-CONTRACT.md` has "Steps that need judgment" with the call and the match-once shape for a first
+    version's build, and `principles/PRINCIPLES.md` 11 is the rule every proposer, designer, builder and reviewer reads.
+    Ask Anetix knows it (`principles/HELP.md`, How a request becomes a change).
+  - *Watching the experiment.* `proposal_drafted` on the record carries `approach` and `approach_step`, and the admin
+    MCP's `activity_since` passes both through, so the four-hourly review shows which way each change was sent.
+  - *Tests.* `scripts/test-judgment.js` (29: the approach kept to its shape, the build lines and brief, the call's
+    argument check, the fake answer's shape, the plain-words guard), `scripts/e2e/judgment.js` (16: a template upload
+    proposed as match once and built with the brief, an ordinary change proposed as rules and built without it, the
+    manager's words naming no way of building, the call's answer, record and plain 400, and the 409 while walled), in
+    `run-all.sh`.
+  - *Known limits.* A judgment is awaited inside the tool's request, which has 30 seconds (`SOS_MODULE_TIMEOUT_MS`):
+    a small match takes a few seconds, a large one can run out; the brief keeps it to headings and a few rows. Only new
+    proposals carry an approach; a proposal drafted before this (CRM v13 at the gate) is built as it was asked. Whether
+    the proposer picks well is the experiment: read `approach` on the record against what Taylor and the floor say.

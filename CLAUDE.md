@@ -1,4 +1,4 @@
-# Symbiotic OS: Workspace Guide (current as of 2026-10-13)
+# Symbiotic OS: Workspace Guide (current as of 2026-10-20)
 
 **This file is the single source of truth for how this repo and the live
 instance are worked on.** Repo: `brf1998-code/SymbioticOS` (private). Live:
@@ -188,6 +188,7 @@ Index of `docs/FEATURES.md`, in its order:
 - No reason asked when Anetix changes a tool (2026-10-14)
 - The tool library across companies: copy a tool, templates, the standard package (2026-10-19)
 - Shop Schedule, a library tool built by hand, and the tools a pin's company starts with (2026-10-19)
+- Steps that need judgment: rules where the cases are known, the tool works it out where they are not (2026-10-20)
 
 ## What this is
 

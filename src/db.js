@@ -282,6 +282,7 @@ const UPGRADES = [
   "ALTER TABLE platform.proposals ADD COLUMN IF NOT EXISTS target_file TEXT",
   "ALTER TABLE platform.proposals ADD COLUMN IF NOT EXISTS model TEXT",
   "ALTER TABLE platform.proposals ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(10,4) NOT NULL DEFAULT 0",
+  "ALTER TABLE platform.proposals ADD COLUMN IF NOT EXISTS approach JSONB",   // how the change decides: rules, judgment or match once (2026-10-20)
   "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS proposal_ids INTEGER[]",
   "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS company TEXT NOT NULL DEFAULT 'demo'",
   "ALTER TABLE platform.build_runs ADD COLUMN IF NOT EXISTS model TEXT",

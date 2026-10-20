@@ -94,7 +94,7 @@ const HELD = "(sent from the company's connected AI app; its words show here onc
 async function heldIds(company) {
   return new Set((await q("SELECT id FROM platform.feedback WHERE held AND ($1::text IS NULL OR company=$1)", [company || null])).rows.map((r) => r.id));
 }
-const DETAIL_KEYS = ["round", "verdict", "by", "decision", "answer", "scope", "lane", "from", "to", "via", "follow_up_id", "asked_by", "kind", "rules"];
+const DETAIL_KEYS = ["round", "verdict", "by", "decision", "answer", "scope", "lane", "from", "to", "via", "follow_up_id", "asked_by", "kind", "rules", "approach", "approach_step"];
 function activityOut(r, held = new Set()) {
   if (r.feedback_id && held.has(Number(r.feedback_id))) return { ...activityOut({ ...r, feedback_id: null }), feedback_id: r.feedback_id, before: null, words: HELD };
   const words = !WORDLESS.has(r.kind);

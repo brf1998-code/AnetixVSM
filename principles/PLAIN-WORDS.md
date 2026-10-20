@@ -27,6 +27,7 @@ may use the technical words; it is marked as such.
 | UI, UX, user interface, frontend | "the screen", "the page", "what people see" |
 | integration, integrate | "connects to", "works with" |
 | bug, exception, stack trace, error log | "a problem", "what went wrong" |
+| deterministic, agentic, heuristic, "rules or AI" | say what the tool does: "matches your headings itself and shows you", "fills it the same way every time" |
 
 The rule of thumb: describe what the person sees and does. A stage, a screen,
 a rule, a number on the board, a list, a scan, a print, a login from IT.

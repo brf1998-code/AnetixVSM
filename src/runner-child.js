@@ -6,7 +6,7 @@
 // database login that reaches ITS company's module tables and nothing else
 // (src/dbroles.js), a unix socket only the platform can reach, and a private
 // channel to the platform for the things the platform lends a module
-// (connections, the AI persona chat, an agent doc). What it does not have: the
+// (connections, the AI persona chat and ai.judge, an agent doc). What it does not have: the
 // platform's environment (no database URL of the platform, no session secret,
 // no API key, no passwords), the platform's files, another company's files,
 // the visitor's cookies, or a way to start other programs.
@@ -112,7 +112,7 @@ function services(mod, spec) {
     connections,
     peer(name) { return peers.has(name) && SCHEMA.test(spec.peerSchemas[name] || "") ? scopedDb(spec.peerSchemas[name], { readOnly: true }) : null; },
     agentDoc: (name) => ask(mod, "agentDoc", { name }),
-    ai: { models: spec.models || [], modelFor: (role) => ask(mod, "ai.modelFor", { role }), chat: (args) => ask(mod, "ai.chat", args || {}) },
+    ai: { models: spec.models || [], modelFor: (role) => ask(mod, "ai.modelFor", { role }), chat: (args) => ask(mod, "ai.chat", args || {}), judge: (args) => ask(mod, "ai.judge", args || {}) },
   };
 }
 

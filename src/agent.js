@@ -375,6 +375,24 @@ function fakeTriage(quoted, prompt, blocks) {
   return { out, notes: notes.length ? " " + notes.join(" ") : "" };
 }
 
+// The smallest value that fits a JSON schema: an enum's first value, an empty string, 0, false, an empty list,
+// and an object with each required property filled the same way. Fake mode's answer to ctx.ai.judge.
+function fakeFromSchema(s, depth = 0) {
+  if (!s || typeof s !== "object" || depth > 8) return null;
+  if (Array.isArray(s.enum) && s.enum.length) return s.enum[0];
+  const t = Array.isArray(s.type) ? s.type.find((x) => x !== "null") || s.type[0] : s.type;
+  if (t === "object") {
+    const out = {};
+    for (const k of s.required || Object.keys(s.properties || {})) out[k] = fakeFromSchema((s.properties || {})[k], depth + 1);
+    return out;
+  }
+  if (t === "array") return [];
+  if (t === "number" || t === "integer") return 0;
+  if (t === "boolean") return false;
+  if (t === "null") return null;
+  return "";
+}
+
 function fakeStructured(toolName, prompt, blocks) {
   const quoted = (/\n\n"([^"]{1,500})"\n\n/.exec(prompt) || [])[1] || prompt.slice(0, 200);
   const screenLine = (prompt.split("\n").find((l) => l.startsWith("Screen:")) || "");
@@ -383,7 +401,7 @@ function fakeStructured(toolName, prompt, blocks) {
   if (toolName === "proposal" && /FAILPROPOSE/.test(quoted)) throw new Error("fake mode: the proposal call failed (FAILPROPOSE)");
   const sorted = toolName === "proposal" ? fakeTriage(quoted, prompt, blocks) : { out: {}, notes: "" };
   const canned = {
-    proposal: { ...sorted.out, erp_data: (() => { const need = /ERPNEED:([a-z_0-9]*)/.exec(quoted); const lk = ((/ERP lookups available to this module: ([^\n]+)/.exec(prompt) || [])[1] || "").split(",")[0].trim(); return need && lk ? [{ what: `fake need: ${need[1] || "something the ERP does not give"}`, lookup: lk, field: need[1] }] : []; })(), proposal: "Fake-mode proposal: apply the requested change as described in the feedback. (SOS_FAKE_AGENT=1)", class: /color|copy|text|label|layout|style|bigger|smaller|show|display|legend|see/i.test(quoted) ? "ui" : "functionality", target_file: target, rationale: "Deterministic fake classification for machinery testing." + ((/This is a follow-up to request #(\d+)\./.exec(prompt) || [])[1] ? ` Follow-up context received for request #${/This is a follow-up to request #(\d+)\./.exec(prompt)[1]}.` : "") + sorted.notes },
+    proposal: { ...sorted.out, erp_data: (() => { const need = /ERPNEED:([a-z_0-9]*)/.exec(quoted); const lk = ((/ERP lookups available to this module: ([^\n]+)/.exec(prompt) || [])[1] || "").split(",")[0].trim(); return need && lk ? [{ what: `fake need: ${need[1] || "something the ERP does not give"}`, lookup: lk, field: need[1] }] : []; })(), proposal: "Fake-mode proposal: apply the requested change as described in the feedback. (SOS_FAKE_AGENT=1)", approach: /template|upload|spreadsheet|their own words/i.test(quoted) ? { how: "match_once", step: "line up the uploaded file's headings with the tool's fields", why: "Fake mode: the request reads a file from outside." } : { how: "rules", step: "", why: "Fake mode: every case is known ahead of time." }, class: /color|copy|text|label|layout|style|bigger|smaller|show|display|legend|see/i.test(quoted) ? "ui" : "functionality", target_file: target, rationale: "Deterministic fake classification for machinery testing." + ((/This is a follow-up to request #(\d+)\./.exec(prompt) || [])[1] ? ` Follow-up context received for request #${/This is a follow-up to request #(\d+)\./.exec(prompt)[1]}.` : "") + sorted.notes },
     requirement: {
       bluf: "Fake-mode requirement: the change in the feedback is applied and nothing else moves.",
       items: (prompt.match(/^Change \d+ of \d+/gm) || ["Approved proposal"]).map((h, i) => ({ change: i + 1, summary: `Fake-mode item ${i + 1}: apply that change on its screen, nothing else.` })),
@@ -566,6 +584,8 @@ async function runStructured({ model, system, prompt, schema, toolName, maxToken
     // SOS_FAKE_PROPOSE_MS: how long a fake proposal call takes, so "the proposer is reading this" can be seen and tested
     const wait = toolName === "proposal" ? Number(process.env.SOS_FAKE_PROPOSE_MS || 0) : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    // a tool's own judgment (registry ctx.ai.judge): an answer in the shape asked for, empty where it can be
+    if (toolName === "judgment") return { data: fakeFromSchema(schema), costUsd: 0 };
     return fakeStructured(toolName, prompt, blocks);
   }
   if (!haveKey()) throw new Error("ANTHROPIC_API_KEY not configured on this instance");
@@ -851,6 +871,7 @@ function capReached(which, usd, cap) {
 
 module.exports = {
   withMeterTag,
+  fakeFromSchema,
   atWall,   // the data wall's choke point and the prompt log (src/datawall.js)
   noteApi,  // a failed call to the API, to the phones (src/credit.js); for a caller with its own call, as src/assist.js
   runAgent, runStructured, runChat, runWeb, webAnswer, webJson, WEB_TOOLS, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,

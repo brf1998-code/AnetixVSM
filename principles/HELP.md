@@ -53,6 +53,14 @@ assistant). Those go to the Anetix team, not to the plant's build loop, and the 
    card the manager can press Done (the person who asked gets a check mark and a thank-you) or "a little left", which
    puts a follow-up back on the board.
 
+Some changes need the tool to work something out rather than follow a fixed rule: matching the headings of a
+template or spreadsheet someone uploads to the tool's own fields, reading notes typed in a person's own words, lining
+up a customer's or supplier's file. The draft decides that on its own and says what the person will see, usually:
+the tool makes the match itself, shows it to check or fix once, then remembers it for that template and fills it the
+same way after that. Nobody is asked to choose how it is built. If the person who asked has to decide something, it
+is what should happen when a heading or a line does not match. When the AI is switched off for a company's data, the
+same screen lets the person make the match by hand.
+
 A change approved while a preview is already waiting is built on top of that preview, so one OK puts them all on the
 floor. Versions keeps every version of a tool: the manager can go back to an earlier one, with the data as it was or
 as it is. Roll back on a card does the same for the change that just went live.

@@ -7,6 +7,28 @@ const { record } = require("./record");
 const datacheck = require("./datacheck");
 const { sourceText } = require("./modulesource");
 
+// How a change decides what to do (2026-10-20). Builds defaulted to fixed rules even where the cases cannot be written
+// down ahead of time: Taylor's CRM asked seven times to "upload my sales report template and fill it", and each build
+// matched the template's headings with a list of other names, which misses the next template. The proposer now
+// decides, per change, which of three it is, and says it to the builder; the manager reads only what the tool will
+// do, in plain words, and is never asked to pick a way of building. principles/PRINCIPLES.md 11 is the rule.
+const APPROACHES = ["rules", "judgment", "match_once"];
+const APPROACH_SCHEMA = {
+  type: "object",
+  description: "How the changed tool decides what to do. rules = every case can be written down ahead of time (fields the tool already has, arithmetic, a fixed layout, a fixed list). judgment = the tool must read something it has not seen before and decide each time (free text, a document, names that differ from one time to the next), and the answer is different every time. match_once = the tool meets something new from outside that then repeats (an uploaded template, a customer's spreadsheet layout, a supplier's file): it works out the match the first time, shows it to a person to check or fix, remembers it, and reuses it by rules after that. When the change reads anything a person uploads, pastes or types in their own words and must line it up with what the tool knows, it is judgment or match_once, never rules.",
+  properties: {
+    how: { type: "string", enum: APPROACHES },
+    step: { type: "string", description: "For judgment and match_once: the one step that needs it, in plain words (for example: line up the template's column headings with the CRM's fields). Empty for rules." },
+    why: { type: "string", description: "One sentence: why the cases can or cannot be written down ahead of time." },
+  },
+  required: ["how", "step", "why"],
+};
+// what the proposer is told, on every proposal
+const APPROACH_BRIEF = `
+
+Decide how the changed tool will decide (approach). Ask yourself: could a careful person write down every case ahead of time, from what the tool already holds? If yes, it is rules. If the tool has to read something from outside that it has never seen (a template or spreadsheet someone uploads, a file from a customer or supplier, notes typed in their own words, a photo of a document) and line it up with what it knows, the cases cannot be written down: a list of other names for each field is a guess that fails on the next file. Then it is judgment, or match_once when the same outside thing comes back again and again (the usual case for templates and spreadsheet layouts): the tool works out the match the first time, shows it to the person to check, remembers it, and fills by rules after that. Prefer match_once to judgment whenever the thing repeats; it is cheaper, steadier, and a person checks it once.
+Write the proposal as what the person will see the tool do, in plain words (for example: "When you upload a template, the tool reads its column headings and matches each one to a CRM field itself, even when the names differ. It shows you the match to check or fix once, then remembers it for that template."). Never write the words rules, judgment, match_once, AI, agentic or deterministic in the proposal or the rationale (the manager reads both). A change with judgment or match_once is a functionality change.`;
+
 // erpLookups: the module's ERP lookup names, when it has an ERP connection.
 // Only then is the model asked what ERP data the change needs (src/datacheck.js).
 function proposalSchema(files, erpLookups, { triage = false, ask = false } = {}) {
@@ -32,11 +54,12 @@ function proposalSchema(files, erpLookups, { triage = false, ask = false } = {})
       } : {}),
       ...(erpLookups && erpLookups.length ? { erp_data: datacheck.schemaFor(erpLookups) } : {}),
       proposal: { type: "string", description: "Plain-language description of the change: what will change, on which screen, and what it will look like. Written for a production manager, not a developer. 2 to 5 sentences." },
+      approach: APPROACH_SCHEMA,
       class: { type: "string", enum: ["ui", "functionality"], description: "ui = layout, styling, copy, view arrangement, or displaying a field that the page already receives. functionality = any logic, data, calculation, workflow state, or integration change. When uncertain, choose functionality." },
       target_file: { type: "string", enum: files, description: "The one file the change lands in. Default to the file behind the screen the feedback came from; pick another only when the feedback clearly talks about a different screen." },
       rationale: { type: "string", description: "One or two sentences on why this class, this file, and this approach." },
     },
-    required: [...(triage ? ["triage"] : []), "proposal", "class", "target_file", "rationale", ...(erpLookups && erpLookups.length ? ["erp_data"] : [])],
+    required: [...(triage ? ["triage"] : []), "proposal", "approach", "class", "target_file", "rationale", ...(erpLookups && erpLookups.length ? ["erp_data"] : [])],
   };
 }
 
@@ -93,7 +116,7 @@ First decide what this request is (triage):
 For anything but change, write one plain sentence in triage_note for the manager, and keep proposal and rationale to one short sentence each (they are not shown).`;
 const ASK_BRIEF = `
 
-You may ask ONE question instead of guessing. Ask only when the words can be read two ways that lead to DIFFERENT changes and the source below does not settle which. Then fill question with one plain question and two or three short answers, each a different reading; the person taps one or answers in their own words. Never ask what the source already answers, never ask how to build it, never ask two things. Most requests need no question: leave question.text empty and draft the proposal. When you do ask, keep proposal and rationale to one short sentence each (they are not shown).`;
+You may ask ONE question instead of guessing. Ask only when the words can be read two ways that lead to DIFFERENT changes and the source below does not settle which. Then fill question with one plain question and two or three short answers, each a different reading; the person taps one or answers in their own words. Never ask what the source already answers, never ask how to build it, never ask two things. Never ask the person to choose between ways of building (fixed rules or the tool working it out); decide that yourself. The one exception is when the choice changes what they get and their words do not say: then ask about what they will see, in their terms, for example "When a heading in your template does not match a CRM field by name, what should happen?" with "The tool picks the closest match and shows me" / "Leave it blank for me to fill". Most requests need no question: leave question.text empty and draft the proposal. When you do ask, keep proposal and rationale to one short sentence each (they are not shown).`;
 
 // Everything the proposer is handed for one request: the system brief, the prompt, the schema and the attached
 // photo. A function of its own so the head-to-head assessment (src/assess.js) asks both models exactly what a
@@ -126,10 +149,17 @@ async function proposalRequest(fb, opts = {}) {
   const extras = [followUp, pointed, blocks.length ? "\nThe person also took a photo; it is attached above." : "", qa].map((x) => String(x || "").trim()).filter(Boolean).join("\n");
   return {
     system: "You draft improvement proposals for a factory operations platform. The reader is a production manager with no software background. Be concrete and short. Never mention code internals in the proposal text. Prefer the smallest change that removes the reported friction. The feedback was filed from a specific screen; the change belongs on that screen unless the feedback clearly says otherwise.\n\n" + guidance.text,
-    prompt: `Floor feedback (reported by ${fb.name || "anonymous"}, reported ${fb.recurrence} time(s))\n${screenLine}\n\n"${fb.message}"${extras ? `\n\n${extras}` : ""}${arrival.candidatesBlock(open)}${mayTriage ? TRIAGE_BRIEF : ""}${outsideLine}${mayAsk ? ASK_BRIEF : ""}\n\nCurrent module for context:\n${ctx.text}\n\nDraft the proposal, classify it, and name the target file.${erpAsk}`,
+    prompt: `Floor feedback (reported by ${fb.name || "anonymous"}, reported ${fb.recurrence} time(s))\n${screenLine}\n\n"${fb.message}"${extras ? `\n\n${extras}` : ""}${arrival.candidatesBlock(open)}${mayTriage ? TRIAGE_BRIEF : ""}${outsideLine}${APPROACH_BRIEF}${mayAsk ? ASK_BRIEF : ""}\n\nCurrent module for context:\n${ctx.text}\n\nDraft the proposal, classify it, and name the target file.${erpAsk}`,
     schema: proposalSchema(ctx.files.length ? ctx.files : ["routes.js"], erpLookups, { triage: mayTriage, ask: mayAsk }),
     blocks, erpLookups, ctx, mayTriage, mayAsk,
   };
+}
+
+// The approach as the model gave it, held to its shape: a known how, short words, or null.
+function cleanApproach(a) {
+  if (!a || !APPROACHES.includes(a.how)) return null;
+  const clip = (t, n) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
+  return { how: a.how, step: a.how === "rules" ? "" : clip(a.step, 300), why: clip(a.why, 300) };
 }
 
 // opts.arrival: the call made the moment a request lands (src/arrival.js). opts.answered: the person answered
@@ -210,17 +240,20 @@ async function generateProposal(feedbackId, opts = {}) {
 
   // one live draft per request: an earlier draft nobody decided on gives way to this one
   await q("UPDATE platform.proposals SET status='superseded' WHERE feedback_id=$1 AND status='draft'", [feedbackId]);
+  const approach = cleanApproach(data.approach);
+  // a change that works something out at run time changes server logic: never a look-and-feel build
+  if (approach && approach.how !== "rules" && data.class === "ui") data.class = "functionality";
   const r = await q(
-    `INSERT INTO platform.proposals (feedback_id, body, class, target_file, rationale, model, cost_usd) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [feedbackId, data.proposal, data.class, data.target_file || fb.target_file || null, data.rationale, model, costUsd || 0]);
+    `INSERT INTO platform.proposals (feedback_id, body, class, target_file, rationale, model, cost_usd, approach) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [feedbackId, data.proposal, data.class, data.target_file || fb.target_file || null, data.rationale, model, costUsd || 0, approach ? JSON.stringify(approach) : null]);
   // a proposal ends a flag (the manager asked for one anyway) and takes an unanswered question off the asker's screen
   await q("UPDATE platform.feedback SET status='reviewing', triage=NULL, triage_note=NULL, updated_at=now() WHERE id=$1", [feedbackId]);
   await logEvent("proposal_generated", feedbackId, { class: data.class, target: data.target_file, model, costUsd, arrival: Boolean(opts.arrival) });
   if (ctx.cut && ctx.cut.length) { console.error(`[context] ${fb.company}/${fb.module} is over the context budget; cut: ${ctx.cut.map((c) => `${c.name} ${c.shown}/${c.of}`).join(", ")}`); await logEvent("proposal_context_cut", feedbackId, { company: fb.company, module: fb.module, cut: ctx.cut }); }
-  await record("proposal_drafted", { company: fb.company, module: fb.module, actor: "agent", feedback_id: feedbackId, proposal_id: r.rows[0].id, after: data.proposal, detail: { class: data.class, target: data.target_file || fb.target_file || null, rationale: data.rationale, model, cost_usd: costUsd || 0, context_chars: ctx.chars || null, ...(ctx.cut && ctx.cut.length ? { context_cut: ctx.cut } : {}), ...(opts.arrival ? { on_arrival: true } : {}), ...(answered ? { with_answer: true } : {}), ...(fb.element ? { pointed: true } : {}), ...(blocks.length ? { photos: blocks.length / 2 } : {}) } });
+  await record("proposal_drafted", { company: fb.company, module: fb.module, actor: "agent", feedback_id: feedbackId, proposal_id: r.rows[0].id, after: data.proposal, detail: { class: data.class, target: data.target_file || fb.target_file || null, rationale: data.rationale, approach: approach ? approach.how : null, approach_step: approach && approach.step ? approach.step : null, model, cost_usd: costUsd || 0, context_chars: ctx.chars || null, ...(ctx.cut && ctx.cut.length ? { context_cut: ctx.cut } : {}), ...(opts.arrival ? { on_arrival: true } : {}), ...(answered ? { with_answer: true } : {}), ...(fb.element ? { pointed: true } : {}), ...(blocks.length ? { photos: blocks.length / 2 } : {}) } });
   // can the ERP connection give what this change needs? the platform checks, not the model
   const check = erpLookups.length ? await datacheck.apply(r.rows[0], fb, data.erp_data).catch((e) => { console.error("[datacheck]", e.message); return null; }) : null;
   return { ...r.rows[0], data_check: check };
 }
 
-module.exports = { generateProposal, moduleContext, proposalRequest };
+module.exports = { generateProposal, moduleContext, proposalRequest, cleanApproach, APPROACHES };

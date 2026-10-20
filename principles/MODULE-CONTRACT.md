@@ -71,6 +71,11 @@ module.exports = function makeRouter(ctx) {
   tables, or null if that module is not live. Reading only.
 - `ctx.ai.chat({ system, messages })` is a plain assistant call for a module
   that has a chat persona. Not needed for a first version.
+- `ctx.ai.judge({ task, input, answer })` is one judgment the module cannot
+  write down ahead of time, answered as `{ data }` in the shape of `answer`
+  (a JSON schema). See "Steps that need judgment" below; a first version uses
+  it whenever the design says the tool works something out from a file or
+  words it has not seen before.
 - `ctx.manifest` is the parsed module.json.
 - `ctx.connections.<name>` is each connection module.json declares, with a
   small fixed surface per kind (see Connections below). This is the only way
@@ -231,6 +236,46 @@ before a connection is set up (say "not connected yet" where it matters,
 A barcode or QR scanner in keyboard mode needs nothing to connect: give the
 page a scan field that keeps focus, treats Enter as the end of a scan, and
 looks the code up. Say in the tour what to scan and where labels print.
+
+## Steps that need judgment
+
+Most of a module is rules: fields it holds, arithmetic, stages, a fixed layout.
+Some steps are not. When the module must read something from outside that it
+has never seen (a template or spreadsheet someone uploads, a supplier's file,
+notes typed in a person's own words) and line it up with what it knows, every
+case cannot be written down ahead of time. A list of other names for each
+field, a fuzzy text score or keyword rules pass the one example and fail on
+the next file. Use `ctx.ai.judge` for that one step, from routes.js:
+
+```js
+const { data } = await ctx.ai.judge({
+  task: "Match each heading of this report template to one of the CRM's fields. A heading with no field that means the same thing gets an empty field.",
+  input: { headings, sample_rows: rows.slice(0, 5), fields: FIELDS },   // FIELDS: [{ name, about }]
+  answer: { type: "object", properties: { matches: { type: "array", items: { type: "object",
+    properties: { heading: { type: "string" }, field: { type: "string", enum: [...FIELDS.map((f) => f.name), ""] } },
+    required: ["heading", "field"] } } }, required: ["matches"] },
+});
+```
+
+- `task` says what to decide in plain words; `input` carries what it needs
+  (for a file: its headings and three to five sample rows, never the whole
+  file; up to 60,000 characters written out); `answer` is a small, closed
+  JSON schema (enums for the module's own fields) so the code can check it.
+- One judgment takes a few seconds to about twenty. Make one per new thing
+  (one per upload), never one per row and never on a page load; show
+  "Working it out..." on the screen while it runs.
+- Match once is the usual shape: the first time a new template, layout or
+  file arrives, ask, save the answer in the module's own table beside it, show
+  it to the person as a list with a plain select per line to check or change,
+  and fill by rules from the saved match after that. Ask again only for a new
+  one or when the person presses "Match again".
+- What comes back is a suggestion: check every value against what the module
+  knows and drop what does not fit. Never write it straight into a record
+  without a person or a rule standing behind it.
+- It throws with a plain sentence when it cannot answer (status 409: switched
+  off for this company). Catch it, say so in one line, and let the person do
+  the step by hand with the same selects, starting empty. The module must
+  still work without it.
 
 ## checks
 

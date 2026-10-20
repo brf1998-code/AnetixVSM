@@ -243,6 +243,7 @@ async function serve(rec, m) {
     if (m.name === "agentDoc") value = await svc.agentDoc(String(a.name || ""));
     else if (m.name === "ai.modelFor") value = await svc.ai.modelFor(a.role);
     else if (m.name === "ai.chat") value = await svc.ai.chat(a);
+    else if (m.name === "ai.judge") value = await svc.ai.judge(a);
     else if (m.name === "conn.status") value = await conn(a.name).status();
     else if (m.name === "conn.query") value = await conn(a.name).query(a.qname, a.params);
     else if (m.name === "conn.preview") value = await conn(a.name).preview(a.template, a.data);

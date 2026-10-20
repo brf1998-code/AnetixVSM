@@ -352,7 +352,7 @@ const TRIALS = {
     try {
       const guidance = await agent.guidanceFor(run.company, run.module);
       const out = await agent.runAgent({ model: t.model, company: run.company, system: guidance.text, dir, capUsd: agent.runCapUsd(ids.length),
-        prompt: pipeline.buildPrompt({ mod: run.module, isBatch: ids.length > 1, batch, req, lane: run.lane, version: run.to_version, walled }) });
+        prompt: pipeline.buildPrompt({ mod: run.module, isBatch: ids.length > 1, batch, req, lane: run.lane, version: run.to_version, walled, judgment: pipeline.needsJudgment(await pipeline.loadProposals(ids.map(Number)).catch(() => [])) }) });
       cost += out.costUsd || 0;
       const verdict = gate.checkDir(dir, { fromFiles, lane: run.lane });
       let diff = "";

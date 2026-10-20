@@ -20,6 +20,8 @@ const BANNED = [
   "prompt", "prompts", "LLM", "LLMs", "UI", "UX",
   "integration", "integrations", "integrate", "integrated",
   "exception", "exceptions",
+  // how a step is built is the agent's call, never a question for the manager (2026-10-20)
+  "deterministic", "nondeterministic", "non-deterministic", "agentic", "heuristic", "heuristics",
   // Model and vendor names (Brendan, 2026-09-26): the agent is "the agent".
   // "Claude" is left off on purpose, it is a common first name on a people list.
   "Fable", "Opus", "Anthropic",

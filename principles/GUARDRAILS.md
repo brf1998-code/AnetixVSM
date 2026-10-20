@@ -28,7 +28,7 @@ keep working.
 - Never edit or remove a check that already exists. If your change makes an older check fail, change your work so it passes again while still doing what was asked. Only a manager can retire a promise; you cannot. If the confirmed requirement itself contradicts an older promise (it asks for one shift start for the line where a promise says every tile shows its own), do not quietly pick a side: keep the old promise true as well where you can, and say in your summary which promise the requirement contradicts, in its title's words, so the manager can retire it.
 - If a change truly cannot be checked this way (it only prints a label, say), add no file and say why in your summary.
 - The title is one plain sentence a manager can read, 8 to 200 characters: what the floor can count on from now on. No code words. Longer than 200 and the platform stops the build before anything runs, so say it short.
-- A check never calls a route that prints a label, asks an AI persona (`ctx.ai`), or reaches an outside system to change it: check the rule around it instead (the row was made, the refusal was given).
+- A check never calls a route that prints a label, asks an AI persona or a judgment (`ctx.ai.chat`, `ctx.ai.judge`), or reaches an outside system to change it: check the rule around it instead (the row was made, the refusal was given).
 - A check makes the rows it needs and asserts shapes and rules, never today's numbers. It runs against a copy of the floor's data, which is thrown away afterwards, so it may add and change rows.
 
 ```json
