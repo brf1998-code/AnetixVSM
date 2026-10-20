@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Morning meeting</title>
+<style>
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --ok:#2e7d4f; --warn:#c2620a; --bad:#b3261e; --navy:#1f3a5f; --hot:#b3261e; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui, sans-serif; background:var(--fog); color:var(--ink); font-size:14px; padding:14px 16px 64px; }
+  a { color:var(--navy); }
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  header.top h1 { font-size:21px; }
+  header.top .day { color:var(--steel); font-size:13px; }
+  nav.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+  nav.tabs a { text-decoration:none; background:#fff; border:1px solid var(--line); border-radius:18px; padding:7px 12px; font-weight:600; font-size:13px; color:var(--ink); }
+  nav.tabs a.on { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:12px; }
+  .card h2 { font-size:15px; margin-bottom:8px; }
+  .sub { color:var(--steel); font-size:12.5px; line-height:1.45; }
+  .pill { display:inline-block; border-radius:12px; padding:2px 9px; font-size:11.5px; font-weight:700; color:#fff; white-space:nowrap; }
+  .pill.ok { background:var(--ok); } .pill.risk { background:var(--warn); } .pill.late { background:var(--bad); } .pill.shipped { background:#7a8794; } .pill.hot { background:var(--hot); }
+  .pill.quiet { background:#e5e9ee; color:var(--ink); }
+  .red { color:var(--bad); font-weight:700; } .amber { color:var(--warn); font-weight:700; } .green { color:var(--ok); font-weight:700; }
+  table.list { width:100%; border-collapse:collapse; }
+  table.list th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.list td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.list tr:last-child td { border-bottom:none; }
+  .wrap { overflow-x:auto; }
+  button, .btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; min-height:40px; }
+  button.go { background:var(--ok); color:#fff; } button.main { background:var(--navy); color:#fff; } button.quiet { background:#e5e9ee; color:var(--ink); }
+  button.warn { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select, textarea { font-family:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  #msg { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 16px; border-radius:10px; font-weight:600; display:none; z-index:30; max-width:90vw; }
+  #msg.bad { background:var(--bad); }
+  .banner { background:#fff7e8; border:1px solid #f0c98a; border-radius:10px; padding:10px 14px; margin-top:10px; font-size:13px; }
+  .banner.red { background:#fdeceb; border-color:#f1b5b0; color:var(--ink); font-weight:400; }
+  .fact { padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; line-height:1.5; }
+  .fact:last-child { border:none; }
+  .fact b.no { font-size:15px; }
+  .fact .sub { display:block; }
+  @media print { nav.tabs, #printbtn, #msg { display:none; } body { background:#fff; } .card { border:none; padding:0; } }
+</style>
+</head>
+<body>
+<header class="top"><h1 id="title">Morning meeting</h1><span class="day" id="day"></span>
+  <nav class="tabs" id="nav"><a href="#" data-to="">Board</a><a href="#" data-to="/meeting">Morning meeting</a><a href="#" data-to="/centers">Work centers</a><a href="#" data-to="/load">Load</a><a href="#" data-to="/setup">Setup</a></nav></header>
+<p class="sub">Facts only: part, quantity, dates, the last operation done and the next one. Each held job has an owner and a date, or it says it has none. <button class="quiet" id="printbtn" onclick="print()" style="min-height:30px;padding:4px 10px;margin-left:6px">Print</button></p>
+<div class="card"><h2 class="red">Late at the dock</h2><div id="late"></div></div>
+<div class="card"><h2>Missed a start date</h2><div id="missed"></div></div>
+<div class="card"><h2>Held: what is in the way, who owns it, by when</h2><div id="held"></div></div>
+<div class="card"><h2>At risk</h2><div id="risk"></div></div>
+<div class="card"><h2>Due at the dock in the next 7 days</h2><div id="soon"></div></div>
+<div class="card"><h2>Shipped in the last 3 days</h2><div id="shipped"></div></div>
+<div id="msg"></div>
+<script>
+const base = location.pathname.match(/^.*?\/(?:staging\/)?m\/[^/]+/)[0];
+const rest = location.pathname.slice(base.length).replace(/\/$/, "");
+const TODAY = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
+function myName() { try { return localStorage.getItem("sos.name") || ""; } catch (e) { return ""; } }
+function setName(v) { try { localStorage.setItem("sos.name", v); } catch (e) {} }
+async function api(path, body) {
+  const url = base + path + (path.includes("?") ? "&" : "?") + "today=" + TODAY;
+  const r = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, who: myName() || undefined }) } : { cache: "no-store" });
+  if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("Sign in first."); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 403) throw new Error("Only a manager can do that.");
+  if (!r.ok) throw new Error(j.error || "Something went wrong.");
+  return j;
+}
+let msgTimer = null;
+function say(text, bad) { const m = document.getElementById("msg"); m.textContent = text; m.className = bad ? "bad" : ""; m.style.display = "block"; clearTimeout(msgTimer); msgTimer = setTimeout(() => { m.style.display = "none"; }, bad ? 5000 : 2500); }
+async function act(path, body, okText, after) { try { const j = await api(path, body || {}); if (okText) say(okText); if (after) await after(j); return j; } catch (e) { say(e.message, true); return null; } }
+const D = (s) => new Date(String(s).slice(0, 10) + "T12:00:00");
+function day(s) { return s ? D(s).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : ""; }
+function short(s) { return s ? D(s).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""; }
+function between(a, b) { return Math.round((D(b) - D(a)) / 86400000); }
+function workdaysBetween(a, b) { let n = 0, d = D(a); const end = D(b); while (d < end) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w > 0 && w < 6) n++; } return n; }
+function plural(n, w) { return `${n} ${w}${n === 1 ? "" : "s"}`; }
+function hrs(h) { h = Number(h) || 0; return (Math.round(h * 10) / 10) + " h"; }
+function ago(t) { if (!t) return ""; const d = (Date.now() - new Date(t)) / 86400000; return d < 1 ? "today" : d < 2 ? "1 day" : Math.floor(d) + " days"; }
+const STATE = { ok: ["ok", "On track"], risk: ["risk", "At risk"], late: ["late", "Late"], shipped: ["shipped", "Shipped"] };
+function pill(state) { const s = STATE[state] || ["quiet", state]; return `<span class="pill ${s[0]}">${s[1]}</span>`; }
+function slackText(n) { return n == null ? "" : n < 0 ? `<span class="red">${plural(-n, "day")} late</span>` : n < 3 ? `<span class="amber">${plural(n, "day")} to spare</span>` : `<span class="green">${plural(n, "day")} to spare</span>`; }
+function go(to) { location.href = base + to; }
+document.getElementById("day").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+for (const a of document.querySelectorAll("#nav a")) {
+  a.href = base + a.dataset.to + (a.dataset.to ? "" : "/");
+  const on = a.dataset.to === "" ? rest === "" : rest.startsWith(a.dataset.to) || (a.dataset.to === "/centers" && rest.startsWith("/center"));
+  if (on) a.classList.add("on");
+}
+function fact(j, extra) {
+  const last = j.last_done ? `last done ${esc(j.last_done.center)} ${short(j.last_done.done_at)}` : "nothing done yet";
+  const next = j.current ? `${j.current.status === "running" ? "running at" : "next"} ${esc(j.current.center)}` : "all done";
+  return `<div class="fact"><a href="${base}/job/${j.id}"><b class="no">${esc(j.job_no)}</b></a> · ${esc(j.part_no || "")} ${esc(j.description || "")} · <b>${j.qty} pcs</b> · ${last} · ${next}
+    <span class="sub">Commit ${day(j.commit_date)} · projected ${day(j.projected_dock)} (${slackText(j.slack_days)})${extra ? " · " + extra : ""}</span></div>`;
+}
+function fill(id, list, extra) { document.getElementById(id).innerHTML = list.length ? list.map(j => fact(j, extra && extra(j))).join("") : '<div class="sub">None.</div>'; }
+async function load() {
+  const b = await api("/api/board"), T = b.today;
+  const byCommit = (a, c) => String(a.commit_date).localeCompare(String(c.commit_date));
+  fill("late", b.jobs.filter(j => j.state === "late").sort(byCommit));
+  fill("missed", b.jobs.filter(j => j.missed_start), j => `<span class="red">${esc(j.current.center)} was to start ${short(j.current.locked_start)}, ${plural(workdaysBetween(j.current.locked_start, T), "working day")} ago</span>`);
+  fill("held", b.jobs.filter(j => j.hold), j => `<b>${esc(j.hold)}</b> · ${j.hold_owner ? "owner " + esc(j.hold_owner) : '<span class="red">no owner</span>'} · ${j.hold_until ? "clear by " + short(j.hold_until) : '<span class="red">no date</span>'}${j.hold_at ? ` · held ${ago(j.hold_at)}` : ""}`);
+  fill("risk", b.jobs.filter(j => j.state === "risk" && !j.missed_start && !j.hold).sort(byCommit));
+  fill("soon", b.jobs.filter(j => between(T, j.commit_date) <= 7).sort(byCommit));
+  const sh = b.shipped.filter(j => j.shipped_at && Date.now() - new Date(j.shipped_at) < 3 * 86400000);
+  document.getElementById("shipped").innerHTML = sh.length ? sh.map(j => `<div class="fact"><b class="no">${esc(j.job_no)}</b> · ${esc(j.part_no || "")} · ${j.qty} pcs · shipped ${day(j.shipped_at)} · commit ${day(j.commit_date)} ${j.on_time ? '<span class="pill ok">On time</span>' : '<span class="pill late">Late</span>'}</div>`).join("") : '<div class="sub">None.</div>';
+}
+load().catch(e => say(e.message, true));
+</script>
+</body>
+</html>

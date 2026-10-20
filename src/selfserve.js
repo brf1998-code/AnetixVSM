@@ -83,6 +83,8 @@ ALTER TABLE platform.self_serve ADD COLUMN IF NOT EXISTS credit_seen_usd NUMERIC
 -- the demo workflow (2026-09-25 evening): a pin is made FOR an email and only works with it; a company made from one
 -- is a demo (the board's rolling DEMO banner, the out-of-credit panel)
 ALTER TABLE platform.access_pins ADD COLUMN IF NOT EXISTS email TEXT;
+-- tools the company starts with, live on its board the moment it is made (2026-10-19): [{ repo: name } | { template: id }]
+ALTER TABLE platform.access_pins ADD COLUMN IF NOT EXISTS tools JSONB;
 ALTER TABLE platform.companies ADD COLUMN IF NOT EXISTS demo BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS platform.credit_ledger (
   id          SERIAL PRIMARY KEY,
@@ -329,7 +331,7 @@ async function assertCredit(company, opts = {}) {
 // own button names ("+ New tool", "Approve build", "Sample data", "Feedback", "Make it live", "Roll back"; rename one
 // there and rename it here). Pure. No dashes: it goes out.
 const PIN_HELP = "brendan@anetix.ai or taylor@anetix.ai";
-function pinMessage({ name, email, pin, days, url }) {
+function pinMessage({ name, email, pin, days, url, starters = [] }) {
   const first = String(name || "").trim().split(/\s+/)[0] || "there";
   url = String(url || WWW_URL()).replace(/\/+$/, "");
   return `Hi ${first},\n\nHere is your pin to try Anetix: ${pin}${days ? ` (good for ${days} days)` : ""}\n\n`
@@ -337,16 +339,21 @@ function pinMessage({ name, email, pin, days, url }) {
     + `1. Go to ${url}/pin and enter the pin with this email address (${email}).\n`
     + `2. Name your company and pick a password.\n`
     + `3. Set up the second sign-in step: Face ID or a fingerprint on a phone, or an authenticator app on your phone (Google Authenticator, Microsoft Authenticator, 1Password or similar) if you are on a computer.\n\n`
-    + `A quick tour, with AI credit from us:\n`
-    + `1. Press "+ New tool" and describe something your floor tracks on a whiteboard, paper or a spreadsheet. Answer its questions and press "Approve build".\n`
-    + `2. Press "Sample data" on the new tool to fill it with a made-up week of work.\n`
+    + (starters.length
+      ? `A quick tour, with AI credit from us:\n`
+        + `1. Open ${starters.map((t) => `"${t}"`).join(" and ")} on your board. ${starters.length === 1 ? "It is" : "They are"} already set up with an example, so you can click around right away.\n`
+        + `2. To build something of your own, press "+ New tool" and describe something your floor tracks on a whiteboard, paper or a spreadsheet.\n`
+      : `A quick tour, with AI credit from us:\n`
+        + `1. Press "+ New tool" and describe something your floor tracks on a whiteboard, paper or a spreadsheet. Answer its questions and press "Approve build".\n`
+        + `2. Press "Sample data" on the new tool to fill it with a made-up week of work.\n`)
     + `3. Be the operator: open the tool, press "Feedback" and ask for a change in plain words. You can talk instead of typing, or add a photo or a spreadsheet.\n`
     + `4. Be the manager: the request comes back to the board ready to build, or with a question if it needs one. Press "Approve build", try the preview, then "Make it live". "Roll back" undoes it.\n\n`
     + `To come back later, go to ${url} and choose Sign in, with the same email and password.\n\n`
     + `If anything gets in the way, write to ${PIN_HELP} or reply here.`;
 }
 // ---- writes ------------------------------------------------------------------------------------------------------
-async function makePinRow({ label, max_uses, days, email }, by) {
+async function makePinRow({ label, max_uses, days, email, tools }, by) {
+  const starters = await require("./library").cleanStarters(tools);   // the tools its company starts with (src/library.js)
   label = clean(label, 80); if (label.length < 2) throw fail(400, "say who the pin is for");
   const accounts = require("./accounts");
   email = accounts.cleanLogin(email);
@@ -357,9 +364,9 @@ async function makePinRow({ label, max_uses, days, email }, by) {
   for (let i = 0; i < 5; i++) {
     const pin = makePin();
     try {
-      const row = (await q("INSERT INTO platform.access_pins (pin, label, max_uses, expires_at, created_by, email) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *",
-        [pin, label, uses, d ? new Date(Date.now() + d * 86400000) : null, by || null, email])).rows[0];
-      await logEvent("pin_made", String(row.id), { label, email, max_uses: uses, days: d, by });
+      const row = (await q("INSERT INTO platform.access_pins (pin, label, max_uses, expires_at, created_by, email, tools) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+        [pin, label, uses, d ? new Date(Date.now() + d * 86400000) : null, by || null, email, starters.length ? JSON.stringify(starters) : null])).rows[0];
+      await logEvent("pin_made", String(row.id), { label, email, max_uses: uses, days: d, by, tools: starters });
       return row;
     } catch (e) { if (!/access_pins_pin_key/.test(e.message)) throw e; }
   }
@@ -452,6 +459,9 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
   else await auth.accountsOnly(slug);                   // a demo: the manager account is the only way in
   const made = await accounts.create({ login, display_name: clean(contact, 80) || login, role: "manager", company: slug, password: mgrPassword }, "anetix.ai", null);
   await upsertDoc(slug, null, "COMPANY.md", `# ${name}\n\nWhat the agents should know about this company: what it makes, who is on the floor, what matters most (safety, throughput, quality), vocabulary the floor uses, anything to avoid.\n`, "repo", true);
+  // the tools the pin was made with go live on the new board now, so the person lands on something working; one that
+  // cannot be added is logged and the company is made all the same (src/library.js addStarters)
+  if (Array.isArray(row.tools) && row.tools.length) await require("./library").addStarters(slug, row.tools, "pin").catch((e) => console.error(`[selfserve] ${slug}: starter tools:`, e.message));
   if (demo) require("./notify").notify(`New demo: ${name}`, `Made on anetix.ai with ${usd.toFixed(2) === "0.00" ? "no" : `$${usd.toFixed(2)} of`} credit. It is on the Demos tab of /admin.`, { tags: ["tada"] });
   await logEvent("company_created", slug, { name, self_serve: true, demo: Boolean(demo), pin: row.id, ref, credit_usd: usd, paid_usd: money(paid_usd), manager_account: made.account.id, chose_password: chosen });
   return { created: true, company: { slug, name }, passwords: floor ? { floor } : null, manager: chosen ? { login: made.account.login } : { login: made.account.login, password: mgrPassword }, credit: await credit(slug) };
@@ -634,7 +644,15 @@ adminRouter.post("/api/admin/pins", requireAdmin, json, guard(async (req, res) =
   const shown = showPin(row.pin), days = Number((req.body || {}).days);
   // the same message a demo request's pin comes with (the launch audit 2.8)
   res.json({ ok: true, pin: { ...row, shown }, subject: "Your Anetix demo pin",
-    message: pinMessage({ name: row.label, email: row.email || "", pin: shown, days: Number.isFinite(days) && days > 0 ? days : (row.expires_at ? Math.round((new Date(row.expires_at) - Date.now()) / 86400e3) : 0) }) });
+    message: pinMessage({ name: row.label, email: row.email || "", pin: shown, days: Number.isFinite(days) && days > 0 ? days : (row.expires_at ? Math.round((new Date(row.expires_at) - Date.now()) / 86400e3) : 0), starters: await require("./library").starterTitles(row.tools) }) });
+}));
+// the tools a pin's company starts with, changed before the pin is used (a pin already sent, then a tool picked)
+adminRouter.post("/api/admin/pins/:id(\\d{1,9})/tools", requireAdmin, json, guard(async (req, res) => {
+  const starters = await require("./library").cleanStarters((req.body || {}).tools);
+  const row = (await q("UPDATE platform.access_pins SET tools=$2 WHERE id=$1 AND uses=0 AND revoked_at IS NULL RETURNING *", [Number(req.params.id), starters.length ? JSON.stringify(starters) : null])).rows[0];
+  if (!row) throw fail(409, "That pin has been used or cancelled; its company is made. Add tools on the company's card.");
+  await logEvent("pin_tools", String(row.id), { tools: starters, by: who(req) });
+  res.json({ ok: true, tools: starters, titles: await require("./library").starterTitles(starters) });
 }));
 adminRouter.post("/api/admin/pins/:id(\\d{1,9})/revoke", requireAdmin, guard(async (req, res) => res.json({ ok: true, pin: await revokePin(req.params.id, who(req)) })));
 adminRouter.get("/api/admin/companies/:slug/credit", requireAdmin, guard(async (req, res) => {

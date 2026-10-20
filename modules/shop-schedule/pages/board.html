@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schedule board</title>
+<style>
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --ok:#2e7d4f; --warn:#c2620a; --bad:#b3261e; --navy:#1f3a5f; --hot:#b3261e; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui, sans-serif; background:var(--fog); color:var(--ink); font-size:14px; padding:14px 16px 64px; }
+  a { color:var(--navy); }
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  header.top h1 { font-size:21px; }
+  header.top .day { color:var(--steel); font-size:13px; }
+  nav.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+  nav.tabs a { text-decoration:none; background:#fff; border:1px solid var(--line); border-radius:18px; padding:7px 12px; font-weight:600; font-size:13px; color:var(--ink); }
+  nav.tabs a.on { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:12px; }
+  .card h2 { font-size:15px; margin-bottom:8px; }
+  .sub { color:var(--steel); font-size:12.5px; line-height:1.45; }
+  .pill { display:inline-block; border-radius:12px; padding:2px 9px; font-size:11.5px; font-weight:700; color:#fff; white-space:nowrap; }
+  .pill.ok { background:var(--ok); } .pill.risk { background:var(--warn); } .pill.late { background:var(--bad); } .pill.shipped { background:#7a8794; } .pill.hot { background:var(--hot); }
+  .pill.quiet { background:#e5e9ee; color:var(--ink); }
+  .red { color:var(--bad); font-weight:700; } .amber { color:var(--warn); font-weight:700; } .green { color:var(--ok); font-weight:700; }
+  table.list { width:100%; border-collapse:collapse; }
+  table.list th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.list td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.list tr:last-child td { border-bottom:none; }
+  .wrap { overflow-x:auto; }
+  button, .btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; min-height:40px; }
+  button.go { background:var(--ok); color:#fff; } button.main { background:var(--navy); color:#fff; } button.quiet { background:#e5e9ee; color:var(--ink); }
+  button.warn { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select, textarea { font-family:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  #msg { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 16px; border-radius:10px; font-weight:600; display:none; z-index:30; max-width:90vw; }
+  #msg.bad { background:var(--bad); }
+  .banner { background:#fff7e8; border:1px solid #f0c98a; border-radius:10px; padding:10px 14px; margin-top:10px; font-size:13px; }
+  .banner.red { background:#fdeceb; border-color:#f1b5b0; color:var(--ink); font-weight:400; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; }
+  .kpi { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .kpi b { display:block; font-size:28px; line-height:1.1; }
+  .kpi span { font-size:12px; color:var(--steel); }
+  .kpi.bad b { color:var(--bad); } .kpi.warn b { color:var(--warn); }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin:12px 0 0; }
+  .chips button { min-height:34px; padding:6px 12px; background:#fff; border:1px solid var(--line); color:var(--ink); font-weight:600; font-size:13px; border-radius:18px; }
+  .chips button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  #jobs tr.row { cursor:pointer; } #jobs tr.row:hover td { background:#f7f9fb; }
+  #jobs td.job { white-space:nowrap; } #jobs td.job b { font-size:15px; }
+  .mv { display:flex; flex-direction:column; gap:2px; }
+  .mv button { min-height:22px; padding:0 7px; font-size:11px; background:#eef1f4; color:var(--steel); border-radius:5px; }
+  .missed { color:var(--bad); font-weight:700; font-size:12px; }
+  .held { color:var(--warn); font-size:12px; font-weight:600; }
+  @media (min-width: 1500px) { body { font-size:15px; } .kpi b { font-size:34px; } }
+</style>
+</head>
+<body>
+<header class="top"><h1 id="title">Shop Schedule</h1><span class="day" id="day"></span>
+  <nav class="tabs" id="nav"><a href="#" data-to="">Board</a><a href="#" data-to="/meeting">Morning meeting</a><a href="#" data-to="/centers">Work centers</a><a href="#" data-to="/load">Load</a><a href="#" data-to="/setup">Setup</a></nav></header>
+<div id="banners"></div>
+<div class="kpis" id="kpis"></div>
+<div class="chips" id="filters"></div>
+<div class="card" style="padding:6px 6px 2px"><div class="wrap"><table class="list" id="jobs"></table></div></div>
+<div class="card" id="shipped-card"><h2>Shipped lately</h2><div class="wrap"><table class="list" id="shipped"></table></div></div>
+<div id="msg"></div>
+<script>
+const base = location.pathname.match(/^.*?\/(?:staging\/)?m\/[^/]+/)[0];
+const rest = location.pathname.slice(base.length).replace(/\/$/, "");
+const TODAY = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
+function myName() { try { return localStorage.getItem("sos.name") || ""; } catch (e) { return ""; } }
+function setName(v) { try { localStorage.setItem("sos.name", v); } catch (e) {} }
+async function api(path, body) {
+  const url = base + path + (path.includes("?") ? "&" : "?") + "today=" + TODAY;
+  const r = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, who: myName() || undefined }) } : { cache: "no-store" });
+  if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("Sign in first."); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 403) throw new Error("Only a manager can do that.");
+  if (!r.ok) throw new Error(j.error || "Something went wrong.");
+  return j;
+}
+let msgTimer = null;
+function say(text, bad) { const m = document.getElementById("msg"); m.textContent = text; m.className = bad ? "bad" : ""; m.style.display = "block"; clearTimeout(msgTimer); msgTimer = setTimeout(() => { m.style.display = "none"; }, bad ? 5000 : 2500); }
+async function act(path, body, okText, after) { try { const j = await api(path, body || {}); if (okText) say(okText); if (after) await after(j); return j; } catch (e) { say(e.message, true); return null; } }
+const D = (s) => new Date(String(s).slice(0, 10) + "T12:00:00");
+function day(s) { return s ? D(s).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : ""; }
+function short(s) { return s ? D(s).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""; }
+function between(a, b) { return Math.round((D(b) - D(a)) / 86400000); }
+function workdaysBetween(a, b) { let n = 0, d = D(a); const end = D(b); while (d < end) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w > 0 && w < 6) n++; } return n; }
+function plural(n, w) { return `${n} ${w}${n === 1 ? "" : "s"}`; }
+function hrs(h) { h = Number(h) || 0; return (Math.round(h * 10) / 10) + " h"; }
+function ago(t) { if (!t) return ""; const d = (Date.now() - new Date(t)) / 86400000; return d < 1 ? "today" : d < 2 ? "1 day" : Math.floor(d) + " days"; }
+const STATE = { ok: ["ok", "On track"], risk: ["risk", "At risk"], late: ["late", "Late"], shipped: ["shipped", "Shipped"] };
+function pill(state) { const s = STATE[state] || ["quiet", state]; return `<span class="pill ${s[0]}">${s[1]}</span>`; }
+function slackText(n) { return n == null ? "" : n < 0 ? `<span class="red">${plural(-n, "day")} late</span>` : n < 3 ? `<span class="amber">${plural(n, "day")} to spare</span>` : `<span class="green">${plural(n, "day")} to spare</span>`; }
+function go(to) { location.href = base + to; }
+document.getElementById("day").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+for (const a of document.querySelectorAll("#nav a")) {
+  a.href = base + a.dataset.to + (a.dataset.to ? "" : "/");
+  const on = a.dataset.to === "" ? rest === "" : rest.startsWith(a.dataset.to) || (a.dataset.to === "/centers" && rest.startsWith("/center"));
+  if (on) a.classList.add("on");
+}
+let B = null, F = "all";
+const FILTERS = [["all", "All open"], ["late", "Late"], ["risk", "At risk"], ["missed", "Missed start"], ["held", "Held"], ["hot", "Hot"]];
+function keep(j) { return F === "all" || (F === "late" && j.state === "late") || (F === "risk" && j.state === "risk") || (F === "missed" && j.missed_start) || (F === "held" && j.hold) || (F === "hot" && j.hot); }
+function draw() {
+  const k = B.kpis;
+  document.getElementById("kpis").innerHTML = [
+    ["", k.open, "open jobs"],
+    [k.late ? "bad" : "", k.late, "late at the dock (projected past commit)"],
+    [k.risk ? "warn" : "", k.risk, "at risk"],
+    [k.missed_starts ? "bad" : "", k.missed_starts, "missed a start date"],
+    [k.held ? "warn" : "", k.held, "held: something in the way"],
+    ["", k.on_time_30 == null ? "None yet" : k.on_time_30 + "%", `on time at the dock, last 30 days (${k.shipped_30} shipped)`],
+    ["", k.avg_wait_days == null ? "None yet" : k.avg_wait_days + " d", "average wait between operations"],
+  ].map(([c, v, l]) => `<div class="kpi ${c}"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("");
+  let ban = "";
+  if (B.example) ban += `<div class="banner">This is an example shop, dated from the day it was put in, so you can see the board working. Start jobs and finish them on <a href="${base}/centers">Work centers</a>, hold one, move one up. When you are ready for your own jobs, clear it on <a href="${base}/setup">Setup</a>.</div>`;
+  if (k.full.length) ban += `<div class="banner red"><b>Booked full:</b> ${k.full.map(o => `<a href="${base}/center/${o.id}">${esc(o.name)}</a> ${o.weeks === 1 ? "this week" : "through the week of " + short(o.through)}`).join("; ")}. Every job behind it waits for those hours. See <a href="${base}/load">Load</a>.</div>`;
+  document.getElementById("banners").innerHTML = ban;
+  const counts = { all: B.jobs.length, late: k.late, risk: k.risk, missed: k.missed_starts, held: k.held, hot: B.jobs.filter(j => j.hot).length };
+  document.getElementById("filters").innerHTML = FILTERS.map(([id, l]) => `<button class="${F === id ? "on" : ""}" onclick="F='${id}';draw()">${l} (${counts[id]})</button>`).join("");
+  const rows = B.jobs.filter(keep);
+  document.getElementById("jobs").innerHTML = `<tr><th>#</th><th>Job</th><th>Part and qty</th><th>Customer</th><th>Where it is now</th><th>Next</th><th>Locked start</th><th>Commit (dock)</th><th>Projected</th><th>Slack</th><th></th></tr>` +
+    (rows.length ? rows.map((j, i) => {
+      const cur = j.current;
+      const start = cur ? (j.missed_start ? `<span class="missed">${short(cur.locked_start)}<br>missed by ${plural(workdaysBetween(cur.locked_start, B.today), "day")}</span>` : short(cur.locked_start)) : "";
+      const where = j.hold ? `${esc(j.where)}<div class="held">Held: ${esc(j.hold)}</div>` : esc(j.where) + (cur && cur.status === "waiting" && cur.waited_days != null && cur.waited_days >= 1 ? ` <span class="sub">for ${plural(Math.floor(cur.waited_days), "day")}</span>` : "");
+      return `<tr class="row" onclick="go('/job/${j.id}')">
+        <td onclick="event.stopPropagation()"><div class="mv"><button title="Up the list" onclick="move(${j.id},'up')">&#9650;</button><button title="Down the list" onclick="move(${j.id},'down')">&#9660;</button></div></td>
+        <td class="job"><b>${esc(j.job_no)}</b> ${j.hot ? '<span class="pill hot">HOT</span>' : ""}</td>
+        <td>${esc(j.part_no || "")} ${esc(j.description || "")}<br><span class="sub">${j.qty} pcs</span></td>
+        <td>${esc(j.customer || "")}</td>
+        <td>${where}</td>
+        <td>${j.next ? esc(j.next.center) : '<span class="sub">last one</span>'}</td>
+        <td>${start}</td>
+        <td><b>${day(j.commit_date)}</b></td>
+        <td>${day(j.projected_dock)}</td>
+        <td>${slackText(j.slack_days)}</td>
+        <td>${pill(j.state)}</td></tr>`;
+    }).join("") : `<tr><td colspan="11" class="sub">Nothing here.${B.jobs.length ? "" : ` Release a job on <a href="${base}/setup">Setup</a>.`}</td></tr>`);
+  const sh = B.shipped.slice(0, 8);
+  document.getElementById("shipped-card").style.display = sh.length ? "" : "none";
+  document.getElementById("shipped").innerHTML = `<tr><th>Job</th><th>Part and qty</th><th>Customer</th><th>Shipped</th><th>Commit (dock)</th><th></th></tr>` + sh.map(j =>
+    `<tr class="row" onclick="go('/job/${j.id}')"><td><b>${esc(j.job_no)}</b></td><td>${esc(j.part_no || "")} ${esc(j.description || "")} <span class="sub">${j.qty} pcs</span></td><td>${esc(j.customer || "")}</td><td>${day(j.shipped_at)}</td><td>${day(j.commit_date)}</td><td>${j.on_time ? '<span class="pill ok">On time</span>' : '<span class="pill late">Late</span>'}</td></tr>`).join("");
+}
+async function move(id, dir) { await act(`/api/jobs/${id}/move`, { dir }, null, load); }
+async function load() { try { B = await api("/api/board"); draw(); } catch (e) { say(e.message, true); } }
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>

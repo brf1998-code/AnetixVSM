@@ -227,5 +227,11 @@ run runner-hostile         node scripts/e2e/runner-hostile.js
 # 2026-10-19: the tool library across companies (src/library.js): copy a tool, templates, the standard package, the check
 fresh; start "SOS_BROWSER=off"
 run library                node scripts/e2e/library.js
+
+# 2026-10-19: the Shop Schedule library tool (modules/shop-schedule), and a pin's starter tools
+fresh; start "SOS_BROWSER=off"
+run shop-schedule          node scripts/e2e/shop-schedule.js
+fresh; start "SOS_BROWSER=off SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test"
+run starter-tools          env SOS_WWW_KEY=e2e-www-key-0123456789abcdef SOS_WWW_URL=https://anetix.test node scripts/e2e/starter-tools.js
 stop
 echo "logs in $LOG"

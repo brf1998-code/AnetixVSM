@@ -187,6 +187,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The web connection (2026-10-13)
 - No reason asked when Anetix changes a tool (2026-10-14)
 - The tool library across companies: copy a tool, templates, the standard package (2026-10-19)
+- Shop Schedule, a library tool built by hand, and the tools a pin's company starts with (2026-10-19)
 
 ## What this is
 
@@ -199,7 +200,9 @@ First module: **Paper Airplane Line** (`modules/paperline/`). A five-station
 line making paper airplanes in 2-minute shifts. It is deliberately a working but
 imperfect v1 so participants feel the improvement loop. `docs/DEMO-RUNBOOK.md`
 is the facilitator script. Second module: **Plant KPIs** (`modules/kpis/`),
-the manager's view of the same line over eight weeks, with Jonah.
+the manager's view of the same line over eight weeks, with Jonah. Third: **Shop Schedule**
+(`modules/shop-schedule/`, 2026-10-19), a job shop's finite-capacity schedule with locked start dates, built by hand
+as the tool a demo lands on (a pin can carry it, "Shop Schedule, a library tool built by hand").
 
 ## Two revision paths, and which one to use
 

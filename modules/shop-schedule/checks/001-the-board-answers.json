@@ -1,0 +1,17 @@
+{
+  "title": "The schedule board shows the numbers, every open job in priority order and every work center",
+  "steps": [
+    {
+      "call": "GET /api/board",
+      "expect": {
+        "json": {
+          "kpis": { "open": { "$type": "number" }, "late": { "$type": "number" }, "missed_starts": { "$type": "number" } },
+          "jobs": { "$type": "array" },
+          "centers": { "$type": "array" },
+          "weeks": { "$length": 8 }
+        }
+      }
+    },
+    { "page": "/", "expect": { "status": 200, "selector": ["#kpis", "#jobs"] } }
+  ]
+}

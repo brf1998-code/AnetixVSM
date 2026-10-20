@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup</title>
+<style>
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --ok:#2e7d4f; --warn:#c2620a; --bad:#b3261e; --navy:#1f3a5f; --hot:#b3261e; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui, sans-serif; background:var(--fog); color:var(--ink); font-size:14px; padding:14px 16px 64px; }
+  a { color:var(--navy); }
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  header.top h1 { font-size:21px; }
+  header.top .day { color:var(--steel); font-size:13px; }
+  nav.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+  nav.tabs a { text-decoration:none; background:#fff; border:1px solid var(--line); border-radius:18px; padding:7px 12px; font-weight:600; font-size:13px; color:var(--ink); }
+  nav.tabs a.on { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:12px; }
+  .card h2 { font-size:15px; margin-bottom:8px; }
+  .sub { color:var(--steel); font-size:12.5px; line-height:1.45; }
+  .pill { display:inline-block; border-radius:12px; padding:2px 9px; font-size:11.5px; font-weight:700; color:#fff; white-space:nowrap; }
+  .pill.ok { background:var(--ok); } .pill.risk { background:var(--warn); } .pill.late { background:var(--bad); } .pill.shipped { background:#7a8794; } .pill.hot { background:var(--hot); }
+  .pill.quiet { background:#e5e9ee; color:var(--ink); }
+  .red { color:var(--bad); font-weight:700; } .amber { color:var(--warn); font-weight:700; } .green { color:var(--ok); font-weight:700; }
+  table.list { width:100%; border-collapse:collapse; }
+  table.list th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.list td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.list tr:last-child td { border-bottom:none; }
+  .wrap { overflow-x:auto; }
+  button, .btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; min-height:40px; }
+  button.go { background:var(--ok); color:#fff; } button.main { background:var(--navy); color:#fff; } button.quiet { background:#e5e9ee; color:var(--ink); }
+  button.warn { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select, textarea { font-family:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  #msg { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 16px; border-radius:10px; font-weight:600; display:none; z-index:30; max-width:90vw; }
+  #msg.bad { background:var(--bad); }
+  .banner { background:#fff7e8; border:1px solid #f0c98a; border-radius:10px; padding:10px 14px; margin-top:10px; font-size:13px; }
+  .banner.red { background:#fdeceb; border-color:#f1b5b0; color:var(--ink); font-weight:400; }
+  .form { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; }
+  .form label { font-size:12px; color:var(--steel); display:flex; flex-direction:column; gap:4px; }
+  #route td input, #route td select { width:100%; }
+  #ctable input { width:100%; min-width:70px; }
+</style>
+</head>
+<body>
+<header class="top"><h1 id="title">Setup</h1><span class="day" id="day"></span>
+  <nav class="tabs" id="nav"><a href="#" data-to="">Board</a><a href="#" data-to="/meeting">Morning meeting</a><a href="#" data-to="/centers">Work centers</a><a href="#" data-to="/load">Load</a><a href="#" data-to="/setup">Setup</a></nav></header>
+<div class="card" id="example-card" style="display:none"></div>
+<div class="card" id="newjob"><h2>Release a job</h2>
+  <div class="form">
+    <label>Job number<input id="j_no" placeholder="J-24140"></label>
+    <label>Part number<input id="j_part" placeholder="AX-410"></label>
+    <label>What it is<input id="j_desc" placeholder="Axle shaft"></label>
+    <label>Quantity<input id="j_qty" type="number" min="1" value="1"></label>
+    <label>Customer<input id="j_cust"></label>
+    <label>Commit date (at their dock)<input id="j_commit" type="date"></label>
+  </div>
+  <p style="margin-top:12px"><b>Routing</b> <span class="sub">the operations in order. Start from a part you have made before:</span> <select id="copyfrom" onchange="copyRoute(this.value)"><option value="">pick a part</option></select></p>
+  <div class="wrap"><table class="list" id="route"></table></div>
+  <p style="margin-top:8px"><button class="quiet" onclick="addOp()">Add an operation</button> <label style="font-size:13px;margin-left:10px"><input type="checkbox" id="j_hot"> Hot</label></p>
+  <p style="margin-top:12px"><button class="main" onclick="release()">Release the job and lock its dates</button></p>
+</div>
+<div class="card"><h2>Work centers</h2><p class="sub">Hours a day is what the work center can run in a day: two machines on one shift are 16, one machine on two shifts is 16. Outside processes take days, not hours.</p>
+  <div class="wrap"><table class="list" id="ctable"></table></div></div>
+<div class="card"><h2>Shipping</h2><label class="sub">Days from your shipping door to the customer's dock <input id="shipdays" type="number" min="0" max="30" style="width:80px"></label> <button class="quiet" onclick="saveShip()">Save</button>
+  <p class="sub" style="margin-top:6px">The commit date is the day it is due at the customer's dock, so a job has to leave this many days before it.</p></div>
+<div id="msg"></div>
+<script>
+const base = location.pathname.match(/^.*?\/(?:staging\/)?m\/[^/]+/)[0];
+const rest = location.pathname.slice(base.length).replace(/\/$/, "");
+const TODAY = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
+function myName() { try { return localStorage.getItem("sos.name") || ""; } catch (e) { return ""; } }
+function setName(v) { try { localStorage.setItem("sos.name", v); } catch (e) {} }
+async function api(path, body) {
+  const url = base + path + (path.includes("?") ? "&" : "?") + "today=" + TODAY;
+  const r = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, who: myName() || undefined }) } : { cache: "no-store" });
+  if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("Sign in first."); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 403) throw new Error("Only a manager can do that.");
+  if (!r.ok) throw new Error(j.error || "Something went wrong.");
+  return j;
+}
+let msgTimer = null;
+function say(text, bad) { const m = document.getElementById("msg"); m.textContent = text; m.className = bad ? "bad" : ""; m.style.display = "block"; clearTimeout(msgTimer); msgTimer = setTimeout(() => { m.style.display = "none"; }, bad ? 5000 : 2500); }
+async function act(path, body, okText, after) { try { const j = await api(path, body || {}); if (okText) say(okText); if (after) await after(j); return j; } catch (e) { say(e.message, true); return null; } }
+const D = (s) => new Date(String(s).slice(0, 10) + "T12:00:00");
+function day(s) { return s ? D(s).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : ""; }
+function short(s) { return s ? D(s).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""; }
+function between(a, b) { return Math.round((D(b) - D(a)) / 86400000); }
+function workdaysBetween(a, b) { let n = 0, d = D(a); const end = D(b); while (d < end) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w > 0 && w < 6) n++; } return n; }
+function plural(n, w) { return `${n} ${w}${n === 1 ? "" : "s"}`; }
+function hrs(h) { h = Number(h) || 0; return (Math.round(h * 10) / 10) + " h"; }
+function ago(t) { if (!t) return ""; const d = (Date.now() - new Date(t)) / 86400000; return d < 1 ? "today" : d < 2 ? "1 day" : Math.floor(d) + " days"; }
+const STATE = { ok: ["ok", "On track"], risk: ["risk", "At risk"], late: ["late", "Late"], shipped: ["shipped", "Shipped"] };
+function pill(state) { const s = STATE[state] || ["quiet", state]; return `<span class="pill ${s[0]}">${s[1]}</span>`; }
+function slackText(n) { return n == null ? "" : n < 0 ? `<span class="red">${plural(-n, "day")} late</span>` : n < 3 ? `<span class="amber">${plural(n, "day")} to spare</span>` : `<span class="green">${plural(n, "day")} to spare</span>`; }
+function go(to) { location.href = base + to; }
+document.getElementById("day").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+for (const a of document.querySelectorAll("#nav a")) {
+  a.href = base + a.dataset.to + (a.dataset.to ? "" : "/");
+  const on = a.dataset.to === "" ? rest === "" : rest.startsWith(a.dataset.to) || (a.dataset.to === "/centers" && rest.startsWith("/center"));
+  if (on) a.classList.add("on");
+}
+let B = null, ROUTE = [];
+function centersOpts(sel) { return B.centers.map(c => `<option value="${c.id}" ${c.id === Number(sel) ? "selected" : ""}>${esc(c.name)}</option>`).join(""); }
+function isOut(cid) { const c = B.centers.find(x => x.id === Number(cid)); return c && c.kind === "outside"; }
+function drawRoute() {
+  document.getElementById("route").innerHTML = `<tr><th>#</th><th>Work center</th><th>What</th><th>Hours</th><th></th></tr>` + ROUTE.map((o, i) =>
+    `<tr><td>${i + 1}</td><td><select onchange="ROUTE[${i}].center_id=Number(this.value);drawRoute()">${centersOpts(o.center_id)}</select></td>
+      <td><input value="${esc(o.what || "")}" onchange="ROUTE[${i}].what=this.value"></td>
+      <td>${isOut(o.center_id) ? '<span class="sub">outside: days, not hours</span>' : `<input type="number" min="0" step="0.25" value="${o.hours || ""}" onchange="ROUTE[${i}].hours=Number(this.value)" style="width:90px">`}</td>
+      <td><button class="quiet" style="min-height:30px;padding:4px 10px" onclick="ROUTE.splice(${i},1);drawRoute()">Remove</button></td></tr>`).join("");
+}
+function addOp() { ROUTE.push({ center_id: B.centers[0] && B.centers[0].id, what: "", hours: 1 }); drawRoute(); }
+function copyRoute(jid) {
+  const j = [...B.jobs, ...B.shipped].find(x => x.id === Number(jid)); if (!j) return;
+  ROUTE = j.ops.map(o => ({ center_id: o.center_id, what: o.what, hours: o.hours }));
+  document.getElementById("j_part").value = j.part_no || ""; document.getElementById("j_desc").value = j.description || "";
+  drawRoute();
+}
+async function release() {
+  const v = (x) => document.getElementById(x).value;
+  await act("/api/jobs", { job_no: v("j_no"), part_no: v("j_part"), description: v("j_desc"), qty: Number(v("j_qty")), customer: v("j_cust"), commit_date: v("j_commit"), hot: document.getElementById("j_hot").checked, ops: ROUTE },
+    null, (j) => { say("Released. Its start dates are locked."); setTimeout(() => go(`/job/${j.id}`), 600); });
+}
+function drawCenters() {
+  document.getElementById("ctable").innerHTML = `<tr><th>Name</th><th>Kind</th><th>Hours a day</th><th>Days out (outside)</th><th></th></tr>` + B.centers.map(c =>
+    `<tr><td><input id="cn${c.id}" value="${esc(c.name)}"></td><td><select id="ck${c.id}"><option value="machine" ${c.kind !== "outside" ? "selected" : ""}>In the shop</option><option value="outside" ${c.kind === "outside" ? "selected" : ""}>Outside vendor</option></select></td>
+      <td><input id="ch${c.id}" type="number" min="0" step="0.5" value="${c.hours_per_day}"></td><td><input id="co${c.id}" type="number" min="0" value="${c.outside_days || 0}"></td>
+      <td style="white-space:nowrap"><button class="quiet" onclick="saveCenter(${c.id})">Save</button> <button class="quiet" onclick="retire(${c.id})">Retire</button></td></tr>`).join("") +
+    `<tr><td><input id="cnnew" placeholder="New work center"></td><td><select id="cknew"><option value="machine">In the shop</option><option value="outside">Outside vendor</option></select></td><td><input id="chnew" type="number" min="0" step="0.5" value="8"></td><td><input id="conew" type="number" min="0" value="0"></td><td><button class="go" onclick="saveCenter('new')">Add</button></td></tr>`;
+}
+async function saveCenter(cid) {
+  const g = (p) => document.getElementById(p + cid).value;
+  await act("/api/centers", { id: cid === "new" ? undefined : cid, name: g("cn"), kind: g("ck"), hours_per_day: Number(g("ch")), outside_days: Number(g("co")) }, "Saved.", load);
+}
+async function retire(cid) { if (confirm("Retire this work center? It stays on old jobs' history.")) await act(`/api/centers/${cid}/retire`, {}, "Retired.", load); }
+async function saveShip() { await act("/api/settings", { ship_days: Number(document.getElementById("shipdays").value) }, "Saved.", load); }
+async function clearExample() { if (confirm("Take out every example job? Your own jobs stay.")) await act("/api/example/clear", { centers: document.getElementById("exc").checked }, "The example is out.", load); }
+async function loadExample() { await act("/api/example/load", {}, "The example shop is back.", load); }
+async function load() {
+  B = await api("/api/board");
+  const ex = document.getElementById("example-card");
+  ex.style.display = "";
+  ex.innerHTML = B.example
+    ? `<h2>The example shop</h2><p class="sub">Sixteen open jobs and six shipped ones, made up and dated from the day they went in, so every screen has something to show. Take them out before you put in your own.</p><p style="margin-top:8px"><label class="sub"><input type="checkbox" id="exc"> and the example work centers nobody else uses</label> <button class="warn" onclick="clearExample()">Take out the example</button></p>`
+    : `<h2>The example shop</h2><p class="sub">Out. Put it back to show someone how the screens work.</p><p style="margin-top:8px"><button class="quiet" onclick="loadExample()">Put the example back</button></p>`;
+  document.getElementById("shipdays").value = B.settings.ship_days;
+  const parts = new Map();
+  for (const j of [...B.jobs, ...B.shipped]) if (j.part_no && !parts.has(j.part_no)) parts.set(j.part_no, j);
+  document.getElementById("copyfrom").innerHTML = `<option value="">pick a part</option>` + [...parts.values()].map(j => `<option value="${j.id}">${esc(j.part_no)} ${esc(j.description || "")}</option>`).join("");
+  if (!ROUTE.length && B.centers.length) addOp(); else drawRoute();
+  drawCenters();
+}
+load().catch(e => say(e.message, true));
+</script>
+</body>
+</html>

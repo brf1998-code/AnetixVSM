@@ -3912,3 +3912,43 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Not done.* The module creation intake still starts blank (the 2026-09-17 decision); starting a new tool from a
     template there is the next question. No AI pass that strips a company's words from a template; the check lists
     them and a person decides. The admin MCP has no template tools yet.
+
+- **Shop Schedule, a library tool built by hand, and the tools a pin's company starts with (2026-10-19)**
+  (`modules/shop-schedule/`, `principles/module-formats/shop-schedule.md`, `src/selfserve.js` pins and createCompany,
+  `src/library.js` cleanStarters / starterTitles / addStarters, the Pins tab of `public/admin.html`). Brendan, after a
+  plant walk at a machining and fabrication shop: "I need something where they are getting a good basic scheduling
+  module when they log on ... a way for when they logon to see something that is working", built by hand "and save me
+  the API tokens". A demo used to land on an empty board, and the first tool cost a build.
+  - *What the shop said it needed, and where it is in the tool.* The schedule showed infinite capacity: the plan
+    places every operation on its work center's real hours a day, highest priority first, so no work center is ever
+    booked past what it has and a constraint (the over-booked lathe) shows as weeks booked full on Load and a red
+    banner on the board. Start dates moved every day, so nothing was late until the end: every operation's start date
+    is locked at release and only a manager moves it, with a reason on the job's history; a waiting operation past its
+    locked start is a missed start, red on the board, the job, the work center and the meeting. On time was counted
+    at the shipping door: the commit date is the customer's dock date, and the projection adds the days from the
+    door to the dock. "I see the date, I need to click down one layer": the job page says what is done and what is
+    left (hours in the shop, outside processes) and where the plan puts it. Nobody knew what was on the lathe: each work
+    center's tablet page has what is running, what is here and ready in order (NEXT UP), what is held and what is
+    coming, with Start and Done. The meeting was "shaggy dog stories": the morning meeting page is facts (part,
+    quantity, dates, last and next operation) with every held job's owner and date, or a red "no owner" / "no date".
+    The wait between operations is measured from the floor's taps (average on the board, per operation on the job).
+  - *The example shop.* On the first request, 11 work centers, 16 open jobs and 6 shipped ones, dated from that day:
+    the lathe booked full, two outside processes, three held jobs (material, a drawing, a purchased part), a few late
+    and a few with missed starts, on time 3 of 6. Setup takes it out (the example jobs, and the unused example work
+    centers if ticked) and puts it back; once out it never comes back on its own. Nothing in it names a real company.
+  - *Built by hand, held to the same rules as a build.* Passes the module gate and the migration validator; two
+    checks (`checks/001`, `checks/002`); a tour; the reference doc for the agent. Every page is built from one shared
+    head and helper script (the generator is not in the repo; the pages are plain files). As a repo library tool it is
+    added to company `demo` at boot and is addable to any company from the Library tab, a company card or a pin.
+  - *Pins carry starter tools.* `platform.access_pins.tools` (`[{ repo }]` or `[{ template }]`), ticked under "On their
+    board from the start" when the pin is made, or changed on the Pins tab until the pin is used. `createCompany` puts
+    them live right after the company is made (`library.addStarters`: a repo tool through `importFromRepo` and the
+    mount, a template through `addTemplate`); one that fails is logged and the company is made all the same. The pin
+    message then tells them to open those tools instead of pressing "+ New tool" first.
+  - *Tests.* `scripts/e2e/shop-schedule.js` (57: the example, the numbers, no work center past its hours, the floor's
+    Start and Done and Can't run it, the manager's release, priority, re-lock and commit date with reasons, ship and
+    undo, work centers, the example out and back, every screen), `scripts/e2e/starter-tools.js` (13: the pin's tools,
+    the message, the company made with them live and the example in, the change before use and the refusal after),
+    both in `run-all.sh`; the module's own checks run against it (2 of 2).
+  - *Rev 1 leaves out on purpose.* People and shifts as a constraint, material from purchase orders, an Epicor
+    connection to read jobs and routings, setup times, splitting a job across machines. They come through feedback.

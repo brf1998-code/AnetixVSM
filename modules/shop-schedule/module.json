@@ -1,0 +1,16 @@
+{
+  "name": "shop-schedule",
+  "title": "Shop Schedule",
+  "description": "A job shop's schedule with real limits: every job's operations placed on each work center's actual hours, start dates locked at release so a missed start shows red the day it happens, the projected date at the customer's dock against the commit date, a queue for each work center, the load by week, and the morning meeting in facts (part, quantity, date, last and next operation).",
+  "entry": "routes.js",
+  "pages": {
+    "/": { "file": "pages/board.html", "label": "Schedule board (office and wall screen)" },
+    "/job/:id": { "file": "pages/job.html", "label": "One job: what is done and what is left" },
+    "/centers": { "file": "pages/center.html", "label": "Work center picker" },
+    "/center/:id": { "file": "pages/center.html", "label": "Work center queue (floor, on a tablet)" },
+    "/load": { "file": "pages/load.html", "label": "Load by work center (planning)" },
+    "/meeting": { "file": "pages/meeting.html", "label": "Morning meeting (facts)" },
+    "/setup": { "file": "pages/setup.html", "label": "Work centers and new jobs (planner)" }
+  },
+  "smoke": ["/api/board", "/api/centers", "/centers", "/load", "/meeting", "/setup"]
+}

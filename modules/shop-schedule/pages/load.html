@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Load</title>
+<style>
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --ok:#2e7d4f; --warn:#c2620a; --bad:#b3261e; --navy:#1f3a5f; --hot:#b3261e; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui, sans-serif; background:var(--fog); color:var(--ink); font-size:14px; padding:14px 16px 64px; }
+  a { color:var(--navy); }
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  header.top h1 { font-size:21px; }
+  header.top .day { color:var(--steel); font-size:13px; }
+  nav.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+  nav.tabs a { text-decoration:none; background:#fff; border:1px solid var(--line); border-radius:18px; padding:7px 12px; font-weight:600; font-size:13px; color:var(--ink); }
+  nav.tabs a.on { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:12px; }
+  .card h2 { font-size:15px; margin-bottom:8px; }
+  .sub { color:var(--steel); font-size:12.5px; line-height:1.45; }
+  .pill { display:inline-block; border-radius:12px; padding:2px 9px; font-size:11.5px; font-weight:700; color:#fff; white-space:nowrap; }
+  .pill.ok { background:var(--ok); } .pill.risk { background:var(--warn); } .pill.late { background:var(--bad); } .pill.shipped { background:#7a8794; } .pill.hot { background:var(--hot); }
+  .pill.quiet { background:#e5e9ee; color:var(--ink); }
+  .red { color:var(--bad); font-weight:700; } .amber { color:var(--warn); font-weight:700; } .green { color:var(--ok); font-weight:700; }
+  table.list { width:100%; border-collapse:collapse; }
+  table.list th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.list td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.list tr:last-child td { border-bottom:none; }
+  .wrap { overflow-x:auto; }
+  button, .btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; min-height:40px; }
+  button.go { background:var(--ok); color:#fff; } button.main { background:var(--navy); color:#fff; } button.quiet { background:#e5e9ee; color:var(--ink); }
+  button.warn { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select, textarea { font-family:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  #msg { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 16px; border-radius:10px; font-weight:600; display:none; z-index:30; max-width:90vw; }
+  #msg.bad { background:var(--bad); }
+  .banner { background:#fff7e8; border:1px solid #f0c98a; border-radius:10px; padding:10px 14px; margin-top:10px; font-size:13px; }
+  .banner.red { background:#fdeceb; border-color:#f1b5b0; color:var(--ink); font-weight:400; }
+  td.cell { min-width:92px; }
+  .bar { height:8px; background:#e5e9ee; border-radius:4px; overflow:hidden; margin-top:4px; }
+  .bar i { display:block; height:100%; background:var(--ok); }
+  .bar i.over { background:var(--bad); } .bar i.near { background:var(--warn); }
+  td.over { background:#fdeceb; }
+</style>
+</head>
+<body>
+<header class="top"><h1 id="title">Load by work center</h1><span class="day" id="day"></span>
+  <nav class="tabs" id="nav"><a href="#" data-to="">Board</a><a href="#" data-to="/meeting">Morning meeting</a><a href="#" data-to="/centers">Work centers</a><a href="#" data-to="/load">Load</a><a href="#" data-to="/setup">Setup</a></nav></header>
+<p class="sub">Hours each work center is booked for, week by week, against the hours it has. The plan never books a work center past its hours, so a red week is a full one: every job that needs it waits for the next open hours, and that shows here weeks before a commit date is missed.</p>
+<div class="card"><div class="wrap"><table class="list" id="load"></table></div></div>
+<div class="card"><h2>Outside processing</h2><div class="wrap"><table class="list" id="outside"></table></div></div>
+<div id="msg"></div>
+<script>
+const base = location.pathname.match(/^.*?\/(?:staging\/)?m\/[^/]+/)[0];
+const rest = location.pathname.slice(base.length).replace(/\/$/, "");
+const TODAY = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
+function myName() { try { return localStorage.getItem("sos.name") || ""; } catch (e) { return ""; } }
+function setName(v) { try { localStorage.setItem("sos.name", v); } catch (e) {} }
+async function api(path, body) {
+  const url = base + path + (path.includes("?") ? "&" : "?") + "today=" + TODAY;
+  const r = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, who: myName() || undefined }) } : { cache: "no-store" });
+  if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("Sign in first."); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 403) throw new Error("Only a manager can do that.");
+  if (!r.ok) throw new Error(j.error || "Something went wrong.");
+  return j;
+}
+let msgTimer = null;
+function say(text, bad) { const m = document.getElementById("msg"); m.textContent = text; m.className = bad ? "bad" : ""; m.style.display = "block"; clearTimeout(msgTimer); msgTimer = setTimeout(() => { m.style.display = "none"; }, bad ? 5000 : 2500); }
+async function act(path, body, okText, after) { try { const j = await api(path, body || {}); if (okText) say(okText); if (after) await after(j); return j; } catch (e) { say(e.message, true); return null; } }
+const D = (s) => new Date(String(s).slice(0, 10) + "T12:00:00");
+function day(s) { return s ? D(s).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : ""; }
+function short(s) { return s ? D(s).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""; }
+function between(a, b) { return Math.round((D(b) - D(a)) / 86400000); }
+function workdaysBetween(a, b) { let n = 0, d = D(a); const end = D(b); while (d < end) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w > 0 && w < 6) n++; } return n; }
+function plural(n, w) { return `${n} ${w}${n === 1 ? "" : "s"}`; }
+function hrs(h) { h = Number(h) || 0; return (Math.round(h * 10) / 10) + " h"; }
+function ago(t) { if (!t) return ""; const d = (Date.now() - new Date(t)) / 86400000; return d < 1 ? "today" : d < 2 ? "1 day" : Math.floor(d) + " days"; }
+const STATE = { ok: ["ok", "On track"], risk: ["risk", "At risk"], late: ["late", "Late"], shipped: ["shipped", "Shipped"] };
+function pill(state) { const s = STATE[state] || ["quiet", state]; return `<span class="pill ${s[0]}">${s[1]}</span>`; }
+function slackText(n) { return n == null ? "" : n < 0 ? `<span class="red">${plural(-n, "day")} late</span>` : n < 3 ? `<span class="amber">${plural(n, "day")} to spare</span>` : `<span class="green">${plural(n, "day")} to spare</span>`; }
+function go(to) { location.href = base + to; }
+document.getElementById("day").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+for (const a of document.querySelectorAll("#nav a")) {
+  a.href = base + a.dataset.to + (a.dataset.to ? "" : "/");
+  const on = a.dataset.to === "" ? rest === "" : rest.startsWith(a.dataset.to) || (a.dataset.to === "/centers" && rest.startsWith("/center"));
+  if (on) a.classList.add("on");
+}
+async function load() {
+  const b = await api("/api/board");
+  const inside = b.centers.filter(c => c.kind !== "outside");
+  document.getElementById("load").innerHTML = `<tr><th>Work center</th><th>Hours a day</th><th>Waiting here now</th>${b.weeks.map((w, i) => `<th>${i === 0 ? "This week" : "Wk of " + short(w)}</th>`).join("")}</tr>` + inside.map(c =>
+    `<tr><td><a href="${base}/center/${c.id}"><b>${esc(c.name)}</b></a></td><td>${c.hours_per_day}</td><td>${c.days_of_work_here ? c.days_of_work_here + " days" : '<span class="sub">none</span>'}</td>${c.load.map(w => {
+      const pct = w.capacity ? Math.round((100 * w.hours) / w.capacity) : null;
+      return `<td class="cell ${pct >= 95 ? "over" : ""}">${w.hours ? `${Math.round(w.hours)} / ${Math.round(w.capacity)} h${pct >= 95 ? ' <b class="red">full</b>' : ""}` : '<span class="sub">open</span>'}${pct != null && w.hours ? `<div class="bar"><i class="${pct >= 95 ? "over" : pct > 80 ? "near" : ""}" style="width:${Math.min(100, pct)}%"></i></div>` : ""}</td>`; }).join("")}</tr>`).join("");
+  const out = [];
+  for (const c of b.centers.filter(c => c.kind === "outside")) for (const x of c.running) out.push({ c, x, state: "Out" });
+  for (const c of b.centers.filter(c => c.kind === "outside")) for (const x of c.here) out.push({ c, x, state: "Ready to send" });
+  document.getElementById("outside").innerHTML = out.length ? `<tr><th>Process</th><th>Job</th><th>Part and qty</th><th></th><th>Back by (plan)</th><th>Commit</th></tr>` + out.map(({ c, x, state }) =>
+    `<tr><td>${esc(c.name)}</td><td><a href="${base}/job/${x.job_id}"><b>${esc(x.job_no)}</b></a></td><td>${esc(x.part_no || "")} <span class="sub">${x.qty} pcs</span></td><td>${state}${state === "Out" && x.started_at ? ` <span class="sub">${ago(x.started_at)}</span>` : ""}</td><td>${day(x.plan_end)}</td><td>${day(x.commit_date)} ${pill(x.state)}</td></tr>`).join("") : '<tr><td class="sub">Nothing is out or waiting to go out.</td></tr>';
+}
+load().catch(e => say(e.message, true));
+</script>
+</body>
+</html>

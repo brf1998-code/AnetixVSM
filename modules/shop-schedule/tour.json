@@ -1,0 +1,13 @@
+{
+  "title": "Shop Schedule in three minutes",
+  "intro": "One schedule for the office and the floor. Every job's operations sit on each work center's real hours, so the schedule never promises a lathe more than it has. Start dates lock when a job is released, so a missed start shows red the day it happens, weeks before the commit date is in danger. The floor moves the jobs with Start and Done on a tablet at each work center.",
+  "steps": [
+    { "path": "/", "target": "#kpis", "title": "The numbers that matter", "body": "Late at the dock means the plan puts the job at the customer's dock after its commit date. Missed a start date is the early warning: an operation that should have started and has not. Held jobs have something in the way. On time is measured at the customer's dock, not the shipping door." },
+    { "path": "/", "target": "#jobs", "title": "Every open job, in priority order", "body": "Where it is now, what is next, its locked start, the commit date and where the plan puts it today. The arrows move a job up or down the list and the whole shop's plan follows. Click any job to see what is done and what is left." },
+    { "path": "/meeting", "target": "#held", "title": "The morning meeting, in facts", "body": "Part, quantity, dates, the last operation done and the next one. Every held job shows who owns clearing it and by when, and says so in red when nobody does. Walk in with this printed or on the screen and leave with owners and dates." },
+    { "path": "/centers", "target": "#centers", "title": "One tablet at each work center", "body": "Each work center sees what is running, what is here and ready in order (the next one marked), what is held and what is coming. Start and Done are the only taps; Done sends the job to the next work center and starts the clock on its wait there." },
+    { "path": "/load", "target": "#load", "title": "Load, weeks ahead", "body": "Hours booked against hours available, week by week. A red week is a work center booked past what it has: decide now whether to offload it, add a shift or move a date, instead of finding out when the work piles up." },
+    { "path": "/setup", "target": "#newjob", "title": "Release a job", "body": "Job number, quantity, the commit date at the customer's dock and the routing, copied from a part you have made before. Releasing it locks its start dates from the plan. Work centers and their hours a day are set below." },
+    { "path": "/", "target": "#sos-fb-btn", "title": "The feedback button", "body": "Something wrong or missing? Say it here, from the screen where it happened. It goes to the improvement board, where the manager turns it into a change to this tool." }
+  ]
+}

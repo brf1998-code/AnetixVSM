@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job</title>
+<style>
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --ok:#2e7d4f; --warn:#c2620a; --bad:#b3261e; --navy:#1f3a5f; --hot:#b3261e; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui, sans-serif; background:var(--fog); color:var(--ink); font-size:14px; padding:14px 16px 64px; }
+  a { color:var(--navy); }
+  header.top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  header.top h1 { font-size:21px; }
+  header.top .day { color:var(--steel); font-size:13px; }
+  nav.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+  nav.tabs a { text-decoration:none; background:#fff; border:1px solid var(--line); border-radius:18px; padding:7px 12px; font-weight:600; font-size:13px; color:var(--ink); }
+  nav.tabs a.on { background:var(--navy); border-color:var(--navy); color:#fff; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px; margin-top:12px; }
+  .card h2 { font-size:15px; margin-bottom:8px; }
+  .sub { color:var(--steel); font-size:12.5px; line-height:1.45; }
+  .pill { display:inline-block; border-radius:12px; padding:2px 9px; font-size:11.5px; font-weight:700; color:#fff; white-space:nowrap; }
+  .pill.ok { background:var(--ok); } .pill.risk { background:var(--warn); } .pill.late { background:var(--bad); } .pill.shipped { background:#7a8794; } .pill.hot { background:var(--hot); }
+  .pill.quiet { background:#e5e9ee; color:var(--ink); }
+  .red { color:var(--bad); font-weight:700; } .amber { color:var(--warn); font-weight:700; } .green { color:var(--ok); font-weight:700; }
+  table.list { width:100%; border-collapse:collapse; }
+  table.list th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--steel); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.list td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.list tr:last-child td { border-bottom:none; }
+  .wrap { overflow-x:auto; }
+  button, .btn { border:none; border-radius:8px; padding:9px 14px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; min-height:40px; }
+  button.go { background:var(--ok); color:#fff; } button.main { background:var(--navy); color:#fff; } button.quiet { background:#e5e9ee; color:var(--ink); }
+  button.warn { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select, textarea { font-family:inherit; font-size:14px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  #msg { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 16px; border-radius:10px; font-weight:600; display:none; z-index:30; max-width:90vw; }
+  #msg.bad { background:var(--bad); }
+  .banner { background:#fff7e8; border:1px solid #f0c98a; border-radius:10px; padding:10px 14px; margin-top:10px; font-size:13px; }
+  .banner.red { background:#fdeceb; border-color:#f1b5b0; color:var(--ink); font-weight:400; }
+  .story { font-size:16px; line-height:1.55; }
+  .story b { font-weight:700; }
+  .story .big { font-size:19px; }
+  .ops td { white-space:nowrap; }
+  .ops td.what { white-space:normal; }
+  .st { display:inline-block; border-radius:10px; padding:2px 8px; font-size:11.5px; font-weight:700; }
+  .st.done { background:#e6f1ea; color:var(--ok); } .st.running { background:#e8eef7; color:var(--navy); } .st.waiting { background:#eef1f4; color:var(--steel); }
+  tr.cur td { background:#fffbea; }
+  .acts { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; }
+  .acts label { font-size:12px; color:var(--steel); display:flex; flex-direction:column; gap:4px; }
+  .hold { background:#fff7e8; border:1px solid #f0c98a; border-radius:10px; padding:12px; margin-top:12px; }
+  .log div { padding:5px 0; border-bottom:1px solid var(--line); font-size:13px; } .log div:last-child { border:none; }
+</style>
+</head>
+<body>
+<header class="top"><h1 id="title">Job</h1><span class="day" id="day"></span>
+  <nav class="tabs" id="nav"><a href="#" data-to="">Board</a><a href="#" data-to="/meeting">Morning meeting</a><a href="#" data-to="/centers">Work centers</a><a href="#" data-to="/load">Load</a><a href="#" data-to="/setup">Setup</a></nav></header>
+<div class="card" id="head"></div>
+<div id="holdbox"></div>
+<div class="card"><h2>Operations, in order</h2><div class="wrap"><table class="list ops" id="ops"></table></div>
+  <p class="sub" style="margin-top:8px">Locked start: the day the operation was to start when the job was released (or last locked again). The plan moves every day with the shop; the locked date only moves when a manager locks the dates again, with a reason, so a missed start stays visible.</p></div>
+<div class="card" id="actions"><h2>Change it</h2>
+  <div class="acts">
+    <button class="warn" id="holdbtn" onclick="hold()">Can't run it: say why</button>
+    <button class="quiet" id="hotbtn" onclick="toggleHot()">Mark hot</button>
+  </div>
+  <div class="acts" style="margin-top:12px">
+    <label>New commit date<input type="date" id="cd"></label>
+    <label style="flex:1;min-width:200px">Why it moves (the customer hears this)<input id="cdwhy" placeholder="Customer pulled it in two weeks"></label>
+    <button class="quiet" onclick="moveCommit()">Move the commit date</button>
+  </div>
+  <div class="acts" style="margin-top:12px">
+    <label style="flex:1;min-width:200px">Why the start dates move<input id="rlwhy" placeholder="Lathe down three days for a spindle repair"></label>
+    <button class="quiet" onclick="relock()">Lock the dates again from today's plan</button>
+  </div>
+  <div class="acts" style="margin-top:12px"><button class="quiet" onclick="cancelJob()">Cancel this job</button></div>
+  <p class="sub" style="margin-top:8px">Anyone can hold a job and say why. Moving dates, the priority and hot jobs are for a manager.</p>
+</div>
+<div class="card"><h2>What happened</h2><div class="log" id="log"></div></div>
+<div id="msg"></div>
+<script>
+const base = location.pathname.match(/^.*?\/(?:staging\/)?m\/[^/]+/)[0];
+const rest = location.pathname.slice(base.length).replace(/\/$/, "");
+const TODAY = (() => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
+function myName() { try { return localStorage.getItem("sos.name") || ""; } catch (e) { return ""; } }
+function setName(v) { try { localStorage.setItem("sos.name", v); } catch (e) {} }
+async function api(path, body) {
+  const url = base + path + (path.includes("?") ? "&" : "?") + "today=" + TODAY;
+  const r = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...body, who: myName() || undefined }) } : { cache: "no-store" });
+  if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); throw new Error("Sign in first."); }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 403) throw new Error("Only a manager can do that.");
+  if (!r.ok) throw new Error(j.error || "Something went wrong.");
+  return j;
+}
+let msgTimer = null;
+function say(text, bad) { const m = document.getElementById("msg"); m.textContent = text; m.className = bad ? "bad" : ""; m.style.display = "block"; clearTimeout(msgTimer); msgTimer = setTimeout(() => { m.style.display = "none"; }, bad ? 5000 : 2500); }
+async function act(path, body, okText, after) { try { const j = await api(path, body || {}); if (okText) say(okText); if (after) await after(j); return j; } catch (e) { say(e.message, true); return null; } }
+const D = (s) => new Date(String(s).slice(0, 10) + "T12:00:00");
+function day(s) { return s ? D(s).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : ""; }
+function short(s) { return s ? D(s).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""; }
+function between(a, b) { return Math.round((D(b) - D(a)) / 86400000); }
+function workdaysBetween(a, b) { let n = 0, d = D(a); const end = D(b); while (d < end) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w > 0 && w < 6) n++; } return n; }
+function plural(n, w) { return `${n} ${w}${n === 1 ? "" : "s"}`; }
+function hrs(h) { h = Number(h) || 0; return (Math.round(h * 10) / 10) + " h"; }
+function ago(t) { if (!t) return ""; const d = (Date.now() - new Date(t)) / 86400000; return d < 1 ? "today" : d < 2 ? "1 day" : Math.floor(d) + " days"; }
+const STATE = { ok: ["ok", "On track"], risk: ["risk", "At risk"], late: ["late", "Late"], shipped: ["shipped", "Shipped"] };
+function pill(state) { const s = STATE[state] || ["quiet", state]; return `<span class="pill ${s[0]}">${s[1]}</span>`; }
+function slackText(n) { return n == null ? "" : n < 0 ? `<span class="red">${plural(-n, "day")} late</span>` : n < 3 ? `<span class="amber">${plural(n, "day")} to spare</span>` : `<span class="green">${plural(n, "day")} to spare</span>`; }
+function go(to) { location.href = base + to; }
+document.getElementById("day").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+for (const a of document.querySelectorAll("#nav a")) {
+  a.href = base + a.dataset.to + (a.dataset.to ? "" : "/");
+  const on = a.dataset.to === "" ? rest === "" : rest.startsWith(a.dataset.to) || (a.dataset.to === "/centers" && rest.startsWith("/center"));
+  if (on) a.classList.add("on");
+}
+const id = Number(rest.split("/")[2]);
+let J = null, T = null;
+function draw() {
+  const j = J;
+  document.getElementById("title").textContent = j.job_no;
+  document.title = j.job_no;
+  const done = j.ops.filter(o => o.status === "done").length, cur = j.current;
+  let story = "";
+  if (j.status === "released") {
+    const late = j.slack_days < 0;
+    story = `<div class="big">Commit at the dock <b>${day(j.commit_date)}</b>. Projected <b>${day(j.projected_dock)}</b>: ${slackText(j.slack_days)}.</div>
+      <div>${done} of ${j.ops.length} operations done. Left: <b>${hrs(j.hours_left)}</b> in the shop${j.outside_left ? ` and <b>${j.outside_left} outside process${j.outside_left === 1 ? "" : "es"}</b>` : ""}.</div>
+      ${cur ? `<div>Now: <b>${esc(j.where)}</b>${cur.status === "waiting" && cur.waited_days >= 1 ? ` for ${plural(Math.floor(cur.waited_days), "day")}` : ""}. ${j.missed_start ? `<span class="red">Its locked start was ${day(cur.locked_start)}: missed by ${plural(workdaysBetween(cur.locked_start, T), "working day")}.</span>` : cur.locked_start ? `Locked start ${day(cur.locked_start)}.` : ""}</div>` : ""}
+      ${j.drift_days ? `<div class="sub">When the dates were locked it was due at the dock ${day(j.locked_finish)}; the plan now says ${day(j.projected_dock)} (${j.drift_days > 0 ? "+" : ""}${plural(j.drift_days, "day")}).</div>` : ""}`;
+  } else story = `<div class="big">${j.status === "shipped" ? `Shipped ${day(j.shipped_at)}. Commit at the dock ${day(j.commit_date)}: ${j.on_time ? '<span class="green">on time</span>' : '<span class="red">late</span>'}.` : "Cancelled."}</div>`;
+  document.getElementById("head").innerHTML = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <span style="font-size:20px;font-weight:800">${esc(j.job_no)}</span>${pill(j.state)}${j.hot ? '<span class="pill hot">HOT</span>' : ""}
+      <span class="sub">${esc(j.part_no || "")} ${esc(j.description || "")} · ${j.qty} pcs${j.customer ? " · " + esc(j.customer) : ""}</span></div><div class="story" id="story">${story}</div>`;
+  document.getElementById("holdbox").innerHTML = j.hold ? `<div class="hold"><b>Held:</b> ${esc(j.hold)}<div class="acts" style="margin-top:10px">
+      <label>Who owns clearing it<input id="hown" value="${esc(j.hold_owner || "")}" placeholder="Purchasing"></label>
+      <label>Expected clear<input type="date" id="huntil" value="${esc(j.hold_until || "")}"></label>
+      <button class="quiet" onclick="saveHold()">Save</button><button class="go" onclick="clearHold()">It is cleared</button></div>
+      ${!j.hold_until ? '<div class="sub red" style="margin-top:6px">No expected date: the plan assumes it clears today, so the projection is the best case.</div>' : ""}</div>` : "";
+  document.getElementById("holdbtn").style.display = j.status === "released" && !j.hold ? "" : "none";
+  document.getElementById("hotbtn").textContent = j.hot ? "No longer hot" : "Mark hot";
+  document.getElementById("actions").style.display = j.status === "released" ? "" : "none";
+  const lastActive = [...j.ops].reverse().find(o => o.status !== "waiting");
+  document.getElementById("ops").innerHTML = `<tr><th>#</th><th>Work center</th><th>What</th><th>Hours</th><th>Status</th><th>Locked start</th><th>Plan</th><th>Waited before it</th><th>Done</th><th></th></tr>` +
+    j.ops.map(o => `<tr class="${cur && o.id === cur.id ? "cur" : ""}"><td>${o.seq}</td><td><b>${esc(o.center)}</b>${o.outside ? ' <span class="sub">outside</span>' : ""}</td><td class="what">${esc(o.what || "")}</td>
+      <td>${o.outside ? "" : hrs(o.hours)}</td><td><span class="st ${o.status}">${o.status === "done" ? "Done" : o.status === "running" ? "Running" : "Waiting"}</span></td>
+      <td>${o.status === "waiting" && o.locked_start && o.locked_start < T ? `<span class="red">${short(o.locked_start)}</span>` : short(o.locked_start)}</td>
+      <td>${o.status === "done" ? "" : o.plan_start ? `${short(o.plan_start)}${o.plan_end && o.plan_end !== o.plan_start ? " to " + short(o.plan_end) : ""}` : ""}</td>
+      <td>${o.waited_days == null ? "" : o.waited_days < 1 ? "under a day" : plural(Math.floor(o.waited_days), "day") + (o.status === "waiting" ? " so far" : "")}</td>
+      <td>${o.done_at ? short(o.done_at) + (o.done_by ? ` <span class="sub">${esc(o.done_by)}</span>` : "") : ""}</td>
+      <td>${lastActive && o.id === lastActive.id ? `<button class="quiet" style="min-height:30px;padding:4px 10px" onclick="undo(${o.id})">Undo</button>` : ""}</td></tr>`).join("");
+}
+async function load() {
+  try { const r = await api(`/api/jobs/${id}`); J = r.job; T = r.today; draw();
+    document.getElementById("log").innerHTML = r.log.length ? r.log.map(l => `<div>${new Date(l.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${esc(l.what)}${l.who ? ` <span class="sub">${esc(l.who)}</span>` : ""}</div>`).join("") : '<div class="sub">Nothing yet.</div>';
+  } catch (e) { say(e.message, true); }
+}
+async function hold() { const why = prompt("What is in the way? (material, a drawing, tooling, a question)"); if (why) await act(`/api/jobs/${id}/hold`, { reason: why }, "Held. It shows on the board and in the morning meeting.", load); }
+async function saveHold() { await act(`/api/jobs/${id}`, { hold_owner: document.getElementById("hown").value, hold_until: document.getElementById("huntil").value }, "Saved.", load); }
+async function clearHold() { await act(`/api/jobs/${id}/clear-hold`, {}, "Cleared.", load); }
+async function toggleHot() { await act(`/api/jobs/${id}`, { hot: !J.hot }, J.hot ? "No longer hot." : "Marked hot: it goes to the top of every queue.", load); }
+async function moveCommit() { await act(`/api/jobs/${id}`, { commit_date: document.getElementById("cd").value, reason: document.getElementById("cdwhy").value }, "Commit date moved.", load); }
+async function relock() { await act(`/api/jobs/${id}/relock`, { reason: document.getElementById("rlwhy").value }, "Dates locked again.", load); }
+async function cancelJob() { if (confirm("Cancel this job? It comes off the board and out of every queue.")) await act(`/api/jobs/${id}`, { status: "cancelled" }, "Cancelled.", load); }
+async function undo(op) { await act(`/api/ops/${op}/undo`, {}, "Undone.", load); }
+load();
+</script>
+</body>
+</html>

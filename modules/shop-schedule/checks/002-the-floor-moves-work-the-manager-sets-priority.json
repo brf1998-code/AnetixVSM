@@ -1,0 +1,15 @@
+{
+  "title": "The floor can start a job, finish it and hold it with a reason; only a manager releases jobs and changes the priority",
+  "steps": [
+    { "call": "POST /api/centers", "body": { "name": "Check cell", "kind": "machine", "hours_per_day": 8 }, "expect": { "json": { "id": { "$type": "number" } } }, "save": { "cid": "id" } },
+    { "call": "POST /api/jobs", "body": { "job_no": "CHECK-0001", "qty": 2, "commit_date": "2099-01-15", "ops": [ { "center_id": "{cid}", "what": "Cut", "hours": 2 }, { "center_id": "{cid}", "what": "Finish", "hours": 1 } ] }, "expect": { "json": { "id": { "$type": "number" } } }, "save": { "id": "id" } },
+    { "call": "GET /api/jobs/{id}", "expect": { "json": { "job": { "ops": { "$length": 2 }, "state": { "$in": ["ok", "risk", "late"] }, "current": { "status": "waiting" } } } }, "save": { "op": "job.ops.0.id" } },
+    { "call": "POST /api/ops/{op}/start", "as": "floor", "expect": { "json": { "ok": true } } },
+    { "call": "POST /api/ops/{op}/done", "as": "floor", "expect": { "json": { "ok": true, "shipped": false } } },
+    { "call": "POST /api/jobs/{id}/hold", "as": "floor", "body": { "reason": "" }, "expect": { "status": 400 } },
+    { "call": "POST /api/jobs/{id}/hold", "as": "floor", "body": { "reason": "Waiting on bar stock" }, "expect": { "json": { "ok": true } } },
+    { "call": "POST /api/jobs/{id}/move", "as": "floor", "body": { "dir": "up" }, "expect": { "status": [401, 403] } },
+    { "call": "POST /api/jobs", "as": "floor", "body": { "job_no": "CHECK-0002", "qty": 1, "commit_date": "2099-01-15", "ops": [] }, "expect": { "status": [401, 403] } },
+    { "call": "GET /api/jobs/{id}", "expect": { "json": { "job": { "hold": "Waiting on bar stock", "current": { "seq": 2 } } } } }
+  ]
+}

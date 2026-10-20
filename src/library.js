@@ -288,7 +288,7 @@ router.post("/api/admin/library/templates", requireAdmin, json, guard(async (req
   const b = req.body || {};
   res.json({ ok: true, ...(await saveTemplate({ fromCompany: b.from_company, module: b.module, title: b.title, description: b.description, standard: b.standard, by: who(req) })) });
 }));
-router.patch("/api/admin/library/templates/:id", requireAdmin, json, guard(async (req, res) => {
+router.patch("/api/admin/library/templates/:id(\\d{1,9})", requireAdmin, json, guard(async (req, res) => {
   const b = req.body || {}, sets = [], vals = [Number(req.params.id)];
   if (b.title != null) { vals.push(String(b.title).trim().slice(0, 120)); sets.push(`title=$${vals.length}`); }
   if (b.description != null) { vals.push(String(b.description).trim().slice(0, 1000)); sets.push(`description=$${vals.length}`); }
@@ -300,13 +300,13 @@ router.patch("/api/admin/library/templates/:id", requireAdmin, json, guard(async
   res.json({ ok: true });
 }));
 // deleting a template never touches the companies that already have a copy of it
-router.delete("/api/admin/library/templates/:id", requireAdmin, guard(async (req, res) => {
+router.delete("/api/admin/library/templates/:id(\\d{1,9})", requireAdmin, guard(async (req, res) => {
   const r = await q("DELETE FROM platform.library_templates WHERE id=$1", [Number(req.params.id)]);
   if (!r.rowCount) throw fail(404, "no such template");
   await logEvent("template_deleted", String(req.params.id), { by: who(req) });
   res.json({ ok: true });
 }));
-router.post("/api/admin/library/templates/:id/add", requireAdmin, json, guard(async (req, res) => {
+router.post("/api/admin/library/templates/:id(\\d{1,9})/add", requireAdmin, json, guard(async (req, res) => {
   res.json({ ok: true, ...(await addTemplate(Number(req.params.id), String((req.body || {}).to_company || ""), who(req))) });
 }));
 router.post("/api/admin/companies/:slug/package", requireAdmin, json, guard(async (req, res) => {
@@ -314,7 +314,55 @@ router.post("/api/admin/companies/:slug/package", requireAdmin, json, guard(asyn
   res.json({ ok: true, ...(await addPackage(req.params.slug, { ids: b.ids, standard: Boolean(b.standard), again: Boolean(b.again), by: who(req) })) });
 }));
 
+// ---- starter tools: what a pin's company has on its board the moment it is made (2026-10-19) ----------------------
+// Brendan: "I need something where they are getting a good basic scheduling module when they log on." A pin carries a
+// list of tools, each a repo library tool ({ repo: name }) or a template ({ template: id }); src/selfserve.js
+// createCompany puts them live right after the company is made, before the person's first page.
+async function cleanStarters(list) {
+  if (list == null || list === "") return [];
+  if (!Array.isArray(list)) throw fail(400, "tools is a list");
+  if (list.length > 10) throw fail(400, "ten tools at most");
+  const repo = new Set(registry.libraryModules().map((m) => m.name));
+  const out = [];
+  for (const x of list) {
+    if (x && typeof x.repo === "string" && repo.has(x.repo)) { if (!out.some((y) => y.repo === x.repo)) out.push({ repo: x.repo }); continue; }
+    const id = x && /^\d{1,9}$/.test(String(x.template)) ? Number(x.template) : 0;
+    if (id && (await q("SELECT 1 FROM platform.library_templates WHERE id=$1", [id])).rows[0]) { if (!out.some((y) => y.template === id)) out.push({ template: id }); continue; }
+    throw fail(400, `no library tool or template ${JSON.stringify(x)}`);
+  }
+  return out;
+}
+async function starterTitles(list) {
+  const lib = registry.libraryModules(), out = [];
+  for (const x of Array.isArray(list) ? list : []) {
+    if (x.repo) { const m = lib.find((l) => l.name === x.repo); if (m) out.push(m.title); }
+    else if (x.template) { const t = (await q("SELECT title FROM platform.library_templates WHERE id=$1", [Number(x.template)])).rows[0]; if (t) out.push(t.title); }
+  }
+  return out;
+}
+async function addStarters(company, list, by) {
+  const results = [];
+  for (const x of Array.isArray(list) ? list : []) {
+    try {
+      if (x.repo) {
+        if (await registry.getModule(company, x.repo)) { results.push({ ...x, skipped: "already there" }); continue; }
+        await registry.importFromRepo(company, x.repo);
+        const row = await registry.getModule(company, x.repo);
+        if (row && row.live_version) { await registry.mountLiveIfNeeded(company, x.repo, row.live_version); await require("./testfloor").afterModuleAdded(company, x.repo, row.live_version).catch(() => {}); }
+        results.push({ ...x, ok: true, module: x.repo });
+      } else if (x.template) {
+        results.push({ ...x, ok: true, ...(await addTemplate(Number(x.template), company, by)) });
+      }
+    } catch (e) {
+      console.error(`[library] ${company}: starter ${JSON.stringify(x)} not added: ${e.message}`);
+      results.push({ ...x, error: e.message });
+    }
+  }
+  await logEvent("starter_tools", company, { results, by });
+  return results;
+}
+
 // a company deleted: its copy history goes; templates saved from it stay (they are Anetix's, apart from the company)
 async function deleteCompany(slug) { await q("DELETE FROM platform.library_copies WHERE company=$1", [slug]); }
 
-module.exports = { init, router, check, rewrite, list, copyTool, saveTemplate, addTemplate, addPackage, deleteCompany };
+module.exports = { init, router, check, rewrite, list, copyTool, saveTemplate, addTemplate, addPackage, deleteCompany, cleanStarters, starterTitles, addStarters };

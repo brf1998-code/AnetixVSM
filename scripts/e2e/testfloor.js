@@ -29,7 +29,7 @@ const R = runner(), t = R.t;
 
   // ---- on
   const on = await admin.post("/api/admin/companies/demo/test-floor", { on: true });
-  t("the admin switches it on and both tools come up", on.status === 200 && on.json.on === true && on.json.modules.filter((m) => m.up).map((m) => m.name).sort().join(",") === "kpis,paperline", on.json);
+  t("the admin switches it on and every tool comes up", on.status === 200 && on.json.on === true && ["kpis", "paperline"].every((n) => on.json.modules.some((m) => m.name === n && m.up)) && on.json.modules.every((m) => m.up), on.json);
   t("switching on twice is harmless", (await admin.post("/api/admin/companies/demo/test-floor", { on: true })).json.already === true);
   t("the board now says so", (await board(mgr)).test_floor === true);
   const ov1 = (await admin.get("/api/admin/overview")).json;

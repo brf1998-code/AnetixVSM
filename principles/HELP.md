@@ -73,6 +73,10 @@ purpose; everything after that comes through requests like any change.
 - **The test floor** (when Anetix has switched it on for the company): every tool together on data that is not the
   floor's. A build can get a test campaign there before it goes on the floor.
 - **A guided tour** on a tool walks through its screens step by step, with each spot ringed.
+- **Shop Schedule**, when a board has it, comes with an example shop already in it (made-up jobs and work centers,
+  dated from the day it went in), so every screen shows something. The manager takes the example out on the tool's
+  Setup screen before putting in real jobs, and can put it back to show someone. It is a tool like any other: its
+  feedback button changes it through the board.
 
 ## Settings
 

@@ -170,7 +170,9 @@
         <label class="sub">Companies it may make<br><input id="pin-uses" type="number" min="1" max="50" value="1" style="width:90px"></label>
         <label class="sub">Good for (days)<br><input id="pin-days" type="number" min="0" max="3650" value="30" style="width:90px" title="0 = never expires"></label>
         <button class="primary" onclick="makePin()" style="margin:0">Make the pin</button>
-      </div></div>
+      </div>
+      <div style="margin-top:12px"><b>On their board from the start</b> <span class="sub">tick the tools their company is made with, live and filled with an example, so they land on something working. None ticked: an empty board.</span>
+        <div class="pick" id="pin-tools" style="max-width:640px"></div></div></div>
     <div class="card"><h2>Pins <small id="pins-sub"></small></h2><div id="pins-list" class="hwrap"></div></div>
     <div class="card"><h2>Pins refused <small id="rf-sub"></small></h2><p class="sub">Every pin anetix.ai turned away in the last 30 days, with what the person was told. The same pin and email within ten minutes is one line. Kept 90 days.</p><div id="rf-list" class="hwrap"></div></div>
   </section>
@@ -688,8 +690,9 @@ async function loadPins() {
   drawPills();
   document.getElementById("pins-sub").textContent = PINS.pins.length ? `${live} live of ${PINS.pins.length}` : "none yet";
   const state = (p) => p.problem ? `<span class="sub">${esc(p.problem)}</span>` : '<span class="ok">live</span>';
-  document.getElementById("pins-list").innerHTML = PINS.pins.length ? `<table class="list"><tr><th>Pin</th><th>For</th><th>Email</th><th>Used</th><th>Expires</th><th>Made</th><th>Companies</th><th></th></tr>${PINS.pins.map(p => `<tr data-pin="${p.id}">
-    <td><b style="font-family:ui-monospace,monospace;font-size:14px">${esc(p.shown)}</b></td><td>${esc(p.label)}</td><td>${p.email ? esc(p.email) : '<span class="sub">any</span>'}</td><td>${p.uses} of ${p.max_uses}</td>
+  document.getElementById("pins-list").innerHTML = PINS.pins.length ? `<table class="list"><tr><th>Pin</th><th>For</th><th>Email</th><th>Starts with</th><th>Used</th><th>Expires</th><th>Made</th><th>Companies</th><th></th></tr>${PINS.pins.map(p => `<tr data-pin="${p.id}">
+    <td><b style="font-family:ui-monospace,monospace;font-size:14px">${esc(p.shown)}</b></td><td>${esc(p.label)}</td><td>${p.email ? esc(p.email) : '<span class="sub">any</span>'}</td>
+    <td>${starterNames(p.tools) ? esc(starterNames(p.tools)) : '<span class="sub">an empty board</span>'}${!p.problem && !p.uses ? ` <a href="#" onclick="editPinTools(${p.id});return false" class="sub">change</a>` : ""}</td><td>${p.uses} of ${p.max_uses}</td>
     <td>${p.expires_at ? new Date(p.expires_at).toLocaleDateString() : "never"}</td><td><small>${esc(p.created_by || "")} ${day(p.created_at)}</small></td>
     <td>${p.companies ? p.companies.split(", ").map(c => `<a href="#demos/${esc(c)}">${esc(c)}</a>`).join(", ") : '<span class="sub">none yet</span>'}</td>
     <td style="white-space:nowrap">${state(p)}${!p.problem ? ` <button class="danger" onclick="revokePin(${p.id})">Cancel</button>` : ""}</td></tr>`).join("")}</table>`
@@ -704,12 +707,39 @@ async function loadPins() {
     <td>${x.email ? esc(x.email) : ""}</td><td class="${x.reason === "unknown" ? "sub" : "warn"}">${esc(x.why)}</td><td><small class="sub">${esc(WHERE[x.where_from] || x.where_from || "")}</small></td></tr>`).join("")}</table>`
     : '<p class="sub">No pin has been refused in the last 30 days.</p>';
 }
+// the tools a pin's company starts with (src/library.js cleanStarters): repo library tools, then templates
+function starterOptions(prefix, chosen) {
+  if (!D) return '<span class="sub">Loading...</span>';
+  const has = (x) => (chosen || []).some(c => (x.repo && c.repo === x.repo) || (x.template && c.template === x.template));
+  const repo = D.library.filter(l => l.origin === "repo").map(l => ({ repo: l.name, title: l.title, about: "ships with the platform" }));
+  const tpl = (D.templates || []).map(t => ({ template: t.id, title: t.title, about: `template from ${t.from_name || t.from_company || ""}` }));
+  return repo.concat(tpl).map(x => `<label><input type="checkbox" class="${prefix}" data-repo="${esc(x.repo || "")}" data-template="${x.template || ""}" ${has(x) ? "checked" : ""}> ${esc(x.title)} <small class="sub">${esc(x.about)}</small></label>`).join("") || '<span class="sub">No library tools or templates yet.</span>';
+}
+function pickedStarters(prefix) { return [...document.querySelectorAll(`input.${prefix}:checked`)].map(x => x.dataset.repo ? { repo: x.dataset.repo } : { template: Number(x.dataset.template) }); }
+function starterNames(list) {
+  if (!D || !list || !list.length) return "";
+  return list.map(x => x.repo ? ((D.library.find(l => l.origin === "repo" && l.name === x.repo) || {}).title || x.repo) : (((D.templates || []).find(t => t.id === x.template) || {}).title || "a template since deleted")).join(", ");
+}
+function drawPinTools() { const el = document.getElementById("pin-tools"); if (el && !el.dataset.drawn && D) { el.innerHTML = starterOptions("pt", []); el.dataset.drawn = "1"; } }
+function editPinTools(id) {
+  const p = PINS.pins.find(x => x.id === id); if (!p) return;
+  openModal(`<h2>On ${esc(p.label)}'s board from the start</h2><p class="sub">Their company is made with these tools live, each filled with an example. Changes reach the company only if the pin has not been used yet.</p>
+    <div class="pick">${starterOptions("pe", p.tools || [])}</div>
+    <div><button class="go" onclick="savePinTools(${id})">Save</button> <button class="quiet" onclick="closeModal()">Cancel</button></div>`);
+}
+async function savePinTools(id) {
+  const j = await post(`/api/admin/pins/${id}/tools`, { tools: pickedStarters("pe") });
+  if (!j.ok) return;
+  closeModal(); loadPins();
+  if (j.titles && j.titles.length) alert(`Saved. If you already sent the pin, tell them their board will open with ${j.titles.join(" and ")}.`);
+}
 async function makePin() {
   const label = document.getElementById("pin-label").value.trim(); if (label.length < 2) { alert("say who the pin is for"); return; }
   const email = document.getElementById("pin-email").value.trim(); if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) { alert("give their email: the pin only works with it"); return; }
-  const j = await post("/api/admin/pins", { label, email, max_uses: document.getElementById("pin-uses").value, days: document.getElementById("pin-days").value });
+  const j = await post("/api/admin/pins", { label, email, max_uses: document.getElementById("pin-uses").value, days: document.getElementById("pin-days").value, tools: pickedStarters("pt") });
   if (!j.ok) return;
   document.getElementById("pin-label").value = ""; document.getElementById("pin-email").value = "";
+  for (const x of document.querySelectorAll("input.pt")) x.checked = false;
   const mailto = `mailto:${encodeURIComponent(j.pin.email || email)}?subject=${encodeURIComponent(j.subject || "Your Anetix demo pin")}&body=${encodeURIComponent(j.message || "")}`;
   openModal(`<h2>A pin for ${esc(label)}</h2>
     <p style="font-size:30px;letter-spacing:.08em;font-family:ui-monospace,monospace;text-align:center;margin:10px 0"><b id="pin-shown">${esc(j.pin.shown)}</b></p>
@@ -841,7 +871,7 @@ async function load() {
   // the brand guide is a design job: the design model unless the admin picks the other one
   const pick = document.getElementById("c-model"), had = pick.value;
   pick.innerHTML = D.models.map(m => `<option value="${m.id}" ${m.id === (had || D.defaults.design) ? "selected" : ""}>guide by ${m.label} ($${m.in}/$${m.out} per M tokens)</option>`).join("");
-  drawInstance(); drawLibrary(); drawCompanies();
+  drawInstance(); drawLibrary(); drawCompanies(); drawPinTools(); if (PINS) loadPins();
   drawPills();
   if (D.companies.some(c => c.brand && c.brand.status === "building")) setTimeout(load, 5000);
 }
