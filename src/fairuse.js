@@ -72,7 +72,7 @@ async function stateOf(slug, now = new Date()) {
   const lift = s.fair_use_lift && s.fair_use_lift.until && new Date(s.fair_use_lift.until) > new Date(now) ? s.fair_use_lift : null;
   const spend = await spendIn(slug, w.from, w.to);
   const f = require("./sites").fairUse({ spend_usd: spend, fee_usd: fee, share: book.fair_use_share, alert_share: book.alert_share, lifted: Boolean(lift) });
-  return { ...f, from: w.from.toISOString(), to: w.to.toISOString(), rolled: w.rolled, lift };
+  return { ...f, from: w.from.toISOString(), to: w.to.toISOString(), rolled: w.rolled, lift, pilot: Boolean(s.band && s.band.key === "pilot") };
 }
 const dayOf = (t) => new Date(t).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 // The words a manager reads at the line (docs/PAID-SITES.md "Copy"), and the gate that throws them.
@@ -82,7 +82,9 @@ async function assertUnder(slug) {
   if (!st || !st.over) return;
   // Anetix is told once a period: the event is what the Sites tab's pill and the record show
   const told = (await q("SELECT 1 FROM platform.events WHERE kind='fair_use_reached' AND ref=$1 AND detail->>'from'=$2 LIMIT 1", [slug, st.from])).rows[0];
-  if (!told) await logEvent("fair_use_reached", slug, { from: st.from, to: st.to, spend_usd: st.spend_usd, line_usd: st.line_usd });
+  if (!told) await logEvent("fair_use_reached", slug, { from: st.from, to: st.to, spend_usd: st.spend_usd, line_usd: st.line_usd, ...(st.pilot ? { pilot: true } : {}) });
+  // a pilot's order form has no fair-use line (Brendan, 2026-10-23): Anetix is told, nothing pauses
+  if (st.pilot) return;
   throw fail(429, message(st), { code: "fair_use" });
 }
 // Brendan lifts the line for the rest of this period, with a note. It ends with the period.

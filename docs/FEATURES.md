@@ -4005,3 +4005,18 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     a small match takes a few seconds, a large one can run out; the brief keeps it to headings and a few rows. Only new
     proposals carry an approach; a proposal drafted before this (CRM v13 at the gate) is built as it was asked. Whether
     the proposer picks well is the experiment: read `approach` on the record against what Taylor and the floor say.
+- **The pilot's order form, trimmed for Chelsea Clock (2026-10-23)**
+  - *Brendan's decisions.* Before Arthur signs, the pilot's order form and price screen drop the sales tax words, the
+    fair-use line, the learning line, the after-the-pilot line and the unused demo credit line. The pilot starts on a
+    date Customer and Anetix agree (Activate is pressed that day) instead of "the day Anetix switches the Site on", and
+    the price screen's "within 24 hours" line goes. On site and Integrations are the offer's own lines (Sites tab).
+  - *What changed.* `src/sites.js` pilotText and pricingView's pilot branch. `src/fairuse.js`: a pilot site is never
+    paused at the fair-use line (`fair_use_reached` is still recorded, with `pilot: true`). `src/golive.js`: the board's
+    line once a pilot order is in. www `internal.js`: a pilot's subscription is made without Stripe Tax, since its form
+    names none. www `pages.js`: no learning box or note on a pilot (a pilot never learns), and the card and order-is-in
+    pages say the start date. Price book subscriptions and their form are unchanged.
+  - *Still true.* At the pilot's end the site goes back to a demo and the floor's sign-in closes unless a new offer or
+    Go live is activated first; the form no longer says so. The phone is told a week before.
+  - *Tests.* `scripts/test-pricing.js` (66), `scripts/e2e/pricing.js` (82), `scripts/e2e/switchon.js` (29), www
+    `e2e-activate.js` (74), `e2e-golive.js` (56), `test-www.js` (152). www `e2e.js` has 9 failures that are there
+    without this change too (the wall and refill cases, likely the 10/22 front page).

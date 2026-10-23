@@ -307,29 +307,28 @@ const SIGNED_LINE = "Signed for Customer by the person named below, who confirms
 // The pilot's own order form (Brendan, 2026-10-05, for Chelsea Clock: "$1,000 then another $1,000 at the start of the
 // second month", ending on its own; the customer's words: a pilot cost, "not a software license fee" to be paid on an
 // ongoing basis, and any commercial arrangement is a separate conversation after it). Pure.
+// Brendan, 2026-10-23 (Chelsea Clock): the pilot starts on a date Customer and Anetix agree (Activate is pressed that
+// day), with no sales tax line, no fair-use line (a pilot has none: src/fairuse.js), no learning line (a pilot never
+// learns: the box is not offered), no after-the-pilot line and no unused demo credit line.
 function pilotText({ facts = {}, offer, terms_version = TERMS_VERSION, terms_url = null } = {}) {
-  const m = Number(offer.monthly_usd), n = Number(offer.months), share = BOOK.fair_use_share;
-  const pay = n === 1 ? `${usd(m)} on the day Anetix switches the Site on`
-    : n === 2 ? `${usd(m)} on the day Anetix switches the Site on and ${usd(m)} one month later`
-      : `${usd(m)} on the day Anetix switches the Site on and ${usd(m)} on the same day of each of the next ${n - 1} months`;
+  const m = Number(offer.monthly_usd), n = Number(offer.months);
+  const pay = n === 1 ? `${usd(m)} on the start date`
+    : n === 2 ? `${usd(m)} on the start date and ${usd(m)} one month later`
+      : `${usd(m)} on the start date and ${usd(m)} on the same day of each of the next ${n - 1} months`;
   return [
     "ANETIX PILOT ORDER FORM",
     `Terms version: ${terms_version}. A pilot offered to Customer by Anetix.`,
     "",
     ...partyLines(facts),
     "",
-    `Pilot: a ${n} month pilot of Anetix at the Site. It starts on the day Anetix switches the Site on and ends ${monthsWord(n)} later.`,
-    `Fee: ${usd(m)} a month for ${monthsWord(n)}, ${usd(m * n)} in all, plus sales tax where it applies, charged to the card on file: ${pay}.`,
+    `Pilot: a ${n} month pilot of Anetix at the Site. It starts on a date Customer and Anetix agree and ends ${monthsWord(n)} later.`,
+    `Fee: ${usd(m)} a month for ${monthsWord(n)}, ${usd(m * n)} in all, charged to the card on file: ${pay}.`,
     "What the fee is: the fee covers building and running the pilot. It is not a software license or subscription fee, and nothing in this order form commits Customer to pay anything after the pilot.",
     "End: the pilot ends on its own on its end date. No charge is made after the payments above unless Customer and Anetix agree new terms in writing. Any continuing arrangement is a separate conversation after the pilot.",
     "Cancelling: Customer may cancel at any time, in the Service's billing settings or by writing to Anetix. A payment not yet made is then not charged. Payments already made are not refunded, except as the Terms provide.",
     "Included: use of Anetix at the Site by any number of Customer's people during the pilot, with no limit on tools, requests or changes.",
-    `Fair use: if Anetix's own AI cost for the Site in a month of the pilot passes ${Math.round(share * 100)}% of that month's fee, new AI work pauses until the next month. A fair-use pause does not stop the Site's tools.`,
     ...(offer.lines || []).map((l) => stop(`${l.label}: ${l.text}`)),
     DATA_LINE,
-    learningLine(facts),
-    "After the pilot: unless Customer and Anetix have agreed to continue, the Site becomes a demo account for Customer's manager and the floor's sign-in closes. Customer's data is kept until Customer asks for its deletion, or until 12 months pass with no sign-in.",
-    CREDIT_LINE,
     termsLine(terms_version, terms_url),
     "Order of precedence: where this order form and the Terms differ on the fee, the length of the pilot or renewal, this order form controls.",
     "",
@@ -413,13 +412,13 @@ function pricingView({ band, live_tools = 0, offer = null, site_name = "the site
       headline: `A ${n} month pilot at ${site}`,
       big: usd(m), big_note: `a month for ${monthsWord(n)}${n > 1 ? `, ${usd(m * n)} in all` : ""}. It ends on its own.`,
       fine: [
-        `Plus sales tax where it applies. ${n === 1 ? `${usd(m)} is charged on the day Anetix switches the site on.` : n === 2 ? `${usd(m)} is charged on the day Anetix switches the site on and ${usd(m)} one month later.` : `${usd(m)} is charged on the day Anetix switches the site on and on the same day of each of the next ${n - 1} months.`} Nothing is charged after that unless you and Anetix agree new terms.`,
+        `The pilot starts on a date you and Anetix agree. ${n === 1 ? `${usd(m)} is charged on the start date.` : n === 2 ? `${usd(m)} is charged on the start date and ${usd(m)} one month later.` : `${usd(m)} is charged on the start date and on the same day of each of the next ${n - 1} months.`} Nothing is charged after that unless you and Anetix agree new terms.`,
         "This is a pilot fee, not a software license or a subscription. You can cancel at any time, and a payment not yet made is then not charged.",
-        "Anetix aims to switch the site on within 24 hours of the order being in (signed, with a card saved), and until then you can withdraw it at no charge.",
+        "Until the start date you can withdraw the order at no charge.",
       ],
       how_title: "What the pilot is",
       how: (offer.lines || []).map((l) => stop(`${l.label}: ${l.text}`)),
-      included: ["Every tool you build during the pilot, and every change to them.", ...INCLUDED],
+      included: ["Every tool you build during the pilot, and every change to them.", ...INCLUDED.map((x) => (/^The AI with no credit/.test(x) ? "The AI with no credit to run out of." : x))],
       next: "Any arrangement after the pilot is a separate conversation, once you have seen what it did.",
       summary: `Pilot: ${pilotLine(offer)}. It ends on its own.`,
     };

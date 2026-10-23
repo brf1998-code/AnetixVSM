@@ -459,7 +459,7 @@ const PILOT_WORDS = Object.freeze({
   kicker: "Your pilot",
   about: "Anetix has offered your site a pilot. Your demo becomes the pilot site, with everything you built still in place: your floor gets its own way in and the AI has no credit to run out of. First, a few facts about the site.",
   about_approver: "asked you to approve this pilot. These are their answers; correct anything that is wrong.",
-  charge: "the first payment is charged then",
+  charge: "the first payment is charged on the start date",
   done: "Until then the demo works as it does now.",
 });
 
@@ -773,7 +773,7 @@ async function forBoard(co, role) {
     from: pilot ? { line: `Your pilot: ${pl}.`, short: pl } : ["demo", "ordering", "back_to_demo"].includes(stage) ? sites.fromLine(book) : null,   // the price before the form (the launch audit, C7)
     action: inAlready ? "See your order" : declined ? "Add another card" : pilot ? (started ? "Continue with your pilot" : "Review your pilot") : started ? "Continue going live" : "Go live",
     // the Terms, 5.4: Anetix AIMS to switch a site on within 24 hours (Brendan, 2026-09-26)
-    line: inAlready ? (pilot ? "Your pilot order is in. Anetix aims to switch this site on within 24 hours, and the first payment is charged then." : "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now.")
+    line: inAlready ? (pilot ? "Your pilot order is in. It starts on the date you and Anetix agree, and the first payment is charged then." : "Your order is in. Anetix aims to switch this site on within 24 hours. Until then your demo works as it does now.")
       : declined ? "Your card was declined, so the site is not switched on yet. Use another card to finish going live."
         // an offer is a line of its own on the board, with the way in beside it: it is there for a company with no credit line too.
         // No price and no end date here: the manager already knows the terms, and they are on the order form (Brendan, 2026-10-08)
