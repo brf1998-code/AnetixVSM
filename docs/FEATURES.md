@@ -4179,3 +4179,23 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Not yet.* A demo's sign-up on anetix.ai with Google or Microsoft is the www service's (its own repo); the account
     it makes would carry the identity the same way.
   - *Tests.* `scripts/e2e/oidc.js` (28, against a stand-in for both providers it serves itself), in `run-all.sh`.
+- **The sign-in map: how everyone signs in, before a way in is taken away (2026-10-29)**
+  - *Why.* Brendan, deciding to take the shared passwords out: "I don't think we have ever actually used floor or
+    managers passwords other than for testing, but I also want to have mapped out how everyone is logging in so I do
+    not bulldoze something I should not". Nothing showed it in one place: the admin card says what is set up, the
+    sign-in log covers named accounts only, and a shared password logged no sign-in at all.
+  - *What.* `src/signins.js` `map({ days })`, served as the admin MCP tool `sign_in_map` (read only). For every company:
+    the floor's sign-in (a floor PIN, a floor password from before PINs, the old instance-wide one, or none), whether
+    its plant network is set, whether it has a shared manager password, and each manager account with its ways in
+    (authenticator app, passkeys, Google or Microsoft) and its last sign-in; then Anetix's admin accounts, and whether
+    the instance-wide password variables are set. Beside each, what was used in the window: sign-ins by way from the
+    sign-in log for accounts; for the floor, the record lines a floor session wrote (and how many carried a person's
+    name); for a shared manager password, the record lines a manager session with no account wrote, counted from
+    2026-10-15 at the earliest (the record names the account only since then). People with their own PIN, per company.
+  - *Shared sign-ins are logged from now on.* `auth.loginHandler` writes `shared_sign_in` to the sign-in log for a floor
+    or a shared manager password sign-in, with the company, the role and which way (`sessionFor` says it: floor PIN,
+    floor password, shared manager password, the instance-wide ones). The map counts them per company.
+  - *Never.* A hash, a PIN, a code, a network or an address anyone signed in from.
+  - *Tests.* `scripts/e2e/mcp.js` (the tool on the address, the legacy demo's floor and shared manager password used and
+    logged, the admin accounts, no address or hash in the answer), `scripts/test-mcp.js` (nineteen tools).
+

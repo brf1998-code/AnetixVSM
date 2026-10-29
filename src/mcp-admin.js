@@ -134,6 +134,12 @@ const tools = [
     },
   },
   {
+    name: "sign_in_map", title: "How everyone signs in",
+    description: "For every company: how its floor signs in (a floor PIN, an old floor password, or none) and whether its plant network is set, whether it still has a shared manager password, and each manager account with its second factors (authenticator app, passkeys, Google or Microsoft) and its last sign-in; then Anetix's own admin accounts. Beside each, what was actually used in the window: sign-ins by way for accounts, and for the shared ways in, what the floor and shared manager sessions did on the board. Use it before taking a way in away, so nobody still using it is locked out. Never a password, a PIN, a code or an address.",
+    input: { days: z.number().int().min(1).max(400).optional().describe("How far back to count what was used. Default 30.") },
+    async run({ days }) { return require("./signins").map({ days }); },
+  },
+  {
     name: "list_demos", title: "Demos",
     description: "The Demos tab: every company that came in from anetix.ai, with what it paid, what it spent on AI, what it built, where it is stuck, and the use case each new-tool request described. Money here is real dollars paid for credit and AI spend against it.",
     input: {},

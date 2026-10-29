@@ -79,7 +79,7 @@ t("the sign-in server's description: every path under /oauth/, PKCE S256 only, p
 const A = require("../src/mcp-admin");
 const names = A.tools.map((x) => x.name);
 const WRITERS = ["answer_tool_request", "change_tool_request_design", "send_tool_request", "start_tool_request"];
-t("eighteen tools, each with a name, a description and a run", names.length === 18 && new Set(names).size === 18 && A.tools.every((x) => /^[a-z_]+$/.test(x.name) && x.description.length > 40 && typeof x.run === "function"));
+t("nineteen tools, each with a name, a description and a run", names.length === 19 && new Set(names).size === 19 && A.tools.every((x) => /^[a-z_]+$/.test(x.name) && x.description.length > 40 && typeof x.run === "function"));
 t("four of them write, all about a new tool request, and every other one only reads", A.tools.filter((x) => x.readOnly === false).map((x) => x.name).sort().join() === WRITERS.join());
 t("no tool confirms a design, builds, deploys, withdraws or deletes", !names.some((n) => /^(confirm|build|deploy|withdraw|abandon|delete|remove|approve)_|make_.*live/.test(n)));
 t("the instructions say which tools write, and that a manager confirms on the board", /Read only, with one exception/.test(A.surface.instructions) && WRITERS.every((n) => A.surface.instructions.includes(n)) && /a manager does that on the board/.test(A.surface.instructions));

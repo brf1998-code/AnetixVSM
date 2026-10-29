@@ -378,12 +378,12 @@ async function sessionFor(password, companyNamed) {
   if (!company) return null;
   const row = await accessRow(company);
   const gen = row ? Number(row.generation || 1) : 0;
-  if (row && row.manager_hash && checkHash(password, row.manager_hash)) return { role: "manager", company, gen };
-  if (row && row.floor_hash && checkHash(password, row.floor_hash)) return { role: "floor", company, gen };
+  if (row && row.manager_hash && checkHash(password, row.manager_hash)) return { role: "manager", company, gen, via: "shared manager password" };
+  if (row && row.floor_hash && checkHash(password, row.floor_hash)) return { role: "floor", company, gen, via: row.floor_pin ? "floor PIN" : "floor password" };
   if (row && row.legacy_login) {
     // (while the manager password doubles as the shared admin password it was taken as admin above, as before)
-    if (!row.manager_hash && same(password, MANAGER) && (ADMIN || !(await sharedOpen()))) return { role: "manager", company, gen };
-    if (!row.floor_hash && same(password, FLOOR)) return { role: "floor", company, gen };
+    if (!row.manager_hash && same(password, MANAGER) && (ADMIN || !(await sharedOpen()))) return { role: "manager", company, gen, via: "instance-wide manager password" };
+    if (!row.floor_hash && same(password, FLOOR)) return { role: "floor", company, gen, via: "instance-wide floor password" };
   }
   return null;
 }
@@ -733,6 +733,9 @@ async function loginHandler(req, res) {
     }
     if (plant) deviceFails.delete(device); else loginFails.delete(ip);
     if (session.shared) await accounts.event("legacy_admin_password", { ip, detail: { at: "sign_in" } });
+    // a shared sign-in (the floor's PIN or password, a shared manager password) is on the sign-in log too since
+    // 2026-10-29, so the sign-in map (src/signins.js) can say who still uses one before it is taken away
+    else if (session.role === "floor" || session.role === "manager") await accounts.event("shared_sign_in", { ip, detail: { company: session.company, role: session.role, by: session.via || null } }).catch(() => {});
     const value = session.role === "admin" ? signAdmin(0, 0, null, now) : sign(session.role, session.company, session.gen, null, now);
     res.append("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, now, now)));
     res.json({ ok: true, role: session.role, company: session.company === ALL ? null : session.company });

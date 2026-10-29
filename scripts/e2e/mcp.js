@@ -242,14 +242,14 @@ async function main() {
   const listed = await c.listTools();
   const names = listed.tools.map((x) => x.name).sort();
   const WRITERS = ["answer_tool_request", "change_tool_request_design", "send_tool_request", "start_tool_request"];
-  t("the address offers the twelve operations tools and the six new tool request tools", names.join() === ["activity_since", "ai_spend", "answer_tool_request", "change_tool_request_design", "get_demo", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "send_tool_request", "start_tool_request"].join(), names);
+  t("the address offers the thirteen operations tools and the six new tool request tools", names.join() === ["activity_since", "ai_spend", "answer_tool_request", "change_tool_request_design", "get_demo", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "send_tool_request", "sign_in_map", "start_tool_request"].join(), names);
   t("four say they write, every other one says it only reads, none is destructive, each has a description", listed.tools.every((x) => x.annotations && x.annotations.readOnlyHint === !WRITERS.includes(x.name) && x.annotations.destructiveHint === false && x.description.length > 40));
   t("the server says what it is", /read only/i.test(c.getInstructions() || "") && c.getServerVersion().name === "anetix-admin");
   const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); let data = null; try { data = JSON.parse(textOf(r)); } catch (e) {} return { r, data, text: textOf(r) }; };
   const all = {};
   for (const [name, args] of [["list_companies", {}], ["list_demos", {}], ["list_sites", {}], ["loop_health", {}], ["loop_health", { days: 7, company: "demo" }], ["ai_spend", {}], ["list_requests_to_anetix", {}],
     ["list_requests_to_anetix", { status: "all", limit: 5 }], ["list_stopped_builds", {}], ["list_runs", {}], ["list_runs", { company: "demo", days: 1, limit: 5 }], ["list_tool_requests", {}], ["list_tool_requests", { company: "demo", open_only: false }],
-    ["activity_since", {}], ["activity_since", { hours: 24, company: "demo", limit: 5 }], ["list_assistant_conversations", {}], ["list_board_requests", {}], ["list_board_requests", { status: "all", company: "demo" }]]) all[`${name} ${JSON.stringify(args)}`] = await call(name, args);
+    ["activity_since", {}], ["activity_since", { hours: 24, company: "demo", limit: 5 }], ["list_assistant_conversations", {}], ["list_board_requests", {}], ["list_board_requests", { status: "all", company: "demo" }], ["sign_in_map", {}], ["sign_in_map", { days: 7 }]]) all[`${name} ${JSON.stringify(args)}`] = await call(name, args);
   t("every tool answers with JSON and no error", Object.values(all).every((x) => !x.r.isError && x.data), Object.entries(all).filter(([, x]) => x.r.isError || !x.data).map(([k, x]) => [k, x.text.slice(0, 200)]));
   const co = all["list_companies {}"].data.companies.find((x) => x.slug === "demo");
   t("list_companies: the demo company, its tools and counts", co && co.kind === "trial" && co.tools.some((x) => x.name === "paperline" && x.live_version >= 1) && co.requests.total >= 2 && co.builds.builds >= 1 && co.walled_off_from_ai === false, co);
@@ -273,6 +273,13 @@ async function main() {
   const br = all["list_board_requests {}"].data;
   t("list_board_requests: the open request in its words; a request to Anetix is not a board request", br.requests.some((x) => x.id === fb.id && /release button bigger/.test(x.words)) && !br.requests.some((x) => /dark screen/.test(x.words)), br.requests.map((x) => x.words));
   t("list_board_requests: counts by company", br.counts.some((x) => x.company === "demo"));
+  // the sign-in map (2026-10-29): what is set up and what was used, per company and for Anetix's own accounts
+  const sm = all["sign_in_map {}"].data, smDemo = sm && sm.companies.find((x) => x.slug === "demo");
+  t("sign_in_map: every company, the demo's floor on the old instance-wide password and used by the floor", sm && sm.window_days === 30 && sm.companies.length >= 1 && smDemo && /instance-wide floor password/.test(smDemo.floor.sign_in) && smDemo.floor.used_in_window.record_lines >= 1, smDemo);
+  t("sign_in_map: a shared sign-in is on the sign-in log now, the floor's and the shared manager password's", smDemo.floor.shared_sign_ins_logged >= 1 && smDemo.managers.shared_password === true && smDemo.managers.shared_password_used.shared_sign_ins_logged >= 1, smDemo);
+  t("sign_in_map: the admin accounts with their ways in and their sign-ins by way", sm.admins.accounts.length >= 1 && sm.admins.accounts.every((a) => Array.isArray(a.ways_in) && a.sign_ins_in_window && typeof a.sign_ins_in_window === "object"), sm.admins);
+  t("sign_in_map: a window of 7 days says so", all['sign_in_map {"days":7}'].data.window_days === 7);
+  t("sign_in_map: no address anyone signed in from, no hash", !/127\.0\.0\.1|::1|s1\$/.test(all["sign_in_map {}"].text));
   const everything = Object.values(all).map((x) => x.text).join("\n");
   t("no answer carries a record from a company's tool", !everything.includes(MARKER));
   t("no answer carries the words of a failed check", !everything.includes(MARKER2));

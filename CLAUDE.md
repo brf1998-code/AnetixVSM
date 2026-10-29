@@ -195,6 +195,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Small fixes from Chelsea's first weeks: round corner icons, the company's own icon, pointing at something for Anetix, several new tool drafts (2026-10-29)
 - Archiving a tool, and deleting one for good (2026-10-29)
 - Sign in with Google or Microsoft (2026-10-29)
+- The sign-in map: how everyone signs in, before a way in is taken away (2026-10-29)
 
 ## What this is
 
