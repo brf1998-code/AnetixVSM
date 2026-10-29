@@ -155,9 +155,9 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFklEQVR
   t("unticking read-at-once saves", (await mgr.get("/api/c/demo/settings-view")).json.company.auto_propose === false);
   await ag.check("#a-auto"); await sleep(800);
 
-  // ---- the platform board itself offers no pointing (nothing there goes to the proposer)
+  // ---- the platform board's own button sends to Anetix, and since 2026-10-29 (Taylor's #287) pointing rides along there too
   const pb = await ctxM.newPage(); await pb.goto(BASE + "/c/demo/"); await pb.waitForSelector("#sos-fb-btn"); await pb.click("#sos-fb-btn");
-  t("the board's own feedback button has no point or photo", (await pb.locator("#fbw-point, #fbw-photo").count()) === 0);
+  t("the board's own feedback button offers Point at it, for a request to Anetix", (await pb.locator("#fbw-point").count()) === 1);
 
   // ---- /admin: the credit line
   const ad = await ctxAd.newPage(); watch(ad, "admin");

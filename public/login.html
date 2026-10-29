@@ -17,6 +17,8 @@
   .err { color:var(--red); font-size:13px; margin-top:10px; display:none; }
   .staff { display:block; margin-top:16px; font-size:12px; color:var(--steel); text-align:center; }
   #code { letter-spacing:.2em; text-align:center; }
+  #pw.pin { letter-spacing:.35em; text-align:center; font-size:26px; padding:14px 12px; }
+  #pinhint { display:none; }
   .hint { color:var(--steel); font-size:12.5px; margin:10px 0 6px; line-height:1.45; }
   .hint a { color:var(--navy); }
   .remember { display:flex; gap:8px; align-items:flex-start; font-size:12.5px; color:var(--steel); margin:10px 0 2px; line-height:1.45; cursor:pointer; }
@@ -25,18 +27,22 @@
   button.pk.first { background:var(--navy); color:#fff; }
   .or { display:none; text-align:center; color:var(--steel); font-size:12px; margin:10px 0; }
   .pwlink { display:none; text-align:center; font-size:13px; margin-top:12px; }
+  .oidcbtn { display:block; width:100%; text-align:center; margin:0 0 8px; background:#fff; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:12px; font-size:15px; font-weight:700; text-decoration:none; box-sizing:border-box; }
+  .by { text-align:center; color:var(--steel); font-size:11.5px; margin-top:16px; opacity:.8; }
 </style>
 <script src="/assets/passkey.js"></script>
 </head>
 <body>
   <form class="card" id="f">
-    <h1><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:34px;height:34px;border-radius:8px;vertical-align:middle;margin-right:10px">Anetix</h1>
+    <h1 id="brand"><img src="/assets/anetix-mark.svg" alt="Anetix" style="width:34px;height:34px;border-radius:8px;vertical-align:middle;margin-right:10px">Anetix</h1>
     <div class="sub" id="sub">Enter the password you were given.</div>
     <input id="co" type="text" placeholder="Company code" autocomplete="organization" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
     <input id="nm" type="email" placeholder="Your email" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" style="display:none;margin-bottom:10px">
     <button type="button" class="pk" id="pk">Sign in with a passkey</button>
+    <div id="oidc" style="display:none"></div>
     <div class="or" id="or">or with your password</div>
     <input id="pw" type="password" placeholder="Password" autofocus autocomplete="current-password">
+    <div class="hint" id="pinhint">The floor PIN is the one for everyone at the plant. Your own PIN, if you have one, goes in after, when you tap your name on the Feedback button.</div>
     <div id="codebox" style="display:none">
       <div class="hint" id="codehint">Type the 6 digit code your authenticator app shows for Anetix.</div>
       <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 digit code" maxlength="24" spellcheck="false">
@@ -48,7 +54,8 @@
     <div class="hint" id="help" style="margin-top:14px">Stuck, forgot your password or lost your phone? Write to <a href="mailto:brendan@anetix.ai">brendan@anetix.ai</a> or <a href="mailto:taylor@anetix.ai">taylor@anetix.ai</a>.</div>
     <a href="#" class="pwlink" id="pwlink">Use my password instead</a>
     <a href="#" class="staff" id="staff">Sign in with an account (managers, Anetix staff)</a>
-    <a href="#" class="staff" id="floorpw" style="display:none">Sign in with the floor's shared password instead</a>
+    <a href="#" class="staff" id="floorpw" style="display:none">Sign in to the floor with the floor PIN instead</a>
+    <div class="by" id="by" style="display:none"><img src="/assets/anetix-mark.svg" alt="" style="width:14px;height:14px;border-radius:3px;vertical-align:-2px;margin-right:5px">Anetix</div>
   </form>
 <script>
 // A login belongs to one company. The link or the wall code that brought the
@@ -63,8 +70,31 @@ if (company) sub.textContent = "Signing in to " + company + ". Enter the passwor
 // Anetix's own people sign in by name, with a code from an authenticator app after the password. The floor never
 // needs this, so it stays behind a small link (and opens by itself when the link that brought you here was /admin).
 let staff = false;
+// Sign in with Google or Microsoft (src/oidc.js, 2026-10-29): on the account form, for each provider that is on; and
+// the word a provider's return leaves in the address
+let oidcAsked = false;
+function offerOidc() {
+  const box = document.getElementById("oidc");
+  if (oidcAsked) { box.style.display = staff ? "block" : "none"; return; }
+  oidcAsked = true;
+  fetch("/login/oidc/providers", { cache: "no-store" }).then((r) => r.json()).then((j) => {
+    const list = (j && j.providers) || [];
+    box.innerHTML = list.map((p) => `<a class="oidcbtn" href="/login/oidc/${encodeURIComponent(p.id)}${next ? "?next=" + encodeURIComponent(next) : ""}">Sign in with ${p.name === "Google" ? "Google" : "Microsoft"}</a>`).join("");
+    box.style.display = list.length && staff ? "block" : "none";
+  }).catch(() => {});
+}
+(function oidcWord() {
+  const w = params.get("oidc"); if (!w) return;
+  const m = /^unlinked_(google|microsoft)$/.exec(w);
+  const who = m ? (m[1] === "google" ? "Google" : "Microsoft") : "";
+  const words = { wait: "Too many tries from here. Wait a few minutes.", expired: "That took too long. Try again.", cancelled: "Nothing was signed in.", failed: "That did not go through. Try again in a minute.",
+    off: "That account is switched off. Ask Anetix.", signin_first: "Sign in with your email and password first, then connect Google or Microsoft on your settings." };
+  setTimeout(() => { err.textContent = m ? `That ${who} account is not connected to an Anetix account yet. Sign in with your email and password, then connect ${who} under Your sign-in on Settings.` : words[w] || ""; err.style.display = err.textContent ? "block" : "none"; }, 0);
+})();
 function staffMode(login) {
   staff = true; nm.style.display = "block"; co.style.display = "none"; document.getElementById("staff").style.display = "none";
+  if (typeof setPin === "function") setPin(false);
+  offerOidc();
   // a manager account (a company from anetix.ai, 2026-09-25) signs in the same way: email, password, the app's code
   sub.textContent = login ? "Your account: the email address, your password, then the code from your authenticator app (set up on the first sign-in)." : "Anetix staff: your own name and password, then the code from your authenticator app.";
   if (login) { nm.value = login; document.getElementById("pw").focus(); } else nm.focus();
@@ -101,17 +131,47 @@ async function passkeyNow(conditional) {
   after(j);
 }
 document.getElementById("staff").onclick = (e) => { e.preventDefault(); staffMode(); document.getElementById("floorpw").style.display = "block"; };
-// Back from the account form to a floor's shared password (the bare address opens the account form; the launch audit 1.12)
+// The floor PIN (2026-10-29): a company whose floor signs in with its PIN gets a number pad and words that say which
+// PIN this is. On 2026-10-28 a phone typed a person's own PIN here six times and was told the password did not match.
+let pinMode = false;
+function setPin(on) {
+  pinMode = Boolean(on);
+  const pw = document.getElementById("pw");
+  pw.classList.toggle("pin", pinMode);
+  pw.inputMode = pinMode ? "numeric" : "text";
+  pw.placeholder = pinMode ? "Floor PIN" : "Password";
+  pw.autocomplete = pinMode ? "off" : "current-password";
+  pw.maxLength = pinMode ? 8 : 524288;
+  document.getElementById("pinhint").style.display = pinMode && !staff ? "block" : "none";
+  if (!staff && company) sub.textContent = companyShown ? (pinMode ? "Type the floor PIN." : "Enter the floor's password.") : pinMode ? "Signing in to " + company + ". Type the floor PIN." : "Signing in to " + company + ". Enter the floor's password.";
+}
+function askMode(slug) {
+  return fetch("/login/mode?c=" + encodeURIComponent(slug)).then((r) => r.json()).then((j) => { if (j && j.name) showCompany(j.name); return j; }).catch(() => ({ mode: "password" }));
+}
+// The company's own name at the top when the page knows it (2026-10-29: Anetix kept discreet on a company's pages)
+let companyShown = "";
+function showCompany(name) {
+  companyShown = String(name || "");
+  const h = document.getElementById("brand"); h.textContent = companyShown;
+  document.getElementById("by").style.display = "block";
+  document.title = companyShown + " · Sign in";
+  if (!staff && company) sub.textContent = pinMode ? "Type the floor PIN." : "Enter the floor's password.";
+}
+// Back from the account form to the floor's sign-in (the bare address opens the account form; the launch audit 1.12)
 function floorMode() {
   staff = false; pkOffered = false; if (pkAbort) { pkAbort.abort(); pkAbort = null; }
+  document.getElementById("oidc").style.display = "none";
   for (const id of ["nm", "pk", "or", "pwlink", "floorpw"]) document.getElementById(id).style.display = "none";
   document.getElementById("pk").classList.remove("first");
   document.getElementById("pw").style.display = "block"; document.querySelector("#f button[type=submit]").style.display = "block";
   document.getElementById("staff").style.display = "block";
   co.style.display = company ? "none" : "block";
-  sub.textContent = company ? "Signing in to " + company + ". Enter the floor's password." : "The floor's password, and the company code: the word after /c/ in the board's address.";
+  sub.textContent = company ? "Signing in to " + company + ". Enter the floor's password." : "The company code (the word after /c/ in the board's address), then the floor PIN.";
+  if (company) setPin(pinMode);
   (company ? document.getElementById("pw") : co).focus();
 }
+// a company code typed by hand: find out whether its floor signs in with a PIN, for the number pad
+co.addEventListener("change", () => { const c = co.value.trim().toLowerCase(); if (c) askMode(c).then((j) => { if (!staff) { setPin(j.mode === "pin"); document.getElementById("pinhint").style.display = j.mode === "pin" ? "block" : "none"; } }); });
 document.getElementById("floorpw").onclick = (e) => { e.preventDefault(); floorMode(); };
 if (/^\/admin(?:[/?#]|$)/.test(next || "")) staffMode();
 else if (params.get("account")) staffMode(params.get("account"));
@@ -119,7 +179,11 @@ else if (params.get("staff")) { staffMode(); sub.textContent = "Your email (or n
 else if (company) {
   // a personal demo has no company password, only its manager's account: open that form at once instead of the
   // password box (which would only ever answer "did not match")
-  fetch("/login/mode?c=" + encodeURIComponent(company)).then((r) => r.json()).then((j) => { if (j.mode === "account" && !staff) { staffMode(); sub.textContent = "Sign in to " + company + " with your email and password, then the code from your authenticator app."; } }).catch(() => {});
+  askMode(company).then((j) => {
+    if (staff) return;
+    if (j.mode === "account") { staffMode(); sub.textContent = "Sign in to " + company + " with your email and password, then the code from your authenticator app."; }
+    else if (j.mode === "pin") { setPin(true); document.getElementById("pw").focus(); }
+  });
 } else {
   // the bare address (app.anetix.ai, a bookmark, a typed URL): nothing names a company, so this is a manager or Anetix
   // staff; a floor comes in through its wall sign's link, which names the company. The shared password is one link away.
@@ -153,12 +217,26 @@ document.getElementById("f").onsubmit = async (e) => {
       if (j.remember_days) document.getElementById("rememberlabel").textContent = "Remember this device for " + j.remember_days + " days: no code at sign-in from this browser. Sign out everywhere on the Accounts tab ends it.";
       if (first && res.ok) { err.style.display = "none"; return; }
     }
+    // a PIN typed into the account form (a floor person on the bare address): say where a PIN goes
+    if (j.code === "pin_in_account_form" || (!nm.value.trim() && /^\d{4,8}$/.test(document.getElementById("pw").value))) {
+      err.textContent = "That looks like a PIN. This form is for managers' own accounts. To sign in to the floor, scan the code at your station, or use the link below.";
+      document.getElementById("floorpw").style.display = "block";
+      err.style.display = "block"; return;
+    }
     err.textContent = j.error ? j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : ".") : "That did not match.";
     err.style.display = "block"; return;
   }
   if (!res.ok) {
     if (j.need_company) { co.style.display = "block"; co.focus(); }
-    err.textContent = res.status === 429 ? (j.error || "Too many tries. Wait a few minutes.") : j.need_company ? "Which company is this login for? Type its code, the word after /c/ in its address." : "That password did not match.";
+    // the server's own words where they say why (off the plant's wifi, the plant not set up, a wait); the page's where
+    // they only say which kind of wrong it was
+    const words = {
+      need_company: "Which company is this login for? Type its code, the word after /c/ in its address.",
+      wrong_pin: "That PIN did not match. Use the floor PIN your manager gave you. Your own PIN goes in later, when you tap your name.",
+      pin_in_password_box: "That looks like a PIN. This box takes the floor's password. Your own PIN goes in after you are in, when you tap your name on the Feedback button.",
+      wrong_password: "That password did not match.",
+    };
+    err.textContent = j.need_company ? words.need_company : words[j.code] || (j.error ? j.error.charAt(0).toUpperCase() + j.error.slice(1) + (/[.!]$/.test(j.error) ? "" : ".") : res.status === 429 ? "Too many tries. Wait a few minutes." : "That did not match.");
     err.style.display = "block"; return;
   }
   if (staff) { after(j); return; }

@@ -28,7 +28,8 @@ const R = runner(), t = R.t;
   await p.goto(BASE + "/admin"); await p.waitForSelector("#demo-stuck", { timeout: 15000 });
   t("/admin opens on Demos", await p.locator("#tab-demos").isVisible() && (await p.locator('#shell nav a[data-tab="demos"]').getAttribute("class")) === "on");
   const tabs = await p.locator("#shell nav a").allInnerTexts();
-  t("the row: Demos first, eight tabs, then More", tabs.length === 9 && /^Demos/.test(tabs[0]) && /^More/.test(tabs[8]) && !tabs.some((x) => /^(Library|Models)/.test(x)), tabs);
+  // Library came out of More on 2026-10-19, so nine tabs and then More
+  t("the row: Demos first, nine tabs, then More", tabs.length === 10 && /^Demos/.test(tabs[0]) && /^More/.test(tabs[9]) && tabs.some((x) => /^Library/.test(x)) && !tabs.some((x) => /^Models/.test(x)), tabs);
   await p.click("#shell nav a[data-more]");
   t("More opens Library and Models", (await p.locator('#shell nav a[data-tab="library"]').isVisible()) && (await p.locator('#shell nav a[data-tab="models"]').isVisible()));
   t("no pill for AI spend or the models (2.5)", (await p.locator("#pill-spend, #pill-models").count()) === 0);
@@ -64,12 +65,12 @@ const R = runner(), t = R.t;
   const listText = await p.locator("#co-list").innerText();
   t("a demo is not flagged in the company list", !/Gamma Parts\s*\n[^\n]*\n?\s*sign-in needs setting/.test(listText) && !/still on the shared/.test(listText.split("Gamma Parts")[1] || ""), listText);
   const cardEl = p.locator(`#companies .card[data-company="${slug}"]`);
-  t("its sign-in says demo, with no Set passwords button", /a demo: no floor password/.test(await cardEl.locator(".sec", { hasText: "Sign-in" }).innerText()) && (await cardEl.locator("button", { hasText: "Set passwords" }).count()) === 0);
+  t("its sign-in says demo, with no floor PIN button", /a demo: no floor PIN/.test(await cardEl.locator(".sec", { hasText: "Sign-in" }).innerText()) && (await cardEl.locator("button", { hasText: "Floor PIN and passwords" }).count()) === 0);
   t("the rarely used settings wait behind the card's More, closed", (await cardEl.locator("details.comore").count()) === 1 && !(await cardEl.locator("details.comore").evaluate((d) => d.open)) && !(await cardEl.locator(".sec", { hasText: "Test floor" }).isVisible()));
   await cardEl.locator("details.comore > summary").click();
   t("open, they are all there", await cardEl.locator(".sec", { hasText: "Test floor" }).isVisible() && await cardEl.locator(".sec", { hasText: "What the AI reads" }).isVisible() && await cardEl.locator("button", { hasText: "Add module from library" }).isVisible());
   const demoCard = await p.goto(BASE + "/admin#companies/demo").then(() => p.waitForSelector('#companies .card[data-company="demo"]')).then(() => p.locator('#companies .card[data-company="demo"]'));
-  t("a company made here still has Set passwords", (await demoCard.locator("button", { hasText: "Set passwords" }).count()) === 1);
+  t("a company made here still has its floor PIN button", (await demoCard.locator("button", { hasText: "Floor PIN and passwords" }).count()) === 1);
 
   // ---- a phone
   const ph = await browser.newContext({ viewport: { width: 390, height: 844 } }); await ph.addCookies(admin.cookies());

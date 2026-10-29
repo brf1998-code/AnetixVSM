@@ -65,8 +65,8 @@ const PAGE = "/c/demo/m/paperline/";
   t("a company named with an apostrophe opens its network box, the name shown as it is and never run", /O'Brien "Tool" <b>&<\/b> Die'\);window\.__pwned=1;\/\//.test(await p.locator("#mcard h2").innerText().catch(() => "")) && (await p.evaluate(() => window.__pwned)) === undefined, await p.locator("#mcard").innerText().catch(() => "no box"));
   t("the box says the address is not proven on an instance with no edge check", /address a request claims is not proven/.test(await p.locator("#nw-unproven").innerText().catch(() => "")));
   await p.locator("#mcard button", { hasText: "Cancel" }).click();
-  await p.locator('[data-company="obrien"] button', { hasText: "Set passwords" }).click();
-  t("so does Set passwords, which had the same trouble", /Passwords for O'Brien/.test(await p.locator("#mcard h2").innerText().catch(() => "")) && (await p.evaluate(() => window.__pwned)) === undefined);
+  await p.locator('[data-company="obrien"] button', { hasText: "Floor PIN and passwords" }).click();   // "Set passwords" until the floor PIN (2026-10-29)
+  t("so does Floor PIN and passwords, which had the same trouble", /Floor PIN for O'Brien/.test(await p.locator("#mcard h2").innerText().catch(() => "")) && (await p.evaluate(() => window.__pwned)) === undefined);
   await p.locator("#mcard button", { hasText: "Cancel" }).click();
 
   // ---- the Instance tab's card

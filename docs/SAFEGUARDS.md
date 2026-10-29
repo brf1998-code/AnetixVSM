@@ -28,7 +28,7 @@ All on the company's card on `/admin` (More, Safeguards), set by Anetix, each ch
 | Label previews | Off: a label's contents are never sent to the public renderer that draws its picture; the tool shows the label's text. | On |
 | Uploads must be scanned | On: a file the malware scan could not take (no scanner, or it did not answer) is refused. Off: it is kept, marked unscanned, and scanned when the scanner answers again. A flagged file is refused either way. | Off |
 | Ask Anetix | Off: no assistant on the board and its routes refuse. On: managers can ask it; what it reads to answer (how the tools are built, the board, and the records unless the company is walled off) goes to the AI service like the rest of the loop. | On |
-| Shared passwords work from | Empty: anywhere. A list of addresses or ranges: the floor's password (and a shared manager password while one exists) works only from the plant's own network, at sign-in and on every request after. A named account with a second factor works from anywhere. | Anywhere |
+| Shared sign-ins work from | Empty: anywhere, except a floor PIN. A list of addresses or ranges: the floor's PIN or password (and a shared manager password while one exists) works only from the plant's own network, at sign-in and on every request after. Since 2026-10-29 a floor PIN works ONLY from the list: with none, the floor cannot sign in. A named account with a second factor works from anywhere. | Anywhere (a floor PIN: nowhere until set) |
 
 And one action, under Sign-in on the same card: **take the shared manager password away**, so a manager signs
 in by name with a second factor and no other way. It is refused until the company has a manager account whose

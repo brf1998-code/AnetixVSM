@@ -280,6 +280,9 @@ const tools = [
         await require("./record").record("intake_taken_over", { company: co.slug, module: open.slug || null, actor: byOf(who), intake_id: open.id, feedback_id: open.feedback_id, detail: { status: open.status } });
         return { took_over: true, request: await shown(await load(open.id)) };
       }
+      // Anetix's own unfinished one is carried on with, answered or not (the board may hold several drafts since 2026-10-29;
+      // a connected app keeps to one)
+      if (open && open.via === VIA) return { carried_on: true, request: await shown(await load(open.id)) };
       const it = await words(() => intake.create(co.slug, "admin", { name: "Anetix", via: VIA }));
       return { carried_on: Boolean(it.reopened), request: await shown(await load(it.id)) };
     },

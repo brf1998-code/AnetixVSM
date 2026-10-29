@@ -302,6 +302,9 @@ const UPGRADES = [
      generation   INTEGER NOT NULL DEFAULT 1,       -- goes up when a password changes; sessions signed under an older one stop working
      updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+  // the floor PIN (2026-10-29, src/auth.js): true once the floor's shared sign-in is a PIN; a PIN signs in only from the
+  // plant's network list (src/safeguards.js). false: a floor password from before, which works as it always did.
+  "ALTER TABLE platform.company_access ADD COLUMN IF NOT EXISTS floor_pin BOOLEAN NOT NULL DEFAULT false",
   "INSERT INTO platform.companies (slug, name) VALUES ('demo', 'Demo Company') ON CONFLICT DO NOTHING",
 ];
 

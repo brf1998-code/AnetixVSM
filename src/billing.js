@@ -24,7 +24,7 @@
 // Brendan's phone hears of each (src/notify.js).
 //
 // BACK TO A DEMO (backToDemo, safe to run twice): the site's stage back_to_demo with returned_at; the DEMO strip back;
-// the floor's password removed, which signs the floor out; AI on credit again from 0%, counted from this moment
+// the floor's PIN removed, which signs the floor out; AI on credit again from 0%, counted from this moment
 // (self_serve.credit_since bounds both the ledger and the spend, so the demo's old spend is never handed back as
 // credit); the tools, their data, their versions, the record and the manager accounts untouched; a notice for the
 // manager. Go live works again from there.
@@ -247,9 +247,9 @@ async function backToDemo(siteId, why, by) {
       const m = (await c.query("SELECT login, display_name FROM platform.accounts WHERE role='manager' AND company=$1 ORDER BY created_at LIMIT 1", [s.company])).rows[0] || {};
       await c.query("INSERT INTO platform.self_serve (company, email, contact, credit_since) VALUES ($1,$2,$3,now()) ON CONFLICT (company) DO UPDATE SET credit_since=now()", [s.company, m.login || null, m.display_name || null]);
     }
-    // the floor's password goes in the same transaction, which signs the floor out (auth.accountsOnly's statement)
+    // the floor's PIN goes in the same transaction, which signs the floor out (auth.accountsOnly's statement)
     await c.query(`INSERT INTO platform.company_access (company, legacy_login) VALUES ($1,false)
-                   ON CONFLICT (company) DO UPDATE SET floor_hash=NULL, manager_hash=NULL, legacy_login=false,
+                   ON CONFLICT (company) DO UPDATE SET floor_hash=NULL, floor_pin=false, manager_hash=NULL, legacy_login=false,
                      generation=platform.company_access.generation + 1, updated_at=now()`, [s.company]);
     await require("./notices").add(s.company, "back_to_demo", `This site's ${pilotEnd(s) ? "pilot" : "subscription"} has ended (${clean(why, 200)}), so it is a demo again. Every tool and all your data are still here. The floor's sign-in is closed, and AI runs on credit again: add credit on anetix.ai to keep building, or go live again any time. Questions: ${CONTACT}.`, { why: clean(why, 300) }, c);
     await c.query("COMMIT");

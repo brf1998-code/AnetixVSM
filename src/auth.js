@@ -18,6 +18,17 @@
 //   admin account has a working authenticator, which is how the first
 //   accounts get made; every use is on the record (legacy_admin_password).
 //   After that it is refused and the variable can leave Railway.
+//   The floor PIN (2026-10-29, Chelsea Clock's first weeks on the floor). The floor's shared sign-in is a PIN of 6
+//   to 8 digits now, never a password: setPasswords takes nothing else for the floor, and every place that makes one
+//   up (a company by hand, a site going live, a site from anetix.ai) makes a PIN. company_access.floor_pin says the
+//   floor's hash is a PIN, and a PIN signs in ONLY from the plant: the company's network list (src/safeguards.js) must
+//   hold the address, and a company with a PIN and no list refuses every floor sign-in in the same words whether the
+//   PIN was right or not. A floor password from before PINs (floor_pin false) works as it always did until the admin
+//   makes the company a PIN. Why: on 2026-10-28 a phone at Chelsea typed a person's own PIN (the People page) into the
+//   floor's password box six times and was told "That password did not match." The person's PIN only names who is at
+//   a device that is already in; the floor's PIN is what lets the device in, and the login page now says so.
+//   At the plant the per-address limit below would lock the whole floor out between them (a plant is one address), so
+//   a sign-in to a company from its own network is counted per device and per plant instead (loginHandler).
 //   SOS_FLOOR_PASSWORD / SOS_MANAGER_PASSWORD are the old instance-wide
 //   passwords. They still open a company only while its access row says
 //   legacy_login, which is how companies that existed before this change keep
@@ -45,7 +56,10 @@
 //   from ends after the idle window. Hours, so a deployment that has to meet
 //   AAL2 on paper (1 hour idle, 24 hour cap) sets 1 and 24 with no code change:
 //     admin            SOS_ADMIN_IDLE_HOURS   168 (7 days)    SOS_ADMIN_CAP_HOURS    720 (30 days)
-//     floor, manager   SOS_SESSION_IDLE_HOURS 720 (30 days)   SOS_SESSION_CAP_HOURS 4320 (180 days; 0 = no cap)
+//     manager          SOS_SESSION_IDLE_HOURS 720 (30 days)   SOS_SESSION_CAP_HOURS 4320 (180 days; 0 = no cap)
+//     floor            SOS_FLOOR_IDLE_HOURS   168 (7 days)    SOS_FLOOR_CAP_HOURS    720 (30 days; 0 = no cap)
+//   (the floor's own pair since 2026-10-29, the same as the person cookie's: a device used every day stays in for a
+//   month, one left in a drawer for a week asks for the floor PIN again; 30 and 180 days before, shared with managers)
 //   (the person cookie has its own pair in src/people.js). The cookie from
 //   before this carried one time; it is accepted while its one time is inside
 //   both windows, and re-issued in the new shape on the first request seen, so
@@ -92,10 +106,11 @@ function hoursVar(name, dflt, { zeroOk = false } = {}) {
 const WINDOWS = {
   admin: { idle: hoursVar("SOS_ADMIN_IDLE_HOURS", 168), cap: hoursVar("SOS_ADMIN_CAP_HOURS", 720, { zeroOk: true }) },
   device: { idle: hoursVar("SOS_SESSION_IDLE_HOURS", 720), cap: hoursVar("SOS_SESSION_CAP_HOURS", 4320, { zeroOk: true }) },
+  floor: { idle: hoursVar("SOS_FLOOR_IDLE_HOURS", 168), cap: hoursVar("SOS_FLOOR_CAP_HOURS", 720, { zeroOk: true }) },
 };
 const RETIRED_ENV = ["SOS_ADMIN_SESSION_HOURS", "SOS_SESSION_DAYS"];
 for (const name of RETIRED_ENV) if (process.env[name] !== undefined) console.warn(`[auth] ${name} is no longer read (sessions slide since 2026-09-24: SOS_ADMIN_IDLE_HOURS / SOS_ADMIN_CAP_HOURS, SOS_SESSION_IDLE_HOURS / SOS_SESSION_CAP_HOURS). Take it out of Railway.`);
-const windowFor = (role) => (role === "admin" ? WINDOWS.admin : WINDOWS.device);
+const windowFor = (role) => (role === "admin" ? WINDOWS.admin : role === "floor" ? WINDOWS.floor : WINDOWS.device);
 // An enrollment-only session (see the top): long enough to scan a code and save the recovery codes, no longer.
 const ENROLL_MINUTES = 60;
 const ENROLL_MS = ENROLL_MINUTES * 60e3;
@@ -147,31 +162,55 @@ function generatePassword() {
   return `${pick()}-${pick()}-${String(crypto.randomInt(100, 1000))}`;
 }
 
+// The floor PIN (see the top): 6 to 8 digits. One made up here is 6, and never a run or a repeat a person would guess
+// first (123456, 111111, 654321, 121212).
+const FLOOR_PIN_MIN = 6, FLOOR_PIN_MAX = 8;
+const validFloorPin = (p) => new RegExp(`^\\d{${FLOOR_PIN_MIN},${FLOOR_PIN_MAX}}$`).test(String(p == null ? "" : p));
+function guessable(p) {
+  const d = String(p).split("").map(Number);
+  const steps = d.slice(1).map((x, i) => x - d[i]);
+  if (steps.every((x) => x === steps[0]) && Math.abs(steps[0]) <= 1) return true;   // 111111, 123456, 654321
+  if (new Set(d).size <= 2) return true;                                              // 121212, 112112
+  return false;
+}
+function generateFloorPin() {
+  for (;;) {
+    const p = String(crypto.randomInt(0, 1e6)).padStart(FLOOR_PIN_MIN, "0");
+    if (!guessable(p)) return p;
+  }
+}
+
 // ---- company access rows ---------------------------------------------------------------
 async function accessRow(slug) {
   return (await q("SELECT * FROM platform.company_access WHERE company=$1", [slug])).rows[0] || null;
 }
 // Set one or both passwords. Giving a company its own passwords ends its use of the shared ones.
+// floor: the floor PIN (6 to 8 digits; nothing else is taken for the floor since 2026-10-29).
 async function setPasswords(slug, { floor, manager }) {
   if (!floor && !manager) throw new Error("give at least one password");
-  for (const [label, p] of [["floor", floor], ["manager", manager]]) if (p && String(p).length < 8) throw new Error(`the ${label} password needs at least 8 characters`);
-  if (floor && manager && String(floor) === String(manager)) throw new Error("the floor and manager passwords must differ: the password is what tells the two apart");
+  if (floor && !validFloorPin(floor)) throw new Error(`the floor PIN is ${FLOOR_PIN_MIN} to ${FLOOR_PIN_MAX} digits, numbers only`);
+  if (floor && guessable(floor)) throw new Error("that floor PIN is one a person would guess first (a run or a repeat): pick another, or let the platform make one up");
+  if (manager && String(manager).length < 8) throw new Error("the manager password needs at least 8 characters");
+  if (floor && manager && String(floor) === String(manager)) throw new Error("the floor PIN and the manager password must differ: what is typed is what tells the two apart");
   await q(
-    `INSERT INTO platform.company_access (company, floor_hash, manager_hash, legacy_login) VALUES ($1,$2,$3,false)
+    `INSERT INTO platform.company_access (company, floor_hash, manager_hash, legacy_login, floor_pin) VALUES ($1,$2::text,$3::text,false,$2::text IS NOT NULL)
      ON CONFLICT (company) DO UPDATE SET floor_hash=COALESCE($2, platform.company_access.floor_hash),
+       floor_pin=CASE WHEN $2::text IS NULL THEN platform.company_access.floor_pin ELSE true END,
        manager_hash=COALESCE($3, platform.company_access.manager_hash), legacy_login=false,
        generation=platform.company_access.generation + 1, updated_at=now()`,
-    [slug, floor ? hashPassword(floor) : null, manager ? hashPassword(manager) : null]);
+    [slug, floor ? hashPassword(String(floor)) : null, manager ? hashPassword(manager) : null]);
   generations.delete(slug);
+  require("./safeguards")._forget(slug);   // it remembers whether the floor signs in with a PIN
 }
 // A company whose only way in is a named account (a personal demo from anetix.ai, 2026-09-25: one person, one
 // manager account with an authenticator, no floor): an access row with no floor or manager password and
 // legacy_login off, so neither a company password nor the shared SOS_FLOOR/MANAGER fallback ever opens it.
 async function accountsOnly(slug) {
   await q(`INSERT INTO platform.company_access (company, legacy_login) VALUES ($1,false)
-           ON CONFLICT (company) DO UPDATE SET floor_hash=NULL, manager_hash=NULL, legacy_login=false,
+           ON CONFLICT (company) DO UPDATE SET floor_hash=NULL, floor_pin=false, manager_hash=NULL, legacy_login=false,
              generation=platform.company_access.generation + 1, updated_at=now()`, [slug]);
   generations.delete(slug);
+  require("./safeguards")._forget(slug);
 }
 // The generation a company's sessions must carry, remembered for a few seconds
 // so a page full of requests costs one lookup.
@@ -197,7 +236,7 @@ async function ensureAccessRows() {
   return r.rows.length;
 }
 function accessPublic(row) {
-  return { own_floor: Boolean(row && row.floor_hash), own_manager: Boolean(row && row.manager_hash), legacy_login: Boolean(row && row.legacy_login), updated_at: row ? row.updated_at : null,
+  return { own_floor: Boolean(row && row.floor_hash), floor_pin: Boolean(row && row.floor_hash && row.floor_pin), own_manager: Boolean(row && row.manager_hash), legacy_login: Boolean(row && row.legacy_login), updated_at: row ? row.updated_at : null,
     networks: (row && row.networks) || [] };   // where the shared sign-ins work from; empty = anywhere (src/safeguards.js)
 }
 // Take away a company's shared manager password (2026-10-08, src/safeguards.js): from then on a manager signs in by
@@ -549,22 +588,95 @@ function noteLoginFail(ip) {
 setInterval(() => {
   const cutoff = Date.now() - LOGIN_WINDOW_MS;
   for (const [ip, rec] of loginFails) if (rec.first < cutoff) loginFails.delete(ip);
+  for (const [k, rec] of deviceFails) if (rec.first < cutoff && !(rec.until > Date.now())) deviceFails.delete(k);
+  for (const [k, rec] of plantFails) if (rec.first < cutoff && !(rec.until > Date.now())) plantFails.delete(k);
 }, 60 * 1000).unref();
+
+// ---- the floor PIN at the plant (2026-10-29) -------------------------------------------------------------------------
+// A whole plant comes from one address, so the per-address limit above would lock every device on the floor out after
+// ten typos between them. A sign-in to a company FROM that company's own network list is counted another way:
+//   per device   a cookie of its own (sos_fdev, path /login): SOS_FLOOR_DEVICE_FAILS (5) wrong tries inside the window
+//                and that device waits SOS_FLOOR_DEVICE_LOCK_MIN (5) minutes;
+//   per plant    SOS_FLOOR_COMPANY_FAILS (40) wrong tries from the plant inside SOS_LOGIN_WINDOW_MIN (15) and the
+//                plant's shared sign-in pauses for the rest of the window, with one phone alert to Anetix.
+// A guesser who clears the cookie still meets the plant's count, and has to be on the plant's wifi to try at all. A
+// device already signed in stays in through a pause. A named account never comes this way (it has its own lock).
+const FDEV_COOKIE = "sos_fdev";
+const FLOOR_DEVICE_FAILS = Math.max(1, Number(process.env.SOS_FLOOR_DEVICE_FAILS || 5));
+const FLOOR_DEVICE_LOCK_MS = Math.max(1, Number(process.env.SOS_FLOOR_DEVICE_LOCK_MIN || 5)) * 60e3;
+const FLOOR_COMPANY_FAILS = Math.max(1, Number(process.env.SOS_FLOOR_COMPANY_FAILS || 40));
+const deviceFails = new Map();   // device id -> { count, first, until }
+const plantFails = new Map();    // company -> { count, first, until, told }
+// This browser's id for counting, made and handed back when it has none.
+function floorDevice(req, res) {
+  let id = parseCookies(req)[FDEV_COOKIE];
+  if (!/^[A-Za-z0-9_-]{16,40}$/.test(id || "")) {
+    id = crypto.randomBytes(16).toString("base64url");
+    const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+    res.append("Set-Cookie", `${FDEV_COOKIE}=${id}; Path=/login; HttpOnly; SameSite=Lax; Max-Age=${365 * 86400}${secure}`);
+  }
+  return id;
+}
+// -> null, or { who: "device" | "plant", wait } in seconds
+function plantWait(device, company, now = Date.now()) {
+  const d = deviceFails.get(device);
+  if (d && d.until > now) return { who: "device", wait: Math.ceil((d.until - now) / 1000) };
+  const c = plantFails.get(company);
+  if (c && c.until > now) return { who: "plant", wait: Math.ceil((c.until - now) / 1000) };
+  return null;
+}
+function notePlantFail(device, company, now = Date.now()) {
+  let d = deviceFails.get(device);
+  if (!d || now - d.first > LOGIN_WINDOW_MS || d.until) deviceFails.set(device, d = { count: 0, first: now });
+  if (++d.count >= FLOOR_DEVICE_FAILS) d.until = now + FLOOR_DEVICE_LOCK_MS;
+  let c = plantFails.get(company);
+  if (!c || now - c.first > LOGIN_WINDOW_MS) plantFails.set(company, c = { count: 0, first: now });
+  if (++c.count >= FLOOR_COMPANY_FAILS && !c.until) {
+    c.until = c.first + LOGIN_WINDOW_MS;
+    if (!c.told) {
+      c.told = true;
+      const back = new Date(c.until).toISOString().slice(11, 16);
+      try { require("./notify").notify(`Floor sign-in paused: ${company}`, `${c.count} wrong floor PINs from ${company}'s own network in ${Math.round(LOGIN_WINDOW_MS / 60e3)} minutes. Its floor sign-in is paused until ${back} UTC; devices already in stay in.`, { priority: 4, tags: ["lock"], ref: company }); } catch (e) { /* the alert is a courtesy */ }
+      accounts.event("floor_pin_paused", { detail: { company, fails: c.count } }).catch(() => {});
+    }
+  }
+}
+// What the floor is told when its sign-in is refused for the plant's sake. The words go on the login page as they are.
+const WAIT_WORDS = {
+  device: (s) => `Too many wrong tries on this phone or tablet. Wait ${Math.max(1, Math.ceil(s / 60))} minute${s > 60 ? "s" : ""} and try again, or ask your manager for the floor PIN.`,
+  plant: (s) => `Too many wrong PINs at this plant in a short time, so the floor's sign-in is paused for ${Math.max(1, Math.ceil(s / 60))} minute${s > 60 ? "s" : ""}. Phones and tablets already signed in keep working.`,
+};
 
 async function loginHandler(req, res) {
   const ip = clientIp(req);
-  const wait = loginBlocked(ip);
-  if (wait) {
-    res.set("Retry-After", String(wait));
-    return res.status(429).json({ error: `too many failed logins; try again in ${Math.ceil(wait / 60)} min` });
+  const safeguards = require("./safeguards");
+  const { password, company, name, code, remember } = req.body || {};
+  const byName = Boolean(String(name || "").trim());
+  // where this sign-in is counted: at a company's own plant (its network list holds this address) per device and per
+  // plant; anywhere else per address, as before
+  const named = byName ? null : await resolveCompany(company);
+  const plant = named ? await safeguards.atPlant(req, named) : false;
+  const device = plant ? floorDevice(req, res) : null;
+  if (plant) {
+    const held = plantWait(device, named);
+    if (held) {
+      res.set("Retry-After", String(held.wait));
+      return res.status(429).json({ error: WAIT_WORDS[held.who](held.wait), code: held.who === "device" ? "device_wait" : "plant_wait" });
+    }
+  } else {
+    const wait = loginBlocked(ip);
+    if (wait) {
+      res.set("Retry-After", String(wait));
+      return res.status(429).json({ error: `too many failed logins; try again in ${Math.ceil(wait / 60)} min` });
+    }
   }
+  const failed = () => (plant ? notePlantFail(device, named) : noteLoginFail(ip));
   try {
-    const { password, company, name, code, remember } = req.body || {};
     const now = Date.now();
     // A name means a named account: password, then a code from the authenticator. Nothing is kept between the two
     // requests: the page sends name, password and code together the second time. A browser this account trusted
     // (src/devices.js) carries a cookie on this one route and skips the code.
-    if (String(name || "").trim()) {
+    if (byName) {
       const r = await accounts.signIn({ login: name, password, code, ip, device: parseCookies(req)[devices.COOKIE], remember: Boolean(remember), ua: req.headers["user-agent"] });
       if (r.need_code && !r.error) {
         if (r.clear_device) res.set("Set-Cookie", devices.clearHeader(req));   // an expired row or a moved generation: the cookie is dead weight
@@ -576,7 +688,9 @@ async function loginHandler(req, res) {
       if (!r.ok) {
         noteLoginFail(ip);
         if (r.retry_after) res.set("Retry-After", String(r.retry_after));
-        return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code), ...(r.passkey_first ? { passkey_first: true } : {}) });
+        // a PIN typed into the account form (a floor person on the bare address): say where a PIN goes
+        const pinShaped = /^\d{4,8}$/.test(String(password || "")) && !r.need_code;
+        return res.status(r.status || 401).json({ error: r.error, need_code: Boolean(r.need_code), ...(pinShaped ? { code: "pin_in_account_form" } : {}), ...(r.passkey_first ? { passkey_first: true } : {}) });
       }
       loginFails.delete(ip);
       const extra = r.device ? [devices.cookieHeader(req, `${r.device.id}.${r.device.token}`, devices.DAYS * 86400)] : [];
@@ -591,25 +705,36 @@ async function loginHandler(req, res) {
     const offNetworkAnswer = async (forCompany) => {
       noteLoginFail(ip);
       await accounts.event("off_network", { ip, detail: { company: forCompany } });
-      return res.status(403).json({ error: require("./safeguards").OFF_NETWORK, off_network: true });
+      return res.status(403).json({ error: safeguards.OFF_NETWORK, off_network: true, code: "off_network" });
     };
     if (!(ADMIN ? same(password, ADMIN) : same(password, MANAGER))) {
-      const named = await resolveCompany(company);
-      if (named && await require("./safeguards").offNetwork(req, named)) return offNetworkAnswer(named);
+      if (named && await safeguards.offNetwork(req, named)) return offNetworkAnswer(named);
     }
     let session = await sessionFor(password, company);
     if (session && session.refused_shared) { await accounts.event("legacy_admin_refused", { ip }); session = null; }
-    if (session && session.role !== "admin" && await require("./safeguards").offNetwork(req, session.company)) return offNetworkAnswer(session.company);
+    if (session && session.role !== "admin") {
+      const where = await safeguards.whereFrom(req, session.company, session.role);
+      if (where === "off") return offNetworkAnswer(session.company);
+      // a floor PIN with no plant on file: the same answer as a wrong PIN gets below, so it says nothing about the PIN
+      if (where === "unset") { failed(); return res.status(403).json({ error: safeguards.NO_NETWORK, code: "floor_no_network" }); }
+    }
     if (!session) {
-      noteLoginFail(ip);
+      failed();
       // say when the missing piece is the company, so the page can ask for it
       const needCompany = !String(company || "").trim() && !(await resolveCompany(""));
-      return res.status(401).json({ error: needCompany ? "which company is this login for?" : "wrong password", need_company: needCompany });
+      const row = named ? await accessRow(named) : null;
+      const pinShaped = /^\d{4,8}$/.test(String(password || ""));
+      if (row && row.floor_hash && row.floor_pin && pinShaped && (await safeguards.whereFrom(req, named, "floor")) === "unset") {
+        return res.status(403).json({ error: safeguards.NO_NETWORK, code: "floor_no_network" });
+      }
+      // what the page says: a wrong floor PIN, a PIN in a box that wants the floor's password, or a wrong password
+      const code = needCompany ? "need_company" : row && row.floor_pin ? (pinShaped ? "wrong_pin" : "wrong_password") : pinShaped ? "pin_in_password_box" : "wrong_password";
+      return res.status(401).json({ error: needCompany ? "which company is this login for?" : code === "wrong_pin" ? "wrong PIN" : "wrong password", need_company: needCompany, code });
     }
-    loginFails.delete(ip);
+    if (plant) deviceFails.delete(device); else loginFails.delete(ip);
     if (session.shared) await accounts.event("legacy_admin_password", { ip, detail: { at: "sign_in" } });
     const value = session.role === "admin" ? signAdmin(0, 0, null, now) : sign(session.role, session.company, session.gen, null, now);
-    res.set("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, now, now)));
+    res.append("Set-Cookie", cookieHeader(req, value, maxAgeFor(session.role, now, now)));
     res.json({ ok: true, role: session.role, company: session.company === ALL ? null : session.company });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }
@@ -684,17 +809,28 @@ async function logoutHandler(req, res) {
   res.redirect(account ? "/login?staff=1" : "/login");
 }
 // How a company's people sign in, for the login page: "account" for a company whose only way in is a named account
-// (a personal demo, accountsOnly), so the page opens the account form at once; "password" otherwise, including for a
-// code that is not a company (the page then behaves as it always has).
+// (a personal demo, accountsOnly), so the page opens the account form at once; "pin" for a company whose floor signs
+// in with its floor PIN (the page shows a number pad); "password" otherwise, including for a code that is not a
+// company (the page then behaves as it always has).
 async function loginMode(slug) {
   slug = String(slug || "").toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(slug)) return "password";
   const row = await accessRow(slug);
-  return row && !row.floor_hash && !row.manager_hash && !row.legacy_login ? "account" : "password";
+  if (row && !row.floor_hash && !row.manager_hash && !row.legacy_login) return "account";
+  return row && row.floor_hash && row.floor_pin ? "pin" : "password";   // "pin": the floor signs in with its PIN (a number pad)
 }
 
-module.exports = { startAccountSession, finishEnrollment, isRevoked, revoke, ENROLL_MINUTES, loginBlocked, noteLoginFail,
+// A company's name for the login page, or null for a code that is not a company.
+async function companyName(slug) {
+  slug = String(slug || "").toLowerCase();
+  if (!SLUG.test(slug)) return null;
+  const row = (await q("SELECT name FROM platform.companies WHERE slug=$1", [slug])).rows[0];
+  return row ? row.name : null;
+}
+
+module.exports = { companyName, startAccountSession, finishEnrollment, isRevoked, revoke, ENROLL_MINUTES, loginBlocked, noteLoginFail,
   middleware, currentSession, companyGuard, ownsCompany, requireManager, requireAdmin, loginHandler, logoutHandler, checkAdminCode,
-  setPasswords, accountsOnly, dropManagerPassword, loginMode, generatePassword, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
+  setPasswords, accountsOnly, dropManagerPassword, loginMode, generatePassword, generateFloorPin, validFloorPin, guessable, FLOOR_PIN_MIN, FLOOR_PIN_MAX, windowFor,
+  plantWait, notePlantFail, FDEV_COOKIE, _resetPlantCounts: () => { deviceFails.clear(); plantFails.clear(); }, serviceCookie, ensureAccessRows, accessRow, accessPublic, hashPassword, checkHash, sign, signAdmin, signManager, verify, OPEN, ALL, hmac, parseCookies, managerEnrollPath,
   clientIp, ENROLL_PATHS, WINDOWS, ticketHandler, alive, refreshDue, maxAgeFor, cookieHeader, reissue, hoursVar, RETIRED_ENV, COOKIE,
 };

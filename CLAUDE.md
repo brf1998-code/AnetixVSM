@@ -189,6 +189,12 @@ Index of `docs/FEATURES.md`, in its order:
 - The tool library across companies: copy a tool, templates, the standard package (2026-10-19)
 - Shop Schedule, a library tool built by hand, and the tools a pin's company starts with (2026-10-19)
 - Steps that need judgment: rules where the cases are known, the tool works it out where they are not (2026-10-20)
+- The pilot's order form, trimmed for Chelsea Clock (2026-10-23)
+- The floor PIN: the floor signs in with a PIN, only on the plant's wifi (2026-10-29)
+- A tool's line is its name, Screens and Settings; a QR code for every screen (2026-10-29)
+- Small fixes from Chelsea's first weeks: round corner icons, the company's own icon, pointing at something for Anetix, several new tool drafts (2026-10-29)
+- Archiving a tool, and deleting one for good (2026-10-29)
+- Sign in with Google or Microsoft (2026-10-29)
 
 ## What this is
 
@@ -380,6 +386,11 @@ tool list, 401 from the API) proves the CLI itself starts.
   (30000: the most text one tool answer carries), `SOS_ASSIST_DEMO` (`live` by default since 2026-10-12, a demo's
   answers come out of its credit; `scripted` brings back the set answers). It uses the company's propose model and the
   instance's key. `SOS_MAX_REWORKS` (5): how many times Change it may rework one build at the gate.
+- Sign in with Google or Microsoft (`src/oidc.js`, "Sign in with Google or Microsoft"): `SOS_GOOGLE_CLIENT_ID` and
+  `SOS_GOOGLE_CLIENT_SECRET`, `SOS_MS_CLIENT_ID` and `SOS_MS_CLIENT_SECRET`, `SOS_MS_TENANT` (`common`). Each provider is
+  off until both of its values are set (and `SOS_PUBLIC_URL` is). Register the redirect address
+  `<SOS_PUBLIC_URL>/login/oidc/<google|microsoft>/callback` with the provider. `SOS_OIDC_STUB` is for the tests only
+  and refused on a hosted instance.
 - `SOS_CONNECTION_KEY` (REQUIRED; any long random string, `openssl rand -hex
   32`): the key every admin's and manager's authenticator secret, every ERP
   login, every company's welcome handout and the per-company database passwords
@@ -440,8 +451,10 @@ process or not mounted; `inline` = the old in-platform way),
 module source a proposal, system review or diagram call is given; files are
 whole below it, see "A model reads a module's files whole"),
 `SOS_SESSION_IDLE_HOURS` (720) and `SOS_SESSION_CAP_HOURS` (4320; 0 = no cap):
-the floor and manager cookie's windows, server-side, not just cookie Max-Age
-(`SOS_SESSION_DAYS` is no longer read), `SOS_LOGIN_MAX_FAILS`
+the manager cookie's windows, server-side, not just cookie Max-Age
+(`SOS_SESSION_DAYS` is no longer read), `SOS_FLOOR_IDLE_HOURS` (168) and `SOS_FLOOR_CAP_HOURS` (720): the floor's
+since 2026-10-29 (see "The floor PIN"), `SOS_FLOOR_DEVICE_FAILS` (5), `SOS_FLOOR_DEVICE_LOCK_MIN` (5) and
+`SOS_FLOOR_COMPANY_FAILS` (40): the counts that stand in for the per-address limit at a plant, `SOS_LOGIN_MAX_FAILS`
 (default 10) and `SOS_LOGIN_WINDOW_MIN` (default 15) for the per-IP login
 limiter (in-memory, address from `edge.clientIp`). Admin accounts:
 `SOS_ADMIN_IDLE_HOURS` (168) and `SOS_ADMIN_CAP_HOURS` (720) for the admin

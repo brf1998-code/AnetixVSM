@@ -11,7 +11,7 @@ const R = runner(), t = R.t;
 
 (async () => {
   const admin = await login(PW.admin, ""), mgr = await login(PW.manager, "demo"), floor = await login(PW.floor, "demo");
-  const made = await admin.post("/api/admin/companies", { slug: "newco", name: "Newco Plastics", manager_password: "newco-manager-pw-1", floor_password: "newco-floor-pw-1" });
+  const made = await admin.post("/api/admin/companies", { slug: "newco", name: "Newco Plastics", manager_password: "newco-manager-pw-1", floor_pin: "482913" });
   t("a new company with no tools", made.status === 200, made.text);
   await q("UPDATE platform.companies SET demo=true WHERE slug IN ('newco','demo')");
   const nmgr = await login("newco-manager-pw-1", "newco");
@@ -90,7 +90,10 @@ const R = runner(), t = R.t;
   await l.locator("#floorpw").click();
   t("one tap back to a floor's shared password", await l.locator("#pw").isVisible() && await l.locator("#co").isVisible() && !(await l.locator("#nm").isVisible()));
   await l.goto(BASE + "/login?next=" + encodeURIComponent("/c/demo/")); await l.waitForTimeout(300);
-  t("a link from a company's board opens that company's password box", /Signing in to demo\. Enter the password you were given\./.test(await l.locator("#sub").innerText()) && !(await l.locator("#nm").isVisible()));
+  // since 2026-10-29 the company's own name is the heading (Anetix kept small beneath it) and the box asks for the floor's PIN or password
+  await l.waitForFunction(() => /floor PIN\.|floor's password\./.test(document.getElementById("sub").textContent), null, { timeout: 5000 }).catch(() => {});
+  const subL = await l.locator("#sub").innerText(), headL = await l.locator("#brand").innerText();
+  t("a link from a company's board opens that company's sign-in box, under its own name", /^(Type the floor PIN|Enter the floor's password)\.$/.test(subL.trim()) && headL.trim().length > 0 && !/^Anetix$/.test(headL.trim()) && await l.locator("#pw").isVisible() && !(await l.locator("#nm").isVisible()), [headL, subL]);
 
   t("no script errors", errors.length === 0, errors);
   await q("UPDATE platform.companies SET demo=false WHERE slug='demo'");

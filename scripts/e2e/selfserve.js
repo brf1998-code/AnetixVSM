@@ -278,7 +278,8 @@ async function www(method, path, body, key = KEY) {
   // the login page opens the account form for a demo (no company password to type), the password box for anyone else
   const mode = async (c) => (await client().get(`/login/mode?c=${encodeURIComponent(c)}`)).json.mode;
   t("the login page is told a demo signs in by account", await mode(DSLUG) === "account");
-  t("and a company with a floor password, the old demo, an unknown code and junk all get the password box", await mode("late-browser-co") === "password" && await mode("demo") === "password" && await mode("nobody-here") === "password" && await mode("../x") === "password");
+  // a site from anetix.ai gets a floor PIN since 2026-10-29 (src/auth.js), so its floor gets the number pad
+  t("a site with a floor PIN gets the PIN box; the old demo on a floor password, an unknown code and junk get the password box", await mode("late-browser-co") === "pin" && await mode("demo") === "password" && await mode("nobody-here") === "password" && await mode("../x") === "password");
   const lo = await dana.get("/logout");
   t("signing out of the demo's account lands on the account sign-in", lo.status === 302 && lo.headers.get("location") === "/login?staff=1", lo.headers.get("location"));
   const fl = await client().post("/login", { password: PW.floor, company: "demo" });

@@ -89,8 +89,16 @@ const R = runner(), t = R.t;
   t("it lands on the board", /Improvement Board/.test(await pv.title()));
   const lv = await ctxF.newPage(); watch(lv, "live tool");
   await lv.goto(BASE + PAGE); await lv.waitForSelector("#sos-fb-btn");
-  t("a live tool page carries the link back to the board, for the floor too", (await lv.locator("#sos-board-link").getAttribute("href")) === "/c/demo/" && /Improvement board/.test(await lv.locator("#sos-board-link").innerText()));
-  await pv.close(); await lv.close();
+  await lv.waitForTimeout(800);   // /who has answered
+  t("a live tool page shows the floor only the Feedback button, not the board's link (2026-10-29)", (await lv.locator("#sos-fb-btn").isVisible()) && (await lv.locator("#sos-board-link").count()) === 1 && !(await lv.locator("#sos-board-link").isVisible()));
+  const lm = await ctxM.newPage(); watch(lm, "live tool, manager");
+  await lm.goto(BASE + PAGE); await lm.waitForSelector("#sos-fb-btn");
+  await lm.waitForFunction(() => { const a = document.getElementById("sos-board-link"); return a && getComputedStyle(a).display !== "none"; }, null, { timeout: 5000 }).catch(() => {});
+  t("a manager on the same page still gets the link back to the board", (await lm.locator("#sos-board-link").getAttribute("href")) === "/c/demo/" && /Improvement board/.test(await lm.locator("#sos-board-link").getAttribute("aria-label")) && await lm.locator("#sos-board-link").isVisible());
+  // #292 (2026-10-29): the two corner controls are small round icons, and the page has room to scroll clear of them
+  const corner = await lm.evaluate(() => { const b = document.getElementById("sos-fb-btn").getBoundingClientRect(), l = document.getElementById("sos-board-link").getBoundingClientRect(); return { bw: b.width, bh: b.height, lw: l.width, room: Boolean(document.getElementById("sos-fb-room")) }; });
+  t("on a tool's screen both are small round icons, with room left at the bottom of the page", corner.bw <= 46 && corner.bh <= 46 && corner.lw <= 40 && corner.room, corner);
+  await pv.close(); await lv.close(); await lm.close();
   await tile.locator("button.go", { hasText: /Make it live/ }).click();
   await waitFor("the change live", async () => { const f = await fbRow(mgr, S1); return f && f.status === "done" && f.shipped_version; }, 30000);
   await b.locator("#col-done button", { hasText: "Show the other" }).click().catch(() => {});

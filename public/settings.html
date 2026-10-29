@@ -37,6 +37,7 @@
   }
 </style>
 <script src="/assets/passkey.js"></script>
+<script src="/assets/identities.js"></script>
 </head>
 <body>
   <div class="band"><h1>Settings <small id="coname" style="font-size:13px;font-weight:400;opacity:.85"></small></h1><div class="sub"><a id="back" href="#">Back to the improvement board</a></div></div>
@@ -77,6 +78,9 @@
       <h3 style="font-size:14px;margin:12px 0 4px">Passkeys</h3>
       <div class="sub">Sign in with your email and Face ID, a fingerprint or the device's PIN.</div>
       <div id="pk-panel"></div>
+      <h3 style="font-size:14px;margin:14px 0 4px">Google or Microsoft</h3>
+      <div class="sub">Connect yours once, then Sign in with Google or Microsoft is all it takes, on any device.</div>
+      <div id="id-panel"></div>
       <h3 style="font-size:14px;margin:14px 0 4px">Authenticator app</h3>
       <div class="sub" id="app-line"></div>
       <h3 style="font-size:14px;margin:14px 0 4px">Change my password</h3>
@@ -108,10 +112,28 @@
     </div>
     <div class="card floor-only">
       <h2>Wall sign</h2>
-      <div class="sub">Scanning this opens the improvement board. Print it and tape it up where people work.</div>
+      <div class="sub">Scanning this opens the improvement board. Print it and tape it up where people work. Each tool's screens have codes of their own, to tape at the station: on the board, a tool's Screens, then QR codes.</div>
       <div class="sign" style="margin-top:10px">
         <img id="qr" alt="QR code that opens this board">
         <div><div class="url" id="url"></div><button class="primary" onclick="window.print()">Print the sign</button><button class="quiet" id="copy" onclick="copyLink()">Copy link</button></div>
+      </div>
+    </div>
+    <div class="card" id="archived-card" style="display:none">
+      <h2>Archived tools</h2>
+      <div class="sub">Tools taken off the board. Each is kept with its data and can come back. Anetix can delete one for good if you ask.</div>
+      <div id="archived-list" style="margin-top:8px"></div>
+    </div>
+    <div class="card" id="logo-card">
+      <h2>Your logo</h2>
+      <div class="sub">What every tab and phone home screen shows for your tools. Without a logo it is your initials on your color.</div>
+      <div style="display:flex;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <img id="logo-now" alt="The icon your tabs show now" style="width:64px;height:64px;border-radius:12px;border:1px solid #d5dbe3;background:#fff;object-fit:contain">
+        <div>
+          <input type="file" id="logo-file" accept="image/png,image/jpeg" style="display:none" onchange="uploadLogo(this.files[0])">
+          <button class="primary" onclick="document.getElementById('logo-file').click()">Upload a logo</button>
+          <button class="quiet" id="logo-clear" style="display:none" onclick="clearLogo()">Take it off</button>
+          <div class="sub" id="logo-msg" style="margin-top:6px">A square PNG or JPEG, up to 512 KB.</div>
+        </div>
       </div>
     </div>
     <div class="card">
@@ -161,6 +183,42 @@ document.getElementById("connections").href = `/c/${SLUG}/connections`;
 document.getElementById("qr").src = `/api/c/${SLUG}/qr.svg?px=320`;
 document.getElementById("print-qr").src = `/api/c/${SLUG}/qr.svg?px=520`;
 document.getElementById("url").textContent = link; document.getElementById("print-url").textContent = link;
+// Archived tools (src/archive.js, 2026-10-29): off the board, kept with their data, back from here
+function drawArchived(list) {
+  document.getElementById("archived-card").style.display = list.length ? "" : "none";
+  document.getElementById("archived-list").innerHTML = list.map((m) => `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 0;border-top:1px solid #e3e7ec"><b style="flex:1 1 auto">${esc(m.title)}</b><span class="sub">archived ${new Date(m.archived_at).toLocaleDateString()}${m.archived_by ? " by " + esc(m.archived_by) : ""}</span><button class="primary" data-mod="${esc(m.name)}" onclick="bringBack(this.dataset.mod)">Bring it back</button></div>`).join("");
+}
+async function bringBack(mod) {
+  const r = await fetch(`/api/c/${SLUG}/modules/${encodeURIComponent(mod)}/unarchive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "It did not go through."); return; }
+  load();
+}
+// Your logo (2026-10-29): the icon on every tab and home screen for this company's tools
+function drawLogo(icon) {
+  icon = icon || {};
+  document.getElementById("logo-now").src = `/api/c/${SLUG}/icon?v=${encodeURIComponent(icon.v || Date.now())}`;
+  document.getElementById("logo-clear").style.display = icon.uploaded ? "" : "none";
+  document.getElementById("logo-msg").textContent = icon.uploaded ? "Your uploaded logo is on every tab." : icon.from_site ? "This is the icon from your website. Upload a logo to use another." : "A square PNG or JPEG, up to 512 KB.";
+}
+async function uploadLogo(file) {
+  const msg = document.getElementById("logo-msg");
+  if (!file) return;
+  if (!/^image\/(png|jpeg)$/.test(file.type)) { msg.textContent = "That is not a PNG or JPEG. Save the logo as a PNG and try again."; return; }
+  if (file.size > 512 * 1024) { msg.textContent = "That picture is over 512 KB. A square logo around 256 by 256 is plenty."; return; }
+  msg.textContent = "Uploading...";
+  const data_url = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.onerror = bad; fr.readAsDataURL(file); });
+  const r = await fetch(`/api/c/${SLUG}/brand/icon`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data_url }) });
+  const j = await r.json().catch(() => ({}));
+  document.getElementById("logo-file").value = "";
+  if (!r.ok) { msg.textContent = j.error ? j.error.charAt(0).toUpperCase() + j.error.slice(1) : "It did not upload."; return; }
+  drawLogo({ v: j.icon_v, uploaded: true });
+}
+async function clearLogo() {
+  const r = await fetch(`/api/c/${SLUG}/brand/icon/clear`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  if (r.ok) drawLogo({ v: j.icon_v, uploaded: false, from_site: j.has_icon });
+}
 async function load() {
   const r = await fetch(`/api/c/${SLUG}/settings-view`, { cache: "no-store" });   // not the agent settings (admin only since the launch audit 1.18)
   if (r.status === 401) { location.href = "/login?next=" + encodeURIComponent(location.pathname); return; }
@@ -170,6 +228,8 @@ async function load() {
   if (D.company.demo) { document.querySelectorAll(".floor-only").forEach((el) => { el.style.display = "none"; }); document.getElementById("golive-later").style.display = ""; }
   signIn(D.me);
   document.getElementById("coname").textContent = D.company.name;
+  drawLogo(D.icon);
+  drawArchived(D.archived || []);
   document.getElementById("print-co").textContent = D.company.name;
   document.getElementById("a-auto").checked = D.company.auto_propose !== false;
   document.getElementById("a-photos").checked = D.company.allow_photos !== false;
@@ -429,6 +489,7 @@ function signIn(me) {
     ? "Set up. Your password and its 6 digit code sign you in on any device."
     : `Not set up: you sign in with your passkey${me.passkeys === 1 ? "" : "s"}, and your recovery codes are the way in from anywhere else. <a href="/c/${SLUG}/enroll?app=1">Add the app</a> to sign in on a device without your passkey.`;
   if (window.Passkey) Passkey.panel(document.getElementById("pk-panel")).catch(() => {});
+  if (window.Identities) Identities.panel(document.getElementById("id-panel"), { next: `/c/${SLUG}/settings` }).catch(() => {});
 }
 document.getElementById("pw-form").onsubmit = async (e) => {
   e.preventDefault();

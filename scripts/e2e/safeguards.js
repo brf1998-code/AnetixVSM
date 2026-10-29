@@ -260,13 +260,15 @@ async function namedManager(admin, slug, name, email, at) {
   t("a change filed in the plant and approved from home builds, passes its checks and goes live with the list on", shipped === true, shipped);
   t("the refusals at sign-in are in the sign-in log, with the address and the company", await (async () => { const rows = (await q("SELECT ip, detail FROM platform.auth_events WHERE event='off_network' ORDER BY id")).rows; return rows.length >= 4 && rows[0].ip === OUTSIDE && rows[0].detail.company === "demo"; })());
   t("the list travels in a backup, with the switches", await (async () => { const bk = (await admin.get("/api/admin/backup")).json; const a = bk.platform.company_access.find((x) => x.company === "demo"), c = bk.platform.companies.find((x) => x.slug === "demo"); return a && a.networks.length === 2 && c.allow_label_preview === false && c.allow_talk === true; })());
-  t("another company is not held to it", (await clientAt(OUTSIDE).post("/login", { password: made.json.passwords.floor, company: "forgeco" })).status === 200);
+  // forgeco's floor signs in with a floor PIN since 2026-10-29, which works only from forgeco's own list (it has none);
+  // its shared manager password shows demo's list does not reach it
+  t("another company is not held to it", (await clientAt(OUTSIDE).post("/login", { password: made.json.passwords.manager, company: "forgeco" })).status === 200);
   const cleared = await admin.post("/api/admin/companies/demo/safeguards", { networks: "" });
   t("cleared, the shared sign-ins work from anywhere again", cleared.status === 200 && cleared.json.networks.length === 0 && (await clientAt(OUTSIDE).post("/login", { password: PW.floor, company: "demo" })).status === 200 && (dev.at = OUTSIDE) && (await dev.get("/api/c/demo/board")).status === 200);
 
   // ---- taking a shared manager password away
   const dropDemo = await admin.post("/api/admin/companies/demo/safeguards/drop-manager-password", {});
-  t("a company still on the old shared passwords is told to get its own first", dropDemo.status === 409 && /Set passwords/.test(dropDemo.json.error), dropDemo.text);
+  t("a company still on the old shared passwords is told to get its own first", dropDemo.status === 409 && /its own floor PIN first/.test(dropDemo.json.error), dropDemo.text);
   t("a company that does not exist is not one", (await admin.post("/api/admin/companies/nope-co/safeguards/drop-manager-password", {})).status === 404);
   const drop0 = await admin.post("/api/admin/companies/forgeco/safeguards/drop-manager-password", {});
   t("it is refused while no manager at the company has an account that works", drop0.status === 409 && /Add a manager first/.test(drop0.json.error), drop0.text);

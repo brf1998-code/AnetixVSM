@@ -61,8 +61,8 @@ async function codeFor(secretText, delta = 0) {
   t("a good code shows the ten recovery codes", codes.length === 10 && codes.every((c) => /^[a-z2-9]{4}(-[a-z2-9]{4}){3}$/.test(c)), codes);
   t("with a download and a copy button", (await page.locator("#rc-dl").getAttribute("href")).startsWith("data:text/plain") && (await page.locator("#rc-copy").count()) === 1);
   await page.locator("#enroll-card button.go").click(); await page.waitForSelector("#acc-list tr td");
-  // eight tabs and More (Library and Models behind it since 2026-09-28, the launch audit 2.4)
-  t("then the whole admin page opens, on the accounts tab, with eight tabs and More in the header", /#accounts$/.test(page.url()) && await page.locator("#accounts-card").isVisible() && (await page.locator("#shell nav a").count()) === 9 && (await page.locator("#shell nav a[data-more]").count()) === 1, await page.locator("#shell nav a").count());
+  // nine tabs and More (Models behind it since 2026-09-28, the launch audit 2.4; Library out of More since 2026-10-19)
+  t("then the whole admin page opens, on the accounts tab, with nine tabs and More in the header", /#accounts$/.test(page.url()) && await page.locator("#accounts-card").isVisible() && (await page.locator("#shell nav a").count()) === 10 && (await page.locator("#shell nav a[data-more]").count()) === 1, await page.locator("#shell nav a").count());
   await page.click("#shell nav a[data-more]");
   t("More opens Library and Models in the row", (await page.locator('#shell nav a[data-tab="library"]').count()) === 1 && (await page.locator('#shell nav a[data-tab="models"]').count()) === 1);
   await page.click('#shell nav a[data-tab="health"]'); await page.waitForSelector("#h-table tr td");

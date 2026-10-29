@@ -113,7 +113,8 @@ const answerFor = (qn) => ({ text: qn.id === "name" ? "Spool tracker" : "Check t
   // ---- sample data: the wait shows at once ---------------------------------------------------------------------------
   await p.goto(`${BASE}/c/demo/`);
   await p.waitForSelector(".modcard");
-  await p.locator(".modcard", { hasText: "Paper Airplane Line" }).locator("button.vbtn", { hasText: "Sample data" }).click();
+  await p.locator(".modcard", { hasText: "Paper Airplane Line" }).locator("button.vbtn", { hasText: "Settings" }).click();   // the tool's Settings popout (2026-10-29)
+  await p.locator("#tmenu button", { hasText: "Sample data" }).click();
   await p.waitForSelector("#samplepanel");
   // hold the fill's answer back a moment so the wait before it can be seen
   await p.route("**/modules/paperline/sample", async (route) => { if (route.request().method() === "POST") await sleep(1200); route.continue().catch(() => {}); });

@@ -287,10 +287,12 @@ async function main() {
   t("an admin cookie refreshed 4 days ago works and comes back refreshed, the issue time kept", due.status === 200 && due2 && Math.abs(due2.issued - (Date.now() - 10 * D * 3600e3)) < 5000 && Date.now() - due2.refreshed < 5000, due.set);
   t("an admin cookie refreshed 8 days ago is signed out (idle)", (await withCookie(slid("admin", `*${idB}`, gB, 10 * D, 8 * D), "/api/admin/overview")) === 401);
   t("an admin cookie issued 31 days ago is signed out even if refreshed an hour ago (cap)", (await withCookie(slid("admin", `*${idB}`, gB, 31 * D, 1), "/api/admin/overview")) === 401);
-  t("a floor cookie refreshed 29 days ago works; 31 days does not", (await withCookie(slid("floor", "demo", gen, 100 * D, 29 * D), "/api/c/demo/board")) === 200 && (await withCookie(slid("floor", "demo", gen, 100 * D, 31 * D), "/api/c/demo/board")) === 401);
-  t("a floor cookie issued 181 days ago is signed out (cap), 179 works", (await withCookie(slid("floor", "demo", gen, 181 * D, 0), "/api/c/demo/board")) === 401 && (await withCookie(slid("floor", "demo", gen, 179 * D, 0), "/api/c/demo/board")) === 200);
+  // the floor's own window since 2026-10-29 (the floor PIN): a week idle, a month at most; a manager's stays 30 and 180 days
+  t("a floor cookie refreshed 6 days ago works; 8 days does not", (await withCookie(slid("floor", "demo", gen, 20 * D, 6 * D), "/api/c/demo/board")) === 200 && (await withCookie(slid("floor", "demo", gen, 20 * D, 8 * D), "/api/c/demo/board")) === 401);
+  t("a floor cookie issued 31 days ago is signed out (cap), 29 works", (await withCookie(slid("floor", "demo", gen, 31 * D, 0), "/api/c/demo/board")) === 401 && (await withCookie(slid("floor", "demo", gen, 29 * D, 0), "/api/c/demo/board")) === 200);
+  t("a manager cookie refreshed 29 days ago still works; issued 179 days ago too", (await withCookie(slid("manager", "demo", gen, 100 * D, 29 * D), "/api/c/demo/board")) === 200 && (await withCookie(slid("manager", "demo", gen, 179 * D, 0), "/api/c/demo/board")) === 200);
   t("an admin cookie with the right times but an older generation is refused whatever the times", (await withCookie(slid("admin", `*${idB}`, gB - 1, 1, 1), "/api/admin/overview")) === 401);
-  t("the admin cookie is set for the 7 day idle window, the floor's for 30 days", /Max-Age=604800/.test((await tryLogin({ name: TAYLOR, password: np.json.password, code: await codeFor(secretT2, 0) })).cookie) && /Max-Age=2592000/.test((await tryLogin({ password: PW.floor, company: "demo" })).cookie));
+  t("the admin cookie is set for the 7 day idle window, the floor's for 7 days, the manager's for 30", /Max-Age=604800/.test((await tryLogin({ name: TAYLOR, password: np.json.password, code: await codeFor(secretT2, 0) })).cookie) && /Max-Age=604800/.test((await tryLogin({ password: PW.floor, company: "demo" })).cookie) && /Max-Age=2592000/.test((await tryLogin({ password: PW.manager, company: "demo" })).cookie));
 
   // ---- trusted devices (src/devices.js): "remember this computer" skips the code for 30 days
   await unlock(BRENDAN); await freshSteps(BRENDAN);

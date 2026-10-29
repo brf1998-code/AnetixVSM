@@ -14,7 +14,8 @@ Nothing changes on the floor without a manager's approval.
 ## The improvement board
 
 The board is the company's home page in Anetix. Across the top is the band: the company's name and, on one line, each
-tool with its links (Open live, Preview when a new version waits, Screens, Diagrams, Versions). With several tools,
+tool with two buttons: Screens and Settings. Settings opens a short list with the rest (Open live, Preview when a new
+version waits, with a dot on Settings, the test floor, Diagrams, Versions, Ask about this tool, Sample data). With several tools,
 tapping a tool's name shows only that tool's requests; All shows every tool. On a phone the tools fold into one
 dropdown and the board shows one column at a time.
 
@@ -74,7 +75,11 @@ purpose; everything after that comes through requests like any change.
 
 ## Other things on the board
 
-- **Screens** on a tool shows every screen of it at once; tap one to go there.
+- **Screens** on a tool shows every screen of it at once; tap one to go there. Its **QR codes** tab has a code for
+  every screen: tape it where that screen is used, and a phone's camera opens it (the first time on a phone or tablet
+  it asks for the floor PIN, on the plant's wifi). A screen for one of many (a station, a work center) gets one code
+  each, or a box to type which one. Pick a size for each code and Print; Print all puts every code on one sheet.
+  People on the floor see only the Feedback button on a tool's screen, not the link back to the board.
 - **Diagrams** draws how a tool's data flows and who does what in it.
 - **Sample data** (trial companies only) fills a tool with a made-up week of work to see what it does, and clears
   exactly those rows again.
@@ -86,11 +91,30 @@ purpose; everything after that comes through requests like any change.
   Setup screen before putting in real jobs, and can put it back to show someone. It is a tool like any other: its
   feedback button changes it through the board.
 
+## Signing in
+
+A phone or tablet on the floor signs in once with the floor PIN: one PIN for everyone at the plant, 6 to 8 digits, and
+it works only on the plant's wifi. It stays signed in while it is used, and asks again after a week in a drawer. A
+person's own PIN (Settings, People) is something else: it puts their name on what they send, typed after the device is
+in, when they tap their name on the feedback button. A manager signs in with their own account (email, password and
+the authenticator app or a passkey) and that works from anywhere. Once Anetix has switched it on, a manager can also
+connect their Google or Microsoft account (Settings, Your sign-in, Connect) and then sign in with it alone. A new floor PIN, or the plant's network, comes from
+Anetix.
+
 ## Settings
+
+A tool that is no longer used can be archived: its Settings on the board, Archive this tool. It comes off the board and
+its screens stop opening, and it is kept with its data under Settings, Archived tools, where Bring it back puts it back as
+it was. Anetix can delete an archived tool for good if the company asks.
+
+Several new tool requests can be open at once, each its own card; New tool starts another unless one is still blank.
+The Feedback button on a tool's screen is the round icon in the corner (the initials on it are whoever is signed in);
+on the board and the settings pages it sends to Anetix, and Point at it and a photo work there too.
 
 The manager's one settings page (Settings, top right of the board): managers and invitations, your own sign-in
 (passkeys, the authenticator app, password), people and their PINs, printers and spreadsheets, the wall sign (a QR
-code that opens the board), When a request arrives (read at once, photos), the system review (now and then the AI
+code that opens the board), Your logo (the icon on every tab and home screen; without one, the company's initials on its
+color), Archived tools, When a request arrives (read at once, photos), the system review (now and then the AI
 reads one whole tool and files what it would change, held for the manager's approval), the test floor, Your data
 (download everything the company put in, as one file), Connected AI apps and Help.
 

@@ -19,7 +19,9 @@ const R = runner(), t = R.t;
   // ---- off: nothing on the board or the settings page
   const b = await ctxM.newPage(); watch(b, "board"); b.on("dialog", (d) => d.accept());
   await b.goto(BASE + "/c/demo/"); await b.waitForSelector("#modules .modcard");
-  t("off: the strip has no test floor link", (await b.locator('#modules a[href*="/test/m/"]').count()) === 0);
+  // a tool's test floor link sits in its Settings popout since 2026-10-29
+  const menuHrefs = async (tool) => { await b.locator(".modcard", { hasText: tool }).locator("button.vbtn", { hasText: "Settings" }).click(); await b.waitForSelector("#tmenu"); const h = await b.locator("#tmenu a").evaluateAll((as) => as.map((a) => a.getAttribute("href"))); await b.keyboard.press("Escape"); return h; };
+  t("off: no tool's Settings popout has a test floor link", !(await menuHrefs("Paper Airplane Line")).some((h) => /\/test\/m\//.test(h)));
   const st = await ctxM.newPage(); watch(st, "settings");
   await st.goto(BASE + "/c/demo/settings"); await st.waitForSelector("#coname");
   await sleep(600);
@@ -35,9 +37,9 @@ const R = runner(), t = R.t;
   await a.waitForFunction(() => { const s = [...document.querySelectorAll("#companies .card .sec")].find((x) => /Test floor/.test(x.textContent)); return s && /On\./.test(s.textContent); }, null, { timeout: 30000 });
   const secOn = a.locator("#companies .card .sec", { hasText: "Test floor" });
   const onText = await secOn.innerText();
-  t("on: the admin card says so, names the tools and offers the way in and the way back off", /On\. 2 tools up/.test(onText) && /Data: (a copy of the floor|a made-up set)/.test(onText) && (await secOn.locator('a[href="/c/demo/test/m/paperline/"]').count()) === 1 && (await secOn.locator("button", { hasText: "Switch off" }).count()) === 1, onText);
-  await b.reload(); await b.waitForSelector('#modules a[href*="/test/m/"]');
-  t("on: the strip links every tool's test floor", (await b.locator('#modules a[href="/c/demo/test/m/paperline/"]').count()) === 1 && (await b.locator('#modules a[href="/c/demo/test/m/kpis/"]').count()) === 1);
+  t("on: the admin card says so, names the tools and offers the way in and the way back off", /On\. \d+ tools up/.test(onText) && /Data: (a copy of the floor|a made-up set)/.test(onText) && (await secOn.locator('a[href="/c/demo/test/m/paperline/"]').count()) === 1 && (await secOn.locator("button", { hasText: "Switch off" }).count()) === 1, onText);
+  await b.reload(); await b.waitForSelector("#modules .modcard"); await sleep(500);
+  t("on: every tool's Settings popout links its test floor", (await menuHrefs("Paper Airplane Line")).includes("/c/demo/test/m/paperline/") && (await menuHrefs("Plant KPIs")).includes("/c/demo/test/m/kpis/"));
   await st.reload(); await st.waitForSelector("#tf-card", { state: "visible" });
   t("on: the settings page shows the card with a button per tool and the reset", (await st.locator('#tf-tools a[href="/c/demo/test/m/paperline/"]').count()) === 1 && /(copy of the floor|made-up set)/.test(await st.locator("#tf-data").innerText()) && (await st.locator("#tf-reset").count()) === 1);
 

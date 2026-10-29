@@ -73,14 +73,16 @@ router.post("/api/feedback", async (req, res) => {
   const mine = req.sosPersonId && req.sosPersonCompany === co.slug;
   const accountName = req.sosAccount ? (req.sosAccount.name || req.sosAccount.login || "") : "";
   // what the person pointed at, for the proposer (src/arrival.js); a token so the device that sent a nameless request can answer its question
-  const pointed = mod && mod !== "platform" ? arrival.cleanElement(element) : null;
+  // what the person pointed at rides along on a request to Anetix too since 2026-10-29 (Taylor's #287: "the ability to
+  // point at something when giving feedback to Anetix"), shown on the Requests tab
+  const pointed = arrival.cleanElement(element);
   const r = await q(
     `INSERT INTO platform.feedback (company, module, page, screen, target_file, message, name, person_id, element, reply_token) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [co.slug, mod || "platform", page || null, screen, target, message.trim().slice(0, 2000), ((mine ? req.sosPerson : accountName || name) || "").slice(0, 80) || null, mine ? req.sosPersonId : null, pointed ? JSON.stringify(pointed) : null, arrival.newToken()]);
   const fb = r.rows[0];
   // one photo, already scaled down by the widget; a company can switch photos off (Agent settings)
   let photoNote = null;
-  if (photo && photo.data && mod && mod !== "platform") {
+  if (photo && photo.data && mod) {
     try {
       if (co.allow_photos === false) throw new Error("photos are switched off for this company");
       if (co.ai_reads_data === false) throw new Error("photos are switched off for this company while the AI is walled off from its data; the words went through");
@@ -207,12 +209,25 @@ function boardUrl(req, slug) {
   const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
   return `${proto}://${host}/c/${slug}/`;
 }
+// A QR code: the board's address, or (path, 2026-10-29) one screen of one of the company's tools, so a code taped at a
+// station opens that screen; a device that is not signed in goes to the floor PIN first and lands there after. Only
+// an address inside this company is ever drawn.
+const SCREEN_PATH = /^\/c\/([a-z0-9][a-z0-9-]{1,40})\/m\/[a-z0-9][a-z0-9-]{0,60}\/[A-Za-z0-9_.~%\/-]*$/;
+function screenUrl(req, slug, p) {
+  p = String(p || "");
+  if (p.length > 200 || p.includes("..") || p.includes("//")) return null;
+  const m = SCREEN_PATH.exec(p);
+  if (!m || m[1] !== slug) return null;
+  return boardUrl(req, slug).replace(/\/c\/[^/]+\/$/, "") + p;
+}
 router.get("/api/c/:slug/qr.svg", async (req, res) => {
   const co = await company(req.params.slug);
   if (!co) return res.status(404).json({ error: "unknown company" });
   const px = Math.min(1200, Math.max(80, Number(req.query.px) || 240));
+  const url = req.query.path === undefined ? boardUrl(req, co.slug) : screenUrl(req, co.slug, req.query.path);
+  if (!url) return res.status(400).json({ error: "that is not a screen of this company's tools" });
   try {
-    res.type("image/svg+xml").set("Cache-Control", "no-cache").send(qrcode.svg(boardUrl(req, co.slug), { size: px }));
+    res.type("image/svg+xml").set("Cache-Control", "no-cache").send(qrcode.svg(url, { size: px }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -296,43 +311,76 @@ router.get("/api/c/:slug/modules/:name/staged-changes", async (req, res) => {
   });
 });
 
-// Company icon for the tab and the phone home screen: the brand icon when the
-// guide found one, else the platform's own mark.
+// Company icon for the tab and the phone home screen: the company's own (a logo a manager uploaded on Settings, or the
+// icon the brand guide found on its website), else its plain mark: its initials on its own color (src/brandmark.js,
+// 2026-10-29; the Anetix mark before, which put Anetix on every tool's tab). DEFAULT_ICON is kept for nothing but the
+// record of what it was.
 const DEFAULT_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="180" fill="#14171c"/><path fill="#4c90d1" d="M468 146h87l387 733H775L512 383 248 879H81z"/><path fill="#4c90d1" d="M439 616h145l68 127H371z"/></svg>`;   // the Anetix mark (2026-09-25; public/assets/anetix-mark.svg is the same file)
 // A short fingerprint of the icon the company has now: the board puts it in the icon's address (?v=) so a browser
 // that keys its icon cache by URL never shows one company's mark on another's board (Safari did, 2026-09-24).
-const iconVersion = (b) => require("crypto").createHash("sha1").update(b && b.icon ? String(b.icon) : `anetix:${b && b.colors && b.colors.primary ? b.colors.primary : "#14171c"}`).digest("hex").slice(0, 10);
+const iconVersion = (b, name) => require("crypto").createHash("sha1").update(b && b.icon ? String(b.icon) : `mark2:${name || ""}:${b && b.colors && b.colors.primary ? b.colors.primary : ""}`).digest("hex").slice(0, 10);
+const brandmark = require("./brandmark");
+// the icon is a picture from this site: never sniffed into anything else, never able to run anything
+const iconHeaders = (res) => res.set({ "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox" });
 // The home-screen icon (2026-09-27): iOS takes a PNG only, so this answers the company's own icon when the brand guide
 // found a PNG or JPEG, else the Anetix mark at 180 px (public/assets/anetix-touch-180.png).
 const TOUCH_PNG = require("fs").readFileSync(require("path").join(__dirname, "..", "public", "assets", "anetix-touch-180.png"));
 router.get("/api/c/:slug/icon.png", async (req, res) => {
   const co = await company(req.params.slug);
   const b = co && co.brand;
-  const etag = `"${iconVersion(b)}-png"`;
-  res.set("Cache-Control", "no-cache").set("ETag", etag);
+  const etag = `"${iconVersion(b, co && co.name)}-png"`;
+  iconHeaders(res).set("Cache-Control", "no-cache").set("ETag", etag);
   if (req.headers["if-none-match"] === etag) return res.status(304).end();
   const m = b && b.icon && /^data:image\/(png|jpeg|jpg);base64,/.exec(b.icon);
   if (m) return res.type(`image/${m[1] === "jpg" ? "jpeg" : m[1]}`).send(Buffer.from(b.icon.split(",", 2)[1], "base64"));
-  res.type("image/png").send(TOUCH_PNG);
+  if (!co) return res.type("image/png").send(TOUCH_PNG);
+  res.type("image/png").send(brandmark.markPng(co.name, b && b.colors && b.colors.primary, co.slug, 180));
 });
 router.get("/api/c/:slug/icon", async (req, res) => {
   const co = await company(req.params.slug);
   const b = co && co.brand;
-  const etag = `"${iconVersion(b)}"`;
-  res.set("Cache-Control", "no-cache").set("ETag", etag);
+  const etag = `"${iconVersion(b, co && co.name)}"`;
+  iconHeaders(res).set("Cache-Control", "no-cache").set("ETag", etag);
   if (req.headers["if-none-match"] === etag) return res.status(304).end();
   if (b && b.icon && /^data:image\/[\w.+-]+;base64,/.test(b.icon)) {
     const [head, data] = b.icon.split(",", 2);
     return res.type(head.slice(5, head.indexOf(";"))).send(Buffer.from(data, "base64"));
   }
-  const primary = b && b.colors && b.colors.primary ? b.colors.primary : "#14171c";
-  res.type("image/svg+xml").send(DEFAULT_ICON.replace("#14171c", primary));
+  if (!co) return res.type("image/svg+xml").send(DEFAULT_ICON);
+  res.type("image/svg+xml").send(brandmark.markSvg(co.name, b && b.colors && b.colors.primary, co.slug));
+});
+// A logo a manager uploads on Settings (2026-10-29): it becomes the company's icon on every tab and home screen, and a
+// rebuilt brand guide keeps it. A PNG or a JPEG only (src/brandmark.js readUpload), scanned before it is kept. Clearing
+// it goes back to the icon the brand guide found, else the plain mark.
+router.post("/api/c/:slug/brand/icon", requireManager, express.json({ limit: "1mb" }), async (req, res) => {
+  const co = await company(req.params.slug);
+  if (!co) return res.status(404).json({ error: "unknown company" });
+  const up = brandmark.readUpload((req.body || {}).data_url);
+  const verdict = await require("./scan").check({ company: co.slug, bytes: up.bytes, what: "icon", filename: "logo" });
+  const dataUrl = `data:${up.type};base64,${up.bytes.toString("base64")}`;
+  const was = co.brand || {};
+  const keepSite = was.icon_from !== "upload" && was.icon ? { site_icon: was.icon, site_icon_type: was.icon_type, site_icon_from: was.icon_from } : {};
+  await brand.setBrand(co.slug, { ...keepSite, icon: dataUrl, icon_type: up.type, icon_from: "upload", icon_scan: verdict && verdict.scan ? verdict.scan : null, icon_at: new Date().toISOString() });
+  await record("company_icon_set", { company: co.slug, actor: actor(req), after: `a logo was uploaded (${up.type}, ${Math.round(up.bytes.length / 1024)} KB)` });
+  const now = await company(co.slug);
+  res.json({ ok: true, icon_v: iconVersion(now.brand, now.name), has_icon: true, uploaded: true });
+});
+router.post("/api/c/:slug/brand/icon/clear", requireManager, express.json(), async (req, res) => {
+  const co = await company(req.params.slug);
+  if (!co) return res.status(404).json({ error: "unknown company" });
+  const was = co.brand || {};
+  if (was.icon_from === "upload") {
+    await brand.setBrand(co.slug, { icon: was.site_icon || null, icon_type: was.site_icon_type || null, icon_from: was.site_icon_from || null, site_icon: null, site_icon_type: null, site_icon_from: null, icon_scan: null });
+    await record("company_icon_cleared", { company: co.slug, actor: actor(req), after: "the uploaded logo was taken off" });
+  }
+  const now = await company(co.slug);
+  res.json({ ok: true, icon_v: iconVersion(now.brand, now.name), has_icon: Boolean(now.brand && now.brand.icon), uploaded: false });
 });
 
-function brandPublic(b) {
+function brandPublic(b, name) {
   if (!b) return null;
-  const { icon, ...rest } = b;
-  return { ...rest, has_icon: Boolean(icon), icon_v: iconVersion(b) };
+  const { icon, site_icon, ...rest } = b;
+  return { ...rest, has_icon: Boolean(icon), icon_v: iconVersion(b, name) };
 }
 
 // ---- board data ------------------------------------------------------------
@@ -357,7 +405,9 @@ router.get("/api/c/:slug/board", async (req, res) => {
   // question never goes to a page
   const folded = new Map();
   for (const f of all) { delete f.reply_token; if (f.duplicate_of) { if (!folded.has(f.duplicate_of)) folded.set(f.duplicate_of, []); folded.get(f.duplicate_of).push(f); } }
-  const feedback = all.filter((f) => !f.duplicate_of || !all.some((o) => o.id === f.duplicate_of));
+  // an archived tool is off the board, with its cards (src/archive.js): they stay in the database and come back with it
+  const archivedNames = new Set((await q("SELECT name FROM platform.modules WHERE company=$1 AND archived_at IS NOT NULL", [co.slug])).rows.map((r) => r.name));
+  const feedback = all.filter((f) => (!f.duplicate_of || !all.some((o) => o.id === f.duplicate_of)) && !(f.module && archivedNames.has(f.module)));
   for (const f of feedback) {
     const dupes = (folded.get(f.id) || []).sort((a, b) => a.id - b.id);
     if (!dupes.length) continue;
@@ -371,8 +421,8 @@ router.get("/api/c/:slug/board", async (req, res) => {
        FROM platform.build_runs r
        JOIN platform.proposals p ON p.id = r.proposal_id
       WHERE r.company=$1
-      ORDER BY r.id DESC`, [co.slug])).rows;
-  const modules = (await q("SELECT * FROM platform.modules WHERE company=$1 ORDER BY name", [co.slug])).rows;
+      ORDER BY r.id DESC`, [co.slug])).rows.filter((r) => !archivedNames.has(r.module));
+  const modules = (await q("SELECT * FROM platform.modules WHERE company=$1 AND archived_at IS NULL ORDER BY name", [co.slug])).rows;
   // screens per module, so the adjust form can offer target files
   const screens = {};
   for (const m of modules) {
@@ -384,7 +434,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
   // page check does (src/pageload.js screenPaths).
   const pages = {};
   for (const m of modules) {
-    const at = (v) => { if (v == null) return []; try { return require("./pageload").screenPaths(registry.readManifest(co.slug, m.name, v)).map((x) => ({ path: x.path, label: x.label })); } catch (e) { return []; } };
+    const at = (v) => { if (v == null) return []; try { return require("./pageload").screenPaths(registry.readManifest(co.slug, m.name, v)).map((x) => ({ path: x.path, label: x.label, route: x.route, for: x.for, each: x.each })); } catch (e) { return []; } };
     pages[m.name] = { live: at(m.live_version), staged: m.staged_version != null && m.staged_version !== m.live_version ? at(m.staged_version) : [] };
   }
   const reviews = await review.listReviews(co.slug);
@@ -395,7 +445,8 @@ router.get("/api/c/:slug/board", async (req, res) => {
   const coPublic = { ...rest, trial: await require("./kind").isTrial(co.slug) };
   const intakes = req.sosRole === "floor" ? {} : await intake.boardIntakes(co.slug);
   res.json({
-    company: coPublic, brand: brandPublic(b), icon_v: iconVersion(b), feedback, runs, modules, screens, pages, reviews, batches, intakes,
+    company: coPublic, brand: brandPublic(b, co.name), icon_v: iconVersion(b, co.name), feedback, runs, modules, screens, pages, reviews, batches, intakes,
+    archived_tools: archivedNames.size,   // how many are under Settings, Archived tools
     requirement_gate: pipeline.requirementGate(),   // off by default since 2026-10-01: a functionality change writes its requirement and builds
     test_floor: Boolean(co.test_floor),   // the strip shows a "Test floor" link per tool only while the company's switch is on
     campaigns: co.test_floor || runs.some((r) => r.step === "campaign" || (r.evidence && r.evidence.campaign_id)) ? await campaign.forBoard(co.slug) : {},
@@ -692,6 +743,9 @@ router.get("/api/c/:slug/settings-view", requireManager, async (req, res) => {
   res.set("Cache-Control", "no-store").json({
     company: { slug: co.slug, name: co.name, demo: Boolean(co.demo), trial: await require("./kind").isTrial(co.slug), auto_propose: co.auto_propose !== false, allow_photos: co.allow_photos !== false, ai_reads_data: co.ai_reads_data !== false },
     modules, me, role: req.sosRole,
+    // the logo card (2026-10-29): whose icon the tabs show now
+    archived: (await require("./archive").listArchived(co.slug)).map((m) => ({ name: m.name, title: m.title, archived_at: m.archived_at, archived_by: m.archived_by })),
+    icon: { v: iconVersion(co.brand, co.name), uploaded: Boolean(co.brand && co.brand.icon_from === "upload" && co.brand.icon), from_site: Boolean(co.brand && co.brand.icon && co.brand.icon_from !== "upload") },
   });
 });
 
@@ -708,7 +762,7 @@ router.get("/api/c/:slug/agents", requireAdmin, async (req, res) => {
   // tools), however it was made (src/kind.js, 2026-09-29); demo stays the anetix.ai demo (credit, Go live, the strip)
   const coPublic = { ...rest, trial: await require("./kind").isTrial(co.slug) };
   res.json({
-    company: coPublic, brand: brandPublic(b),
+    company: coPublic, brand: brandPublic(b, co.name),
     models: {
       list: agent.MODELS,
       defaults: await agent.defaultModels(),   // what each job runs on when the company leaves it to the instance
@@ -825,7 +879,7 @@ async function libraryView(modules) {
 
 router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
   const companies = (await q("SELECT * FROM platform.companies ORDER BY created_at")).rows;
-  const modules = (await q("SELECT company, name, title, live_version, staged_version, created_at FROM platform.modules ORDER BY company, name")).rows;
+  const modules = (await q("SELECT company, name, title, live_version, staged_version, created_at, archived_at, archived_by FROM platform.modules ORDER BY company, name")).rows;
   const settings = await agent.instanceModels(), defs = await agent.defaultModels(settings);
   const eff = (c, job) => (agent.inTier(c[`model_${job}`]) ? c[`model_${job}`] : defs[job]);
   const docs = (await q("SELECT company, module, name, source, updated_at, length(content) AS bytes FROM platform.agent_docs ORDER BY company, module NULLS FIRST, name")).rows;
@@ -851,7 +905,7 @@ router.get("/api/admin/overview", requireAdmin, async (_req, res) => {
       spend_usd: Math.round((spend.by[c.slug] || 0) * 100) / 100,
       monthly_cap_usd: c.monthly_cap_usd == null ? null : Number(c.monthly_cap_usd),
       access: auth.accessPublic(access.find((a) => a.company === c.slug)),
-      brand: brandPublic(c.brand),
+      brand: brandPublic(c.brand, c.name),
       test_floor: Boolean(c.test_floor),
       ...datawall.status(c),
       credit: selfServe[c.slug] || null,
@@ -896,7 +950,8 @@ router.get("/api/admin/health", requireAdmin, async (req, res) => {
 const whoAmI = (req) => (req.sosPersonId && req.sosPersonCompany === req.params.slug ? { id: req.sosPersonId, name: req.sosPerson, role: req.sosPersonRole } : null);
 router.get("/api/c/:slug/who", async (req, res) => {
   // account: the named account behind this session (an admin, a demo's manager), so the feedback button can say who it sends as when nobody tapped a name
-  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), account: req.sosAccount ? { name: req.sosAccount.name || req.sosAccount.login } : null, photos: (await arrival.settings(req.params.slug)).allow_photos,
+  // device: the session's role, so the button on a tool's screen shows the floor only Feedback, never the board link (2026-10-29)
+  try { res.set("Cache-Control", "no-store").json({ people: await people.list(req.params.slug), me: whoAmI(req), account: req.sosAccount ? { name: req.sosAccount.name || req.sosAccount.login } : null, device: req.sosRole === "floor" ? "floor" : "manager", photos: (await arrival.settings(req.params.slug)).allow_photos,
     talk: (await require("./safeguards").get(req.params.slug)).talk }); }   // talk: whether the mic button may be offered (public/assets/dictate.js asks before it listens)
   catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1069,7 +1124,8 @@ router.post("/api/admin/companies", requireAdmin, async (req, res) => {
   // birth, the ones given or ones made up here and shown to the admin once.
   let made = null;
   if (!existed) {
-    const floor = String((req.body || {}).floor_password || "").trim() || auth.generatePassword();
+    // the floor's shared sign-in is a PIN since 2026-10-29 (src/auth.js); floor_password is the old name of the field
+    const floor = String((req.body || {}).floor_pin || (req.body || {}).floor_password || "").trim() || auth.generateFloorPin();
     let manager = String((req.body || {}).manager_password || "").trim() || auth.generatePassword();
     while (manager === floor) manager = auth.generatePassword();
     try { await q("INSERT INTO platform.companies (slug, name) VALUES ($1,$2)", [slug, name]); await auth.setPasswords(slug, { floor, manager }); }
@@ -1087,21 +1143,23 @@ router.post("/api/admin/companies", requireAdmin, async (req, res) => {
   res.json({ ok: true, passwords: made });
 });
 
-// Set or rotate a company's floor and manager passwords. Giving a company its
-// own passwords ends its use of the shared ones from the environment.
+// Set or rotate a company's floor PIN and manager password. Giving a company its
+// own ends its use of the shared ones from the environment. generate: true makes up
+// both; generate: "floor" makes up only a floor PIN (the manager signs in by account).
 router.post("/api/admin/companies/:slug/access", requireAdmin, async (req, res) => {
   const co = await company(req.params.slug);
   if (!co) return res.status(404).json({ error: "unknown company" });
   const b = req.body || {};
-  const floor = b.generate ? auth.generatePassword() : String(b.floor_password || "").trim();
-  let manager = b.generate ? auth.generatePassword() : String(b.manager_password || "").trim();
-  while (b.generate && manager === floor) manager = auth.generatePassword();
+  const floorOnly = b.generate === "floor";
+  const floor = b.generate ? auth.generateFloorPin() : String(b.floor_pin || b.floor_password || "").trim();
+  let manager = floorOnly ? "" : b.generate ? auth.generatePassword() : String(b.manager_password || "").trim();
+  while (b.generate && !floorOnly && manager === floor) manager = auth.generatePassword();
   try {
     await auth.setPasswords(co.slug, { floor: floor || null, manager: manager || null });
-    // a new site's once-only welcome holds the floor password the rollover made: a new one here makes that one dead
+    // a new site's once-only welcome holds the floor PIN the rollover made: a new one here makes that one dead
     if (floor) await q("UPDATE platform.sites SET welcome_enc=NULL WHERE company=$1 AND welcome_enc IS NOT NULL", [co.slug]).catch(() => {});
     await logEvent("company_passwords_set", co.slug, { floor: Boolean(floor), manager: Boolean(manager), generated: Boolean(b.generate) });
-    res.json({ ok: true, passwords: b.generate ? { floor, manager } : null, access: auth.accessPublic(await auth.accessRow(co.slug)) });
+    res.json({ ok: true, passwords: b.generate ? { floor, manager: manager || null } : null, access: auth.accessPublic(await auth.accessRow(co.slug)) });
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 

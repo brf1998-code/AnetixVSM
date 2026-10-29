@@ -68,6 +68,8 @@ async function main() {
   await require("./src/scan").init();        // every file from outside is scanned for malware before it is kept (src/scan.js)
   await require("./src/assist").init();      // Ask Anetix, the assistant on the board: its conversations, the audit of its tool calls, feedback.source (src/assist.js, docs/ASSISTANT.md)
   await require("./src/library").init();     // the tool library across companies: templates, copies, the standard package (src/library.js)
+  await require("./src/archive").init();     // archived tools: off the board, under Settings; deleted for good by Anetix (src/archive.js)
+  await require("./src/oidc").init();        // sign in with Google or Microsoft: the identities connected to an account (src/oidc.js)
   await require("./src/mcp-company").init(); // the company MCP: the records switch, Anetix's lock, feedback.held for a request a connected app filed (src/mcp-company.js, docs/MCP.md)
 
   const app = express();
@@ -105,7 +107,9 @@ async function main() {
   });
   app.get("/login", (_req, res) => res.sendFile(page("login.html")));
   // which form the login page opens for the company it was sent to: "account" for a personal demo (no company password)
-  app.get("/login/mode", async (req, res) => { try { res.set("Cache-Control", "no-store").json({ mode: await auth.loginMode(req.query.c) }); } catch (e) { res.json({ mode: "password" }); } });
+  // the company's name too (2026-10-29), so a floor that came from a station's code reads its own company's name at the top,
+  // with Anetix kept small; a name is no secret, and a code that is not a company gets none
+  app.get("/login/mode", async (req, res) => { try { res.set("Cache-Control", "no-store").json({ mode: await auth.loginMode(req.query.c), name: await auth.companyName(req.query.c) }); } catch (e) { res.json({ mode: "password" }); } });
   // anetix.ai is a wall (2026-09-25): its only public page is a sign-in, and that form posts HERE across the origin
   // (same site, so the session cookie this answer sets lands on this host). CORS for the www service's own
   // addresses and nothing else; any other origin gets no CORS headers and the browser refuses to read the answer.
@@ -135,6 +139,8 @@ async function main() {
   app.options(["/login/passkey/options", "/login/passkey"], selfserve.loginCors);
   app.post("/login/passkey/options", selfserve.loginCors, express.json(), require("./src/passkeys").beginSignIn);
   app.post("/login/passkey", selfserve.loginCors, express.json({ limit: "64kb" }), require("./src/passkeys").finishSignIn);
+  // Sign in with Google or Microsoft (src/oidc.js, 2026-10-29): off until a provider's client id and secret are set
+  app.use(require("./src/oidc").publicRouter);
   app.get("/logout", auth.logoutHandler);
   // A stand-in ERP for the showroom: SAP-shaped OData answers about the paper
   // line's stock, so a demo company's erp connection has something to talk
@@ -185,12 +191,23 @@ async function main() {
   });
   app.get("/c/:slug", (req, res) => res.redirect(`/c/${req.params.slug}/`));
   app.get("/c/:slug/agents", auth.requireAdmin, (_req, res) => res.sendFile(page("agents.html")));   // Anetix's side of a company (the launch audit 1.18)
-  app.get("/c/:slug/diagrams/:module", (_req, res) => res.sendFile(page("diagrams.html")));
+  // A company's own pages carry the company's icon on the tab, not the Anetix mark (2026-10-29, Chelsea Clock's request
+  // #290: "it should be more discreetly anetix"). Named in the HTML itself, like the board's, since a browser reads the
+  // icon link at parse time; and the title loses its "Anetix · ".
+  const ANETIX_ICONS = '<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/anetix-touch-180.png">';
+  const companyPages = new Map();
+  const companyPage = (name) => (req, res) => {
+    const slug = /^[a-z0-9][a-z0-9-]{1,40}$/.test(req.params.slug) ? req.params.slug : null;
+    if (!slug) return res.sendFile(page(name));
+    if (!companyPages.has(name)) companyPages.set(name, fs.readFileSync(page(name), "utf8"));
+    res.type("html").send(companyPages.get(name).replace(ANETIX_ICONS, `<link rel="icon" href="/api/c/${slug}/icon"><link rel="apple-touch-icon" href="/api/c/${slug}/icon.png">`).replace(/<title>Anetix · /, "<title>"));
+  };
+  app.get("/c/:slug/diagrams/:module", companyPage("diagrams.html"));
   app.get("/c/:slug/checks", auth.requireAdmin, (_req, res) => res.sendFile(page("checks.html")));   // Anetix's: it names models and replays on them (Phase 2, 2026-09-27)
-  app.get("/c/:slug/connections", auth.requireManager, (_req, res) => res.sendFile(page("connections.html")));
-  app.get("/c/:slug/people", auth.requireManager, (_req, res) => res.sendFile(page("people.html")));
-  app.get("/c/:slug/settings", auth.requireManager, (_req, res) => res.sendFile(page("settings.html")));
-  app.get("/c/:slug/enroll", auth.requireManager, (_req, res) => res.sendFile(page("enroll.html")));   // a manager account's authenticator setup, its first stop (src/accounts.js)   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
+  app.get("/c/:slug/connections", auth.requireManager, companyPage("connections.html"));
+  app.get("/c/:slug/people", auth.requireManager, companyPage("people.html"));
+  app.get("/c/:slug/settings", auth.requireManager, companyPage("settings.html"));
+  app.get("/c/:slug/enroll", auth.requireManager, companyPage("enroll.html"));   // a manager account's authenticator setup, its first stop (src/accounts.js)   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
   app.use(accounts.router);  // /api/admin/accounts*: the admin accounts, authenticator setup, sign out everywhere
@@ -200,6 +217,8 @@ async function main() {
   app.use(checks.router);    // /api/c/:slug/checks, /api/runs/:id/label
   app.use(require("./src/assess").router);   // /api/admin/models*, /api/admin/assess*: the baseline, the live A/B, the head-to-head
   app.use(require("./src/requests").router); // /api/admin/requests*: requests to Anetix, moved along from the Requests tab of /admin
+  app.use(require("./src/oidc").router);    // /api/me/identities*: a named account's connected Google or Microsoft (src/oidc.js)
+  app.use(require("./src/archive").router);  // /api/c/:slug/modules/:name/archive|unarchive, /api/admin/companies/:slug/modules/:name/delete (src/archive.js)
   app.use(require("./src/demostops").router);    // /api/admin/demo-stops*: a demo's builds that stopped before a preview (the launch audit 1.20)
   app.use(require("./src/demos").router);        // /api/admin/demos*: the Demos tab of /admin (what each self-serve company paid, spent, built, and how)
   app.use(require("./src/sites").router);        // /api/admin/sites*: the Sites tab of /admin (the price book, the pipeline from a demo to a paying site)

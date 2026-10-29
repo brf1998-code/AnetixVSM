@@ -106,10 +106,19 @@ async function openFor(company) {
 }
 // opts (2026-10-06, the admin connector's write tools, src/mcp-intake.js): name = who the board says started it
 // (default: the role), via = 'anetix' when Anetix started it through a connected app.
+// A draft nobody has put anything in yet: still on its first questions, nothing answered, not named. opts.via keeps
+// Anetix's drafts (a connected app) and the plant's apart.
+async function blankFor(company, via = null) {
+  return (await q(`SELECT i.* FROM platform.module_intakes i JOIN platform.feedback f ON f.id=i.feedback_id
+    WHERE i.company=$1 AND i.status='answering' AND i.answers='{}'::jsonb AND i.rounds='[]'::jsonb AND i.name IS NULL
+      AND i.via IS NOT DISTINCT FROM $2 AND f.status NOT IN ('declined','done') ORDER BY i.id DESC LIMIT 1`, [company, via])).rows[0] || null;
+}
 async function create(company, role, opts = {}) {
-  // one unfinished new-tool request at a time (the launch audit 1.5, 2026-09-27: each tap on "New tool" started another
-  // request): while one is still being answered, thought about or waiting at its design, New tool opens that one again
-  const open = await openFor(company);
+  // Several drafts at once since 2026-10-29 (Taylor's #288: "the ability to work on multiple new tool drafts at the same
+  // time"): each is its own card on the board, opened from there. What the launch audit 1.5 (2026-09-27) guarded
+  // against stays guarded: each tap on "New tool" used to start another empty request, so a tap while a draft is still
+  // blank (nothing answered, not named) opens that blank one again instead of making a second empty card.
+  const open = await blankFor(company, opts.via || null);
   // starting a module needs credit (asked on a reopen too, so New tool says so the same way); once started, its rounds,
   // design and build go through to the end (the generateRound / generateDesign gates pass started: true)
   await require("./selfserve").assertCredit(company);
@@ -700,4 +709,4 @@ router.get("/api/attachments/:id(\\d{1,9})", requireManager, async (req, res) =>
   res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
 });
 
-module.exports = { router, create, openFor, slugTaken, answer, next, think, adjust, revise, mergeRevision, cleanChanges, withIds, POINT_KINDS, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief };
+module.exports = { router, create, openFor, slugTaken, answer, next, think, adjust, revise, mergeRevision, cleanChanges, withIds, POINT_KINDS, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief, blankFor };

@@ -202,7 +202,8 @@ const tools = [
     input: { status: z.enum(["open", "closed", "all"]).optional().describe("Default open"), limit: z.number().int().min(1).max(300).optional().describe("How many, newest first. Default 50.") },
     async run({ status, limit }) {
       const r = await require("./requests").list(status || "open");
-      return { open: r.open, untouched: r.untouched, requests: r.requests.slice(0, limit || 50) };
+      // what was pointed at, in words; never the element's markup or a photo (an upload stays off the admin MCP)
+      return { open: r.open, untouched: r.untouched, requests: r.requests.slice(0, limit || 50).map(({ element, photo_id, ...x }) => ({ ...x, has_photo: Boolean(photo_id) })) };
     },
   },
   {

@@ -146,7 +146,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   // ---- Activate ------------------------------------------------------------------------------------------------------------
   const demoFb = (await q("INSERT INTO platform.feedback (company, message, name, status, outcome) VALUES ($1, 'in the demo: make the labels bigger', 'floor', 'new', NULL) RETURNING id", [A.slug])).rows[0].id;
   const ck = await admin.get(`/api/admin/sites/${A.slug}/checks`);
-  t("the checks: ready, the channel up in test mode, the AI key not noted as on, no other paying site, what the rollover does", ck.status === 200 && ck.json.ready === true && ck.json.channel.ok === true && ck.json.channel.stripe === "test" && ck.json.ai_key.autofill === false && ck.json.tenancy.others === 0 && ck.json.plan.some((x) => /floor gets its own password/.test(x)), ck.json);
+  t("the checks: ready, the channel up in test mode, the AI key not noted as on, no other paying site, what the rollover does", ck.status === 200 && ck.json.ready === true && ck.json.channel.ok === true && ck.json.channel.stripe === "test" && ck.json.ai_key.autofill === false && ck.json.tenancy.others === 0 && ck.json.plan.some((x) => /floor gets its own floor PIN/.test(x)), ck.json);
   t("and they say Stripe is in test mode for a customer's order (Activate asks for the tick), with no Tax warning outside live mode", ck.json.test_mode === true && ck.json.tax_off === false, ck.json);
   const noCode = await admin.post(`/api/admin/sites/${A.slug}/activate`, {});
   t("Activate needs the step-up (the admin password again, for the shared admin session)", noCode.status === 403 && noCode.json.code === "step_up", noCode.json);
@@ -177,7 +177,7 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   t("the manager's board: no credit line, not a demo, the welcome waiting", bmA.credit === null && bmA.company.demo === false && bmA.welcome && bmA.welcome.ready === true && !bmA.welcome.admin && bmA.golive === null, { credit: bmA.credit, welcome: bmA.welcome });
   t("an admin sees the welcome waits and cannot take it", (await admin.get(`/api/c/${A.slug}/board`)).json.welcome.admin === true && (await admin.post(`/api/c/${A.slug}/welcome`, {})).status === 403);
   const wA = await A.mgr.post(`/api/c/${A.slug}/welcome`, {});
-  t("the manager collects the floor's password once", wA.status === 200 && /^[a-z]+-[a-z]+-\d{3}$/.test(wA.json.floor) && wA.json.board === `/c/${A.slug}/`, wA.json);
+  t("the manager collects the floor PIN once (a PIN since 2026-10-29)", wA.status === 200 && /^\d{6}$/.test(wA.json.floor) && wA.json.board === `/c/${A.slug}/`, wA.json);
   t("and never again", (await A.mgr.post(`/api/c/${A.slug}/welcome`, {})).status === 404 && !(await A.mgr.get(`/api/c/${A.slug}/board`)).json.welcome);
   const floorA = client(); const fl = await floorA.post("/login", { password: wA.json.floor, company: A.slug });
   t("the floor signs in with it", fl.status === 200 && (await floorA.get(`/api/c/${A.slug}/board`)).status === 200, fl.json);
@@ -306,8 +306,8 @@ server.listen(Number(STUB.port), "127.0.0.1", async () => {
   // ---- the welcome: a floor password changed another way is never shown as if it opened the floor ----------------------------
   const encL = (await site(L.slug)).welcome_enc;
   t("the rollover left L's welcome waiting", Boolean(encL) && (await L.mgr.get(`/api/c/${L.slug}/board`)).json.welcome.ready === true);
-  await admin.post(`/api/admin/companies/${L.slug}/access`, { floor_password: "tin-crane-448" });
-  t("a new floor password from the company card takes the welcome away", !(await site(L.slug)).welcome_enc && !(await L.mgr.get(`/api/c/${L.slug}/board`)).json.welcome);
+  await admin.post(`/api/admin/companies/${L.slug}/access`, { floor_pin: "482913" });
+  t("a new floor PIN from the company card takes the welcome away", !(await site(L.slug)).welcome_enc && !(await L.mgr.get(`/api/c/${L.slug}/board`)).json.welcome);
   await q("UPDATE platform.sites SET welcome_enc=$2 WHERE company=$1", [L.slug, encL]);   // an old welcome back, as a restore could bring it
   const staleW = await L.mgr.post(`/api/c/${L.slug}/welcome`, {});
   t("an old welcome whose password no longer opens the floor says so and shows nothing", staleW.status === 410 && staleW.json.code === "stale" && !staleW.json.floor && !(await site(L.slug)).welcome_enc, staleW.json);

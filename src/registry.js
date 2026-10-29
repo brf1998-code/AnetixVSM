@@ -570,6 +570,8 @@ async function dropDraftVersion(company, mod, version) {
   await logEvent("draft_dropped", `${company}/${mod}`, { version });
 }
 
+// Forget one tool's mounts (a tool deleted for good, src/archive.js); its processes are unloaded by the caller.
+function forgetModule(company, mod) { mounts.delete(key(company, mod)); }
 // Forget every mount of a company (company deletion).
 function unmountCompany(company) {
   for (const k of [...mounts.keys()]) if (k.startsWith(`${company}/`)) mounts.delete(k);
@@ -817,6 +819,9 @@ function lockDown(req, res) {
 }
 
 function attach(app) {
+  // an archived tool's screens say so instead of opening (src/archive.js, 2026-10-29)
+  const archive = require("./archive");
+  app.use(["/c/:company/m/:module", "/c/:company/staging/m/:module", "/c/:company/test/m/:module"], (req, res, next) => (archive.isArchived(req.params.company, req.params.module) ? archive.archivedAnswer(req, res) : next()));
   app.use("/c/:company/m/:module", (req, res, next) => {
     const entry = mounts.get(key(req.params.company, req.params.module));
     if (!entry || !entry.live) return res.status(404).send("module not found");
@@ -846,6 +851,6 @@ module.exports = {
   locationOk, lockDown,
   MODULES_DIR, REPO_MODULES_DIR, versionDir, readManifest, pageEntries, screenFor, versionForPage, loadAll, attach,
   createDraftVersion, stageVersion, deployVersion, rollback, goToVersion, versionHistory, versionFiles, persistVersion, importFromRepo,
-  unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany, moduleServices,
+  unstage, resetStagedData, getModule, libraryModules, tourFor, mountLiveIfNeeded: mountLive, hooks, materialize, dropDraftVersion, unmountCompany, forgetModule, moduleServices,
   mountTest, unmountTest, testMounted, testVersionMounted, wasEverLive,
 };

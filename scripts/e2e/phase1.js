@@ -34,6 +34,13 @@ const MODEL_IDS = require("../../src/agent").MODELS.map((m) => m.id);
   t("its card is the company's own (no tool yet) and says tool", card && card.kind === "module_request" && card.module == null && card.screen === "New tool request" && card.message === "New tool", card);
   await mgr.post(`/api/intakes/${i1.id}/answer`, { id: "name", value: "Scrap Tally" });
   t("once named, the card is New tool: <name>", (await fbRow(mgr, card.id)).message === "New tool: Scrap Tally");
+  // 2026-10-29 (Taylor's #288): several drafts at once; only a blank one is opened again
+  const i1b = (await mgr.post("/api/c/demo/intakes", {})).json;
+  t("with the first one named, New tool starts a second draft beside it (several at once)", i1b.id && i1b.id !== i1.id && !i1b.reopened, i1b);
+  const i1c = (await mgr.post("/api/c/demo/intakes", {})).json;
+  t("and a tap while that second one is still blank opens it again, no third empty card", i1c.id === i1b.id && i1c.reopened === true, i1c);
+  t("each draft is its own card on the board", (await board(mgr)).feedback.filter((f) => [i1.id, i1b.id].includes(f.intake_id)).length === 2);
+  await mgr.post(`/api/intakes/${i1b.id}/abandon`, {});
   await mgr.post(`/api/intakes/${i1.id}/abandon`, {});
   const i3 = (await mgr.post("/api/c/demo/intakes", {})).json;
   t("after it is withdrawn, New tool starts a new one", i3.id && i3.id !== i1.id && !i3.reopened, i3);

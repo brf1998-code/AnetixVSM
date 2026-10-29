@@ -388,7 +388,7 @@ ${findings}
 
 Rules for this build:
 - Follow MODULE-CONTRACT.md exactly: module.json (keep "name": "${slug}"), routes.js exporting (ctx) => router, additive migrations, pages computing base from location.pathname, tour.json ending at the feedback button.
-- One screen per role the design names, each with its single prominent action, phone first for the floor. Add each screen to module.json "pages" with a label a manager would recognize, and its API to "smoke".
+- One screen per role the design names, each with its single prominent action, phone first for the floor. Add each screen to module.json "pages" with a label a manager would recognize, "for": "floor" or "office", and for a floor screen of one of many (a station, a bench) "each" naming its list API (MODULE-CONTRACT.md); and its API to "smoke".
 - The rules in the design become checks in routes.js (refuse the action and say why in plain words).
 - checks/ holds what this module promises, as files the platform runs against every build from now on (MODULE-CONTRACT.md, "Checks"). checks/001-the-list-answers.json describes the skeleton's API: keep it true, and since nothing is on the floor yet you may edit it this once if you change that API. Add one check file per rule the design names (the next numbers), each proving the rule holds: make the rows it needs, try the thing the rule refuses, expect the refusal.
 - The numbers on the board come from /api/stats or your own endpoint and show at the top of the lead's or manager's screen.

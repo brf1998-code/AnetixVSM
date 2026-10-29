@@ -26,9 +26,10 @@ labels/<name>.zpl    label layouts, only when the module prints labels (below)
   "description": "One or two sentences in plain words.",
   "entry": "routes.js",
   "pages": {
-    "/":            { "file": "pages/board.html",   "label": "Crib board (lead view)" },
-    "/me":          { "file": "pages/mine.html",    "label": "My tools (operator, on a phone)" },
-    "/item/:id":    { "file": "pages/item.html",    "label": "One tool" }
+    "/":            { "file": "pages/board.html",   "label": "Crib board (lead view)",           "for": "office" },
+    "/me":          { "file": "pages/mine.html",    "label": "My tools (operator, on a phone)",  "for": "floor" },
+    "/bench/:id":   { "file": "pages/bench.html",   "label": "One bench (operator, on a tablet)", "for": "floor", "each": "/api/benches" },
+    "/item/:id":    { "file": "pages/item.html",    "label": "One tool",                          "for": "office" }
   },
   "smoke": ["/api/items", "/me"],       paths the platform requests after every build; each must answer below 500
   "connections": {                      only what the design's Connections section names (below)
@@ -45,6 +46,16 @@ labels/<name>.zpl    label layouts, only when the module prints labels (below)
 Routes in `pages` may carry `:params`. The same file can serve several routes.
 Labels are what the feedback widget shows as the screen name, so write them
 for a manager.
+
+Every screen says who it is for: `"for": "floor"` (an operator uses it at a
+station, on a phone or a tablet) or `"for": "office"` (a lead, a planner or a
+manager). Each floor screen gets a printed QR code that opens it, taped up
+where the work happens, so a floor screen must make sense opened on its own
+from a code, with no menu before it. A floor screen for one of many (one
+station, one bench, one work center: a route with a `:param`) also names
+`"each"`: a GET address of this module's own API that answers a list of them,
+`[{ "id": "3", "label": "Bench 3" }, ...]`, where `id` is what goes in the
+route. The platform prints one code for each.
 
 ## routes.js
 

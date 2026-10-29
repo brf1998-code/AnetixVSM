@@ -156,10 +156,13 @@ async function buildGuide(slug, url, model) {
     await upsertDoc(slug, null, "STYLE.md", `${guide}\n\n<!-- brand style built from ${site.url} on ${new Date().toISOString().slice(0, 10)} by ${model}; this file replaces the platform STYLE.md for every build of this company -->\n`, "user", false);
     // an older build may have left a BRAND.md; the agent must not see two style files
     await q("DELETE FROM platform.agent_docs WHERE company=$1 AND module IS NULL AND name='BRAND.md'", [slug]);
+    // a logo the manager uploaded on Settings (2026-10-29) is theirs: a rebuilt guide never replaces it
+    const kept = ((await q("SELECT brand FROM platform.companies WHERE slug=$1", [slug])).rows[0] || {}).brand || {};
+    const uploaded = kept.icon_from === "upload" && kept.icon;
     const brand = await setBrand(slug, {
       status: "done", built_at: new Date().toISOString(), cost_usd: Number((costUsd || 0).toFixed(4)), model,
       company_name: data.company_name, colors, font: data.font_stack, tone: data.tone,
-      icon: icon ? icon.dataUrl : null, icon_type: icon ? icon.type : null, icon_from: icon ? icon.from : null,
+      ...(uploaded ? {} : { icon: icon ? icon.dataUrl : null, icon_type: icon ? icon.type : null, icon_from: icon ? icon.from : null }),
       site_title: site.title, logos: site.logos.map((l) => l.src).filter(Boolean),
     });
     await logEvent("brand_built", slug, { url, model, costUsd, colors });
@@ -201,4 +204,4 @@ async function restyleModule(slug, mod, opts = {}) {
   return run;
 }
 
-module.exports = { buildGuide, restyleModule, readSite, readIcon };
+module.exports = { setBrand, buildGuide, restyleModule, readSite, readIcon };

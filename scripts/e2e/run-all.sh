@@ -213,6 +213,22 @@ run safeguards             env $SG node scripts/e2e/safeguards.js
 [ -z "$QUICK" ] && { fresh; start "SOS_BROWSER=off $SG"; run safeguards-browser env $SG node scripts/e2e/safeguards-browser.js; }
 fresh; start "SOS_BROWSER=off"
 run safeguards-noscanner   node scripts/e2e/safeguards.js noscanner
+# 2026-10-29: the floor PIN (src/auth.js): only from the plant's network, counted per device and per plant, the page's words
+fresh; start "SOS_BROWSER=off SOS_FLOOR_COMPANY_FAILS=15"
+run floorpin               env SOS_CHROMIUM_PATH=$CHROME node scripts/e2e/floorpin.js
+# 2026-10-29: a tool's line (name, Screens, Settings) and a QR code for every screen
+fresh; start "SOS_BROWSER=off"
+run screens-qr             env SOS_CHROMIUM_PATH=$CHROME node scripts/e2e/screens-qr.js
+# 2026-10-29: the small fixes (the company's icon and logo, pointing at something for Anetix, the round corner icons)
+fresh; start "SOS_BROWSER=off"
+run smallfixes             env SOS_CHROMIUM_PATH=$CHROME node scripts/e2e/smallfixes.js
+# 2026-10-29: archiving a tool, and deleting one for good (src/archive.js)
+fresh; start "SOS_BROWSER=off"
+run archive                node scripts/e2e/archive.js
+# 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
+OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
+fresh; start "SOS_BROWSER=off $OI"
+run oidc                   env $OI node scripts/e2e/oidc.js
 
 # 2026-10-08: Ask Anetix, the assistant on the board (docs/ASSISTANT.md): managers only, one company, one tool, the wall
 # (the prompt log), a demo answering from its credit, the read-only role, the card filing nothing until the tap; the panel in a

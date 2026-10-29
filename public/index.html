@@ -59,6 +59,12 @@
   .card.request .stat { margin-top:8px; font-size:12.5px; line-height:1.5; }
   .card.request .stat b { color:var(--navy); }
   .wrap { max-width:1500px; margin:0 auto; padding:14px 22px 0; }
+  .modcard .pvdot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#ffb366; margin-left:4px; vertical-align:1px; }
+  .tmenu { position:absolute; z-index:18000; background:#fff; color:var(--ink); border:1px solid var(--line); border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,.25); padding:6px; min-width:220px; max-width:calc(100vw - 24px); }
+  .tmenu .th { font-size:12px; color:var(--steel); padding:6px 10px 4px; }
+  .tmenu a, .tmenu button { display:block; width:100%; text-align:left; background:none; border:none; margin:0; min-height:38px; padding:8px 10px; border-radius:7px; color:var(--ink); font:600 14px system-ui,sans-serif; text-decoration:none; cursor:pointer; }
+  .tmenu a:hover, .tmenu button:hover, .tmenu a:focus, .tmenu button:focus { background:var(--fog); outline:none; }
+  .tmenu .amber { color:#a65400; } .tmenu .violet { color:#5b3fa8; }
   .modcard button.vbtn { background:none; color:#fff; border:none; padding:0; margin:0; min-height:0; font-weight:500; font-size:12px; opacity:.8; cursor:pointer; font-family:inherit; }
   .vpanel { background:#fff; border:1px solid var(--line); border-left:4px solid var(--navy); border-radius:10px; padding:12px 14px; margin-bottom:12px; font-size:13px; }
   .vpanel h3 { font-size:14px; margin-bottom:6px; display:flex; gap:10px; align-items:center; }
@@ -85,6 +91,18 @@
   .scr-frame.phone { background:var(--fog); }
   .scr-frame.phone .shell { position:absolute; top:8px; bottom:0; left:50%; transform:translateX(-50%); overflow:hidden; border-radius:10px 10px 0 0; box-shadow:0 0 0 1px var(--line); background:#fff; }
   .scr-empty { padding:30px 16px; color:var(--steel); text-align:center; }
+  .qr-help { padding:10px 16px 0; color:var(--steel); font-size:13px; line-height:1.45; }
+  .qr-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:14px; padding:14px 16px 18px; overflow:auto; align-items:start; }
+  .qr-card { border:1px solid var(--line); border-radius:10px; padding:12px; background:#fff; text-align:center; }
+  .qr-lab { font-weight:800; font-size:14px; line-height:1.3; margin-bottom:6px; }
+  .qr-lab small { display:block; color:var(--steel); font-weight:500; font-size:12px; margin-top:2px; }
+  .qr-img { width:180px; height:180px; display:block; margin:4px auto 8px; }
+  .qr-which { display:block; font-size:12.5px; color:var(--steel); margin:0 0 8px; }
+  .qr-which input { width:90px; margin-left:4px; padding:5px 7px; font-size:14px; }
+  .qr-act { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; align-items:center; }
+  .qr-act select { font-size:13px; padding:5px; margin:0; }
+  .qr-act button, .qr-act a { margin:0; min-height:32px; }
+  .qr-act a { font-size:13px; color:var(--navy); font-weight:700; padding:0 6px; display:inline-flex; align-items:center; }
   @media (max-width: 640px) {
     .scr-back { padding:0; } .scr-box { max-height:none; height:100%; border-radius:0; }
     .scr-grid { grid-template-columns:1fr 1fr; gap:10px; padding:12px; }
@@ -1364,6 +1382,7 @@ function openScreens(mod, which) {
   const p = (DATA.pages || {})[mod] || {};
   const m = DATA.modules.find(x => x.name === mod) || {};
   const can = { live: Boolean(m.live_version && (p.live || []).length), staged: Boolean(m.staged_version && (p.staged || []).length) };
+  if (which === "codes") return openCodes(mod);
   which = which && can[which] ? which : can.live ? "live" : "staged";
   SCR = { mod, which };   // the popout sits outside the board's columns, so the 4 s refresh never redraws it
   const list = (which === "live" ? p.live : p.staged) || [];
@@ -1375,7 +1394,7 @@ function openScreens(mod, which) {
   let root = document.getElementById("scr-root");
   if (!root) { root = document.createElement("div"); root.id = "scr-root"; document.body.appendChild(root); }
   root.innerHTML = `<div class="scr-back" onclick="if(event.target===this)closeScreens()"><div class="scr-box" role="dialog" aria-modal="true" aria-label="Every screen of ${esc(m.title || mod)}">
-    <div class="scr-head"><b>${esc(m.title || mod)}: ${list.length} screens</b>${seg}<button class="quiet x" onclick="closeScreens()">Close</button></div>
+    <div class="scr-head"><b>${esc(m.title || mod)}: ${list.length} screens</b>${seg}${m.live_version ? `<span class="seg"><button class="on">Screens</button><button onclick="openScreens('${esc(mod)}','codes')">QR codes</button></span>` : ""}<button class="quiet x" onclick="closeScreens()">Close</button></div>
     ${list.length ? `<div class="scr-grid">${tiles}</div>` : `<div class="scr-empty">No screens to show yet.</div>`}</div></div>`;
   fitScreens();
   document.addEventListener("keydown", screensKey);
@@ -1398,6 +1417,134 @@ function closeScreens() {
   SCR = null;
   const root = document.getElementById("scr-root"); if (root) root.innerHTML = "";
   document.removeEventListener("keydown", screensKey);
+}
+
+// ---- a QR code for every screen (2026-10-29) ---------------------------------
+// Brendan: "there needs to be a pathway to get a QR code of every single tool", printable, at a size picked per station.
+// Every screen of a live tool, each with a code that opens it: tape it where the work happens, a phone's camera opens
+// that screen, and the first time on a phone or tablet it asks for the floor PIN (on the plant's wifi only) and lands
+// there after. A screen for one of many (a station, a work center: a route with a :param) gets one code each, from the
+// tool's own list when its manifest names one ("each", MODULE-CONTRACT.md), else a box to type which. Floor screens
+// come first. Printing opens a sheet with each code at the size picked for it.
+const QR_SIZES = [["2", "Small, 2 in"], ["3", "Medium, 3 in"], ["4.5", "Large, 4.5 in"], ["7", "Full page, 7 in"]];
+let CODES = null;   // { mod, items: [{ label, sub, path, route, for, typed, value, size }] }
+const fillRoute = (route, v) => String(route || "/").replace(/:[^/]+/, encodeURIComponent(v));
+const codeSrc = (path, px) => `/api/c/${SLUG}/qr.svg?px=${px}&path=${encodeURIComponent(path)}`;
+async function openCodes(mod) {
+  const p = (DATA.pages || {})[mod] || {}, m = DATA.modules.find((x) => x.name === mod) || {};
+  SCR = { mod, which: "codes" };
+  const base = `/c/${SLUG}/m/${mod}`;
+  const items = [];
+  const list = m.live_version ? (p.live || []).slice() : [];
+  const rank = (x) => (x.for === "floor" ? 0 : x.for === "office" ? 2 : 1);
+  list.sort((a, b) => rank(a) - rank(b));
+  for (const x of list) {
+    const param = /:[^/]+/.test(x.route || "");
+    if (param && x.each) {
+      let rows = [];
+      try {
+        const r = await fetch(base + x.each, { cache: "no-store" }); const j = await r.json();
+        rows = Array.isArray(j) ? j : (j && (j.items || j.rows || j.list || j[Object.keys(j).find((k) => Array.isArray(j[k]))])) || [];
+      } catch (e) { rows = []; }
+      rows = rows.slice(0, 80).map((r) => (r && typeof r === "object" ? { id: String(r.id ?? r.value ?? r.seq ?? r.code ?? ""), label: String(r.label ?? r.name ?? r.title ?? "") } : { id: String(r), label: "" }))
+        .filter((r) => /^[A-Za-z0-9_.~-]{1,40}$/.test(r.id));
+      if (rows.length) { for (const r of rows) items.push({ label: x.label, sub: r.label || r.id, path: base + fillRoute(x.route, r.id), route: x.route, for: x.for, size: "3" }); continue; }
+    }
+    const value = param ? decodeURIComponent((String(x.path).match(new RegExp("^" + String(x.route).replace(/:[^/]+.*$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^/]+)")) || [])[1] || "1") : "";
+    items.push({ label: x.label, sub: "", path: base + (param ? fillRoute(x.route, value) : "/" + String(x.path || "/").replace(/^\//, "")), route: x.route, for: x.for, typed: param, value, size: "3" });
+  }
+  CODES = { mod, items };
+  let root = document.getElementById("scr-root");
+  if (!root) { root = document.createElement("div"); root.id = "scr-root"; document.body.appendChild(root); }
+  const tag = (f) => (f === "floor" ? "For the floor" : f === "office" ? "For the office" : "");
+  const cards = items.map((it, i) => `<div class="qr-card" data-code="${i}">
+      <div class="qr-lab">${esc(it.sub || it.label)}${it.sub || tag(it.for) ? `<small>${it.sub ? esc(it.label) : ""}${it.sub && tag(it.for) ? " · " : ""}${esc(tag(it.for))}</small>` : ""}</div>
+      <img class="qr-img" id="qr-img-${i}" alt="QR code that opens ${esc(it.sub || it.label)}" src="${esc(codeSrc(it.path, 220))}">
+      ${it.typed ? `<label class="qr-which">Which one? <input id="qr-v-${i}" value="${esc(it.value)}" maxlength="40" oninput="codeValue(${i}, this.value)"></label>` : ""}
+      <div class="qr-act"><select aria-label="Print size" onchange="CODES.items[${i}].size=this.value">${QR_SIZES.map(([v, l]) => `<option value="${v}" ${v === it.size ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <button class="go small" onclick="printCodes([${i}])">Print</button><a id="qr-open-${i}" href="${esc(it.path)}" target="_blank" rel="noopener">Open</a><button class="quiet small" onclick="copyCode(${i}, this)">Copy link</button></div>
+    </div>`).join("");
+  root.innerHTML = `<div class="scr-back" onclick="if(event.target===this)closeScreens()"><div class="scr-box" role="dialog" aria-modal="true" aria-label="QR codes for ${esc(m.title || mod)}">
+    <div class="scr-head"><b>${esc(m.title || mod)}: QR codes</b><span class="seg"><button onclick="openScreens('${esc(mod)}','live')">Screens</button><button class="on">QR codes</button></span>${items.length > 1 ? `<button class="go small" style="margin:0" onclick="printCodes()">Print all ${items.length}</button>` : ""}<button class="quiet x" onclick="closeScreens()">Close</button></div>
+    ${items.length ? `<div class="qr-help">Tape each code where that screen is used. A phone's camera opens the screen; the first time on a phone or tablet it asks for the floor PIN, on the plant's wifi. Pick a size for each, then Print.</div><div class="qr-grid">${cards}</div>` : `<div class="scr-empty">${m.live_version ? "This tool has no screens to make codes for." : "QR codes come once the tool is live."}</div>`}</div></div>`;
+  document.addEventListener("keydown", screensKey);
+}
+let codeTimer = null;
+function codeValue(i, v) {
+  const it = CODES && CODES.items[i]; if (!it) return;
+  v = String(v || "").trim();
+  if (!/^[A-Za-z0-9_.~-]{1,40}$/.test(v)) return;
+  it.value = v; it.path = `/c/${SLUG}/m/${CODES.mod}` + fillRoute(it.route, v);
+  clearTimeout(codeTimer);
+  codeTimer = setTimeout(() => { const img = document.getElementById("qr-img-" + i); if (img) img.src = codeSrc(it.path, 220); const a = document.getElementById("qr-open-" + i); if (a) a.href = it.path; }, 250);
+}
+function copyCode(i, btn) {
+  const it = CODES && CODES.items[i]; if (!it) return;
+  const url = location.origin + it.path;
+  (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => { btn.textContent = "Copied"; setTimeout(() => { btn.textContent = "Copy link"; }, 1500); }).catch(() => prompt("Copy this link:", url));
+}
+// a sheet with each code at its own size, the company, the tool and the screen over it, one line on how to use it
+function printCodes(which) {
+  if (!CODES) return;
+  const pick = (which || CODES.items.map((_, i) => i)).map((i) => CODES.items[i]).filter(Boolean);
+  const m = DATA.modules.find((x) => x.name === CODES.mod) || {};
+  const co = (DATA.company && DATA.company.name) || SLUG;
+  const cards = pick.map((it) => {
+    const inch = Number(it.size) || 3, fs = Math.max(11, Math.round(inch * 6));
+    const big = it.sub || (it.typed ? it.value : "") || it.label, small = big === it.label ? "" : it.label;   // one of many: which one, big
+    return `<div class="card" style="width:${(inch + 0.3).toFixed(2)}in"><div class="co" style="font-size:${Math.max(8, Math.round(fs * 0.55))}pt">${esc(co)} · ${esc(m.title || CODES.mod)}</div>`
+      + `<div class="t" style="font-size:${fs}pt">${esc(big)}</div>${small ? `<div class="s" style="font-size:${Math.max(8, Math.round(fs * 0.6))}pt">${esc(small)}</div>` : ""}`
+      + `<img src="${esc(location.origin + codeSrc(it.path, Math.min(1200, Math.round(inch * 150))))}" style="width:${inch}in;height:${inch}in">`
+      + `<div class="h" style="font-size:${Math.max(7, Math.round(fs * 0.45))}pt">Scan with your phone's camera. The first time, type the floor PIN (on the plant's wifi).</div></div>`;
+  }).join("");
+  const w = window.open("", "_blank");
+  if (!w) { alert("The print window was blocked. Allow pop-ups for this site, then press Print again."); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR codes: ${esc(m.title || CODES.mod)}</title><style>@page{margin:.4in} body{font-family:system-ui,sans-serif;margin:16px;color:#111} .card{display:inline-block;vertical-align:top;text-align:center;margin:0 .25in .3in 0;padding:.15in .15in .12in;border:1px dashed #aaa;border-radius:8px;break-inside:avoid;page-break-inside:avoid;box-sizing:border-box} .card img{display:block;margin:.08in auto} .co{color:#555} .t{font-weight:800;line-height:1.15;margin-top:2px} .s{color:#333;margin-top:2px} .h{color:#444;line-height:1.3} @media print{body{margin:0}}</style></head><body>${cards}<script>Promise.all([].slice.call(document.images).map(function(i){return i.complete?1:new Promise(function(r){i.onload=i.onerror=r})})).then(function(){setTimeout(function(){print()},200)})<\/script></body></html>`);
+  w.document.close();
+}
+
+// ---- a tool's Settings popout (2026-10-29) ----------------------------------
+// What used to sit on the tool's line as links: open it live, the waiting preview, the test floor, diagrams, versions,
+// Ask Anetix about it, sample data. Built in the body, outside the band, so the 4 s refresh never redraws it away.
+function toolMenu(mod, anchor) {
+  closeToolMenu();
+  const m = DATA.modules.find((x) => x.name === mod) || {};
+  const items = [
+    m.live_version ? `<a href="/c/${SLUG}/m/${m.name}/" role="menuitem">Open live</a>` : "",
+    m.staged_version && m.staged_version !== m.live_version ? `<a class="amber" href="/c/${SLUG}/staging/m/${m.name}/" role="menuitem">Preview v${m.staged_version} (waiting)</a>` : "",
+    DATA.test_floor && m.live_version ? `<a class="violet" href="/c/${SLUG}/test/m/${m.name}/" role="menuitem" title="The test floor: every tool together on data that is not the floor's. Nothing done there is real.">Test floor${m.test_version ? ` v${m.test_version}` : ""}</a>` : "",
+    m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}" role="menuitem">Diagrams</a>` : "",
+    MGR() && m.live_version ? `<button role="menuitem" onclick="closeToolMenu();openVersions('${m.name}')">Versions</button>` : "",
+    MGR() && window.Assist && Assist.on() ? `<button role="menuitem" onclick="closeToolMenu();Assist.open({kind:'tool',module:'${m.name}'})" title="Ask Anetix about this tool: how it works, where things are, what changed">Ask about this tool</button>` : "",
+    MGR() && TRIAL() && (m.live_version || m.staged_version) ? `<button role="menuitem" onclick="closeToolMenu();openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
+    MGR() ? `<button role="menuitem" onclick="closeToolMenu();archiveTool('${m.name}')" title="Take it off the board. It is kept, with its data, under Settings, and can come back.">Archive this tool</button>` : "",
+  ].filter(Boolean);
+  const menu = document.createElement("div");
+  menu.className = "tmenu"; menu.id = "tmenu"; menu.setAttribute("role", "menu");
+  menu.innerHTML = `<div class="th">${esc(m.title || mod)}${m.live_version ? `, live v${m.live_version}` : ""}</div>${items.join("")}`;
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  const left = Math.max(12, Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - menu.offsetWidth - 12));
+  menu.style.left = left + "px"; menu.style.top = (r.bottom + window.scrollY + 6) + "px";
+  (menu.querySelector("a,button") || menu).focus();
+  setTimeout(() => { document.addEventListener("click", toolMenuAway); document.addEventListener("keydown", toolMenuKey); }, 0);
+}
+// Archive a tool (src/archive.js, 2026-10-29): off the board, kept under Settings with its data, back from there.
+async function archiveTool(mod, again) {
+  const m = DATA.modules.find((x) => x.name === mod) || {};
+  if (!again && !confirm(`Archive ${m.title || mod}? It comes off the board and its screens stop opening (a QR code at a station will say it is archived). Nothing is lost: it is kept under Settings, Archived tools, with its data, and can come back from there.`)) return;
+  const r = await fetch(`/api/c/${SLUG}/modules/${mod}/archive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(again ? { confirm: true } : {}) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && j.pin_again && window.sosPerson && window.sosPerson.pin) { window.sosPerson.pin(j.person, () => archiveTool(mod, true), "Tap your PIN again to archive this tool."); return; }
+  if (r.status === 409 && j.code === "readers") { if (confirm(j.error)) archiveTool(mod, true); return; }
+  if (!r.ok) { alert(j.error || "It did not go through."); return; }
+  load();
+}
+function toolMenuAway(e) { const m = document.getElementById("tmenu"); if (m && !m.contains(e.target)) closeToolMenu(); }
+function toolMenuKey(e) { if (e.key === "Escape") closeToolMenu(); }
+function closeToolMenu() {
+  const m = document.getElementById("tmenu"); if (m) m.remove();
+  document.removeEventListener("click", toolMenuAway); document.removeEventListener("keydown", toolMenuKey);
 }
 
 // ---- sample data (a demo company's tools, src/sample.js) -------------------
@@ -1523,9 +1670,9 @@ function renderPaid() {
       <button class="go" id="terms-go" onclick="acceptTerms()">Continue</button></div>`);
   }
   if (DATA.welcome && DATA.welcome.ready) {
-    if (DATA.welcome.admin) out.push(`<div class="paid ok"><div class="grow"><b>${esc(DATA.company.name)} is live.</b> Its manager has not collected the floor's password yet.</div></div>`);
-    else out.push(`<div class="paid ok" id="welcomebox"><div class="grow"><b>${esc(DATA.company.name)} is live.</b> Your floor has its own password now. It is shown once, so have somewhere to write it down.<div id="welcome-pw"></div></div>
-      <button class="go" id="welcome-go" onclick="collectWelcome()">Show the floor's password</button></div>`);
+    if (DATA.welcome.admin) out.push(`<div class="paid ok"><div class="grow"><b>${esc(DATA.company.name)} is live.</b> Its manager has not collected the floor PIN yet.</div></div>`);
+    else out.push(`<div class="paid ok" id="welcomebox"><div class="grow"><b>${esc(DATA.company.name)} is live.</b> Your floor has its own floor PIN now. It is shown once, so have somewhere to write it down.<div id="welcome-pw"></div></div>
+      <button class="go" id="welcome-go" onclick="collectWelcome()">Show the floor PIN</button></div>`);
   }
   if (DATA.fair_use && DATA.fair_use.over) out.push(`<div class="paid amber"><div class="grow">${esc(DATA.fair_use.message)}</div></div>`);
   // stage 4 (src/billing.js): a payment that failed, a site that is unpaid, a cancel date. Managers and admins only.
@@ -1568,7 +1715,7 @@ async function collectWelcome() {
   const into = document.getElementById("welcome-pw");
   if (!r.ok) { into.innerHTML = `<p class="err">${esc(j.error || "It could not be shown.")}</p>`; btn.remove(); return; }
   EDITING = "welcome";   // no refresh while it is on screen
-  into.innerHTML = `<div class="pw">${esc(j.floor)}</div><div>The floor signs in at <b>${esc(location.origin + j.board)}</b> with this password. <a href="/c/${SLUG}/settings">Print the wall sign</a> for them.</div>`;
+  into.innerHTML = `<div class="pw">${esc(j.floor)}</div><div>The floor signs in at <b>${esc(location.origin + j.board)}</b> with this PIN, on the plant's wifi. <a href="/c/${SLUG}/settings">Print the wall sign</a> for them.</div>`;
   btn.textContent = "Done, I wrote it down"; btn.disabled = false; btn.onclick = () => { EDITING = null; load(); };
 }
 async function seenNotice(id) {
@@ -1649,16 +1796,13 @@ function render() {
   // One quiet line: each module is a name (the filter toggle when there are
   // several), its version, and small text links. The hint sits at the end of
   // the same line only while a filter is in force.
-  const links = (m) => [
-    m.live_version ? `<a href="/c/${SLUG}/m/${m.name}/">Open live</a>` : `<span class="v">being built</span>`,
-    m.staged_version ? `<a class="amber" href="/c/${SLUG}/staging/m/${m.name}/">Preview v${m.staged_version}</a>` : "",
-    DATA.test_floor && m.live_version ? `<a class="violet" href="/c/${SLUG}/test/m/${m.name}/" title="The test floor: every tool together on data that is not the floor's. Nothing done there is real.">Test floor${m.test_version ? ` v${m.test_version}` : ""}</a>` : "",
-    (m.live_version || m.staged_version) && pagesOf(m.name).length > 1 ? `<button class="vbtn" onclick="openScreens('${m.name}')" title="Every screen of this tool at once; tap one to go there">Screens</button>` : "",
-    m.live_version ? `<a href="/c/${SLUG}/diagrams/${m.name}">Diagrams</a>` : "",
-    MGR() && m.live_version ? `<button class="vbtn" onclick="openVersions('${m.name}')">Versions</button>` : "",
-    MGR() && window.Assist && Assist.on() ? `<button class="vbtn" onclick="Assist.open({kind:'tool',module:'${m.name}'})" title="Ask Anetix about this tool: how it works, where things are, what changed">Ask</button>` : "",
-    MGR() && TRIAL() && (m.live_version || m.staged_version) ? `<button class="vbtn" onclick="openSample('${m.name}')" title="Fill this tool with a made-up week of work to see what it does">Sample data</button>` : "",
-  ].filter(Boolean).join('<span class="sep">·</span>');
+  // Each tool's line (Brendan, 2026-10-29: "too many options"): its name, Screens and Settings. Screens is every screen
+  // of the tool with a QR code for each; Settings is a small popout with the rest (toolMenu). A dot on Settings says a
+  // preview is waiting.
+  const links = (m) => (!m.live_version && !m.staged_version) ? `<span class="v">being built</span>` : [
+    `<button class="vbtn" onclick="openScreens('${m.name}')" title="Every screen of this tool, and a QR code for each">Screens</button>`,
+    `<button class="vbtn" onclick="toolMenu('${m.name}', this)" aria-haspopup="menu" title="Open live, the preview, diagrams, versions and more">Settings${m.staged_version && m.staged_version !== m.live_version ? '<span class="pvdot" title="A preview is waiting"></span>' : ""}</button>`,
+  ].join('<span class="sep">·</span>');
   // the phone's one-line summary of the strip: which modules the board is showing
   const summary = !many ? (DATA.modules[0] ? DATA.modules[0].title : "none yet")
     : !SEL ? `All ${DATA.modules.length} tools`
@@ -1672,7 +1816,7 @@ function render() {
     DATA.modules.map(m => {
       const on = visible(m.name);
       return `<span class="modcard ${many ? (on ? "on" : "off") : ""}">
-      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this tool's feedback" : "Show only this tool's feedback") : "Show this tool's feedback too"}">${esc(m.title)}</button>` : pagesOf(m.name).length > 1 ? `<button class="tog solo" onclick="openScreens('${m.name}')" title="Every screen of this tool at once">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="v">${m.live_version ? "v" + m.live_version : ""}</span><span class="links">${links(m)}</span></span>`;
+      ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this tool's feedback" : "Show only this tool's feedback") : "Show this tool's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="links">${links(m)}</span></span>`;
     }).join("") +
     (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new tool in plain words; the AI designs it, you confirm, then it is built">+ New tool</button>` : "") +
     (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one tool" : SEL.size + " tools"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "");

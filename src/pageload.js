@@ -63,12 +63,16 @@ function screenPaths(manifest) {
   const out = [];
   for (const [route, v] of Object.entries(manifest.pages || {})) {
     const file = typeof v === "string" ? v : v && v.file, label = (v && v.label) || route;
+    // who the screen is for, and the list API of a one-of-many floor screen (MODULE-CONTRACT.md, 2026-10-29): an
+    // agent-written manifest, so only the two words and an address of the tool's own /api/ are kept
+    const forWho = v && ["floor", "office"].includes(v.for) ? v.for : null;
+    const each = v && typeof v.each === "string" && /^\/api\/[A-Za-z0-9/_.-]{1,120}$/.test(v.each) && !v.each.includes("..") ? v.each : null;
     let path = route;
     if (/:[^/]+/.test(route)) {
       const re = new RegExp("^" + route.replace(/:[^/]+/g, "[^/]+") + "/?$");
       path = smoke.find((s) => re.test(s.split("?")[0])) || route.replace(/:[^/]+/g, "1");
     }
-    if (!out.some((o) => o.path === path)) out.push({ route, path, file, label });
+    if (!out.some((o) => o.path === path)) out.push({ route, path, file, label, for: forWho, each: /:[^/]+/.test(route) ? each : null });
   }
   return out;
 }

@@ -98,7 +98,7 @@ const PAGE = "/c/demo/m/paperline/";
   const root = await file(ana, "show the scrap count per shift");
   await read(root.id);
   const dupe = await file(ben, "DUPE we need to see scrap for each shift");
-  const rd = await waitFor("the repeat to be folded in", async () => { const all = (await board(mgr)).feedback; const x = all.find((y) => y.id === root.id); return x && x.dupes ? { x, all } : null; });
+  const rd = await waitFor("the repeat to be folded in", async () => { const all = (await board(mgr)).feedback; const x = all.find((y) => y.id === root.id); return x && x.dupes && x.recurrence === 2 ? { x, all } : null; });   // the link and the count are two writes (src/arrival.js linkDuplicate): wait for both, the full run caught the board between them (2026-10-29)
   t("the repeat is not a card of its own", !rd.all.some((y) => y.id === dupe.id));
   t("the first card says asked 2 times by 2 people, with Ben's own words", rd.x.asked.times === 2 && rd.x.asked.people === 2 && rd.x.recurrence === 2 && rd.x.dupes[0].message === "DUPE we need to see scrap for each shift" && rd.x.dupes[0].name === "Ben T" && /same thing as request/.test(rd.x.dupes[0].note));
   const dupe2 = await file(ana, "DUPE scrap per shift please");

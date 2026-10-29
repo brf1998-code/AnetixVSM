@@ -14,11 +14,14 @@
 //                      already does when the renderer cannot be reached.
 //   require_scan       uploads must be scanned for malware (src/scan.js). Off: a file the scanner could not take is
 //                      kept and scanned later. On: it is refused.
-//   networks           the addresses the SHARED sign-ins work from (the floor's password, and a shared manager password
-//                      while one exists). Empty: anywhere. Set: a device has to be on the plant's own network, at
-//                      sign-in and on every request after (a phone that leaves the wifi is refused until it is back,
-//                      and is not signed out). A named account (an admin, a manager with a code or a passkey) works from
-//                      anywhere: its second factor is what stands in for the network.
+//   networks           the addresses the SHARED sign-ins work from (the floor's PIN or password, and a shared manager
+//                      password while one exists). Empty: anywhere, except a floor PIN (below). Set: a device has to be
+//                      on the plant's own network, at sign-in and on every request after (a phone that leaves the wifi
+//                      is refused until it is back, and is not signed out). A named account (an admin, a manager with a
+//                      code or a passkey) works from anywhere: its second factor is what stands in for the network.
+//                      Since 2026-10-29 a floor PIN (src/auth.js) works ONLY from the list: a company whose floor signs
+//                      in with a PIN and has no list refuses the floor ("unset", NO_NETWORK) until Anetix puts the
+//                      plant's network on it. A floor password from before PINs keeps the old rule.
 //
 // And one action beside them: take away a company's shared manager password, so a manager signs in by name with a
 // second factor and no other way (auth.dropManagerPassword; only once the company has a manager account that works).
@@ -99,15 +102,15 @@ const TTL = 10000;
 // a page loaded in the same instant as the switch kept the old answer for ten seconds). Every change moves the
 // count; a read remembers its answer only if the count has not moved since it asked.
 let changes = 0;
-const DEFAULTS = Object.freeze({ talk: true, label_preview: true, require_scan: false, assistant: true, networks: [] });
+const DEFAULTS = Object.freeze({ talk: true, label_preview: true, require_scan: false, assistant: true, networks: [], floor_pin: false });
 async function get(company) {
   if (!company) return DEFAULTS;
   const c = cache.get(company);
   if (c && Date.now() - c.at < TTL) return c.v;
   const asked = changes;
-  const r = (await q(`SELECT c.allow_talk, c.allow_label_preview, c.require_scan, c.allow_assistant, a.networks
+  const r = (await q(`SELECT c.allow_talk, c.allow_label_preview, c.require_scan, c.allow_assistant, a.networks, (a.floor_hash IS NOT NULL AND a.floor_pin) AS floor_pin
                         FROM platform.companies c LEFT JOIN platform.company_access a ON a.company=c.slug WHERE c.slug=$1`, [company])).rows[0];
-  const v = r ? { talk: r.allow_talk !== false, label_preview: r.allow_label_preview !== false, require_scan: r.require_scan === true, assistant: r.allow_assistant !== false, networks: r.networks || [] } : DEFAULTS;
+  const v = r ? { talk: r.allow_talk !== false, label_preview: r.allow_label_preview !== false, require_scan: r.require_scan === true, assistant: r.allow_assistant !== false, networks: r.networks || [], floor_pin: r.floor_pin === true } : DEFAULTS;
   if (asked === changes) cache.set(company, { at: Date.now(), v });
   return v;
 }
@@ -153,6 +156,9 @@ async function bootCheck() {
   if (held.length) console.error(`[safeguards] ${held.join(", ")}: shared sign-ins are held to a network list, but the edge check is ${edge.mode() === "report" ? "in report mode" : "off"}, so the address a request claims is not proven. Enforce the edge check (SOS_EDGE_SECRET, no SOS_EDGE_MODE).`);
 }
 const OFF_NETWORK = "This sign-in works only on the company's own network. Join the plant's wifi and try again. A manager with an account of their own can sign in from anywhere.";
+// A floor PIN with no plant network on file (2026-10-29): the PIN works only from the plant, and nobody has said yet
+// which network that is. The same words whether the PIN typed was right or wrong.
+const NO_NETWORK = "The floor PIN works only on the plant's wifi, and this plant's network is not set up yet. Ask your manager to have Anetix add it. A manager with an account of their own can sign in from anywhere.";
 // The platform's own calls to itself (the checks and the page load of a staged build, src/pipeline.js) arrive over
 // loopback as that company's manager and carry no forwarded address; nothing from outside can look like that.
 const ownCall = (req) => edge.isLoopback(req.socket && req.socket.remoteAddress) && !req.headers["x-real-ip"] && !req.headers["cf-connecting-ip"];
@@ -162,7 +168,24 @@ async function offNetwork(req, company) {
   if (!list.length || ownCall(req)) return false;
   return !inNetworks(list, edge.clientIp(req));
 }
-const refusalPage = () => `<!DOCTYPE html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not on the plant's network</title>
+// Where a session of this role may be used from, for this request: null (fine), "off" (outside the company's list) or
+// "unset" (a floor session of a company whose floor signs in with a PIN and that has no list: a PIN is for the plant
+// only). The platform's own calls pass, as above.
+async function whereFrom(req, company, role) {
+  const s = await get(company);
+  if (ownCall(req)) return null;
+  if (!s.networks.length) return role === "floor" && s.floor_pin ? "unset" : null;
+  return inNetworks(s.networks, edge.clientIp(req)) ? null : "off";
+}
+// Is this request coming from the company's own plant, by its list? false when there is no list.
+async function atPlant(req, company) {
+  const list = (await get(company)).networks;
+  return Boolean(list.length) && !ownCall(req) && inNetworks(list, edge.clientIp(req));
+}
+const refusalPage = (unset = false) => unset ? `<!DOCTYPE html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not set up for the plant's wifi</title>
+<body style="font-family:system-ui,sans-serif;background:#f2f4f7;color:#1c242e;margin:0;padding:24px"><div style="max-width:440px;margin:8vh auto;background:#fff;border:1px solid #d9dee5;border-radius:10px;padding:22px">
+<h1 style="font-size:20px;margin:0 0 10px">The plant's wifi is not set up yet</h1>
+<p style="font-size:16px;line-height:1.5;margin:0 0 14px">${NO_NETWORK}</p></div></body></html>` : `<!DOCTYPE html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Not on the plant's network</title>
 <body style="font-family:system-ui,sans-serif;background:#f2f4f7;color:#1c242e;margin:0;padding:24px"><div style="max-width:440px;margin:8vh auto;background:#fff;border:1px solid #d9dee5;border-radius:10px;padding:22px">
 <h1 style="font-size:20px;margin:0 0 10px">This device is not on the plant's network</h1>
 <p style="font-size:16px;line-height:1.5;margin:0 0 14px">The sign-in on this device works only on the company's own network. Join the plant's wifi, then try again. You are still signed in.</p>
@@ -172,11 +195,12 @@ const refusalPage = () => `<!DOCTYPE html><html lang="en"><meta charset="utf-8">
 // the platform's own calls pass.
 function networkGate(req, res, next) {
   if (!req.sosRole || req.sosRole === "admin" || req.sosAccount || req.sosInternal) return next();
-  offNetwork(req, req.sosCompany).then((off) => {
-    if (!off) return next();
+  whereFrom(req, req.sosCompany, req.sosRole).then((where) => {
+    if (!where) return next();
     const p = req.path;
     res.set("Cache-Control", "no-store");
-    if (req.method === "GET" && !p.startsWith("/api/") && !/\/api\//.test(p)) return res.status(403).type("html").send(refusalPage());
+    if (req.method === "GET" && !p.startsWith("/api/") && !/\/api\//.test(p)) return res.status(403).type("html").send(refusalPage(where === "unset"));
+    if (where === "unset") return res.status(403).json({ error: NO_NETWORK, code: "floor_no_network" });
     res.status(403).json({ error: OFF_NETWORK, off_network: true });
   }).catch(next);
 }
@@ -208,7 +232,7 @@ async function view(req, slug) {
   const ip = edge.clientIp(req);
   const sc = await require("./scan").health().catch(() => ({ configured: false, reachable: false }));
   return { ...s, your_address: ip, your_network: networkOf(ip), your_address_listed: inNetworks(s.networks, ip), address_proven: addressProven(), may_hold_to_network: mayHoldToNetwork(),
-    shared_manager_password: Boolean(row && row.manager_hash), shared_floor_password: Boolean(row && row.floor_hash), legacy_login: Boolean(row && row.legacy_login), manager_accounts: managers,
+    shared_manager_password: Boolean(row && row.manager_hash), shared_floor_password: Boolean(row && row.floor_hash), floor_pin: Boolean(row && row.floor_hash && row.floor_pin), legacy_login: Boolean(row && row.legacy_login), manager_accounts: managers,
     scanner: { configured: Boolean(sc.configured), reachable: Boolean(sc.reachable) } };
 }
 router.get("/api/admin/companies/:slug/safeguards", requireAdmin, async (req, res) => {
@@ -226,7 +250,7 @@ router.post("/api/admin/companies/:slug/safeguards", requireAdmin, json, async (
 router.post("/api/admin/companies/:slug/safeguards/drop-manager-password", requireAdmin, json, async (req, res) => {
   if (!(await q("SELECT 1 FROM platform.companies WHERE slug=$1", [req.params.slug])).rows[0]) return res.status(404).json({ error: "unknown company" });
   const v = await view(req, req.params.slug);
-  if (v.legacy_login) return res.status(409).json({ error: "this company is still on the old shared passwords: give it its own floor password first (Set passwords)" });
+  if (v.legacy_login) return res.status(409).json({ error: "this company is still on the old shared passwords: give it its own floor PIN first (Sign-in)" });
   if (!v.shared_manager_password) return res.json({ ok: true, already: true, ...v });
   if (!v.manager_accounts) return res.status(409).json({ error: "no manager at this company has an account with a second factor set up yet. Add a manager first (Settings, Managers), and take the shared password away once they have signed in." });
   await require("./auth").dropManagerPassword(req.params.slug);
@@ -237,4 +261,4 @@ router.post("/api/admin/companies/:slug/safeguards/drop-manager-password", requi
 router.get("/api/admin/scan", requireAdmin, async (_req, res) => { res.set("Cache-Control", "no-store").json(await require("./scan").status()); });
 router.post("/api/admin/scan/sweep", requireAdmin, json, async (_req, res) => { res.json({ ok: true, sweep: await require("./scan").sweep(), ...(await require("./scan").status()) }); });
 
-module.exports = { init, SCHEMA, router, get, set, mustScan, mayHoldToNetwork, addressProven, bootCheck, cleanNetwork, cleanNetworks, inNetworks, networkOf, offNetwork, networkGate, pageHeaders, OFF_NETWORK, DEFAULTS, MAX_NETWORKS, _forget: (c) => { changes++; return c ? cache.delete(c) : cache.clear(); } };
+module.exports = { init, SCHEMA, router, get, set, mustScan, mayHoldToNetwork, addressProven, bootCheck, cleanNetwork, cleanNetworks, inNetworks, networkOf, offNetwork, whereFrom, atPlant, networkGate, pageHeaders, OFF_NETWORK, NO_NETWORK, DEFAULTS, MAX_NETWORKS, _forget: (c) => { changes++; return c ? cache.delete(c) : cache.clear(); } };

@@ -41,10 +41,13 @@ t("an admin cookie refreshed 8 days ago is nobody (idle window)", see(at("admin"
 t("an admin cookie issued 31 days ago is nobody even if refreshed an hour ago (cap)", see(at("admin", "*7", 3, 31 * D, H)) === null);
 t("an admin cookie issued 29 days ago and refreshed an hour ago holds", (see(at("admin", "*7", 3, 29 * D, H)) || {}).role === "admin");
 t("the shared password's session slides the same way", see(at("admin", "*0", 0, 31 * D, H)) === null && (see(at("admin", "*0", 0, 2 * D, 2 * D)) || {}).account === 0);
-t("a floor cookie refreshed 29 days ago holds", (see(at("floor", "demo", 2, 100 * D, 29 * D)) || {}).role === "floor");
-t("a floor cookie refreshed 31 days ago is nobody", see(at("floor", "demo", 2, 100 * D, 31 * D)) === null);
+// the floor's own window since 2026-10-29 (the floor PIN): a week idle, a month at most
+t("a floor cookie refreshed 6 days ago holds", (see(at("floor", "demo", 2, 20 * D, 6 * D)) || {}).role === "floor");
+t("a floor cookie refreshed 8 days ago is nobody", see(at("floor", "demo", 2, 20 * D, 8 * D)) === null);
+t("a floor cookie issued 31 days ago is nobody even if refreshed today; 29 days holds", see(at("floor", "demo", 2, 31 * D, 0)) === null && (see(at("floor", "demo", 2, 29 * D, 0)) || {}).role === "floor");
+t("a manager cookie refreshed 29 days ago still holds", (see(at("manager", "demo", 2, 100 * D, 29 * D)) || {}).role === "manager");
 t("a manager cookie issued 179 days ago and refreshed today holds; 181 days is nobody", (see(at("manager", "demo", 2, 179 * D, 0)) || {}).role === "manager" && see(at("manager", "demo", 2, 181 * D, 0)) === null);
-t("a floor cookie refreshed 14 days ago is not due; 16 days is due", (see(at("floor", "demo", 2, 20 * D, 14 * D)) || {}).refresh === false && (see(at("floor", "demo", 2, 20 * D, 16 * D)) || {}).refresh === true);
+t("a floor cookie refreshed 3 days ago is not due; 4 days is due", (see(at("floor", "demo", 2, 20 * D, 3 * D)) || {}).refresh === false && (see(at("floor", "demo", 2, 20 * D, 4 * D)) || {}).refresh === true);
 t("a cookie issued in the future is nobody", see(at("admin", "*7", 3, -H, -H)) === null && see(at("floor", "demo", 2, -H, -H)) === null);
 t("a cookie refreshed in the future is nobody", see(at("admin", "*7", 3, H, -H)) === null);
 t("a cookie refreshed before it was issued is nobody", see(at("admin", "*7", 3, H, 2 * H)) === null);
@@ -55,7 +58,7 @@ const lv = auth.verify(legacy);
 t("an admin cookie in the old shape, 20 hours old, still holds (it would have died at 12 under the old rule)", lv && lv.account === 7 && lv.legacy === true && lv.issued === lv.refreshed, JSON.stringify(lv));
 t("and is due a refresh on the first request seen", lv && lv.refresh === true);
 t("an old-shape cookie 8 days old is nobody", auth.verify(craft("admin", "*7", 3, 8 * D)) === null);
-t("an old-shape floor cookie 29 days old holds", (auth.verify(craft("floor", "demo", 2, 29 * D)) || {}).role === "floor");
+t("an old-shape floor cookie 6 days old holds; 8 days is nobody", (auth.verify(craft("floor", "demo", 2, 6 * D)) || {}).role === "floor" && auth.verify(craft("floor", "demo", 2, 8 * D)) === null);
 // the re-issue: the same issued, refreshed = now, the same attributes
 const headers = [];
 const res = { append: (k, val) => headers.push([k, val]) };
@@ -63,7 +66,7 @@ auth.reissue({ headers: { "x-forwarded-proto": "https" } }, res, lv, NOW);
 const line = headers[0][1], again = auth.verify(line.split(";")[0].slice("sos_session=".length), NOW);
 t("the re-issued cookie is the new shape with the same issued and refreshed = now", again && again.legacy === false && again.issued === lv.issued && again.refreshed === NOW && again.account === 7 && again.gen === 3, line);
 t("under the same attributes: Path, HttpOnly, SameSite=Lax, Secure behind https, Max-Age the idle window", /; Path=\/; HttpOnly; SameSite=Lax; Max-Age=604800; Secure$/.test(line), line);
-t("Max-Age is what is left of the cap when that comes first", auth.maxAgeFor("admin", NOW - 29 * D, NOW) === Math.round(D / 1000) && auth.maxAgeFor("floor", NOW, NOW) === 720 * 3600);
+t("Max-Age is what is left of the cap when that comes first", auth.maxAgeFor("admin", NOW - 29 * D, NOW) === Math.round(D / 1000) && auth.maxAgeFor("floor", NOW, NOW) === 168 * 3600 && auth.maxAgeFor("manager", NOW, NOW) === 720 * 3600);
 t("no Secure without https", !/Secure/.test(auth.cookieHeader({ headers: {} }, "x", 10)));
 t("alive() is the rule: generation is the middleware's business, the cookie only carries it", auth.alive("admin", NOW - H, NOW - H, NOW) && !auth.alive("admin", NOW - 8 * D, NOW - 8 * D, NOW) && !auth.alive("floor", NaN, NOW, NOW));
 t("hoursVar: blank or junk is the default, 0 is the default for an idle window and 0 for a cap that allows it", auth.hoursVar("SOS_X_NOT_SET", 5) === 5 && (process.env.SOS_X_JUNK = "abc", auth.hoursVar("SOS_X_JUNK", 5) === 5) && (process.env.SOS_X_ZERO = "0", auth.hoursVar("SOS_X_ZERO", 5) === 5 && auth.hoursVar("SOS_X_ZERO", 5, { zeroOk: true }) === 0) && (process.env.SOS_X_TWO = "2", auth.hoursVar("SOS_X_TWO", 5) === 2));

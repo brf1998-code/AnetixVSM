@@ -23,8 +23,13 @@
     back.id = "sos-board-link";
     back.href = boardHref;
     back.title = "Back to your improvement board";
-    back.textContent = "\u2190 Improvement board";
-    back.style.cssText = "position:fixed!important;left:12px!important;bottom:12px!important;right:auto!important;top:auto!important;z-index:9999;background:#fff!important;color:#1f3a5f!important;border:1px solid #1f3a5f!important;border-radius:18px!important;padding:8px 12px!important;font-size:12.5px!important;font-weight:700!important;line-height:1!important;text-decoration:none!important;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,sans-serif!important;opacity:.95;";
+    // a small round icon in the corner (Brendan, 2026-10-29: the two pills got in the way of a tool's own buttons)
+    back.setAttribute("aria-label", "Improvement board");
+    back.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="11" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></svg>';
+    back.style.cssText = "position:fixed!important;left:12px!important;bottom:12px!important;right:auto!important;top:auto!important;z-index:9999;width:38px!important;height:38px!important;box-sizing:border-box!important;display:flex;align-items:center;justify-content:center;background:#fff!important;color:#1f3a5f!important;border:1px solid #c9d1db!important;border-radius:50%!important;padding:0!important;text-decoration:none!important;box-shadow:0 2px 8px rgba(0,0,0,.18);opacity:.85;";
+    // the floor sees only the Feedback button on a tool's screen (Brendan, 2026-10-29: an operator who comes in from the
+    // station's QR code has no use for the board's link). Hidden until /who says this device is not the floor's.
+    back.style.setProperty("display", "none", "important");
     const put = () => document.body.appendChild(back);
     if (document.body) put(); else document.addEventListener("DOMContentLoaded", put);
   }
@@ -33,15 +38,25 @@
   const btn = document.createElement("button");
   btn.id = "sos-fb-btn";
   btn.setAttribute("aria-label", "Something in the way? Send feedback");
-  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Feedback';
+  // Floating, it is a small round icon in the corner (Brendan, 2026-10-29: "Feedback and improvement board keep getting
+  // in the way of buttons, so they need to be small and out of the way"); whoever is signed in shows as initials on it,
+  // and their name is in its label and in the panel. Docked in the board's band on a phone it keeps its words.
+  const ICON = (px, gap) => '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="' + (gap ? "vertical-align:-2px;margin-right:6px" : "display:block") + '"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  btn.innerHTML = ICON(18, false);
   // !important so a page's own button rules (width:100%, min-height) cannot resize it
-  btn.style.cssText = "position:fixed!important;right:12px!important;bottom:12px!important;left:auto!important;top:auto!important;z-index:9999;width:auto!important;min-height:0!important;height:auto!important;margin:0!important;background:#1f3a5f!important;color:#fff!important;border:none!important;border-radius:18px!important;padding:8px 12px!important;font-size:12.5px!important;font-weight:700!important;line-height:1!important;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:system-ui,sans-serif!important;opacity:.92;";
+  btn.style.cssText = "position:fixed!important;right:12px!important;bottom:12px!important;left:auto!important;top:auto!important;z-index:9999;width:44px!important;min-height:0!important;height:44px!important;margin:0!important;box-sizing:border-box!important;display:flex!important;align-items:center;justify-content:center;background:#1f3a5f!important;color:#fff!important;border:none!important;border-radius:50%!important;padding:0!important;font-size:11px!important;font-weight:800!important;line-height:1!important;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25);font-family:system-ui,sans-serif!important;opacity:.88;";
 
   // data-dock="<selector>": on a phone the button sits in that spot on the page instead of floating over it (the board
   // docks it in its band, so it no longer covers the bottom card's buttons; the launch audit 1.9)
   const dockSel = script ? script.getAttribute("data-dock") : null;
   const FLOAT_CSS = btn.style.cssText;
   const DOCK_CSS = "position:static!important;z-index:auto;width:auto!important;min-height:36px!important;height:auto!important;margin:0!important;background:rgba(255,255,255,.14)!important;color:#fff!important;border:1px solid rgba(255,255,255,.4)!important;border-radius:18px!important;padding:8px 12px!important;font-size:13px!important;font-weight:700!important;line-height:1!important;cursor:pointer;font-family:system-ui,sans-serif!important;display:inline-flex!important;align-items:center;";
+  // room at the bottom of the page, so a page's own last buttons can always be scrolled clear of the corner icons
+  function room(on) {
+    let r = document.getElementById("sos-fb-room");
+    if (on && !r && document.body) { r = document.createElement("div"); r.id = "sos-fb-room"; r.setAttribute("aria-hidden", "true"); r.style.cssText = "height:64px;clear:both;pointer-events:none"; document.body.appendChild(r); }
+    else if (!on && r) r.remove();
+  }
   function dock() {
     const spot = dockSel && document.querySelector(dockSel);
     const narrow = Boolean(window.matchMedia && window.matchMedia("(max-width: 640px)").matches);
@@ -49,15 +64,17 @@
       if (btn.parentNode !== spot) spot.appendChild(btn);
       btn.style.cssText = DOCK_CSS;
       panel.style.top = "56px"; panel.style.bottom = "auto";
+      room(false);
     } else {
       if (btn.parentNode !== document.body) document.body.appendChild(btn);
       btn.style.cssText = FLOAT_CSS;
-      panel.style.top = ""; panel.style.bottom = "52px";
+      panel.style.top = ""; panel.style.bottom = "64px";
+      room(true);
     }
   }
 
   const panel = document.createElement("div");
-  panel.style.cssText = "position:fixed;right:12px;bottom:52px;z-index:9999;background:#fff;border:1px solid #d5dbe3;border-radius:10px;padding:14px;width:300px;max-width:calc(100vw - 24px);display:none;box-shadow:0 6px 20px rgba(0,0,0,.2);font-family:system-ui,sans-serif;";
+  panel.style.cssText = "position:fixed;right:12px;bottom:64px;z-index:9999;background:#fff;border:1px solid #d5dbe3;border-radius:10px;padding:14px;width:300px;max-width:calc(100vw - 24px);display:none;box-shadow:0 6px 20px rgba(0,0,0,.2);font-family:system-ui,sans-serif;";
   // On the platform's own pages (the board, settings, the admin page) the feedback is about the software itself,
   // so it goes to Anetix and not to the manager's build loop; say so before the person types (Brendan, 2026-09-24).
   const toAnetix = !mod || mod === "platform";
@@ -383,14 +400,20 @@
   const who = { people: [], me: null, listeners: [] };
   const peopleApi = (p, opts) => fetch("/api/c/" + encodeURIComponent(company) + "/who" + p, Object.assign({ credentials: "same-origin" }, opts || {}));
   async function loadWho() {
-    try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; who.account = j.account || null; who.photos = j.photos !== false; drawExtras(); } } catch (e) { /* the list is a nicety; the button works without it */ }
+    try { const r = await peopleApi("", { cache: "no-store" }); if (r.ok) { const j = await r.json(); who.people = j.people || []; who.me = j.me || null; who.account = j.account || null; who.photos = j.photos !== false; who.device = j.device || null; drawExtras();
+      const back = document.getElementById("sos-board-link"); if (back && who.device && who.device !== "floor") back.style.setProperty("display", "flex", "important"); } } catch (e) { /* the list is a nicety; the button works without it */ }
     renderWho(); who.listeners.forEach((f) => { try { f(who.me); } catch (e) {} });
   }
-  const BTN_ICON = btn.innerHTML;
+  const initials = (name) => String(name || "").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("") || "?";
   function renderWho() {
-    // the button itself says who is signed in (a name can stay on a shared tablet for days now, so it is never hidden)
+    // the button itself says who is signed in (a name can stay on a shared tablet for days now, so it is never hidden):
+    // as initials on the round icon, in full in its label, and in words when it is docked in the band
     const shown = who.me || who.account;
-    btn.innerHTML = BTN_ICON + (shown ? ' <span id="sos-fb-me" style="opacity:.85;font-weight:600">\u00b7 ' + esc(shown.name) + "</span>" : "");
+    const docked = btn.style.position === "static";
+    btn.setAttribute("aria-label", "Something in the way? Send feedback" + (shown ? " (sending as " + shown.name + ")" : ""));
+    btn.title = "Feedback" + (shown ? ": sending as " + shown.name : "");
+    btn.innerHTML = docked ? ICON(14, true) + "Feedback" + (shown ? ' <span id="sos-fb-me" style="opacity:.85;font-weight:600">\u00b7 ' + esc(shown.name) + "</span>" : "")
+      : ICON(18, false) + (shown ? '<span id="sos-fb-me" style="position:absolute;top:-4px;left:-6px;min-width:20px;height:20px;padding:0 4px;box-sizing:border-box;border-radius:10px;background:#fff;color:#1f3a5f;border:1px solid #1f3a5f;font:800 10px/18px system-ui,sans-serif;text-align:center">' + esc(initials(shown.name)) + "</span>" : "");
     const el = panel.querySelector("#fbw-who"), nameEl = panel.querySelector("#fbw-name"); if (!el) return;
     if (who.me) { el.style.display = "block"; nameEl.style.display = "none"; el.innerHTML = "Sending as <b>" + esc(who.me.name) + "</b> · <a href=\"#\" id=\"fbw-switch\" style=\"color:#1f3a5f\">not you?</a>"; }
     // a named account (signed in with a code): the server files under its name, so there is nothing to type
@@ -587,13 +610,14 @@
   }
   // ---- propose on arrival (src/arrival.js): point at it, add a photo, and the proposer's one question --------
   // What the person points at and a photo ride along with the words and go to the proposer, so "this number"
-  // and "that button" mean something. Module pages only.
+  // and "that button" mean something. Module pages, and since 2026-10-29 the pages that send to Anetix too (Taylor's
+  // #287), where they go to the Requests tab.
   const extra = { element: null, photo: null };
   const onModule = Boolean(mod && mod !== "platform");
   const linkBtn = "background:none!important;border:1px solid #d5dbe3!important;border-radius:14px!important;padding:4px 10px!important;margin:0 6px 0 0!important;width:auto!important;min-height:0!important;font:600 12.5px system-ui,sans-serif!important;color:#1f3a5f!important;cursor:pointer";
   function drawExtras() {
     const el = panel.querySelector("#fbw-extras"); if (!el) return;
-    if (!onModule) { el.style.display = "none"; return; }
+    if (!onModule && !company) { el.style.display = "none"; return; }
     el.style.display = "block";
     el.innerHTML =
       (extra.element ? "<span id=\"fbw-pointed\">Pointing at: <b>" + esc(String(extra.element.text || extra.element.label || "<" + extra.element.tag + ">").slice(0, 40)) + "</b> <a href=\"#\" id=\"fbw-unpoint\" style=\"color:#b3261e\">remove</a></span><br>" : "") +
@@ -739,7 +763,7 @@
       if (askCard) { askCard.remove(); askCard = null; }
       if (!open) {
         askCard = document.createElement("button"); askCard.id = "sos-ask-pill"; askCard.textContent = "Did it fix it?";
-        askCard.style.cssText = "position:fixed!important;right:132px!important;bottom:12px!important;left:auto!important;top:auto!important;z-index:9998;width:auto!important;min-height:0!important;height:auto!important;margin:0!important;background:#c2620a!important;color:#fff!important;border:none!important;border-radius:20px!important;padding:9px 14px!important;font:700 13px system-ui,sans-serif!important;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25)";
+        askCard.style.cssText = "position:fixed!important;right:66px!important;bottom:12px!important;left:auto!important;top:auto!important;z-index:9998;width:auto!important;min-height:0!important;height:auto!important;margin:0!important;background:#c2620a!important;color:#fff!important;border:none!important;border-radius:20px!important;padding:9px 14px!important;font:700 13px system-ui,sans-serif!important;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.25)";
         askCard.onclick = () => showAsk(item, true);
         document.body.appendChild(askCard); return;
       }
@@ -790,8 +814,9 @@
     document.body.appendChild(panel);
     if (dockSel) {
       dock();
-      try { window.matchMedia("(max-width: 640px)").addEventListener("change", dock); } catch (e) { /* an old browser: the first choice stays */ }
-    }
+      try { window.matchMedia("(max-width: 640px)").addEventListener("change", () => { dock(); renderWho(); }); } catch (e) { /* an old browser: the first choice stays */ }
+    } else room(true);
+    renderWho();
     talkInto(panel.querySelector("#fbw-msg"));
     watchVersion();
     drawExtras();

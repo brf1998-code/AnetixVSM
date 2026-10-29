@@ -99,7 +99,7 @@ const R = runner(), t = R.t;
   t("the question only comes back for the one request nobody has spoken about", askable.length === 1 && askable[0] === B5 && (await tab.locator("#sos-ask, #sos-ask-pill").count()) === 1, askable);
   // open the feedback panel, then My requests
   await tab.evaluate(() => { const c = document.getElementById("sos-ask"); if (c) c.remove(); });
-  await tab.locator("button", { hasText: /Feedback/i }).first().click();
+  await tab.locator("#sos-fb-btn").click();   // a round icon since 2026-10-29 (#292): its words are its label
   await tab.waitForSelector("#fbw-mine-open");
   const thanked = (await floor.get("/api/c/demo/who/requests")).json.requests.filter((x) => x.state === "thanked").length;   // 3 on a fresh database; more after closeout.js
   t("a quiet green badge says what was marked done, beside the amber one for what is still to check", thanked >= 3 && new RegExp(`${thanked} done`).test(await tab.locator("#fbw-thanked").innerText()) && /1 to check/.test(await tab.locator("#fbw-mine").innerText()), await tab.locator("#fbw-mine").innerText());

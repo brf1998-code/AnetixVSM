@@ -21,7 +21,7 @@
 // THE ROLLOVER, one function that is safe to run twice (docs/PAID-SITES.md's table). Under the lock: the order is
 // activated and the site subscribed (standing good, its subscription, its period, the band and price it signed, its
 // learning choice, converted_at). Then, each step marked done on sites.rollover so a restart finishes the rest: the
-// sample data comes out of every tool (if Brendan left that ticked), the floor gets its own password (handed to the
+// sample data comes out of every tool (if Brendan left that ticked), the floor gets its own floor PIN (handed to the
 // manager once, encrypted until then), the DEMO strip comes off and the company takes the site's name. From then on:
 // no credit gate (the fair-use line instead, src/fairuse.js), no company cap, the instance cap never refuses it, no
 // top-ups (one that lands is refunded), the Demos tab shows the demo period only unless the site opted in to learning.
@@ -204,7 +204,7 @@ async function rolloverPlan(slug, o, { clear_sample = true } = {}) {
     byHand ? "It is switched on by hand already, so the floor keeps the password it has and the sample data is already out. This takes the payment." : null,
     `The DEMO strip and the credit line come off the board, and new AI work has no credit to run out of: the fair-use line is ${usd(fee * book.fair_use_share)} a month.`,
     f.site_name && f.site_name !== co.name ? `The company shows as ${f.site_name} instead of ${co.name} (its address stays /c/${co.slug}/).` : null,
-    byHand ? null : "The floor gets its own password, shown once to the manager on the board.",
+    byHand ? null : "The floor gets its own floor PIN, shown once to the manager on the board. A PIN signs in only from the plant's network: put that on the company's Safeguards (More) if it is not there yet.",
     fills.length ? (clear_sample ? `The sample data comes out of ${fills.length} tool${fills.length === 1 ? "" : "s"} (${fills.join(", ")}).` : `The sample data stays in ${fills.join(", ")}, as you chose.`) : "No tool has sample data in it.",
     pilot ? `A pilot: ${sites.pilotLine({ monthly_usd: band.monthly_usd, months: pilot.months })}. ${usd(fee)} is charged now${pilot.months > 1 ? `, and ${usd(fee)} on the same day of ${pilot.months === 2 ? "next month" : `each of the next ${pilot.months - 1} months`}` : ""}. Stripe ends it on its own ${pilot.months} month${pilot.months === 1 ? "" : "s"} from today and nothing is charged after that. On that day the site goes back to a demo and the floor's sign-in closes, unless you have agreed what comes next and activated it.`
       : amt.plan === "tools" ? `${band.name} site on price book ${o.price_book}: ${usd(band.per_tool_usd)} a tool, ${amt.tools} live today, so ${usd(fee)} is charged now. From each next bill the fee follows the tools live on the floor, never above the ${usd(band.monthly_usd)} cap. Both prices are locked while the subscription runs.`
@@ -468,7 +468,7 @@ async function rolloverStepsLocked(slug) {
     await mark("sample_at");
   }
   if (!ro.floor_at) {
-    const floor = require("./auth").generatePassword();
+    const floor = require("./auth").generateFloorPin();   // the floor PIN (2026-10-29): it signs in only from the plant's network list
     await require("./auth").setPasswords(slug, { floor });
     let enc = null;
     try { enc = require("./connections").encrypt({ floor, made_at: new Date().toISOString() }); } catch (e) { console.error(`[activate] ${slug}: the floor password cannot be kept for the manager (${e.message}); reset it from the admin page`); }
@@ -716,19 +716,19 @@ async function forBoard(co, role) {
 }
 // The floor's first password: handed to a manager once, then gone (a new one is Settings' or the admin's to make).
 async function collectWelcome(req, slug) {
-  if (req.sosRole !== "manager") throw fail(403, "the site's manager collects the floor's password");
+  if (req.sosRole !== "manager") throw fail(403, "the site's manager collects the floor PIN");
   slug = String(slug || "").toLowerCase();
   const row = (await q(`WITH old AS (SELECT welcome_enc FROM platform.sites WHERE company=$1 AND welcome_enc IS NOT NULL FOR UPDATE)
                         UPDATE platform.sites s SET welcome_enc=NULL FROM old WHERE s.company=$1 RETURNING old.welcome_enc`, [slug])).rows[0];
-  if (!row) throw fail(404, "The floor's password was shown once already. Make a new one from the admin page if it was not written down.");
+  if (!row) throw fail(404, "The floor PIN was shown once already. Ask Anetix for a new one if it was not written down.");
   let v = null; try { v = require("./connections").decrypt(row.welcome_enc); } catch (e) { v = null; }
-  if (!v || !v.floor) throw fail(500, "the floor's password could not be read back; make a new one from the admin page");
+  if (!v || !v.floor) throw fail(500, "the floor PIN could not be read back; ask Anetix for a new one");
   // the floor's password may have changed another way since the rollover set it (the admin's New password on the company
   // card, a restore): a password that no longer opens the floor is never shown as if it did
   const access = await require("./auth").accessRow(slug);
   if (!access || !access.floor_hash || !require("./auth").checkHash(v.floor, access.floor_hash)) {
     await logEvent("site_welcome_stale", slug, { by: req.sosAccount ? req.sosAccount.login : "manager" });
-    throw fail(410, "The floor's password was changed since it was made, so there is nothing to show. Ask Anetix for the new one, or make one on the admin page.", { code: "stale" });
+    throw fail(410, "The floor PIN was changed since it was made, so there is nothing to show. Ask Anetix for the new one.", { code: "stale" });
   }
   await logEvent("site_welcome_collected", slug, { by: req.sosAccount ? req.sosAccount.login : "manager" });
   return { floor: v.floor, board: `/c/${slug}/` };

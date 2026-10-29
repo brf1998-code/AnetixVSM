@@ -345,8 +345,8 @@ function pinMessage({ name, email, pin, days, url, starters = [] }) {
         + `2. To build something of your own, press "+ New tool" and describe something your floor tracks on a whiteboard, paper or a spreadsheet.\n`
       : `A quick tour, with AI credit from us:\n`
         + `1. Press "+ New tool" and describe something your floor tracks on a whiteboard, paper or a spreadsheet. Answer its questions and press "Approve build".\n`
-        + `2. Press "Sample data" on the new tool to fill it with a made-up week of work.\n`)
-    + `3. Be the operator: open the tool, press "Feedback" and ask for a change in plain words. You can talk instead of typing, or add a photo or a spreadsheet.\n`
+        + `2. Press "Settings" beside the new tool, then "Sample data", to fill it with a made-up week of work.\n`)
+    + `3. Be the operator: open the tool, press the round "Feedback" button in the corner and ask for a change in plain words. You can talk instead of typing, or add a photo or a spreadsheet.\n`
     + `4. Be the manager: the request comes back to the board ready to build, or with a question if it needs one. Press "Approve build", try the preview, then "Make it live". "Roll back" undoes it.\n\n`
     + `To come back later, go to ${url} and choose Sign in, with the same email and password.\n\n`
     + `If anything gets in the way, write to ${PIN_HELP} or reply here.`;
@@ -423,7 +423,7 @@ async function createCompany({ pin, name, contact, email, ref, paid_usd, credit_
     if (!agreements.sameTerms(agreed.version, agreed.sha)) throw Object.assign(fail(409, "The Terms of Service changed while this page was open. Look at them again and tick the box."), { code: "terms_changed" });
   }
   let slug = await freeSlug(name);
-  const floor = demo ? null : auth.generatePassword();   // a personal demo is one person on one manager account: no floor
+  const floor = demo ? null : auth.generateFloorPin();   // a personal demo is one person on one manager account: no floor; a site gets a floor PIN (2026-10-29)
   const mgrPassword = chosen ? String(password) : require("./accounts").makePassword();
   // the manager's account: the checkout email as the login; a person who already has an account (a second company
   // on the same email) gets "<local>+<slug>@<domain>", so a payment that went through never fails here

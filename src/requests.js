@@ -80,13 +80,17 @@ async function list(status = "open") {
   const rows = (await q(
     `SELECT f.id, f.company, c.name AS company_name, f.page, f.screen, f.message, f.name, f.person_id, f.status, f.outcome, f.recurrence, f.created_at, f.updated_at,
             f.anetix_stage, f.anetix_note, f.anetix_at, f.anetix_by, f.anetix_kind, f.about_module, f.about_system, f.about_kind, f.triage_note,
-            m.title AS about_title,
+            m.title AS about_title, f.element,
+            (SELECT a.id FROM platform.attachments a WHERE a.feedback_id=f.id ORDER BY a.id LIMIT 1) AS photo_id,
             (SELECT array_agg(a.kind ORDER BY a.kind) FROM platform.connection_allowances a WHERE a.company=f.company AND a.module=f.about_module) AS turned_on
        FROM platform.feedback f LEFT JOIN platform.companies c ON c.slug=f.company
        LEFT JOIN platform.modules m ON m.company=f.company AND m.name=f.about_module
       WHERE f.module='platform' AND f.kind='feedback' AND ${where} ORDER BY f.id DESC LIMIT 300`)).rows;
   const counts = (await q("SELECT count(*) FILTER (WHERE status='new')::int AS open, count(*) FILTER (WHERE status='new' AND anetix_stage IS NULL)::int AS untouched FROM platform.feedback WHERE module='platform' AND kind='feedback'")).rows[0];
-  return { requests: rows.map((r) => ({ ...r, turned_on: r.turned_on || [], ...stateOf(r), stage: STAGES.includes(r.anetix_stage) ? r.anetix_stage : "received" })), open: counts.open, untouched: counts.untouched };
+  // pointed: what the person pointed at on the screen, in words (the element's text or label, its tag); the whole element
+  // and the photo's id stay for the admin page, which shows them
+  const pointedOf = (e) => (e && (e.text || e.label || e.tag) ? { text: e.text || e.label || null, tag: e.tag || null } : null);
+  return { requests: rows.map((r) => ({ ...r, pointed: pointedOf(r.element), turned_on: r.turned_on || [], ...stateOf(r), stage: STAGES.includes(r.anetix_stage) ? r.anetix_stage : "received" })), open: counts.open, untouched: counts.untouched };
 }
 
 const IG_KINDS = ["erp", "printer", "web", "machine", "scale", "other"];

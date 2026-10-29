@@ -4020,3 +4020,162 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Tests.* `scripts/test-pricing.js` (66), `scripts/e2e/pricing.js` (82), `scripts/e2e/switchon.js` (29), www
     `e2e-activate.js` (74), `e2e-golive.js` (56), `test-www.js` (152). www `e2e.js` has 9 failures that are there
     without this change too (the wall and refill cases, likely the 10/22 front page).
+- **The floor PIN: the floor signs in with a PIN, only on the plant's wifi (2026-10-29)**
+  - *Why.* On 2026-10-28 at Chelsea Clock a manager added a person on the People page, and a phone that opened the
+    board's link typed that person's new PIN into the floor's password box six times (Railway's log: 16:11 to 16:13
+    UTC) and was told "That password did not match." The login took only the company's shared floor password; a
+    person's PIN only names who is at a device that is already in, and nothing on the screen said so. The page also
+    threw away the server's own words: an off-network refusal read "did not match" too. Brendan's decisions the next
+    morning (the Requests tab, #291, and the build brief `claude/build-brief-chelsea-floor-round-2026-10-29.md` in the
+    Anetix project): drop the shared floor password, the floor signs in with a PIN; only on the plant's wifi; a week
+    on a device; a site starts on one common floor PIN and moves to a PIN per person later; managers and admins use
+    their own account and a second factor.
+  - *What a floor PIN is.* 6 to 8 digits (`auth.validFloorPin`); one the platform makes up is 6 and never a run or a
+    repeat (`auth.generateFloorPin`, `auth.guessable`). `auth.setPasswords` takes nothing else for the floor and
+    refuses a guessable one in words; `platform.company_access.floor_pin` says the floor's hash is a PIN. Every place
+    that makes a floor credential makes a PIN: a company by hand (`POST /api/admin/companies`), Floor PIN and
+    passwords on the company card (`POST /api/admin/companies/:slug/access`, `floor_pin`, or `generate: "floor"` for a
+    PIN alone, leaving the manager password as it is), the rollover when a site goes live (`src/activate.js`, the
+    welcome is "Show the floor PIN") and a site from anetix.ai (`src/selfserve.js`). A floor password from before
+    PINs (`floor_pin` false) keeps working as it did, with an amber line on the card, until the admin makes a PIN.
+  - *Only from the plant.* A floor PIN signs in only from the company's network list (`src/safeguards.js`,
+    `whereFrom`): off the list it is the usual off-network refusal; with NO list it is refused as well
+    (`floor_no_network`, `safeguards.NO_NETWORK`: "this plant's network is not set up yet"), in the same words
+    whether the PIN was right or wrong, and a floor device of such a company is refused on every request (the
+    gate's own page says the plant is not set up). The company card goes red ("floor PIN, no plant network") until
+    the list is set. A shared manager password and a named account are untouched by it.
+  - *Counted per device and per plant.* A plant is one address, so the per-address limit (10 in 15 minutes) would
+    have locked every device on the floor out between them. A sign-in to a company from its own network list skips it
+    and is counted per device instead (`sos_fdev`, a cookie of its own on `/login`: `SOS_FLOOR_DEVICE_FAILS` 5 wrong
+    and that device waits `SOS_FLOOR_DEVICE_LOCK_MIN` 5 minutes) and per plant (`SOS_FLOOR_COMPANY_FAILS` 40 wrong in
+    `SOS_LOGIN_WINDOW_MIN` and the plant's shared sign-in pauses for the rest of the window, one phone alert, the
+    `floor_pin_paused` event). Devices already in keep working through a pause. A guesser who throws the cookie away
+    meets the plant's count, and has to be on the plant's wifi to try at all.
+  - *A week.* The floor's session has its own window, the person cookie's: `SOS_FLOOR_IDLE_HOURS` 168 sliding,
+    `SOS_FLOOR_CAP_HOURS` 720 (`auth.windowFor`). A manager's stays 30 days idle and 180 at most.
+  - *The login page.* `/login/mode` answers `pin` for a company whose floor signs in with a PIN, and the page shows a
+    number pad, "Signing in to <company>. Type the floor PIN." and one line that says the person's own PIN goes in
+    after, when they tap their name. Every refusal carries a `code`, and the page says the server's own reason for
+    the ones that are not a plain mismatch (off the wifi, plant not set up, a wait). A wrong PIN says "Use the floor
+    PIN your manager gave you. Your own PIN goes in later, when you tap your name."; a PIN typed where a floor
+    password goes, or into the account form, is told apart (`pin_in_password_box`, `pin_in_account_form`). The
+    People page's How it works says which PIN is which.
+  - *Not yet.* A person's own PIN signing a device in by itself (the per-person stage), and the module code being
+    told who is at the device (`ctx`), come with Chelsea's move to per-person PINs. A company made by hand still gets a
+    shared manager password beside the floor PIN; Take it away (Safeguards) once a manager account works.
+  - *Tests.* `scripts/test-floorpin.js` (23: what a PIN is, the made-up ones, the windows, the counts),
+    `scripts/e2e/floorpin.js` (the whole path above, and in a browser the number pad, the off-network words instead
+    of "did not match", and the 2026-10-28 case), in `run-all.sh`.
+- **A tool's line is its name, Screens and Settings; a QR code for every screen (2026-10-29)**
+  - *Why.* Brendan, 2026-10-29, from Chelsea Clock's requests #291 and #294: "there needs to be a pathway to get a QR
+    code of every single tool", printable and at a size picked per station, each opening one screen (the MO Board's
+    landing screen is for managers, the floor needs its own); and a tool's line on the board had too many options
+    ("Inventory Request v3 Open live · Screens · Diagrams · Versions · Ask"), so it should be the name, Screens and
+    Settings, with a popout for the rest. Operators should see only Feedback on a tool's screen.
+  - *The line.* `public/index.html` render: a tool is its name (the filter toggle when there are several), Screens and
+    Settings; "being built" until it has a version. Settings (`toolMenu`) is a popout in the body, outside the band so
+    the 4 second refresh never redraws it away, with the version, Open live, the waiting preview (amber, and a dot on
+    Settings while one waits), the test floor, Diagrams, Versions, Ask about this tool and Sample data, each only where
+    it was shown before. A click elsewhere or Escape closes it.
+  - *QR codes.* Screens' popout has a QR codes tab (`openCodes`): every screen of the live tool, floor screens first,
+    each with its code, a size (2, 3, 4.5 or 7 inches), Print, Open and Copy link. `GET /api/c/:slug/qr.svg?path=`
+    draws a code for one screen, and only a screen of that company's own tools (`/c/<slug>/m/<tool>/...`, no climbing,
+    no second slash, 200 characters at most; anything else is a 400). A device that is not signed in goes to the
+    floor PIN and lands on that screen after (the login page's `next`). A screen whose route has a `:param` (one
+    station, one work center) gets a code per item from the tool's own list when the manifest names one (`"each"`),
+    else a box to type which one, starting from the value the page check uses. Print opens a sheet with each code at
+    its size, the company and tool over it, the station big, and one line on how to use it.
+  - *Who a screen is for.* `principles/MODULE-CONTRACT.md` and the build brief (`src/modulebuild.js`) now ask for
+    `"for": "floor"` or `"office"` on every screen in module.json, and `"each"` (a GET of the tool's own `/api/` that
+    lists the items) on a one-of-many floor screen. `pageload.screenPaths` passes them through checked (the two words
+    only, and an address of the tool's own API only) and the board hands them to the page. Tools already live carry
+    no tag until a build adds it; their screens are listed all the same, untagged ones between floor and office.
+  - *The floor sees Feedback only.* `/api/c/:slug/who` says whether the device is the floor's (`device`), and the
+    widget keeps the "Improvement board" link on a tool's screen hidden for the floor; a manager still gets it.
+  - *Tests.* `scripts/e2e/screens-qr.js` (25: the address check, the route and tag on the board, the manifest's tag
+    and list checked, /who, and in a browser the line, the popout, the codes, a station's box changing its code, a
+    one-code and an all-codes print sheet at their sizes, a phone), `scripts/e2e/board-browser.js` (the floor without
+    the board link, a manager with it), and the line's other suites moved to the popout (`assist-browser.js`,
+    `firstrun-browser.js`, `testfloor-browser.js`).
+- **Small fixes from Chelsea's first weeks: round corner icons, the company's own icon, pointing at something for Anetix, several new tool drafts (2026-10-29)**
+  - *#292, "Feedback and improvement board keep getting in the way of buttons".* `public/assets/feedback-widget.js`:
+    floating, the Feedback button is a 44 px round icon (whoever is signed in shows as initials on it, and in full in
+    its label, its title and the panel); docked in the board's band on a phone it keeps its words. The board link on a
+    tool's screen is a 38 px round icon (managers only since the same day). Every page with the floating button gets
+    64 px of room at its bottom (`#sos-fb-room`), so a page's own last buttons can be scrolled clear of the corners.
+  - *#290, "every chelsea tool window the anetix logo pops up on the tab header, it should be more discreetly
+    anetix".* A company with no icon of its own showed the Anetix mark in its color on every tab. Now
+    `/api/c/:slug/icon` and `/icon.png` answer its plain mark (`src/brandmark.js`): its initials on its brand color
+    (navy without one), an SVG for the tab and a PNG drawn without any dependency for iOS. Settings has Your logo: a
+    manager uploads a PNG or JPEG of up to 512 KB (`POST /api/c/:slug/brand/icon`; checked by its first bytes, never
+    an SVG, scanned by `scan.check` before it is kept), which a rebuilt brand guide never replaces, and Take it off
+    goes back to the website's icon or the initials (`/brand/icon/clear`; both on the record). The icon routes answer
+    with `nosniff` and a sandboxing policy. The company's own pages (Settings, People, Connections, Diagrams, the
+    enrollment page) name its icon in their HTML and drop "Anetix · " from their title (`server.js companyPage`),
+    and the login page leads with the company's name when it knows it (`/login/mode` answers `name`), with Anetix
+    small at the bottom.
+  - *#287, "the ability to point at something when giving feedback to Anetix".* Point at it and Add a photo were on
+    a tool's screens only. Now they are on the pages that send to Anetix too (the board, Settings, /admin): the
+    element is kept on the request (`arrival.cleanElement`) and a photo follows the company's photo switch and the
+    data wall like any other. The Requests tab shows "Pointing at: <the words>" with where it was, and "See the
+    photo". The admin MCP's `list_requests_to_anetix` passes what was pointed at in words and `has_photo`, never the
+    element's markup or the photo.
+  - *#288, "I want the ability to work on multiple new tool drafts at the same time".* `intake.create` used to reopen
+    the company's one unfinished request (the launch audit 1.5: every tap on New tool started an empty one). Now a
+    tap starts a new draft beside the others, each its own card on the board, and only a draft that is still blank
+    (nothing answered, not named) is opened again (`intake.blankFor`). A connected app (the admin MCP) still keeps to
+    one: it carries on with Anetix's own unfinished request and refuses or takes over the plant's as before.
+  - *Tests.* `scripts/e2e/smallfixes.js` (24: the initials icon and its PNG, the headers, the upload refused as an
+    SVG, over 512 KB and as a fake PNG, a PNG and a JPEG taken, Settings and the board's icon address, Take it off,
+    the record, the company pages' HTML, the login page's name, a pointed request to Anetix with a photo on the
+    Requests tab and in the MCP's words, and in a browser the round button with room below it, the logo card, Point
+    at it on a settings page), `scripts/e2e/phase1.js` (several drafts, a blank one opened again),
+    `scripts/e2e/board-browser.js` (the round icons and the room on a tool's screen).
+- **Archiving a tool, and deleting one for good (2026-10-29)**
+  - *Why.* Taylor's request #286, "I want the ability to delete a module from the admin view of a company"; Brendan's
+    decision: "it should be archive to where it doesn't show up on the main screen just under settings. Then from the
+    admin side we can actually delete it."
+  - *Archive (a manager).* The tool's Settings popout on the board has Archive this tool
+    (`POST /api/c/:slug/modules/:name/archive`, a fresh PIN for a signed-in name). `platform.modules.archived_at`
+    takes it off the board (the band, its cards, its screens and runs), and its screens, preview and test floor
+    answer 410, "This tool is archived" (a page in words, JSON for a call; `registry.attach` asks `archive.isArchived`,
+    a set kept in memory). Refused while one of its builds is open. When another live tool reads it (`ctx.peer` in
+    its routes.js), the manager is told which and asked again (`confirm: true`); the reader keeps reading its data.
+    Settings lists Archived tools with Bring it back (`/unarchive`). Nothing is lost by archiving.
+  - *Delete for good (Anetix).* The admin's company card marks an archived tool and offers Delete for good
+    (`POST /api/admin/companies/:slug/modules/:name/delete`): the tool's name typed and the admin's step
+    (`auth.checkAdminCode`). Only an archived tool, and never the library's own copy in the company it seeds (the
+    demo company gets the library's tools again at every start, `registry.loadAll`). Its live, preview and test
+    floor schemas and every snapshot are dropped, its versions, docs, batches, connections, uploads, allowances,
+    reviews, diagrams, data requests, ERP cache, print jobs, sample fills and retired checks go
+    (`archive.GONE_WITH_IT`), its mounts and processes are let go, and its open requests are closed with "The tool was
+    deleted." Its requests, builds, AI spend, library copies and the record stay. The name is free again after.
+  - *Not changed.* A paying site's fee counts the tools live on its floor (`src/modprice.js`); an archived tool still
+    counts until it is deleted. The tool library, Ask Anetix and the MCPs still see an archived tool.
+  - *Tests.* `scripts/e2e/archive.js` (33), in `run-all.sh`.
+- **Sign in with Google or Microsoft (2026-10-29)**
+  - *Why.* Brendan's request #301, "We need to have auth login, so people can login from their google or Microsoft
+    accounts or other, that will be much easier for most people"; his decision: for managers, admins and a demo's
+    sign-up, as a second route beside the email, password and second factor; never the floor.
+  - *Connected, never matched by email.* `src/oidc.js`. A named account with a full session presses Connect Google
+    or Connect Microsoft (Settings, Your sign-in; the Accounts tab of /admin, `public/assets/identities.js`) and signs
+    in there once; the provider's own id (Google's `sub`, Microsoft's tenant and object id) is kept on the account in
+    `platform.account_identities` (it travels with the account in a backup). From then on Sign in with Google or
+    Microsoft on the account form is the whole sign-in, second factor included. An email claim is never used to find
+    an account: it is not always one the person proved (a Microsoft tenant's admin sets it), and matching on it is how
+    accounts elsewhere were taken over. One provider account connects to one Anetix account.
+  - *The flow.* Authorization code with PKCE (S256); state, nonce and verifier in one signed HttpOnly cookie on
+    `/login/oidc` for ten minutes. The ID token comes straight from the token endpoint over TLS with the client secret,
+    so its signature is not checked (OpenID Connect Core 3.1.3.7); its issuer (Microsoft: the token's own tenant, and
+    the one tenant or no personal accounts when `SOS_MS_TENANT` says so), audience (and `azp` with several), expiry,
+    issue time and nonce are. Failures count against the per-address sign-in limit. A manager lands on the page they
+    were sent from inside their company, else their board; an admin on the page asked for, else /admin. The login
+    page says what happened in words (`?oidc=`: not connected yet and how to, cancelled, took too long, switched off).
+  - *Switching it on.* Off until a provider's client id and secret are set and `SOS_PUBLIC_URL` names the instance:
+    `SOS_GOOGLE_CLIENT_ID`, `SOS_GOOGLE_CLIENT_SECRET`; `SOS_MS_CLIENT_ID`, `SOS_MS_CLIENT_SECRET`, `SOS_MS_TENANT`
+    (`common` by default). The redirect addresses to register: `https://app.anetix.ai/login/oidc/google/callback` and
+    `https://app.anetix.ai/login/oidc/microsoft/callback`. `SOS_OIDC_STUB` points both at a stand-in for the tests and
+    is refused on a hosted instance.
+  - *Not yet.* A demo's sign-up on anetix.ai with Google or Microsoft is the www service's (its own repo); the account
+    it makes would carry the identity the same way.
+  - *Tests.* `scripts/e2e/oidc.js` (28, against a stand-in for both providers it serves itself), in `run-all.sh`.

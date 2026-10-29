@@ -36,7 +36,7 @@ const PLATFORM_TABLES = [
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under
 // SOS_CONNECTION_KEY, recovery codes as hashes. Restored only when the file carries them (see restore()).
-const ACCOUNT_TABLES = ["accounts", "account_factors", "account_recovery_codes", "account_passkeys"];   // passkeys (src/passkeys.js) travel with the account they sign in to
+const ACCOUNT_TABLES = ["accounts", "account_factors", "account_recovery_codes", "account_passkeys", "account_identities"];   // passkeys (src/passkeys.js) and connected Google or Microsoft identities (src/oidc.js) travel with the account they sign in to
 // Never in the file: who tried to sign in from where. It is a log of this instance, and it names addresses.
 const NOT_IN_BACKUP = ["auth_events", "admin_devices", "pin_refusals", "manager_invites", "signin_tickets",   // (manager_invites, src/managers.js: a restore ends pending invitations, and they are made again)
      // the sign-in log, the trusted devices, the refused pins and the one-time sign-ins from demo setup are this instance's, never a file's

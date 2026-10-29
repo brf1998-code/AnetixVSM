@@ -30,7 +30,9 @@ const shot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursiv
   await page.goto(`${BASE}/c/brow/`);
   await page.waitForSelector("#ax-btn", { timeout: 15000 });
   t("the band has an Ask Anetix button for a manager", await page.isVisible("#ax-btn"));
-  t("each tool on the band has an Ask link", (await page.locator(".modcard button.vbtn", { hasText: "Ask" }).count()) === 2);
+  // since 2026-10-29 a tool's line is its name, Screens and Settings; Ask about this tool is in the Settings popout
+  const askIn = async (pg) => { let n = 0; const cards = pg.locator(".modcard"); for (let i = 0; i < await cards.count(); i++) { await cards.nth(i).locator("button.vbtn", { hasText: "Settings" }).click(); await pg.waitForSelector("#tmenu"); n += await pg.locator("#tmenu button", { hasText: "Ask about this tool" }).count(); await pg.keyboard.press("Escape"); } return n; };
+  t("each tool's Settings popout has an Ask about this tool", (await askIn(page)) === 2);
   await page.click("#ax-btn");
   await page.waitForSelector(".ax:not([hidden]) .ax-chips button");
   const chips = await page.locator(".ax-chips button").allInnerTexts();
@@ -134,7 +136,7 @@ const shot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursiv
   await fp.waitForSelector("#col-new", { timeout: 15000 });
   await fp.waitForTimeout(1500);
   t("the floor sees no Ask Anetix button", (await fp.locator("#ax-btn").count()) === 0);
-  t("and no Ask link on the tools", (await fp.locator(".modcard button.vbtn", { hasText: "Ask" }).count()) === 0);
+  t("and no Ask in the tools' Settings popouts", (await askIn(fp)) === 0);
 
   await browser.close();
   await pool.end();
