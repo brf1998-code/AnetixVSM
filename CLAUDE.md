@@ -8,8 +8,10 @@ history kept) to rebuild the product around two primary views: the **value strea
   never to `SymbioticOS`.
 - Live: https://anetixvsm-production.up.railway.app, a separate Railway project, `anetix-vsm-dev` (project
   54a3c151-f964-4130-9d33-36304c2c3a7b, service `AnetixVSM` 2ba29b72-7194-452b-9143-b1371f5e87b7, its own Postgres,
-  environment production 80ccbdd8-67e8-4473-8cf3-509646aeaf31). No WWW_INTERNAL_URL, STRIPE, NTFY, OIDC or edge
-  secret on purpose: the [modprice] "channel to anetix.ai is not set up" error in its logs is expected.
+  environment production 80ccbdd8-67e8-4473-8cf3-509646aeaf31). No WWW_INTERNAL_URL, STRIPE, OIDC or edge secret on
+  purpose: the [modprice] "channel to anetix.ai is not set up" error in its logs is expected. NTFY_TOPIC is wanted here
+  since 2026-11-02 (the agent board's climbed flags, "to get a sense"), with `SOS_NTFY_TITLE_PREFIX` = "VSM dev: " so its
+  pushes are told apart from production's on the same phones.
   **Nothing here touches app.anetix.ai, anetix.ai, the `symbiotic-os` Railway project or its database.**
 - Seeded with a snapshot of Chelsea Clock taken from production (tools, versions, records, board history), restored
   through /admin. No production admin or manager accounts and no Stripe, Google or Microsoft keys come across; the
@@ -221,6 +223,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The sign-in map: how everyone signs in, before a way in is taken away (2026-10-29)
 - The value stream map, M1: the Map beside Kaizen (2026-11-01, VSM dev copy)
 - The value stream map, M2: the mapping walk (2026-11-01, VSM dev copy)
+- The agent board, A1: agents from the map, watches, flags routed by the map, climbing (2026-11-02, VSM dev copy)
 
 ## What this is
 
@@ -367,6 +370,10 @@ tool list, 401 from the API) proves the CLI itself starts.
   `NTFY_TOPIC` on anetix-www sends its alerts (`www/notify.js`) and its watch of
   this product (`UPTIME_WATCH`, `UPTIME_MS` there).
 - `SOS_REPRICE_DELAY_MS` (1500): how long after a tool goes live the site's fee is looked at again (`src/modprice.js`).
+- The agent board (`src/vsm-agents.js`, VSM copy): `SOS_WATCH_MS` (300000: how often the watches run; 0 = no runner, the
+  tests), `SOS_FLAG_RAISE_MIN` (720: a Look flag nobody marked seen becomes Act), `SOS_FLAG_CLIMB_MIN` (240: an Act flag
+  nobody marked seen climbs), `SOS_FLAG_UPDATE_MIN` (60), `SOS_FLAG_RESOLVED_HOLD_MIN` (60), `SOS_AGENT_PUSH` (on; `off`
+  stops the ntfy push for a climbed flag, the notice stays).
 - `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
   (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
   second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts

@@ -106,6 +106,33 @@ number nobody records yet; stage scans will fill those in later.
   without reading again. Anetix can also run a walk for the plant from a call, and then the manager decides on the
   board whether to use the map. The floor does not see the Map; it keeps its own screens.
 
+## The agent board
+
+Managers and admins have a third tab, **Agents**, beside Kaizen and Map: one public board where the plant's agents
+post, and where everyone who manages the plant reads the same thing. The floor does not see it.
+
+- **Agents come from the map.** A box on the Map names the agent that watches it ("Inventory agent"; Edit this box
+  sets it, and several boxes can share one). An agent can be set up only where an Anetix tool sits on its boxes, since
+  it watches that tool's records. **Set up** drafts its watches from the tool's tables; none runs until a manager
+  turns it on.
+- **Watches** are rules, checked every few minutes: work stuck in one state too long, something open too long, a
+  number past its limit (stock under its order level), work coming due and not done, or a tool the plant has stopped
+  using. Each has a limit to set (hours, days, a number) and is Look or Act. **Add a watch** makes one by hand;
+  **Check now** looks at once; **Look again** drafts watches for a tool added to the agent's boxes since.
+- **A flag** is what a watch posts when it finds something: in the agent's channel and in #plant, with the rows by
+  name. It also goes to the areas next to it on the map: the step before, the step after, and the production control
+  step that sends it work. Their agent gets it if they have one; otherwise it lands in that box's channel for its
+  people. While the rows stay, it is one flag with its count kept up to date; when they clear, it says so and closes.
+- **What a person does with a flag**: Seen, On it, Resolved (with a line on what was done), Not a problem (with a
+  line on why; the watch is muted for a week), Make it a request (a card on the Kaizen board, on that tool, with the
+  evidence), or a reply in its thread. Anyone can also write in #plant or an agent's channel.
+- **Climbing.** A Look flag nobody marks seen for a shift becomes Act; an Act flag nobody marks seen for a few hours
+  goes to #escalations, onto the board's notices for every manager, and its box turns red on the Map. Anetix hears of
+  it too.
+- On the Map, the Agents layer shows each agent's chip with its open flags; a chip opens that agent's channel.
+- Agents read only their own tools' records and never change anything in a tool. Talking agents that answer each
+  other and write a note on each shift come next.
+
 ## Other things on the board
 
 - **Screens** on a tool shows every screen of it at once; tap one to go there. Its **QR codes** tab has a code for

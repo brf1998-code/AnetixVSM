@@ -191,6 +191,9 @@ server-side, so the page CSP does not change.
 
 ## 8. Agents, in three steps
 
+*Superseded 2026-11-02 by `docs/AGENTS.md` (the agent board: areas from the map, rule watches, shift reviews, one
+public board with routing and climbing along the map). Kept below as the first sketch.*
+
 Honest about what exists: today nothing in a tool can tell another tool anything.
 
 1. **Watchers (no AI).** Platform rules over `stage_events` and the tools' own tables: a kit is complete, a job has

@@ -245,7 +245,7 @@ async function mapView(company, id) {
   const kaizen = (await q(`SELECT id, node_key, n, title, why, status, feedback_id FROM platform.vsm_kaizen WHERE company=$1 AND map_id=$2 ORDER BY n`, [company, id])).rows;
   const questions = (await q(`SELECT id, map_key, node_key, where_label, claim, why, confidence, status, answer, answered_by, answered_at
                                 FROM platform.vsm_questions WHERE company=$1 AND (map_key IS NULL OR map_key=$2) ORDER BY (status='open') DESC, sort, id`, [company, map.key])).rows;
-  return { map, nodes, edges, kaizen, questions, tools: await tools(company) };
+  return { map, nodes, edges, kaizen, questions, tools: await tools(company), agents: await require("./vsm-agents").chips(company) };
 }
 
 // ---- small edits (M1): a box's words, record, tools, who, data box rows and place
@@ -260,6 +260,8 @@ const nodeFields = {
   data: (v) => (Array.isArray(v) ? v : []).slice(0, 12).map((r) => ({ label: txt(r && r.label, 24), value: txt(r && r.value, 60) })).filter((r) => r.label),
   x: (v) => int(v, 0, 6000), y: (v) => int(v, 0, 4000),
 };
+// the agent that watches a box (the agent board, src/vsm-agents.js): kept in detail.agent_name, as the import and the
+// Chelsea seed put it; several boxes may name one agent
 async function editNode(req, company, id, body) {
   const before = (await q(`SELECT * FROM platform.vsm_nodes WHERE company=$1 AND id=$2`, [company, id])).rows[0];
   if (!before) throw notFound("box");
@@ -272,6 +274,11 @@ async function editNode(req, company, id, body) {
     sets.push(`${k}=$${vals.length}${k === "data" ? "::jsonb" : ""}`);
   }
   if (body.notes !== undefined) { vals.push(txt(body.notes, 2000)); sets.push(`detail = jsonb_set(detail, '{notes}', to_jsonb($${vals.length}::text))`); changed.notes = vals[vals.length - 1]; }
+  if (body.agent_name !== undefined) {
+    const name = txt(body.agent_name, 60).replace(/\s+/g, " ");
+    if (name && !/[a-z0-9]/i.test(name)) throw bad("an agent's name needs a letter or a digit");
+    vals.push(name); sets.push(`detail = jsonb_set(${sets.some((x) => x.startsWith("detail")) ? sets.pop().replace(/^detail = /, "") : "detail"}, '{agent_name}', to_jsonb($${vals.length}::text))`); changed.agent_name = name;
+  }
   if (!sets.length) throw bad("nothing to change");
   if (changed.modules) {
     const known = new Set((await q(`SELECT name FROM platform.modules WHERE company=$1`, [company])).rows.map((r) => r.name));
@@ -283,7 +290,7 @@ async function editNode(req, company, id, body) {
   await q(`UPDATE platform.vsm_maps SET updated_at=now() WHERE id=$1`, [before.map_id]);
   const moveOnly = Object.keys(changed).every((k) => k === "x" || k === "y");
   if (!moveOnly) {
-    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, k === "notes" ? (before.detail || {}).notes || "" : before[k]]));
+    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, k === "notes" || k === "agent_name" ? (before.detail || {})[k] || "" : before[k]]));
     await record.record("map_changed", { company, actor: record.actor(req), before: JSON.stringify(was), after: JSON.stringify(changed), detail: { box: before.key, label: before.label, map_id: before.map_id } });
   }
   return (await q(`SELECT id, key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence, updated_at, updated_by FROM platform.vsm_nodes WHERE id=$1`, [id])).rows[0];
@@ -419,6 +426,7 @@ async function importMap(req, company, doc) {
 
 async function deleteCompany(company) {
   await require("./vsm-walk").deleteCompany(company);   // the mapping walks and their sources (their files are attachments, deleted with the company's)
+  await require("./vsm-agents").deleteCompany(company); // the agent board: agents, watches, messages, flags
   for (const t of ["vsm_questions", "vsm_kaizen", "vsm_edges", "vsm_nodes", "vsm_maps", "vsm_stages", "module_use"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 

@@ -79,7 +79,13 @@
   .trilbl { position:absolute; font-size:12px; color:var(--steel); text-align:center; width:56px; pointer-events:none; }
   .kz { position:absolute; width:34px; height:34px; background:var(--amber); color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; z-index:4; cursor:pointer;
         clip-path:polygon(50% 0%,61% 18%,80% 9%,79% 30%,100% 33%,86% 50%,100% 67%,79% 70%,80% 91%,61% 82%,50% 100%,39% 82%,20% 91%,21% 70%,0% 67%,14% 50%,0% 33%,21% 30%,20% 9%,39% 18%); border:none; }
-  .agent { position:absolute; height:24px; border:1.5px dotted var(--navy); border-radius:999px; background:#fff; color:var(--navy); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; white-space:nowrap; overflow:hidden; pointer-events:none; }
+  .agent { position:absolute; height:24px; border:1.5px dotted var(--navy); border-radius:999px; background:#fff; color:var(--navy); font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:5px; white-space:nowrap; overflow:hidden; text-decoration:none; }
+  /* the agent board (src/vsm-agents.js): a chip is a link to the agent's channel; a set-up agent is solid, a flag shows its count */
+  .agent.on { border-style:solid; }
+  .agent.paused { opacity:.6; }
+  .agent .fl { background:var(--amber); color:#fff; border-radius:999px; padding:0 6px; font-size:10.5px; }
+  .agent .fl.up { background:var(--red); }
+  .node.alarm { box-shadow:0 0 0 3px #fff, 0 0 0 6px var(--red); }
   .ladder { position:absolute; display:flex; font-size:11.5px; color:var(--steel); }
   .ladder .w { border-top:2px solid var(--ink); text-align:center; padding-top:4px; flex:none; }
   .ladder .p { border:2px solid var(--ink); border-top:none; display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px; flex:none; }
@@ -164,7 +170,7 @@
 <body>
 <div class="band"><div class="inner">
   <h1><img class="mark" id="comark" alt="">Value stream map <small id="coname"></small></h1>
-  <nav class="views" aria-label="Views"><a href="./">Kaizen</a><a class="on" href="map" aria-current="page">Map</a></nav>
+  <nav class="views" aria-label="Views"><a href="./">Kaizen</a><a class="on" href="map" aria-current="page">Map</a><a href="agent-board">Agents</a></nav>
   <span class="right" id="who"></span>
 </div></div>
 <main class="wrap" id="app"><div class="empty">Loading the map…</div></main>
@@ -200,6 +206,8 @@ async function load(keepSel) {
   const want = Number(new URLSearchParams(location.search).get("map")) || S.mapId;
   S.mapId = S.ov.maps.some((m) => m.id === want) ? want : S.ov.maps[0].id;
   S.view = await api(`/maps/${S.mapId}`);
+  // the Agents layer opens on its own the first time once an agent on this company's map is running
+  if (!S.layersAuto) { S.layersAuto = true; if ((((S.view.agents || {}).agents) || []).some((a) => a.status === "on")) S.layers.agents = true; }
   if (!keepSel || !S.view.nodes.some((n) => n.key === S.sel)) S.sel = (S.view.nodes.find((n) => n.kind === "control") || S.view.nodes[0] || {}).key || null;
   render();
 }
@@ -252,6 +260,7 @@ function mapHtml() {
   if (S.layers.agents) H += 0;
   // the bands are drawn first, under the flows, so a flow between two production control boxes shows on the band
   let svg = "", html = "", under = "";
+  const climbed = new Set(((v.agents || {}).climbed_boxes) || []);
   for (const b of L.bands || []) under += `<div class="bandbg" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px"></div><div class="bandlbl" style="left:${b.x + 16}px;top:${b.y + 8}px">${esc(b.label)}</div><div class="bandnote" style="left:${b.x + 240}px;width:${Math.max(80, b.w - 256)}px;top:${b.y + 8}px">${esc(b.note || "")}</div>`;
   const defs = Object.entries({ k: "#1c242e", n: "#1f3a5f", o: "#c2620a" }).map(([id, c]) => `<marker id="h-${id}" orient="auto" markerWidth="5" markerHeight="5" refX="3" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="${c}"/></marker>`).join("");
   for (const e of v.edges) {
@@ -288,7 +297,7 @@ function mapHtml() {
     }
   }
   for (const n of v.nodes) {
-    const cls = `node ${n.kind} r-${n.record_kind}${n.key === S.sel ? " sel" : ""}`;
+    const cls = `node ${n.kind} r-${n.record_kind}${n.key === S.sel ? " sel" : ""}${climbed.has(`${v.map.key}/${n.key}`) ? " alarm" : ""}`;
     html += `<button type="button" class="${cls}" data-node="${esc(n.key)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px" aria-label="${esc(n.label)}${n.sub ? ", " + esc(n.sub) : ""}: ${esc(REC[n.record_kind])}"><span><b>${esc(n.label)}</b>${n.sub ? `<span class="s">${esc(n.sub)}</span>` : ""}</span></button>`;
     if (n.kind === "process") {
       const rows = [`<b>Stage</b> ${esc((n.stage_refs || []).join(", ") || "?")}`].concat(n.who ? [`<b>Who</b> ${esc(n.who)}`] : [], (n.data || []).map((d) => `<b>${esc(d.label)}</b> <span class="${d.value === "?" ? "unk" : ""}">${esc(d.value)}</span>`), [`<b>Record</b> ${esc(n.record_system || REC[n.record_kind])}`]);
@@ -297,7 +306,10 @@ function mapHtml() {
     if (S.layers.agents && n.detail && n.detail.agent_name) {
       const factory = ["supplier", "customer", "outside"].includes(n.kind);
       const top = n.kind === "process" ? n.y + n.h + 8 + dataH(n) + 8 : n.y - (factory ? 46 : 30);
-      html += `<div class="agent" data-for="${esc(n.key)}" style="left:${n.x}px;top:${top}px;width:${n.kind === "process" ? n.w : n.w - 24}px">${esc(n.detail.agent_name)}</div>`;
+      const ag = agentOf(n.detail.agent_name);
+      const cls = ag ? ag.status : "";
+      const fl = ag && ag.open ? `<span class="fl ${ag.climbed ? "up" : ""}" title="open flags">${ag.open}</span>` : "";
+      html += `<a class="agent ${esc(cls)}" data-for="${esc(n.key)}" href="agent-board?channel=${encodeURIComponent(ag && ag.status !== "not_set_up" ? `a:${ag.key}` : "plant")}" title="${esc(ag && ag.status === "not_set_up" ? "Not set up yet: open the agent board to set it up" : "Open this agent's channel")}" style="left:${n.x}px;top:${top}px;width:${n.kind === "process" ? n.w : n.w - 24}px">${esc(n.detail.agent_name)}${fl}</a>`;
     }
   }
   if (S.layers.kz) for (const z of v.kaizen) { const n = nodes[z.node_key]; if (n) html += `<button type="button" class="kz" data-node="${esc(n.key)}" style="left:${n.x + n.w - 18}px;top:${n.y - 18}px" title="${esc(z.title)}" aria-label="Kaizen ${z.n}: ${esc(z.title)}">${z.n}</button>`; }
@@ -338,6 +350,10 @@ function layoutAfter() {
   host.style.zoom = S.z;
 }
 
+// the agent board's view of an agent named on a box (src/vsm-agents.js chips)
+const slugOf = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+function agentOf(name) { const k = slugOf(name); return (((S.view || {}).agents || {}).agents || []).find((a) => a.key === k) || null; }
+
 // ---------- the selected box
 function detailHtml() {
   const n = S.view.nodes.find((x) => x.key === S.sel);
@@ -372,6 +388,7 @@ function editHtml(n) {
     <div class="row2"><label>Where its record lives<select name="record_kind">${opts}</select></label><label>Which system or paper<input type="text" name="record_system" value="${esc(n.record_system)}" maxlength="120"></label></div>
     ${tools ? `<fieldset style="border:none;padding:0;display:flex;flex-direction:column;gap:4px"><legend class="lbl" style="margin-bottom:4px">Anetix tools on this box</legend>${tools}</fieldset>` : ""}
     ${n.kind === "process" ? `<div><div class="lbl" style="margin-bottom:4px">Data box (? for a number nobody knows yet)</div><div id="drows" style="display:flex;flex-direction:column;gap:6px">${rows}</div><button type="button" class="quietbtn" data-act="addrow" style="margin-top:6px">Add a row</button></div>` : ""}
+    <label>The agent that watches it (several boxes may share one; leave empty for none)<input type="text" name="agent_name" value="${esc((n.detail || {}).agent_name || "")}" maxlength="60" placeholder="Inventory agent"></label>
     <label>Notes<textarea name="notes" maxlength="2000">${esc((n.detail || {}).notes || "")}</textarea></label>
     ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
     <div class="chips"><button type="submit" class="go">Save</button><button type="button" class="quietbtn" data-act="canceledit">Cancel</button></div>
@@ -719,7 +736,7 @@ app.addEventListener("submit", async (ev) => {
   if (ev.target.id !== "editform") return;
   ev.preventDefault();
   const f = ev.target, n = S.view.nodes.find((x) => x.key === S.sel);
-  const body = { label: f.label.value, sub: f.sub.value, who: f.who.value, record_kind: f.record_kind.value, record_system: f.record_system.value, notes: f.notes.value,
+  const body = { label: f.label.value, sub: f.sub.value, who: f.who.value, record_kind: f.record_kind.value, record_system: f.record_system.value, notes: f.notes.value, agent_name: f.agent_name.value,
     modules: [...f.querySelectorAll("input[name=mod]:checked")].map((i) => i.value) };
   if (n.kind === "process") { const ls = [...f.querySelectorAll("input[name=dl]")], vs = [...f.querySelectorAll("input[name=dv]")]; body.data = ls.map((l, i) => ({ label: l.value, value: vs[i].value })).filter((r) => r.label.trim()); }
   try { await post(`/nodes/${n.id}`, body); S.editing = false; S.err = ""; await load(true); } catch (e) { S.err = e.message; render(); }

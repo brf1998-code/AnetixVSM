@@ -4264,4 +4264,34 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Not yet.* Floor answers to a box's question through its station QR code, kaizen bursts proposed from the walk and
     the future state (phase 6, with M3), a second read that adds sources to a walk under way, a walk of the whole plant
     across families at once.
+- **The agent board, A1: agents from the map, watches, flags routed by the map, climbing (2026-11-02, VSM dev copy)**
+  - *What.* The third view, Kaizen | Map | Agents (`public/agent-board.html` at `/c/<slug>/agent-board`, `src/vsm-agents.js`,
+    design `docs/AGENTS.md`): one public board for managers and admins with #plant, #escalations, a channel per agent
+    and per box with no agent, and threads. Agents are the `detail.agent_name` on the map's boxes; one can be set up
+    only where an Anetix tool sits on its boxes. Setting it up drafts watches from the tool's tables (no AI); a manager
+    turns each on and sets its limit. Watches (Stuck, Waiting, Level, Due, Quiet) run every `SOS_WATCH_MS` through the
+    company's read-only role with every name checked against the tool's own tables, values as parameters, never free
+    SQL. A watch that finds rows opens one flag with the rows by name and keeps it while they stay; when they clear it
+    closes. The flag goes to the agent's channel, #plant, and the immediate parties on the map (the box before, the box
+    after, the production control box with an information flow in): their agent if one is on, else that box's people.
+  - *Decisions (Brendan, 2026-11-02).* Its own tab; a manager turns each watch on; a flag for an area with no agent
+    goes to that box's people; climbing goes to the board's notices and also to the founders' ntfy for now, "to get a
+    sense" (`SOS_AGENT_PUSH=off` backs it off), with no record value in the push; the floor does not see the board (a
+    station line is an experiment for later, off by default).
+  - *People.* Seen, On it, Resolved (with a line), Not a problem (with a line; mutes the watch a week), Reopen, Make
+    it a request (a Kaizen card on the flag's tool, `feedback.source = 'agent_board'`, read by the proposer at once),
+    replies and messages. Look becomes Act after `SOS_FLAG_RAISE_MIN` (720) unseen; Act climbs after
+    `SOS_FLAG_CLIMB_MIN` (240): #escalations, a notice (`agent_flag`), a red box on the Map, the push.
+  - *Rules kept.* Read only, scoped to the agent's tools; nothing writes a tool's record or moves anything toward the
+    floor; watches are platform code, so they run under the data wall; no model names or costs; every change on the
+    record; the board is in the backup, the data export (`agent_board`) and goes with the company.
+  - *Tables.* `vsm_agents`, `vsm_watches`, `vsm_messages`, `vsm_flags`. *Record.* `agent_set_up`, `agent_changed`,
+    `agent_watch_added`, `agent_watch_changed`, `agent_flag`, `agent_flag_cleared`, `agent_flag_climbed`, the people's
+    `agent_flag_*` and `agent_board_message`.
+  - *Routes.* `/api/c/:slug/vsm/agents` (list, set up), `/agents/:id` (on, paused, brief), `/agents/:id/tables`,
+    `/agents/:id/propose`, `/agents/:id/check`, `/agents/:id/watches`, `/vsm/watches/:id`, `/vsm/board` (channels and
+    the stream), `/vsm/board/threads/:id`, `/vsm/board/messages`, `/vsm/board/flags/:id/:action`. Managers and admins.
+  - *Tests.* `scripts/test-vsm-agents.js` (32), `scripts/e2e/vsm-agents.js` (59) and its `runner` mode (3).
+  - *Not yet (A2).* Disagree watches across two tools, the agents' own reviews and shift notes (AI, once a shift),
+    answers between agents, the floor's station line, counts on the admin MCP.
 

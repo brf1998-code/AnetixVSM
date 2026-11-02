@@ -233,6 +233,13 @@ run vsm                    node scripts/e2e/vsm.js
 # the draft beside the family's map, Use this map, another family, another company, the record, the backup
 fresh; rm -f "$LOG/vsm-walk-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/vsm-walk-prompts.jsonl"
 run vsm-walk               env SOS_PROMPT_LOG=$LOG/vsm-walk-prompts.jsonl node scripts/e2e/vsm-walk.js
+# 2026-11-02 (VSM dev copy): the agent board, A1 (src/vsm-agents.js): agents from the map, watches, flags routed by the
+# map, people's actions, climbing to the notices and ntfy (a stand-in on 4788), a request from a flag; then the runner
+AG="SOS_WATCH_MS=0 SOS_FLAG_UPDATE_MIN=0 SOS_FLAG_RESOLVED_HOLD_MIN=0 SOS_PUBLIC_URL=http://127.0.0.1:3999 NTFY_URL=http://127.0.0.1:4788 NTFY_TOPIC=e2e-topic"
+fresh; start "SOS_BROWSER=off $AG"
+run vsm-agents             env $AG node scripts/e2e/vsm-agents.js
+fresh; start "SOS_BROWSER=off SOS_WATCH_MS=1000"
+run vsm-agents-runner      node scripts/e2e/vsm-agents.js runner
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

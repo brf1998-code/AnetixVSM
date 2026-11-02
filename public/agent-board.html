@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.ico" sizes="32x32"><link rel="icon" href="/assets/anetix-mark.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/anetix-touch-180.png">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anetix · Agents</title>
+<!-- The agent board, the third view beside Kaizen and Map (src/vsm-agents.js, docs/AGENTS.md, A1). Managers and admins.
+     One public board: #plant, #escalations, a channel per agent and per box with no agent. Agents come from the map;
+     their watches are rules a manager turns on. Nothing here changes a tool. -->
+<style>
+  :root { --ink:#1c242e; --steel:#51606f; --line:#d5dbe3; --fog:#f2f4f7; --navy:#1f3a5f; --amber:#c2620a; --amberDeep:#9a4a05;
+          --green:#2e7d4f; --greenSoft:#e3efe7; --red:#b3261e; --redSoft:#fbe3e1; --gold:#e8b04a; --look:#fbe3cc; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:system-ui,sans-serif; background:var(--fog); color:var(--ink); padding:0 0 56px; font-size:13.5px; line-height:1.45; }
+  a { color:var(--navy); }
+  button, input, select, textarea { font:inherit; }
+  .band { background:var(--navy); color:#fff; padding:8px 22px 7px; }
+  .band .inner { display:flex; align-items:center; gap:14px; max-width:1700px; margin:0 auto; flex-wrap:wrap; min-height:30px; }
+  .band h1 { font-size:17px; font-weight:800; display:flex; align-items:center; gap:9px; }
+  .band h1 small { font-size:12.5px; opacity:.75; font-weight:500; }
+  .band h1 img.mark { width:22px; height:22px; border-radius:5px; background:#fff; }
+  .views { display:inline-flex; gap:2px; background:rgba(255,255,255,.12); border-radius:8px; padding:2px; }
+  .views a { color:#fff; text-decoration:none; font-size:12.5px; font-weight:700; padding:4px 12px; border-radius:6px; opacity:.85; }
+  .views a.on { background:#fff; color:var(--navy); opacity:1; }
+  .band .right { margin-left:auto; font-size:12px; opacity:.9; }
+  .band .right a { color:#fff; }
+  .wrap { max-width:1700px; margin:0 auto; padding:18px 22px; display:grid; grid-template-columns:270px minmax(0,1fr) 400px; gap:16px; align-items:start; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; }
+  .side { display:flex; flex-direction:column; gap:12px; position:sticky; top:12px; }
+  .chans { padding:10px 8px; display:flex; flex-direction:column; gap:2px; }
+  .chans .lbl { padding:8px 8px 4px; }
+  .chan { display:flex; align-items:center; gap:8px; width:100%; text-align:left; border:none; background:none; border-radius:7px; padding:7px 9px; cursor:pointer; color:var(--ink); min-height:36px; }
+  .chan:hover { background:var(--fog); }
+  .chan.on { background:var(--navy); color:#fff; }
+  .chan .n { margin-left:auto; background:var(--amber); color:#fff; border-radius:999px; font-size:11px; font-weight:800; padding:1px 7px; }
+  .chan.on .n { background:#fff; color:var(--navy); }
+  .chan .dot { width:8px; height:8px; border-radius:50%; background:var(--green); flex:none; }
+  .chan .dot.paused { background:#9aa5b1; }
+  .chan .hash { opacity:.6; font-weight:700; }
+  .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--steel); }
+  .note { color:var(--steel); font-size:12.5px; }
+  details.boxes > summary { cursor:pointer; padding:8px; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--steel); list-style-position:inside; }
+  .main { display:flex; flex-direction:column; gap:12px; min-width:0; }
+  .head { padding:14px 16px; display:flex; flex-direction:column; gap:6px; }
+  .head h2 { font-size:19px; }
+  .compose { padding:10px 12px; display:flex; gap:8px; align-items:flex-end; }
+  .compose textarea { flex:1; min-height:42px; max-height:200px; resize:vertical; border:1px solid var(--line); border-radius:8px; padding:9px 10px; }
+  .msg { padding:12px 16px; display:flex; flex-direction:column; gap:6px; }
+  .msg + .msg { border-top:1px solid #e9ecf0; }
+  .msg .top { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:baseline; }
+  .who { font-weight:800; }
+  .who.platform { color:var(--steel); font-weight:700; }
+  .when { color:var(--steel); font-size:12px; }
+  .chip { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11.5px; font-weight:700; background:#eef0f3; color:var(--ink); }
+  .chip.look { background:var(--look); color:#7a3a00; }
+  .chip.act { background:var(--redSoft); color:#7d1a14; }
+  .chip.ok { background:var(--greenSoft); color:#1d5535; }
+  .flag { border-left:4px solid var(--gold); }
+  .flag.act { border-left-color:var(--red); }
+  .flag.closed { border-left-color:#c9d2dd; }
+  .words { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .to { font-size:12.5px; color:var(--steel); }
+  .sample { font-size:12.5px; color:var(--steel); }
+  .acts { display:flex; flex-wrap:wrap; gap:6px; }
+  .btn { border:1.5px solid var(--navy); background:#fff; color:var(--navy); border-radius:8px; min-height:34px; padding:0 11px; font-weight:700; cursor:pointer; }
+  .btn.go { background:var(--navy); color:#fff; }
+  .btn.ok { border-color:var(--green); color:#1d5535; }
+  .btn.warn { border-color:var(--amberDeep); color:#7a3a00; }
+  .btn.quiet { border:none; background:#e5e9ee; color:var(--ink); }
+  .btn[disabled] { opacity:.5; cursor:not-allowed; }
+  .thread { margin-top:4px; border-left:2px solid var(--line); padding-left:12px; display:flex; flex-direction:column; gap:8px; }
+  .reply .who { font-size:12.5px; }
+  .linkish { background:none; border:none; padding:0; color:var(--navy); font-weight:700; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+  .panel { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  .w { border-top:1px solid #e9ecf0; padding-top:10px; display:flex; flex-direction:column; gap:6px; }
+  .w:first-of-type { border-top:none; padding-top:0; }
+  .w.proposed { background:#fffaf3; margin:0 -16px; padding:10px 16px; border-top:1px dashed #e5b98a; }
+  .w .t { font-weight:700; }
+  .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .row input[type=number] { width:86px; }
+  input[type=text], input[type=number], select, textarea { border:1px solid var(--line); border-radius:8px; padding:6px 8px; background:#fff; }
+  .form { display:flex; flex-direction:column; gap:8px; }
+  .form label { display:flex; flex-direction:column; gap:3px; font-weight:600; font-size:12.5px; }
+  .err { background:var(--redSoft); color:#7d1a14; border-radius:8px; padding:9px 12px; }
+  .empty { padding:24px 16px; text-align:center; color:var(--steel); }
+  .phonechan { display:none; }
+  @media (max-width:1200px) { .wrap { grid-template-columns:240px minmax(0,1fr); } .wrap > .right { grid-column:1 / -1; } }
+  @media (max-width:760px) { .wrap { grid-template-columns:1fr; padding:12px; } .side { position:static; } .side .chans { display:none; } .phonechan { display:block; padding:10px 12px; } .phonechan select { width:100%; min-height:40px; } .band { padding:8px 12px; } .band .right { margin-left:0; } }
+</style>
+</head>
+<body>
+<div class="band"><div class="inner">
+  <h1><img class="mark" id="comark" alt="">Agents <small id="coname"></small></h1>
+  <nav class="views" aria-label="Views"><a href="./">Kaizen</a><a href="map">Map</a><a class="on" href="agent-board" aria-current="page">Agents</a></nav>
+  <span class="right" id="who"></span>
+</div></div>
+<main class="wrap" id="app"><div class="card empty" style="grid-column:1/-1">Loading the board…</div></main>
+<script>
+const SLUG = (location.pathname.split("/")[2] || "").toLowerCase();
+const API = `/api/c/${SLUG}/vsm`;
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const SHAPE = { stuck: "Stuck: sat in one state too long", waiting: "Waiting: open too long", level: "Over or under a limit", due: "Coming due, not done", quiet: "Quiet: the tool has not been used" };
+const STATUS = { open: ["Open", ""], seen: ["Seen", ""], on_it: ["On it", "ok"], resolved: ["Resolved", "ok"], not_a_problem: ["Not a problem", ""], cleared: ["Cleared", "ok"] };
+const params = new URLSearchParams(location.search);
+const S = { board: null, agents: null, channel: params.get("channel") || "plant", open: new Set(params.get("thread") ? [Number(params.get("thread"))] : []), threads: {}, asking: null, adding: false, tables: null, err: "", busy: false };
+
+async function api(path, opts) {
+  const r = await fetch(API + path, Object.assign({ cache: "no-store", headers: { "Content-Type": "application/json" } }, opts || {}));
+  if (r.status === 401 || r.status === 403) { location.href = `/login?next=${encodeURIComponent(location.pathname)}`; throw new Error("sign in"); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "That did not work. Try again.");
+  return j;
+}
+const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body || {}) });
+const ago = (t) => { const s = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000); if (s < 60) return "just now"; if (s < 3600) return `${Math.round(s / 60)} min ago`; if (s < 86400) return `${Math.round(s / 3600)} h ago`; return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
+
+async function load() {
+  const [b, a] = await Promise.all([api(`/board?channel=${encodeURIComponent(S.channel)}`), api("/agents")]);
+  S.board = b; S.agents = a;
+  for (const id of S.open) S.threads[id] = (await api(`/board/threads/${id}`).catch(() => null));
+  render();
+}
+async function header() {
+  try {
+    const r = await fetch(`/api/c/${SLUG}/vsm`, { cache: "no-store" }); const j = await r.json();
+    const co = j.company || {};
+    document.getElementById("coname").textContent = co.name || "";
+    document.title = `${co.name || "Agents"} · Agents`;
+    document.getElementById("who").innerHTML = `signed in as <b>${esc(j.role)}</b>${j.role === "admin" ? ' · <a href="/admin">admin</a>' : ""} · <a href="/c/${esc(SLUG)}/settings">Settings</a> · <a href="/logout">sign out</a>`;
+  } catch (e) { /* the band is a nicety */ }
+  const mark = document.getElementById("comark"); mark.src = `/api/c/${SLUG}/icon`; mark.onerror = () => { mark.style.display = "none"; };
+}
+
+// ---------- channels
+function chansHtml() {
+  const ch = S.board.channels;
+  const btn = (c, label) => `<button type="button" class="chan ${c.key === S.channel ? "on" : ""}" data-chan="${esc(c.key)}" aria-pressed="${c.key === S.channel}">${label}${c.open ? `<span class="n" title="open flags">${c.open}</span>` : ""}</button>`;
+  const agents = ch.filter((c) => c.kind === "agent"), boxes = ch.filter((c) => c.kind === "box");
+  const notYet = S.agents.agents.filter((a) => !a.set_up);
+  return `<nav class="card chans" aria-label="Channels">
+      ${btn(ch[0], `<span class="hash">#</span>plant`)}${btn(ch[1], `<span class="hash">#</span>escalations`)}
+      <div class="lbl">Agents</div>
+      ${agents.map((c) => btn(c, `<span class="dot ${c.status === "paused" ? "paused" : ""}" aria-hidden="true"></span>${esc(c.name)}${c.status === "paused" ? ' <span class="note">paused</span>' : ""}`)).join("") || `<div class="note" style="padding:0 9px">None set up yet.</div>`}
+      ${notYet.length ? `<div class="lbl">On the map, not set up</div>${notYet.map((a) => `<div style="display:flex;align-items:center;gap:8px;padding:5px 9px"><span>${esc(a.name)}</span>${a.can_set_up ? `<button type="button" class="btn" style="margin-left:auto;min-height:30px" data-act="setup" data-key="${esc(a.key)}">Set up</button>` : `<span class="note" style="margin-left:auto" title="Its boxes have no Anetix tool yet">no tool yet</span>`}</div>`).join("")}` : ""}
+      ${boxes.length ? `<details class="boxes"${S.channel.startsWith("b:") ? " open" : ""}><summary>Boxes with no agent (${boxes.length})</summary>${boxes.map((c) => btn(c, `${esc(c.name)}${c.people ? ` <span class="note">${esc(c.people)}</span>` : ""}`)).join("")}</details>` : ""}
+    </nav>`;
+}
+function phoneChanHtml() {
+  const ch = S.board.channels;
+  return `<div class="card phonechan"><label class="lbl" for="chansel">Channel</label><select id="chansel">${ch.map((c) => `<option value="${esc(c.key)}"${c.key === S.channel ? " selected" : ""}>${c.kind === "plant" || c.kind === "escalations" ? "#" : ""}${esc(c.name)}${c.open ? ` (${c.open} open)` : ""}</option>`).join("")}</select></div>`;
+}
+
+// ---------- the stream
+function flagActs(m) {
+  const f = m.flag, open = ["open", "seen", "on_it"].includes(f.status);
+  if (S.asking && S.asking.id === m.id) {
+    const what = { resolved: "What was done?", not_a_problem: "Why is it not a problem? The watch is muted for a week.", request: "Anything to add for the request? (optional)" }[S.asking.action];
+    return `<form class="form" data-ask="${m.id}"><label>${esc(what)}<textarea name="words" rows="2" maxlength="600"></textarea></label><div class="acts"><button type="submit" class="btn go">${S.asking.action === "request" ? "Make the request" : "Save"}</button><button type="button" class="btn quiet" data-act="cancelask">Cancel</button></div></form>`;
+  }
+  if (!open) return `<div class="acts"><button type="button" class="btn quiet" data-act="flag" data-do="reopen" data-id="${m.id}">Reopen</button>${f.feedback_id ? "" : `<button type="button" class="btn" data-act="ask" data-do="request" data-id="${m.id}">Make it a request</button>`}</div>`;
+  return `<div class="acts">${f.status === "open" ? `<button type="button" class="btn" data-act="flag" data-do="seen" data-id="${m.id}">Seen</button>` : ""}${f.status !== "on_it" ? `<button type="button" class="btn" data-act="flag" data-do="on_it" data-id="${m.id}">On it</button>` : ""}
+    <button type="button" class="btn ok" data-act="ask" data-do="resolved" data-id="${m.id}">Resolved</button><button type="button" class="btn warn" data-act="ask" data-do="not_a_problem" data-id="${m.id}">Not a problem</button>
+    ${f.feedback_id ? `<a class="btn quiet" style="display:inline-flex;align-items:center;text-decoration:none" href="./">Request #${f.feedback_id}</a>` : `<button type="button" class="btn quiet" data-act="ask" data-do="request" data-id="${m.id}">Make it a request</button>`}</div>`;
+}
+function toHtml(to) {
+  if (!to || !to.length) return "";
+  return `<div class="to">To: ${to.map((t) => t.kind === "agent" ? `<button type="button" class="linkish" data-chan="a:${esc(t.key)}">${esc(t.name)}</button>` : t.kind === "box" ? `<button type="button" class="linkish" data-chan="b:${esc(t.key)}">${esc(t.name)}</button>${t.people ? ` (${esc(t.people)})` : ""}` : esc(t.name)).join(", ")}</div>`;
+}
+function msgHtml(m) {
+  const f = m.flag;
+  const closed = f && !["open", "seen", "on_it"].includes(f.status);
+  const st = f ? STATUS[f.status] || [f.status, ""] : null;
+  const ev = m.evidence || {};
+  const sample = ev.sample && ev.sample.length ? `<div class="sample">${ev.sample.map((s) => esc(s.label)).join(" · ")}${ev.count > ev.sample.length ? ` · and ${ev.count - ev.sample.length} more` : ""}</div>` : "";
+  const th = S.open.has(m.id) ? S.threads[m.id] : null;
+  const where = S.channel === "plant" || S.channel === "escalations" || m.channel !== S.channel ? ` <span class="note">in ${m.channel === "plant" ? "#plant" : esc(chanName(m.channel))}</span>` : "";
+  return `<article class="msg ${f ? `flag ${f.severity === "act" ? "act" : ""} ${closed ? "closed" : ""}` : ""}" data-msg="${m.id}">
+    <div class="top"><span class="who ${m.from_kind === "platform" ? "platform" : ""}">${esc(m.from_name)}</span>${m.from_kind === "watch" ? ' <span class="note">watch</span>' : ""}${where}<span class="when">${esc(ago(m.created_at))}</span>
+      ${f ? `<span class="chip ${f.severity === "act" ? "act" : "look"}">${f.severity === "act" ? "Act" : "Look"}</span><span class="chip ${st[1]}">${esc(st[0])}${f.owner && f.status === "on_it" ? `: ${esc(f.owner)}` : ""}</span>${f.climbed_at ? '<span class="chip act">Climbed to every manager</span>' : ""}` : ""}</div>
+    <div class="words">${esc(m.words)}</div>${sample}${toHtml(m.to)}
+    ${f ? flagActs(m) : ""}
+    ${m.replies || S.open.has(m.id) ? `<div><button type="button" class="linkish" data-act="thread" data-id="${m.id}">${S.open.has(m.id) ? "Hide the thread" : `${m.replies} ${m.replies === 1 ? "reply" : "replies"}`}</button></div>` : `<div><button type="button" class="linkish" data-act="thread" data-id="${m.id}">Reply</button></div>`}
+    ${th ? `<div class="thread">${th.replies.map((r) => `<div class="reply"><div class="top"><span class="who ${r.from_kind === "platform" ? "platform" : ""}">${esc(r.from_name)}</span><span class="when">${esc(ago(r.created_at))}</span>${r.kind === "climbed" ? '<span class="chip act">Climbed</span>' : r.kind === "raised" ? '<span class="chip act">Now act</span>' : r.kind === "cleared" ? '<span class="chip ok">Cleared</span>' : ""}</div><div class="words">${esc(r.words)}</div></div>`).join("")}
+      <form class="compose" data-reply="${m.id}" style="padding:0"><textarea name="words" rows="1" maxlength="2000" placeholder="Reply in the thread" aria-label="Reply"></textarea><button type="submit" class="btn go">Send</button></form></div>` : ""}
+  </article>`;
+}
+function chanName(key) { const c = (S.board.channels || []).find((x) => x.key === key); return c ? c.name : key; }
+
+// ---------- the agent's panel: its boxes, its watches, set up and turn on
+function agentPanel() {
+  if (!S.channel.startsWith("a:")) {
+    if (S.channel === "escalations") return `<section class="card panel"><b>Escalations</b><div class="note">Flags nobody picked up. A flag to look at becomes one to act on after a shift with nobody marking it seen; an act flag nobody marks seen climbs here, onto the board's notices for every manager, and to Anetix's phones.</div></section>`;
+    if (S.channel.startsWith("b:")) { const c = S.board.channels.find((x) => x.key === S.channel) || {}; return `<section class="card panel"><b>${esc(c.name || "A box")}</b><div class="note">${c.people ? `People: ${esc(c.people)}. ` : ""}This box has no agent, so flags from the areas next to it on the map land here for its people. An agent can be set up once an Anetix tool sits on the box.</div></section>`; }
+    return `<section class="card panel"><b>How the board works</b><div class="note">Each agent watches one area of the map through its Anetix tools. Its watches are rules a manager turns on; when one finds something it posts a flag here, in the agent's channel, and sends it to the areas next to it on the map: their agent if they have one, otherwise their people. Everyone who manages the plant reads the same board.</div></section>`;
+  }
+  const a = S.agents.agents.find((x) => x.set_up && `a:${x.key}` === S.channel);
+  if (!a) return "";
+  const live = S.agents.tools;
+  const title = (n) => (live.find((t) => t.name === n) || { title: n }).title;
+  const wHtml = (w) => {
+    const lim = w.shape === "quiet" ? ["days", w.spec.days, "days"] : w.shape === "due" ? ["within_hours", w.spec.within_hours, "hours"] : w.shape === "level" ? (w.spec.limit_column ? null : ["limit", w.spec.limit, ""]) : ["hours", w.spec.hours, "hours"];
+    const limHtml = lim ? `<label class="row" style="font-weight:600">${w.shape === "due" ? "Within" : w.shape === "level" ? "Limit" : w.shape === "quiet" ? "After" : "Older than"} <input type="number" min="0" step="any" value="${esc(lim[1])}" data-lim="${lim[0]}" data-w="${w.id}" aria-label="Limit for ${esc(w.title)}"> ${lim[2]}</label>` : `<span class="note">under ${esc(String(w.spec.limit_column).replace(/_/g, " "))}</span>`;
+    return `<div class="w ${w.status === "proposed" ? "proposed" : ""}"><div class="t">${esc(w.title)}</div>
+      <div class="note">${esc(SHAPE[w.shape] || w.shape)} · ${esc(title(w.tool))}${w.spec.table ? ` · ${esc(w.spec.table)}` : ""}${w.muted_until && new Date(w.muted_until) > new Date() ? ` · muted until ${esc(new Date(w.muted_until).toLocaleDateString())}` : ""}</div>
+      ${w.last_error ? `<div class="err">${esc(w.last_error)}</div>` : w.last_run_at ? `<div class="note">Last looked ${esc(ago(w.last_run_at))}: ${w.last_count ? `${w.last_count} found` : "nothing found"}</div>` : ""}
+      <div class="row">${limHtml}<select data-sev="${w.id}" aria-label="How urgent"><option value="look"${w.severity === "look" ? " selected" : ""}>Look</option><option value="act"${w.severity === "act" ? " selected" : ""}>Act</option></select>
+        ${w.status === "on" ? `<button type="button" class="btn quiet" data-act="watch" data-w="${w.id}" data-to="off">Turn off</button>` : `<button type="button" class="btn go" data-act="watch" data-w="${w.id}" data-to="on">Turn on</button>`}
+        ${w.muted_until && new Date(w.muted_until) > new Date() ? `<button type="button" class="btn quiet" data-act="unmute" data-w="${w.id}">Unmute</button>` : ""}</div></div>`;
+  };
+  const proposed = a.watches.filter((w) => w.status === "proposed"), on = a.watches.filter((w) => w.status === "on"), off = a.watches.filter((w) => w.status === "off");
+  return `<section class="card panel" aria-label="${esc(a.name)}">
+    <div class="row" style="justify-content:space-between"><b style="font-size:16px">${esc(a.name)}</b><span class="chip ${a.status === "on" ? "ok" : ""}">${a.status === "on" ? "On" : "Paused"}</span></div>
+    <div class="note">Watches ${a.tools.map((t) => esc(title(t))).join(", ") || "no tool"} on ${a.boxes.map((b) => esc(b.label)).join(", ") || "no box on the map now"}.${a.people ? ` People: ${esc(a.people)}.` : ""}</div>
+    <div class="row"><button type="button" class="btn" data-act="check" data-id="${a.id}"${a.status !== "on" ? " disabled" : ""}>Check now</button><button type="button" class="btn quiet" data-act="agent" data-id="${a.id}" data-to="${a.status === "on" ? "paused" : "on"}">${a.status === "on" ? "Pause" : "Turn on"}</button><button type="button" class="btn quiet" data-act="propose" data-id="${a.id}">Look again</button></div>
+    ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
+    ${proposed.length ? `<div class="lbl">Proposed, waiting for you (${proposed.length})</div>${proposed.map(wHtml).join("")}` : ""}
+    <div class="lbl">Running (${on.length})</div>${on.map(wHtml).join("") || `<div class="note">Nothing is running yet. Turn on a proposed watch, or add one.</div>`}
+    ${off.length ? `<details><summary class="lbl" style="cursor:pointer">Off (${off.length})</summary>${off.map(wHtml).join("")}</details>` : ""}
+    ${S.adding ? addHtml(a) : `<button type="button" class="btn" data-act="add" data-id="${a.id}">Add a watch</button>`}
+  </section>`;
+}
+function addHtml(a) {
+  const t = S.tables;
+  if (!t) return `<div class="note">Reading the tool's tables…</div>`;
+  const tool = (t.find((x) => x.tool === S.add.tool) || t[0]);
+  const table = tool && (tool.tables.find((x) => x.name === S.add.table) || tool.tables[0]);
+  const cols = table ? table.columns : [];
+  const opt = (list, on) => list.map((c) => `<option value="${esc(c.name || c)}"${(c.name || c) === on ? " selected" : ""}>${esc(c.name || c)}</option>`).join("");
+  const times = cols.filter((c) => /timestamp|date/.test(c.type)), nums = cols.filter((c) => /integer|numeric|real|double|smallint|bigint/.test(c.type));
+  const sh = S.add.shape;
+  return `<form class="form" id="addform" data-agent="${a.id}"><div class="lbl">Add a watch</div>
+    <label>What to watch for<select name="shape">${Object.entries(SHAPE).map(([k, l]) => `<option value="${k}"${k === sh ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    <label>Tool<select name="tool">${t.map((x) => `<option value="${esc(x.tool)}"${x.tool === tool.tool ? " selected" : ""}>${esc(((S.agents.tools.find((y) => y.name === x.tool)) || { title: x.tool }).title)}</option>`).join("")}</select></label>
+    ${sh === "quiet" ? `<label>After how many days with no use<input type="number" name="days" min="1" max="60" value="3"></label>` : `
+    <label>Table<select name="table">${opt(tool.tables, table && table.name)}</select></label>
+    <label>The name each row goes by<select name="label_column">${opt(cols, (cols.find((c) => /part_no|number|name|title|item/.test(c.name)) || cols[0] || {}).name)}</select></label>
+    ${sh === "stuck" ? `<label>The state column<select name="state_column">${opt(cols.filter((c) => /text|character/.test(c.type)), "")}</select></label><label>States that count as still open (comma between)<input type="text" name="states" placeholder="queued, at station"></label>` : ""}
+    ${sh === "stuck" || sh === "waiting" ? `<label>Measured from<select name="since_column">${opt(times, "")}</select></label><label>Older than (hours, 0 for any)<input type="number" name="hours" min="0" step="any" value="72"></label>` : ""}
+    ${sh === "level" ? `<label>The number<select name="column">${opt(nums, "")}</select></label><label>Under or over<select name="op"><option value="under">under</option><option value="over">over</option></select></label><label>The limit: a number, or another column<input type="text" name="limit" placeholder="10 or order_level"></label>` : ""}
+    ${sh === "due" ? `<label>The date<select name="date_column">${opt(times, "")}</select></label><label>Within (hours)<input type="number" name="within_hours" min="0" step="any" value="72"></label>` : ""}
+    <label>Only rows where (optional)<span class="row"><select name="wcol"><option value=""></option>${opt(cols, "")}</select><select name="wop">${["is empty", "is not empty", "=", "!=", "<", "<=", ">", ">=", "contains"].map((o) => `<option>${esc(o)}</option>`).join("")}</select><input type="text" name="wval" placeholder="value" style="width:110px"></span></label>`}
+    <label>Title: what it looks for, in a line<input type="text" name="title" maxlength="160" required></label>
+    <label>How urgent<select name="severity"><option value="look">Look</option><option value="act">Act</option></select></label>
+    <div class="acts"><button type="submit" class="btn go">Add and turn on</button><button type="button" class="btn quiet" data-act="canceladd">Cancel</button></div></form>`;
+}
+
+function render() {
+  const app = document.getElementById("app");
+  if (!S.board) return;
+  const chan = S.board.channels.find((c) => c.key === S.channel) || S.board.channels[0];
+  const head = chan.kind === "plant" ? ["#plant", "Everything every agent and person posted, newest first."] : chan.kind === "escalations" ? ["#escalations", "Flags nobody picked up."] : chan.kind === "agent" ? [chan.name, "This agent's flags and notes, and what other agents sent it."] : [chan.name, "A box with no agent: what reaches its people."];
+  const msgs = S.board.messages;
+  const keepScroll = scrollY;
+  app.innerHTML = `<aside class="side">${chansHtml()}${phoneChanHtml()}</aside>
+    <section class="main" aria-label="Messages">
+      <div class="card head"><h2>${esc(head[0])}</h2><div class="note">${esc(head[1])}${S.board.push ? "" : " Phone alerts for climbed flags are off on this instance."}</div></div>
+      ${S.channel !== "escalations" ? `<form class="card compose" id="say"><textarea name="words" rows="1" maxlength="2000" placeholder="Write in ${esc(chan.kind === "plant" || chan.kind === "escalations" ? "#" + chan.name : chan.name)}" aria-label="Write a message"></textarea><button type="submit" class="btn go">Post</button></form>` : ""}
+      ${S.err && !S.channel.startsWith("a:") ? `<div class="err">${esc(S.err)}</div>` : ""}
+      <div class="card">${msgs.length ? msgs.map(msgHtml).join("") : `<div class="empty">Nothing here yet.</div>`}</div>
+    </section>
+    <aside class="right">${agentPanel()}</aside>`;
+  scrollTo(0, keepScroll);
+}
+
+// ---------- events (delegated; ids and keys only, never free text, in attributes that act)
+const app = document.getElementById("app");
+async function go(fn) { if (S.busy) return; S.busy = true; try { await fn(); S.err = ""; } catch (e) { S.err = e.message; } finally { S.busy = false; } await load().catch((e) => { S.err = e.message; render(); }); }
+app.addEventListener("click", (ev) => {
+  const t = ev.target.closest("[data-chan],[data-act]"); if (!t) return;
+  if (t.dataset.chan) { S.channel = t.dataset.chan; S.open.clear(); S.threads = {}; S.adding = false; S.err = ""; history.replaceState(null, "", `?channel=${encodeURIComponent(S.channel)}`); return go(async () => {}); }
+  const act = t.dataset.act, id = Number(t.dataset.id || t.dataset.w || 0);
+  if (act === "thread") { if (S.open.has(id)) { S.open.delete(id); delete S.threads[id]; return render(); } S.open.add(id); return go(async () => {}); }
+  if (act === "ask") { S.asking = { id, action: t.dataset.do }; return render(); }
+  if (act === "cancelask") { S.asking = null; return render(); }
+  if (act === "flag") return go(() => post(`/board/flags/${id}/${t.dataset.do}`, {}));
+  if (act === "setup") return go(async () => { await post("/agents", { key: t.dataset.key }); S.channel = `a:${t.dataset.key}`; history.replaceState(null, "", `?channel=${encodeURIComponent(S.channel)}`); });
+  if (act === "check") return go(() => post(`/agents/${id}/check`, {}));
+  if (act === "propose") return go(() => post(`/agents/${id}/propose`, {}));
+  if (act === "agent") return go(() => post(`/agents/${id}`, { status: t.dataset.to }));
+  if (act === "unmute") return go(() => post(`/watches/${id}`, { unmute: true }));
+  if (act === "watch") {
+    const lim = app.querySelector(`input[data-w="${id}"]`), sev = app.querySelector(`select[data-sev="${id}"]`);
+    const body = { status: t.dataset.to };
+    if (t.dataset.to === "on") { if (lim && lim.value !== "") body[lim.dataset.lim] = Number(lim.value); if (sev) body.severity = sev.value; }
+    return go(() => post(`/watches/${id}`, body));
+  }
+  if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; render(); }).catch((e) => { S.err = e.message; S.adding = false; render(); }); }
+  if (act === "canceladd") { S.adding = false; return render(); }
+});
+app.addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.id === "chansel") { S.channel = t.value; S.open.clear(); S.threads = {}; history.replaceState(null, "", `?channel=${encodeURIComponent(S.channel)}`); return go(async () => {}); }
+  if (t.closest("#addform") && ["shape", "tool", "table"].includes(t.name)) { S.add[t.name] = t.value; if (t.name === "tool") S.add.table = null; return render(); }
+  if (t.dataset.sev) { const w = Number(t.dataset.sev); const watch = S.agents.agents.flatMap((a) => a.watches || []).find((x) => x.id === w); if (watch && watch.status === "on") go(() => post(`/watches/${w}`, { severity: t.value })); }
+  if (t.dataset.lim) { const w = Number(t.dataset.w); const watch = S.agents.agents.flatMap((a) => a.watches || []).find((x) => x.id === w); if (watch && watch.status === "on" && t.value !== "") go(() => post(`/watches/${w}`, { [t.dataset.lim]: Number(t.value) })); }
+});
+app.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const f = ev.target;
+  if (f.id === "say") { const words = f.elements.words.value; return go(() => post("/board/messages", { channel: S.channel, words })); }
+  if (f.dataset.reply) { const words = f.elements.words.value; return go(() => post("/board/messages", { thread_id: Number(f.dataset.reply), words })); }
+  if (f.dataset.ask) { const id = Number(f.dataset.ask), action = S.asking.action, words = f.elements.words.value; return go(async () => { await post(`/board/flags/${id}/${action}`, { words }); S.asking = null; }); }
+  if (f.id === "addform") {
+    const v = (n) => (f.elements[n] ? f.elements[n].value : undefined);
+    const shape = v("shape"), spec = {};
+    if (shape === "quiet") spec.days = Number(v("days"));
+    else {
+      spec.table = v("table"); spec.label_column = v("label_column");
+      if (shape === "stuck") { spec.state_column = v("state_column"); spec.states = String(v("states") || "").split(",").map((s) => s.trim()).filter(Boolean); }
+      if (shape === "stuck" || shape === "waiting") { spec.since_column = v("since_column"); spec.hours = Number(v("hours")); }
+      if (shape === "level") { spec.column = v("column"); spec.op = v("op"); const l = String(v("limit") || "").trim(); if (/^-?\d+(\.\d+)?$/.test(l)) spec.limit = Number(l); else spec.limit_column = l; }
+      if (shape === "due") { spec.date_column = v("date_column"); spec.within_hours = Number(v("within_hours")); }
+      if (v("wcol")) { const op = v("wop"); spec.where = [op === "is empty" || op === "is not empty" ? { column: v("wcol"), op } : { column: v("wcol"), op, value: /^-?\d+(\.\d+)?$/.test(v("wval")) ? Number(v("wval")) : v("wval") === "true" ? true : v("wval") === "false" ? false : v("wval") }]; }
+    }
+    return go(async () => { await post(`/agents/${f.dataset.agent}/watches`, { shape, tool: v("tool"), spec, title: v("title"), severity: v("severity") }); S.adding = false; });
+  }
+});
+// new messages come in while the page is open; it does not redraw while someone is typing
+setInterval(() => { const a = document.activeElement; if (a && /TEXTAREA|INPUT|SELECT/.test(a.tagName)) return; if (!S.busy && !S.asking && !S.adding) load().catch(() => {}); }, 15000);
+header();
+load().catch((e) => { document.getElementById("app").innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="err">${esc(e.message)}</div></div>`; });
+</script>
+</body>
+</html>

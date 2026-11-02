@@ -3,7 +3,7 @@
 //   (src/agent.js), a signed order and a card declined at Activate (src/golive.js, src/activate.js), billing
 //   (src/billing.js), a demo request and a new demo (src/demorequests.js, src/selfserve.js), refused pins
 //   (src/selfserve.js), an account locked (src/accounts.js), a demo's build stopped before a preview
-//   (src/demostops.js), the AI service refusing or any AI call failing (src/credit.js, reported from src/agent.js and the callers), a request to Anetix (src/feedback.js), a tool process
+//   (src/demostops.js), a flag on the agent board nobody picked up (src/vsm-agents.js, the VSM copy), the AI service refusing or any AI call failing (src/credit.js, reported from src/agent.js and the callers), a request to Anetix (src/feedback.js), a tool process
 //   restarted after it kept timing out (src/runner.js), anetix.ai not answering (src/uptime.js). anetix.ai sends its
 //   own for a Stripe event it could not apply and for this product not answering (www/notify.js, www/uptime.js). Brendan chose push
 // through ntfy: the free ntfy app on his and Taylor's phones, both subscribed to one private topic. Nothing here reaches a
@@ -13,6 +13,8 @@
 //                the alerts, so it lives in Railway only. Unset: nothing is sent (the event log still has every event).
 //   NTFY_URL     the server, https://ntfy.sh unless set (a self-hosted ntfy works the same way)
 //   NTFY_TOKEN   optional: an access token, for a server that wants one
+//   SOS_NTFY_TITLE_PREFIX  optional: put before every title, so a second instance on the same topic is told apart
+//                ("VSM dev: " on the VSM dev copy, 2026-11-02)
 //
 // What an alert may carry: a company's name, a site's name, a band and its price, and what happened. Never an email, a
 // password, a card, a person's words or anything else from a company's data: the message passes through ntfy's servers
@@ -32,7 +34,7 @@ const clip = (s, n) => String(s == null ? "" : s).replace(/\s+/g, " ").trim().sl
 
 // The alert as ntfy's JSON publish takes it. Pure.
 function payload(title, message, { priority = 3, tags = [], click } = {}) {
-  return { topic: TOPIC(), title: clip(title, 120), message: clip(message, 1000), priority: Math.max(1, Math.min(5, Number(priority) || 3)), tags: [].concat(tags || []).map((t) => clip(t, 30)).filter(Boolean).slice(0, 5), ...(click ? { click: String(click) } : {}) };
+  return { topic: TOPIC(), title: clip(`${process.env.SOS_NTFY_TITLE_PREFIX || ""}${title}`, 120), message: clip(message, 1000), priority: Math.max(1, Math.min(5, Number(priority) || 3)), tags: [].concat(tags || []).map((t) => clip(t, 30)).filter(Boolean).slice(0, 5), ...(click ? { click: String(click) } : {}) };
 }
 const sent = [];   // the last few, for the admin page and the tests (in memory)
 async function send(body) {

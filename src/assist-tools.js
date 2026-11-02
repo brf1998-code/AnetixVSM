@@ -469,4 +469,5 @@ async function call(ctx, name, args) {
 }
 function newCtx({ company, role, scope, walled, person }) { return { company, role, scope, walled: Boolean(walled), person: person || null, refs: [], cards: [], shows: [] }; }
 
-module.exports = { TOOLS, toolsFor, definitions, call, newCtx, toolFor, tablesOf, readOnly, dropPool, modules, cell, stems, screenOf, similarOpen, sourceOf, WORDS_NOTE, STATUS_WORDS, HELD_WORDS, MAX_ROWS, MAX_CHARS };
+module.exports = { TOOLS, toolsFor, definitions, call, newCtx, toolFor, tablesOf, readOnly, whereSql, qi,   // whereSql and qi: also the agent board's watches (src/vsm-agents.js)
+  dropPool, modules, cell, stems, screenOf, similarOpen, sourceOf, WORDS_NOTE, STATUS_WORDS, HELD_WORDS, MAX_ROWS, MAX_CHARS };
