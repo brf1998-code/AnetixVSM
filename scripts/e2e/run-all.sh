@@ -229,6 +229,10 @@ run archive                node scripts/e2e/archive.js
 # review answers, another company, export and backup
 fresh; start "SOS_BROWSER=off SOS_USE_FLUSH_MS=500"
 run vsm                    node scripts/e2e/vsm.js
+# 2026-11-01 (VSM dev copy): the mapping walk, M2 (src/vsm-walk.js): sources, the read, the data wall, every screen,
+# the draft beside the family's map, Use this map, another family, another company, the record, the backup
+fresh; rm -f "$LOG/vsm-walk-prompts.jsonl"; start "SOS_BROWSER=off SOS_PROMPT_LOG=$LOG/vsm-walk-prompts.jsonl"
+run vsm-walk               env SOS_PROMPT_LOG=$LOG/vsm-walk-prompts.jsonl node scripts/e2e/vsm-walk.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

@@ -4223,4 +4223,45 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Tests.* `scripts/e2e/vsm.js`.
   - *Not yet.* The mapping walk (M2), cards on the board tied to a box (M3), stage scans and live numbers (M4), agents
     (M5). The Chelsea seed file is kept out of the repo (it carries Chelsea's people and quotes).
+- **The value stream map, M2: the mapping walk (2026-11-01, VSM dev copy)**
+  - *What.* The agent that guides a manager, or Anetix as a service, through mapping one product family (`src/vsm-walk.js`,
+    the walk panel in `public/map.html`, `docs/VSM.md` section 5). Sources first (typed or pasted words, a pdf, a photo,
+    a text file or a spreadsheet as words; every file through `scan.check` before it is kept, its bytes in
+    `platform.attachments` with `walk_id`). One read (the company's design model, `structured:map_extract`, metered as
+    `mapping`) finds families, the customer, systems, production control in order, the material steps of each family in
+    order with who, trigger, record, waits, numbers, a quote and its source, the supplier and open questions; generated
+    words go through the plain-words scrub, quotes stay as said, a number nobody said is "?". Then the walk: family,
+    customer and demand, systems, the last step before the customer, then step by step upstream (a guess, other steps
+    from the sources, a step the sources missed, or "this is where it starts"), each step a card, then the supplier,
+    production control, a review. **Draw the map** is platform code, no model: process row in flow order, production
+    control right to left in its band, supplier and customer, push flows with what waits before each step, information
+    flows from each step's trigger, data boxes, and a review question for every unknown, every step the manager was
+    unsure of, every question of the read, and every step of the sources left out.
+  - *Decisions (Brendan, 2026-11-01).* "Confirm the guess": about two screens a step (which step, then its card).
+    Board and admin MCP now. The result is a draft beside the family's current map (`vsm_maps.proposed`); **Use this
+    map** (board only) replaces the family's map, and the old one is kept, hidden (`replaced_at`, its key and review
+    answers moved aside), never deleted. A company with no stage list gets one from the map's boxes when a map is used.
+  - *The admin MCP* (`src/mcp-vsm.js`): `list_map_walks`, `get_map_walk` (read), `start_map_walk`, `add_map_source`
+    (words only; files on the board), `read_map_sources` (paced with the intake's sends), `answer_map_walk` (family,
+    customer, systems, the steps in flow order, supplier, production control, in one call, each part saved or refused
+    on its own), `draft_map_walk`, `map_another_family`. It writes only to a walk Anetix started; a paying site's own
+    walk shows only how far it got; nothing there uses a map or puts a walk away; no source's words come back.
+  - *Rules kept.* Under the data wall the typed words still go to the read, a pdf or a photo is named and never sent.
+    A manager reads no model and no cost (an admin does). One family per map; at most 24 steps and 6 production
+    control steps. Sources are fixed once read ("Read the sources again" starts over). A read running at a restart is
+    marked failed at boot, to be read again. A map import puts a drawn walk back to its review.
+  - *Tables.* `vsm_walks`, `vsm_sources` (in the backup, gone with the company); new columns `vsm_maps.walk_id`,
+    `proposed`, `replaced_at`, `attachments.walk_id`. The data export carries the map and the walks' sources.
+  - *Record.* `map_walk_started`, `map_source_added`, `map_source_removed`, `map_walk_reading`, `map_walk_read`,
+    `map_walk_answered`, `map_walk_step` (before and after of a card), `map_drafted`, `map_walk_reopened`,
+    `map_walk_back_to_sources`, `map_walk_used`, `map_walk_abandoned`.
+  - *Routes.* Under `/api/c/:slug/vsm/walks` (managers and admins): list, start (`from_walk` for another family),
+    one walk, `words`, `file`, `sources/:sid/remove`, `read`, `answer` (`{ screen, ... }`; a screen the walk is not on
+    is a 409, the frame, a card, the supplier and production control can be answered again any time while walking),
+    `draft`, `reopen`, `reread`, `abandon`, `use`.
+  - *Tests.* `scripts/test-vsm-walk.js` (27), `scripts/e2e/vsm-walk.js` (65), the walk's part of `scripts/e2e/mcp.js`
+    and `scripts/test-mcp.js`.
+  - *Not yet.* Floor answers to a box's question through its station QR code, kaizen bursts proposed from the walk and
+    the future state (phase 6, with M3), a second read that adds sources to a walk under way, a walk of the whole plant
+    across families at once.
 

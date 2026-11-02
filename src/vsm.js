@@ -23,6 +23,7 @@
 //   vsm_questions  the review queue: the places the map is guessing, answered by a manager (confirmed, or needs a fix
 //                  with the right answer).
 //   vsm_kaizen     the bursts on a map, numbered, tied to a box.
+//   vsm_walks, vsm_sources  the mapping walk (M2) and what went into it: src/vsm-walk.js.
 //   module_use     per tool per day: screens opened and changes made by the company's own people (floor and manager
 //                  sessions; Anetix's admin sessions do not count). "In daily use" reads it.
 //
@@ -224,15 +225,19 @@ function coverage(stages, toolList) {
   return c;
 }
 async function overview(company, role) {
-  const maps = (await q(`SELECT id, key, family, title, state, status, updated_at FROM platform.vsm_maps WHERE company=$1 ORDER BY sort, id`, [company])).rows;
+  // a map the walk replaced is kept, hidden (replaced_at); a walk's draft (proposed) is listed beside its family's map
+  const maps = (await q(`SELECT id, key, family, title, state, status, walk_id, proposed, updated_at FROM platform.vsm_maps WHERE company=$1 AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows;
   const stages = (await q(`SELECT id, ref, name, who, record_kind, record_system, modules, anetix_note, phase, target FROM platform.vsm_stages WHERE company=$1 ORDER BY sort, ref`, [company])).rows;
   const toolList = await tools(company);
-  const open = (await q(`SELECT count(*)::int AS n FROM platform.vsm_questions WHERE company=$1 AND status='open'`, [company])).rows[0].n;
+  // the open questions of the maps in use (a walk's draft and a replaced map keep theirs to themselves)
+  const open = (await q(`SELECT count(*)::int AS n FROM platform.vsm_questions x WHERE x.company=$1 AND x.status='open'
+                           AND (x.map_key IS NULL OR EXISTS (SELECT 1 FROM platform.vsm_maps m WHERE m.company=x.company AND m.key=x.map_key AND NOT m.proposed AND m.replaced_at IS NULL))`, [company])).rows[0].n;
   const co = (await q(`SELECT slug, name FROM platform.companies WHERE slug=$1`, [company])).rows[0] || { slug: company, name: company };
-  return { company: co, role, maps, stages, tools: toolList, coverage: coverage(stages, toolList), questions_open: open, can_import: role === "admin" };
+  const walks = (await require("./vsm-walk").list(company)).filter((w) => w.open);
+  return { company: co, role, maps, stages, tools: toolList, coverage: coverage(stages, toolList), questions_open: open, walks, can_import: role === "admin" };
 }
 async function mapView(company, id) {
-  const map = (await q(`SELECT id, key, family, title, state, status, layout, updated_at FROM platform.vsm_maps WHERE company=$1 AND id=$2`, [company, id])).rows[0];
+  const map = (await q(`SELECT id, key, family, title, state, status, layout, walk_id, proposed, replaced_at, updated_at FROM platform.vsm_maps WHERE company=$1 AND id=$2`, [company, id])).rows[0];
   if (!map) throw notFound("map");
   const nodes = (await q(`SELECT id, key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence, updated_at, updated_by
                             FROM platform.vsm_nodes WHERE company=$1 AND map_id=$2 ORDER BY id`, [company, id])).rows;
@@ -316,14 +321,15 @@ async function answer(req, company, id, body) {
 async function exportMap(company) {
   const stages = (await q(`SELECT ref, name, who, record_kind, record_system, modules, anetix_note, phase, target FROM platform.vsm_stages WHERE company=$1 ORDER BY sort, ref`, [company])).rows;
   const maps = [];
-  for (const m of (await q(`SELECT id, key, family, title, state, status, layout FROM platform.vsm_maps WHERE company=$1 ORDER BY sort, id`, [company])).rows) {
+  for (const m of (await q(`SELECT id, key, family, title, state, status, layout FROM platform.vsm_maps WHERE company=$1 AND NOT proposed AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows) {
     const nodes = (await q(`SELECT key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence FROM platform.vsm_nodes WHERE map_id=$1 ORDER BY id`, [m.id])).rows;
     const edges = (await q(`SELECT from_key AS "from", to_key AS "to", kind, label, from_side, to_side, from_at, to_at, inventory FROM platform.vsm_edges WHERE map_id=$1 ORDER BY sort, id`, [m.id])).rows;
     const kaizen = (await q(`SELECT node_key AS node, n, title, why, status FROM platform.vsm_kaizen WHERE map_id=$1 ORDER BY n`, [m.id])).rows;
     const { id, ...rest } = m;
     maps.push({ ...rest, nodes, edges, kaizen });
   }
-  const questions = (await q(`SELECT map_key AS map, node_key AS node, where_label AS "where", claim, why, confidence, status, answer, answered_by FROM platform.vsm_questions WHERE company=$1 ORDER BY sort, id`, [company])).rows;
+  const keys = maps.map((m) => m.key);
+  const questions = (await q(`SELECT map_key AS map, node_key AS node, where_label AS "where", claim, why, confidence, status, answer, answered_by FROM platform.vsm_questions WHERE company=$1 AND (map_key IS NULL OR map_key = ANY($2)) ORDER BY sort, id`, [company, keys])).rows;
   return { format: "anetix-map-1", company, exported_at: new Date().toISOString(), stages, maps, questions };
 }
 // Checked for shape before anything is written; the whole replace is one transaction.
@@ -380,6 +386,8 @@ async function importMap(req, company, doc) {
   try {
     await client.query("BEGIN");
     for (const t of ["vsm_questions", "vsm_kaizen", "vsm_edges", "vsm_nodes", "vsm_maps", "vsm_stages"]) await client.query(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
+    // a mapping walk whose draft went with the old map goes back to its review, to be drawn again
+    await client.query("UPDATE platform.vsm_walks SET status='walking', map_id=NULL, updated_at=now() WHERE company=$1 AND status='drafted'", [company]);
     for (const s of c.stages) {
       await client.query(`INSERT INTO platform.vsm_stages (company, ref, name, who, record_kind, record_system, modules, anetix_note, phase, target, sort) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [company, s.ref, s.name, s.who, s.record_kind, s.record_system, s.modules, s.anetix_note, s.phase, s.target, s.sort]);
@@ -410,6 +418,7 @@ async function importMap(req, company, doc) {
 }
 
 async function deleteCompany(company) {
+  await require("./vsm-walk").deleteCompany(company);   // the mapping walks and their sources (their files are attachments, deleted with the company's)
   for (const t of ["vsm_questions", "vsm_kaizen", "vsm_edges", "vsm_nodes", "vsm_maps", "vsm_stages", "module_use"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 

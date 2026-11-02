@@ -40,7 +40,10 @@
 //   doc_saved (before/after an agent doc), doc_deleted, models_changed
 //   label_set (the checks log), chat_question, chat_answer (a module's chat persona)
 //   map_changed (a box of the value stream map: before/after the fields changed), stage_changed (a stage on the map's
-//   coverage list), map_question_answered (before = the claim, after = the answer), map_imported (src/vsm.js)
+//   coverage list), map_question_answered (before = the claim, after = the answer), map_imported (src/vsm.js);
+//   the mapping walk (src/vsm-walk.js): map_walk_started, map_source_added / map_source_removed (the title),
+//   map_walk_reading, map_walk_read, map_walk_answered, map_walk_step (before/after: a step's card), map_drafted,
+//   map_walk_reopened, map_walk_back_to_sources, map_walk_used, map_walk_abandoned
 //
 // Who (2026-10-15). actor_role is the session's role. actor_name is the person signed in on the device, else a name the
 // caller passed, else the named account behind the session. actor_account is that account's id whenever the session

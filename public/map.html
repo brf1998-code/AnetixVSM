@@ -123,7 +123,42 @@
   .feed .m:first-of-type { border-top:none; padding-top:0; }
   .feed .who { font-size:12px; font-weight:700; color:var(--navy); }
   .tag { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; color:#fff; }
-  @media (max-width:700px) { .wrap { padding:12px; } .band { padding:8px 12px; } .band .right { margin-left:0; } }
+  /* the mapping walk (src/vsm-walk.js): one screen at a time, built for a phone or a tablet on the floor */
+  .walk { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+  .wmain { flex:2 1 560px; min-width:0; padding:18px 20px 22px; display:flex; flex-direction:column; gap:14px; }
+  .wmain h2 { font-size:21px; line-height:1.25; }
+  .wmain p { max-width:70ch; }
+  .steps { display:flex; flex-wrap:wrap; gap:4px; }
+  .steps span { font-size:11.5px; font-weight:700; padding:3px 10px; border-radius:999px; background:#eef0f3; color:var(--steel); }
+  .steps span.done { background:var(--greenSoft); color:#1d5535; }
+  .steps span.now { background:var(--navy); color:#fff; }
+  .go.big, .ok.big, .fix.big, .quietbtn.big { min-height:46px; padding:0 18px; font-size:14px; }
+  .go[disabled] { opacity:.45; cursor:not-allowed; }
+  .opts { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(240px,100%),1fr)); gap:10px; }
+  .opt { text-align:left; background:#fff; border:1.5px solid var(--line); border-radius:10px; padding:12px 14px; display:flex; flex-direction:column; gap:3px; cursor:pointer; min-height:64px; }
+  .opt:hover, .opt:focus-visible { border-color:var(--navy); }
+  .opt b { font-size:15px; }
+  .guess { border:2px solid var(--navy); border-radius:12px; padding:14px 16px; display:flex; flex-direction:column; gap:8px; background:#f7f9fc; }
+  .guess .gname { font-size:19px; }
+  .inline { display:flex; gap:8px; flex-wrap:wrap; }
+  .inline input { flex:1 1 220px; width:auto; }
+  fieldset.box { border:1px solid var(--line); border-radius:10px; padding:10px 12px 12px; display:flex; flex-direction:column; gap:8px; }
+  fieldset.box legend { padding:0 4px; }
+  .tog { display:inline-flex !important; flex-direction:row !important; align-items:center; gap:7px; font-weight:600; background:#eef0f3; border-radius:999px; padding:6px 12px; cursor:pointer; min-height:36px; }
+  .tog:has(input:checked) { background:var(--navy); color:#fff; }
+  .tog:has(input:checked) .note { color:#dbe4ef; }
+  .tog input { accent-color:var(--navy); }
+  .srcs { display:flex; flex-direction:column; gap:6px; }
+  .src { display:flex; align-items:center; gap:10px; background:var(--fog); border-radius:8px; padding:6px 6px 6px 12px; }
+  .src b { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+  .crow { display:grid; grid-template-columns:minmax(120px,1.4fr) minmax(90px,1fr) minmax(110px,1fr) minmax(100px,1fr) minmax(120px,1fr) minmax(110px,1fr) auto; gap:6px; align-items:center; }
+  @media (max-width:900px) { .crow { grid-template-columns:1fr 1fr; border-top:1px solid #e3e7ec; padding-top:8px; } }
+  ol.flow { padding-left:22px; display:flex; flex-direction:column; gap:6px; }
+  .linkish { background:none; border:none; padding:0; color:var(--navy); font-weight:700; cursor:pointer; text-decoration:underline; text-underline-offset:2px; text-align:left; }
+  .spin { width:28px; height:28px; border:3px solid #dbe4ef; border-top-color:var(--navy); border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 10px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .walkchip { background:#fbe3cc; color:#7a3a00; }
+  @media (max-width:700px) { .wrap { padding:12px; } .band { padding:8px 12px; } .band .right { margin-left:0; } .wmain { padding:14px; } }
 </style>
 </head>
 <body>
@@ -140,7 +175,8 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&":
 const REC = { anetix: "In Anetix", next: "Anetix, rolling out", other: "Another system", paper: "Paper, email or word of mouth", none: "No record" };
 const CONF = { heard: ["Heard on a walk-through", "#e3efe7", "#1d5535"], seen: ["Seen in a tool or document", "#dfe7f1", "#1f3a5f"], assumed: ["Assumed, needs a person to confirm", "#fbe3cc", "#7a3a00"], confirmed: ["Confirmed", "#e3efe7", "#1d5535"] };
 const EDGE = { push: ["#1c242e", 3, ""], pull: ["#1c242e", 3, "2 5"], fifo: ["#1c242e", 3, ""], supermarket: ["#1c242e", 3, ""], supply: ["#1c242e", 3, ""], ship: ["#1c242e", 3, ""], info_system: ["#1f3a5f", 2, ""], info_word: ["#c2620a", 2, "6 5"] };
-const S = { ov: null, mapId: null, view: null, sel: null, layers: { sys: true, agents: false, kz: true, ladder: true }, arrange: false, editing: false, fixing: null, err: "", fit: true, z: 1 };
+const S = { ov: null, mapId: null, view: null, sel: null, layers: { sys: true, agents: false, kz: true, ladder: true }, arrange: false, editing: false, fixing: null, err: "", fit: true, z: 1,
+            panel: null, walk: null, walkEdit: null };   // panel "walk": the mapping walk is open instead of the map
 
 async function api(path, opts) {
   const r = await fetch(API + path, Object.assign({ cache: "no-store", headers: { "Content-Type": "application/json" } }, opts || {}));
@@ -158,6 +194,8 @@ async function load(keepSel) {
   document.title = `${co.name || "Map"} · Value stream map`;
   const mark = document.getElementById("comark"); mark.src = `/api/c/${SLUG}/icon`; mark.onerror = () => { mark.style.display = "none"; };
   document.getElementById("who").innerHTML = `signed in as <b>${esc(S.ov.role)}</b>${S.ov.role === "admin" ? ' · <a href="/admin">admin</a>' : ""} · <a href="/c/${esc(SLUG)}/settings">Settings</a> · <a href="/logout">sign out</a>`;
+  const wantWalk = Number(new URLSearchParams(location.search).get("walk"));
+  if (wantWalk && !S.panel && !keepSel) { try { return await openWalk(wantWalk); } catch (e) { history.replaceState(null, "", location.pathname); } }
   if (!S.ov.maps.length) { S.view = null; return render(); }
   const want = Number(new URLSearchParams(location.search).get("map")) || S.mapId;
   S.mapId = S.ov.maps.some((m) => m.id === want) ? want : S.ov.maps[0].id;
@@ -212,8 +250,9 @@ function mapHtml() {
   const ladderY = L.ladder_y != null ? L.ladder_y : (procs.length ? Math.max(...procs.map((n) => n.y + n.h + dataH(n) + 48)) : 0);
   if (S.layers.ladder && procs.length) H = Math.max(H, ladderY + 80);
   if (S.layers.agents) H += 0;
-  let svg = "", html = "";
-  for (const b of L.bands || []) html += `<div class="bandbg" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px"></div><div class="bandlbl" style="left:${b.x + 16}px;top:${b.y + 8}px">${esc(b.label)}</div><div class="bandnote" style="left:${b.x + 240}px;width:${Math.max(80, b.w - 256)}px;top:${b.y + 8}px">${esc(b.note || "")}</div>`;
+  // the bands are drawn first, under the flows, so a flow between two production control boxes shows on the band
+  let svg = "", html = "", under = "";
+  for (const b of L.bands || []) under += `<div class="bandbg" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px"></div><div class="bandlbl" style="left:${b.x + 16}px;top:${b.y + 8}px">${esc(b.label)}</div><div class="bandnote" style="left:${b.x + 240}px;width:${Math.max(80, b.w - 256)}px;top:${b.y + 8}px">${esc(b.note || "")}</div>`;
   const defs = Object.entries({ k: "#1c242e", n: "#1f3a5f", o: "#c2620a" }).map(([id, c]) => `<marker id="h-${id}" orient="auto" markerWidth="5" markerHeight="5" refX="3" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="${c}"/></marker>`).join("");
   for (const e of v.edges) {
     const pts = route(e, nodes); if (!pts) continue;
@@ -274,7 +313,7 @@ function mapHtml() {
     html += `<div class="ladder" id="ladder" data-min="${ladderY}" style="left:${x0}px;top:${ladderY}px;height:52px">${cells}</div>`;
     H = Math.max(H, ladderY + 70);
   }
-  return `<div class="host ${S.layers.sys ? "sys" : ""} ${S.arrange ? "arrange" : ""}" id="host" style="width:${W}px;height:${H}px"><svg class="edges" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><defs>${defs}</defs>${svg}</svg>${html}</div>`;
+  return `<div class="host ${S.layers.sys ? "sys" : ""} ${S.arrange ? "arrange" : ""}" id="host" style="width:${W}px;height:${H}px">${under}<svg class="edges" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" aria-hidden="true"><defs>${defs}</defs>${svg}</svg>${html}</div>`;
 }
 
 // The data boxes wrap their words, so their heights are only known once drawn: the agent chips and the ladder move
@@ -389,22 +428,245 @@ function stagesHtml() {
   </tbody></table></div></details>`;
 }
 
+// ---------- the mapping walk (src/vsm-walk.js, docs/VSM.md section 5): one screen at a time; every answer is saved as it
+// is given, so the walk can be closed and picked up again, here or on a phone walking the floor
+const WREC = { anetix: "An Anetix tool", other: "Another system", paper: "Paper, email or word of mouth", none: "Nothing is kept" };
+const WHOW = { system: "In a system", paper: "On paper or a list", word: "Word of mouth or email" };
+const PHASES = [["sources", "Sources"], ["read", "Read"], ["frame", "Family"], ["walk", "Walk upstream"], ["control", "Production control"], ["draw", "Draw"]];
+const PHASE_OF = { sources: "sources", reading: "read", family: "frame", customer: "frame", systems: "frame", last: "walk", before: "walk", card: "walk", supplier: "walk", control: "control", review: "draw", drafted: "draw", used: "draw", abandoned: "draw" };
+async function openWalk(id) {
+  const r = await api(`/walks/${id}`);
+  S.walk = r.walk; S.walkEdit = null; S.panel = "walk"; S.err = "";
+  history.replaceState(null, "", `?walk=${id}`);
+  render(); poll();
+}
+let pollT = null;
+function poll() {
+  clearTimeout(pollT);
+  if (S.panel !== "walk" || !S.walk || S.walk.status !== "reading") return;
+  pollT = setTimeout(async () => {
+    try { const r = await api(`/walks/${S.walk.id}`); S.walk = r.walk; render(); } catch (e) { /* the next look tries again */ }
+    poll();
+  }, 3000);
+}
+async function wpost(path, body) {
+  const r = await post(`/walks/${S.walk.id}${path}`, body);
+  if (r.walk) S.walk = r.walk;
+  S.walkEdit = null; S.err = "";
+  return r;
+}
+function closeWalk() { clearTimeout(pollT); S.panel = null; S.walk = null; S.walkEdit = null; S.err = ""; history.replaceState(null, "", location.pathname); return load(false); }
+// The screen on show: the walk's own, or one of its earlier answers opened again to change it
+function screenNow() {
+  const w = S.walk, e = S.walkEdit, st = w.settled || {};
+  if (!e) return w.screen;
+  if (e.kind === "card") {
+    const i = w.walked.findIndex((x) => x.key === e.key); if (i < 0) return w.screen;
+    const s = w.walked[i];
+    return { kind: "card", key: s.key, position: w.walked.length - i, step: s, evidence: s.quote ? { quote: s.quote, quote_by: s.quote_by } : null, control: (st.control || []).map((c) => ({ key: c.key, name: c.name })), systems: st.systems || [], edit: true };
+  }
+  if (e.kind === "family") return { kind: "family", options: w.family_options || [], edit: true };
+  if (e.kind === "customer") return { kind: "customer", prefill: st.customer || {}, edit: true };
+  if (e.kind === "systems") return { kind: "systems", suggested: (w.found || {}).systems || [], chosen: st.systems || [], edit: true };
+  if (e.kind === "supplier") return { kind: "supplier", prefill: st.supplier || {}, first: (w.walked[0] || {}).name || "the first step", edit: true };
+  if (e.kind === "control") return { kind: "control", prefill: st.control || [], edit: true };
+  return w.screen;
+}
+const quoteHtml = (ev) => (ev && ev.quote ? `<figure class="quote"><blockquote>“${esc(ev.quote)}”</blockquote><figcaption>${esc(ev.quote_by || "")}</figcaption></figure>` : "");
+const radios = (name, pairs, on) => pairs.map(([v, l]) => `<label class="tog"><input type="radio" name="${name}" value="${esc(v)}"${v === on ? " checked" : ""}> ${esc(l)}</label>`).join("");
+const cancelEdit = (sc) => (sc.edit ? `<button type="button" class="quietbtn big" data-act="w-cancel">Cancel</button>` : "");
+function wScreenHtml(sc) {
+  const w = S.walk;
+  switch (sc.kind) {
+    case "sources": {
+      const kinds = { transcript: "transcript", notes: "notes", email: "email", document: "document", pdf: "pdf", photo: "photo" };
+      const size = (s) => (s.file ? `${Math.max(1, Math.round(s.size / 1024))} KB` : `${s.chars.toLocaleString()} characters`);
+      return `<h2>What goes into the walk</h2>
+        <p class="note">Add everything first: call and walk-through transcripts, your notes, the plant's own process documents, photos of a whiteboard or a traveler. The agent reads them all once and makes its best guess at every step; then you confirm each one, walking upstream from shipping.</p>
+        ${w.sources.length ? `<div class="srcs">${w.sources.map((s) => `<div class="src"><b>${esc(s.title)}</b><span class="note">${esc(kinds[s.kind] || s.kind)} · ${size(s)}${s.gone ? " · removed by the malware scan" : ""}</span><button type="button" class="x" data-act="w-rmsrc" data-src="${s.id}" aria-label="Remove ${esc(s.title)}">×</button></div>`).join("")}</div>` : `<div class="note">No sources yet.</div>`}
+        <form id="wf" data-screen="words" class="form">
+          <div class="row2"><label>What it is<input type="text" name="title" maxlength="120" placeholder="Walk-through with the floor, Oct 30"></label><label>Kind<select name="kind"><option value="transcript">Transcript of a call or walk-through</option><option value="notes">Notes</option><option value="email">Email</option><option value="document">Document</option></select></label></div>
+          <label>The words<textarea name="words" rows="6" placeholder="Paste a transcript, or type what you saw and heard"></textarea></label>
+          <div class="chips"><button type="submit" class="quietbtn big">Add these words</button><label class="quietbtn big" style="cursor:pointer">Add a file<input type="file" id="wfile" hidden accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.vtt,.srt,.csv,.tsv,.xlsx"></label><span class="note">A pdf, a photo, a text file, a csv or an xlsx.</span></div>
+        </form>
+        ${w.problem ? `<div class="err">${esc(w.problem)}</div>` : ""}
+        <div class="chips"><button type="button" class="go big" data-act="w-read"${w.sources.length ? "" : " disabled"}>Read the sources</button><span class="note">A minute or two. Nothing can be added once they are read.</span></div>`;
+    }
+    case "reading": return `<div class="empty"><div class="spin"></div><b>The agent is reading ${w.sources.length} source${w.sources.length === 1 ? "" : "s"}.</b><p style="margin:6px auto 0">This takes a minute or two. You can close this and come back; the walk waits.</p></div>`;
+    case "family": return `<h2>Which product family is this walk?</h2>
+      <p class="note">A value stream map shows one family: products that share most of their steps. Map one now; the next can start from the same sources without reading them again.</p>
+      <div class="opts">${(sc.options || []).map((o) => `<button type="button" class="opt" data-act="w-family" data-key="${esc(o.key)}"><b>${esc(o.name)}</b>${o.products ? `<span>${esc(o.products)}</span>` : ""}<span class="note">${o.steps} step${o.steps === 1 ? "" : "s"} found in the sources${o.on_map ? " · on the map now" : ""}</span></button>`).join("")}</div>
+      <form id="wf" data-screen="family-new" class="inline"><input type="text" name="name" maxlength="60" placeholder="Another family" aria-label="Another family"><button type="submit" class="quietbtn big">Use this name</button>${cancelEdit(sc)}</form>`;
+    case "customer": { const p = sc.prefill || {}; return `<h2>Who is the customer, and how much do they pull?</h2>
+      <p class="note">Demand sets the pace the whole map is measured against. Keep what nobody knows as ?.</p>${quoteHtml(sc.evidence)}
+      <form id="wf" data-screen="customer" class="form"><label>Who buys<input type="text" name="who" maxlength="120" value="${esc(p.who)}"></label>
+        <div class="row2"><label>Demand, with units<input type="text" name="demand" maxlength="120" value="${esc(p.demand || "?")}"></label><label>How often the plant ships<input type="text" name="ships" maxlength="120" value="${esc(p.ships || "?")}"></label></div>
+        <div class="chips"><button type="submit" class="go big">Looks right</button>${cancelEdit(sc)}</div></form>`; }
+    case "systems": { const names = [...new Set([...(sc.suggested || []).map((x) => x.name), ...(sc.chosen || [])])]; const used = Object.fromEntries((sc.suggested || []).map((x) => [x.name, x.used_for])); return `<h2>Which systems does the plant use?</h2>
+      <p class="note">Named once here, so every step can say where its record lives. Untick one the plant does not use.</p>
+      <form id="wf" data-screen="systems" class="form"><div class="chips">${names.map((n) => `<label class="tog"><input type="checkbox" name="sys" value="${esc(n)}"${(sc.chosen || []).includes(n) ? " checked" : ""}> ${esc(n)}${used[n] ? ` <span class="note">${esc(used[n])}</span>` : ""}</label>`).join("") || `<span class="note">The sources name no system.</span>`}</div>
+        <div class="inline"><input type="text" name="add" maxlength="60" placeholder="Another system, by its name" aria-label="Another system"></div>
+        <div class="chips"><button type="submit" class="go big">Looks right</button>${cancelEdit(sc)}</div></form>`; }
+    case "last": case "before": {
+      const g = sc.guess, of = sc.of;
+      const full = sc.kind === "before" && sc.walked >= sc.max;
+      return `<h2>${sc.kind === "last" ? "What is the last step before the work goes to the customer?" : `What happens right before ${esc(of.name)}?`}</h2>
+        <p class="note">${sc.kind === "last" ? "The walk starts at shipping and goes upstream, the way the customer pulls." : "One step back toward where the work starts."}</p>
+        ${full ? `<div class="note">This family has ${sc.walked} steps, the most one map holds.</div>` : g ? `<div class="guess"><div class="lbl">The sources suggest</div><b class="gname">${esc(g.name)}</b>${g.who || g.what ? `<div class="note">${esc([g.who, g.what].filter(Boolean).join(" · "))}</div>` : ""}${quoteHtml(g)}<div><button type="button" class="go big" data-act="w-pick" data-pick="${esc(g.key)}">Yes, ${esc(g.name)}</button></div></div>` : `<p>The sources have no more steps for this family.</p>`}
+        ${!full && (sc.others || []).length ? `<div><div class="lbl" style="margin-bottom:6px">Or another step from the sources</div><div class="chips">${sc.others.map((o) => `<button type="button" class="pill" data-act="w-pick" data-pick="${esc(o.key)}">${esc(o.name)}</button>`).join("")}</div></div>` : ""}
+        ${full ? "" : `<form id="wf" data-screen="newstep" data-of="${sc.kind}" class="inline"><input type="text" name="name" maxlength="60" placeholder="A step the sources missed" aria-label="A step the sources missed"><button type="submit" class="quietbtn big">Add it</button></form>`}
+        ${sc.kind === "before" ? `<div class="chips"><button type="button" class="${g && !full ? "quietbtn" : "go"} big" data-act="w-pick" data-pick="start">Nothing before it: ${esc(of.name)} is where the work starts</button><button type="button" class="linkish" data-act="w-card" data-key="${esc(of.key)}">Back to ${esc(of.name)}</button></div>` : ""}`;
+    }
+    case "card": {
+      const s = sc.step, t = s.trigger || {};
+      const from = [["arrival", "The work arrives from the step before"], ...(sc.control || []).map((c) => [c.key, c.name]), ["person", "Someone tells them"]];
+      const rows = (s.numbers || []).map((d, i) => `<div class="dr"><input type="text" name="dl" value="${esc(d.label)}" aria-label="Label ${i + 1}"><input type="text" name="dv" value="${esc(d.value)}" aria-label="Value ${i + 1}"><button type="button" class="x" data-act="droprow" aria-label="Remove this row">×</button></div>`).join("");
+      const tools = (w.tools || []).map((x) => `<label class="tog"><input type="checkbox" name="tool" value="${esc(x.name)}"${(s.tools || []).includes(x.name) ? " checked" : ""}> ${esc(x.title)}</label>`).join("");
+      return `<div class="lbl">${sc.position === 1 ? "The last step before the customer" : `Step ${sc.position} back from shipping`}${sc.edit ? " · changing an answer" : ""}</div>
+        <h2>${esc(s.name)}</h2>${quoteHtml(sc.evidence)}
+        <form id="wf" data-screen="card" data-key="${esc(sc.key)}" class="form">
+          <div class="row2"><label>Name<input type="text" name="name" maxlength="60" value="${esc(s.name)}"></label><label>Who does it<input type="text" name="who" maxlength="120" value="${esc(s.who)}"></label></div>
+          <div class="row2"><label>Where<input type="text" name="where" maxlength="80" value="${esc(s.where)}"></label><label>What happens<input type="text" name="what" maxlength="300" value="${esc(s.what)}"></label></div>
+          <fieldset class="box"><legend class="lbl">What tells them to start</legend><div class="chips">${radios("tfrom", from, t.from || "arrival")}</div><div class="chips">${radios("thow", Object.entries(WHOW), t.how || "word")}</div><input type="text" name="ttext" maxlength="200" value="${esc(t.text)}" placeholder="In their words" aria-label="In their words"></fieldset>
+          <fieldset class="box"><legend class="lbl">Where its record lives</legend><div class="chips">${radios("rk", Object.entries(WREC), s.record_kind || "none")}</div>
+            <label>Which system or paper<input type="text" name="rs" maxlength="120" list="wsys" value="${esc(s.record_system)}"></label><datalist id="wsys">${(sc.systems || []).map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+            ${tools ? `<div><div class="lbl" style="margin-bottom:6px">Anetix tools that keep it</div><div class="chips">${tools}</div></div>` : ""}</fieldset>
+          <label>What waits before it (? if nobody counted)<input type="text" name="waits" maxlength="80" value="${esc(s.waits_before || "?")}"></label>
+          <div><div class="lbl" style="margin-bottom:4px">Numbers anyone said: cycle time, changeover, uptime, batch (? if not known)</div><div id="drows" style="display:flex;flex-direction:column;gap:6px">${rows}</div><button type="button" class="quietbtn" data-act="addrow" style="margin-top:6px">Add a number</button></div>
+          <div class="chips"><label class="tog"><input type="checkbox" name="unsure"${s.unsure ? " checked" : ""}> Not sure about this step</label></div>
+          <input type="text" name="note" maxlength="500" value="${esc(s.note)}" placeholder="What is unsure, or anything to remember" aria-label="Note">
+          <div class="chips"><button type="submit" class="go big">Looks right</button>${cancelEdit(sc)}<button type="button" class="fix big" data-act="w-remove" data-key="${esc(sc.key)}">Remove this step</button></div>
+        </form>`;
+    }
+    case "supplier": { const p = sc.prefill || {}; return `<h2>Where does the material for ${esc(sc.first)} come from?</h2>
+      <p class="note">The supplier sits at the left of the map, with what waits before the first step.</p>
+      <form id="wf" data-screen="supplier" class="form"><div class="row2"><label>Supplier<input type="text" name="name" maxlength="80" value="${esc(p.name)}"></label><label>What they send<input type="text" name="what" maxlength="120" value="${esc(p.what)}"></label></div>
+        <label>How it is ordered<input type="text" name="how_ordered" maxlength="200" value="${esc(p.how_ordered)}"></label>
+        <fieldset class="box"><legend class="lbl">Where the order's record lives</legend><div class="chips">${radios("rk", Object.entries(WREC).filter(([k]) => k !== "anetix"), p.record_kind && p.record_kind !== "anetix" ? p.record_kind : "none")}</div><label>Which system or paper<input type="text" name="rs" maxlength="120" value="${esc(p.record_system)}"></label></fieldset>
+        <div class="chips"><button type="submit" class="go big">Looks right</button>${cancelEdit(sc)}${sc.edit ? "" : `<button type="button" class="quietbtn big" data-act="w-more">There is another step before ${esc(sc.first)}</button>`}</div></form>`; }
+    case "control": return `<h2>Production control, end to end</h2>
+      <p class="note">How an order becomes work on the floor, in order: the order coming in, the build order, priority, the daily list. These run across the top of the map, and the steps below learn from them what to do.</p>
+      <form id="wf" data-screen="control" class="form"><div id="crows" style="display:flex;flex-direction:column;gap:8px">${(sc.prefill || []).map(ctlRow).join("")}</div>
+        <div class="chips"><button type="button" class="quietbtn" data-act="w-addctl">Add a step</button></div>
+        <div class="chips"><button type="submit" class="go big">Looks right</button>${cancelEdit(sc)}</div></form>`;
+    case "review": {
+      const c = sc.customer || {}, su = sc.supplier || {};
+      const change = (k) => `<button type="button" class="linkish" data-act="w-edit" data-kind="${k}">change</button>`;
+      return `<h2>The walk, before the map is drawn</h2>
+        <div class="grid2"><div><div class="lbl">Family</div><div><b>${esc(sc.family)}</b> ${change("family")}</div></div><div><div class="lbl">Customer</div><div>${esc(c.who || "Customer")} · ${esc(c.demand || "?")} · ships ${esc(c.ships || "?")} ${change("customer")}</div></div>
+          <div><div class="lbl">Supplier</div><div>${esc(su.name || "?")}${su.what ? ` · ${esc(su.what)}` : ""} ${change("supplier")}</div></div><div><div class="lbl">Systems</div><div>${esc(((S.walk.settled || {}).systems || []).join(", ") || "none")} ${change("systems")}</div></div></div>
+        <div><div class="lbl" style="margin-bottom:6px">Production control ${change("control")}</div><div class="chips">${(sc.control || []).map((x) => `<span class="chip">${esc(x.name)}${x.who ? ` · ${esc(x.who)}` : ""}</span>`).join("") || `<span class="note">none</span>`}</div></div>
+        <div><div class="lbl" style="margin-bottom:6px">The steps, in the order the work moves</div><ol class="flow">${sc.steps.map((x) => `<li><button type="button" class="linkish" data-act="w-card" data-key="${esc(x.key)}">${esc(x.name)}</button> <span class="chip" style="${recChip(x.record_kind)}">${esc(WREC[x.record_kind])}</span> ${esc(x.record_system || "")}${x.unknown.length ? ` <span class="note">? ${esc(x.unknown.join(", "))}</span>` : ""}${x.unsure ? ` <span class="note">· not sure</span>` : ""}</li>`).join("")}</ol></div>
+        ${sc.left_out.length ? `<div class="note">In the sources but not walked: ${esc(sc.left_out.map((x) => x.name).join(", "))}. Each becomes a review question on the map.</div>` : ""}
+        <div class="chips"><button type="button" class="go big" data-act="w-draft">Draw the map</button><button type="button" class="quietbtn big" data-act="w-moreup">Add a step further upstream</button></div>`;
+    }
+    case "drafted": return `<h2>The map is drawn</h2><p>It sits beside ${esc(w.family)}'s current map as a draft, so the two can be compared. Every guess on it is a review question.</p>
+      <div class="chips"><button type="button" class="go big" data-act="w-showmap" data-mapid="${w.map_id}">Open the draft</button><button type="button" class="quietbtn big" data-act="w-reopen">Change the walk</button><button type="button" class="quietbtn big" data-act="w-another">Map another family from the same sources</button></div>`;
+    case "used": return `<h2>This walk's map is ${esc(w.family)}'s map now</h2><div class="chips"><button type="button" class="go big" data-act="w-showmap" data-mapid="${w.map_id}">Open it</button><button type="button" class="quietbtn big" data-act="w-another">Map another family from the same sources</button></div>`;
+    default: return `<h2>This walk is put away</h2>`;
+  }
+}
+const recChip = (k) => ({ anetix: "background:var(--anetix);color:#fff", other: "background:var(--other);color:#14202c", paper: "background:var(--paper);color:#3d2000", none: "background:#eef0f3" }[k] || "");
+function ctlRow(c) {
+  c = c || {};
+  const opt = (pairs, on) => pairs.map(([v, l]) => `<option value="${esc(v)}"${v === on ? " selected" : ""}>${esc(l)}</option>`).join("");
+  const tools = [["", "No Anetix tool"], ...(S.walk.tools || []).map((t) => [t.name, t.title])];
+  return `<div class="crow" data-ckey="${esc(c.key || "")}"><input type="text" name="cname" maxlength="60" value="${esc(c.name)}" placeholder="Step" aria-label="Step"><input type="text" name="cwho" maxlength="120" value="${esc(c.who)}" placeholder="Who" aria-label="Who">
+    <select name="chow" aria-label="How it is passed on">${opt(Object.entries(WHOW), c.how || "word")}</select><input type="text" name="csys" maxlength="120" value="${esc(c.system)}" placeholder="System or paper" aria-label="System or paper">
+    <select name="crk" aria-label="Where its record lives">${opt(Object.entries(WREC), c.record_kind || "none")}</select><select name="ctool" aria-label="Anetix tool">${opt(tools, (c.tools || [])[0] || "")}</select>
+    <button type="button" class="x" data-act="w-dropctl" aria-label="Remove this step">×</button></div>`;
+}
+function walkHtml() {
+  const w = S.walk, sc = screenNow(), at = PHASE_OF[sc.kind] || "sources";
+  const idx = PHASES.findIndex(([k]) => k === at);
+  const prog = `<div class="steps" aria-label="Where the walk is">${PHASES.map(([k, l], i) => `<span class="${i < idx ? "done" : i === idx ? "now" : ""}">${esc(l)}</span>`).join("")}</div>`;
+  const walked = w.walked.length ? `<section class="card"><b>Walked so far</b><div class="note">In the order the work moves. Open a step to change it.</div><ol class="flow">${w.walked.map((s) => `<li><button type="button" class="linkish" data-act="w-card" data-key="${esc(s.key)}">${esc(s.name)}</button>${s.confirmed ? "" : ` <span class="note">open</span>`}</li>`).join("")}</ol></section>` : "";
+  const f = w.found;
+  const found = f ? `<section class="card"><b>Found in the sources</b><div class="note">${f.families.length} famil${f.families.length === 1 ? "y" : "ies"} · ${f.steps} steps · ${f.control} production control steps · ${f.people} people · ${f.questions} open questions</div>${f.systems.length ? `<div class="chips">${f.systems.map((x) => `<span class="chip">${esc(x.name)}</span>`).join("")}</div>` : ""}</section>` : "";
+  const manage = `<section class="card"><b>This walk</b><div class="note">Started by ${esc(w.started_by || "a manager")}${w.via === "anetix" ? " (Anetix)" : ""} · ${w.sources.length} source${w.sources.length === 1 ? "" : "s"}</div><div class="chips">${["walking", "drafted", "failed"].includes(w.status) && w.found ? `<button type="button" class="quietbtn" data-act="w-reread">Read the sources again</button>` : ""}${["sources", "walking", "drafted", "failed"].includes(w.status) ? `<button type="button" class="quietbtn" data-act="w-abandon">Put this walk away</button>` : ""}</div></section>`;
+  return `<div class="head"><div style="font-size:17px"><b>Mapping walk</b>${w.family ? ` · ${esc(w.family)}` : ""} <span class="note">${esc(w.status_means)}</span></div><div class="controls"><button type="button" class="quietbtn" data-act="w-close">Back to the map</button></div></div>
+    <div class="walk"><section class="card wmain" aria-label="The walk">${prog}${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}${wScreenHtml(sc)}</section><aside class="side">${walked}${found}${manage}</aside></div>`;
+}
+// an error on a walk form is shown above it without drawing the screen again, so nothing typed is lost
+function walkErr(msg) {
+  const main = document.querySelector(".wmain"); if (!main) { S.err = msg; return render(); }
+  let el = main.querySelector(".err.top");
+  if (!el) { el = document.createElement("div"); el.className = "err top"; el.setAttribute("role", "alert"); main.querySelector(".steps").after(el); }
+  el.textContent = msg; el.scrollIntoView({ block: "nearest" });
+}
+// what a screen's form sends
+function wformBody(f) {
+  const scr = f.dataset.screen, val = (n) => (f.elements[n] ? f.elements[n].value : undefined);
+  const checked = (n) => (f.querySelector(`input[name=${n}]:checked`) || {}).value;
+  if (scr === "customer") return { screen: "customer", who: val("who"), demand: val("demand"), ships: val("ships") };
+  if (scr === "systems") { const list = [...f.querySelectorAll("input[name=sys]:checked")].map((i) => i.value); if (val("add").trim()) list.push(val("add").trim()); return { screen: "systems", systems: list }; }
+  if (scr === "family-new") return { screen: "family", family: { name: val("name") } };
+  if (scr === "newstep") return { screen: f.dataset.of, pick: { name: val("name") } };
+  if (scr === "supplier") return { screen: "supplier", name: val("name"), what: val("what"), how_ordered: val("how_ordered"), record_kind: checked("rk"), record_system: val("rs") };
+  if (scr === "control") return { screen: "control", control: [...f.querySelectorAll(".crow")].map((r) => ({ key: r.dataset.ckey || undefined, name: r.querySelector("[name=cname]").value, who: r.querySelector("[name=cwho]").value, how: r.querySelector("[name=chow]").value, system: r.querySelector("[name=csys]").value, record_kind: r.querySelector("[name=crk]").value, tools: r.querySelector("[name=ctool]").value ? [r.querySelector("[name=ctool]").value] : [] })).filter((c) => c.name.trim()) };
+  if (scr === "card") {
+    const ls = [...f.querySelectorAll("input[name=dl]")], vs = [...f.querySelectorAll("input[name=dv]")];
+    return { screen: "card", key: f.dataset.key, name: val("name"), who: val("who"), where: val("where"), what: val("what"), trigger: { from: checked("tfrom"), how: checked("thow"), text: val("ttext") },
+      record_kind: checked("rk"), record_system: val("rs"), tools: [...f.querySelectorAll("input[name=tool]:checked")].map((i) => i.value), waits_before: val("waits"),
+      numbers: ls.map((l, i) => ({ label: l.value, value: vs[i].value })).filter((r) => r.label.trim()), unsure: f.elements.unsure.checked, note: val("note") };
+  }
+  return null;
+}
+async function walkClick(t, act) {
+  if (act === "w-new") { const r = await post("/walks", {}); return openWalk(r.walk.id); }
+  if (act === "w-open") return openWalk(Number(t.dataset.walk));
+  if (act === "w-use") {
+    const m = S.view && S.view.map;
+    if (!confirm(`Use this map for ${m ? m.family : "this family"}? The current map is kept, hidden, with its kaizen and review answers, and Anetix can bring it back.`)) return;
+    const r = await post(`/walks/${t.dataset.walk}/use`, {});
+    S.mapId = r.map_id; history.replaceState(null, "", `?map=${r.map_id}`); return load(false);
+  }
+  if (!S.walk) return;
+  if (act === "w-close") return closeWalk();
+  if (act === "w-cancel") { S.walkEdit = null; S.err = ""; return render(); }
+  if (act === "w-card") { S.walkEdit = { kind: "card", key: t.dataset.key }; S.err = ""; render(); return scrollTo(0, 0); }
+  if (act === "w-edit") { S.walkEdit = { kind: t.dataset.kind }; S.err = ""; render(); return scrollTo(0, 0); }
+  if (act === "w-rmsrc") { await wpost(`/sources/${t.dataset.src}/remove`, {}); return render(); }
+  if (act === "w-read") { t.disabled = true; await wpost("/read", {}); render(); return poll(); }
+  if (act === "w-family") { await wpost("/answer", { screen: "family", family: t.dataset.key }); return render(); }
+  if (act === "w-pick") { const sc = screenNow(); await wpost("/answer", { screen: sc.kind, pick: t.dataset.pick }); render(); return scrollTo(0, 0); }
+  if (act === "w-remove") { if (!confirm("Take this step off the walk?")) return; await wpost("/answer", { screen: "remove", key: t.dataset.key }); return render(); }
+  if (act === "w-more" || act === "w-moreup") { await wpost("/answer", { screen: "more" }); return render(); }
+  if (act === "w-addctl") { document.getElementById("crows").insertAdjacentHTML("beforeend", ctlRow({})); return; }
+  if (act === "w-dropctl") { t.closest(".crow").remove(); return; }
+  if (act === "w-draft") { t.disabled = true; await wpost("/draft", {}); return render(); }
+  if (act === "w-reopen") { await wpost("/reopen", {}); return render(); }
+  if (act === "w-reread") { if (!confirm("Read the sources again? The walk starts over from its sources; the sources stay, the answers go.")) return; await wpost("/reread", {}); return render(); }
+  if (act === "w-abandon") { if (!confirm("Put this walk away? Its draft map goes with it; the map in use stays as it is.")) return; await wpost("/abandon", {}); return closeWalk(); }
+  if (act === "w-another") { const r = await post("/walks", { from_walk: S.walk.id }); return openWalk(r.walk.id); }
+  if (act === "w-showmap") { const id = Number(t.dataset.mapid); clearTimeout(pollT); S.panel = null; S.walk = null; S.mapId = id; history.replaceState(null, "", `?map=${id}`); return load(false); }
+}
+async function walkFile(file) {
+  if (file.size > 15 * 1024 * 1024) throw new Error("That file is bigger than 15 MB.");
+  const data = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1] || ""); fr.onerror = () => rej(new Error("That file could not be read.")); fr.readAsDataURL(file); });
+  await wpost("/file", { filename: file.name, mime: file.type, data });
+}
+
 function render() {
   const app = document.getElementById("app");
   if (!S.ov) return;
+  if (S.panel === "walk" && S.walk) { app.innerHTML = walkHtml(); return; }
   const imp = S.ov.can_import ? `<label class="quietbtn" style="cursor:pointer">Import a map<input type="file" accept="application/json,.json" id="importfile" hidden></label>` : "";
+  const walks = (S.ov.walks || []).slice(0, 3).map((w) => `<button type="button" class="pill" data-act="w-open" data-walk="${w.id}">Walk: ${esc(w.family || (w.status === "reading" ? "reading" : "sources"))}${w.steps ? ` · ${w.steps} steps` : ""}</button>`).join("");
+  const walkBtns = `${walks}<button type="button" class="quietbtn" data-act="w-new">Map a family</button>`;
   if (!S.view) {
-    app.innerHTML = `<div class="card empty"><h2 style="font-size:18px;color:var(--ink);margin-bottom:6px">No value stream map yet</h2><p>The map shows every step of the plant, the information and material between them, and where each step's record lives. The mapping walk that builds it with you comes next; until then Anetix can load a first draft.</p><div style="margin-top:12px">${imp}</div>${S.err ? `<div class="err" style="margin-top:10px">${esc(S.err)}</div>` : ""}</div>`;
+    app.innerHTML = `<div class="card empty"><h2 style="font-size:18px;color:var(--ink);margin-bottom:6px">No value stream map yet</h2><p>The map shows every step of the plant, the information and material between them, and where each step's record lives. The mapping walk builds it with you: add your call and walk-through notes, the agent makes a first guess at every step, and you confirm each one walking upstream from shipping.</p><div class="chips" style="justify-content:center;margin-top:12px">${walks}<button type="button" class="go big" data-act="w-new">Start the mapping walk</button>${imp}</div>${S.err ? `<div class="err" style="margin-top:10px">${esc(S.err)}</div>` : ""}</div>`;
     return;
   }
-  const fam = S.ov.maps.map((m) => `<button type="button" data-map="${m.id}" class="${m.id === S.mapId ? "on" : ""}" aria-pressed="${m.id === S.mapId}">${esc(m.family)}</button>`).join("");
+  const fam = S.ov.maps.map((m) => `<button type="button" data-map="${m.id}" class="${m.id === S.mapId ? "on" : ""}" aria-pressed="${m.id === S.mapId}">${esc(m.family)}${m.proposed ? " · walk draft" : ""}</button>`).join("");
   const layer = (k, label) => `<button type="button" class="pill ${S.layers[k] ? "on" : ""}" data-layer="${k}" aria-pressed="${S.layers[k]}">${label}</button>`;
   const scroll = document.querySelector(".scroller"); const keep = scroll ? [scroll.scrollLeft, scroll.scrollTop] : null;
   app.innerHTML = `<div class="head"><div class="controls"><div class="seg" role="group" aria-label="Product family">${fam}</div>
       <div class="controls" role="group" aria-label="Layers"><span class="lbl">Layers</span>${layer("sys", "Systems")}${layer("agents", "Agents")}${layer("kz", "Kaizen")}${layer("ladder", "Timeline")}</div></div>
-    <div class="controls"><button type="button" class="pill ${S.arrange ? "on" : ""}" data-act="arrange" aria-pressed="${S.arrange}">${S.arrange ? "Done arranging" : "Arrange boxes"}</button><a class="quietbtn" href="${API}/export">Download the map</a>${imp}</div></div>
+    <div class="controls">${walkBtns}<button type="button" class="pill ${S.arrange ? "on" : ""}" data-act="arrange" aria-pressed="${S.arrange}">${S.arrange ? "Done arranging" : "Arrange boxes"}</button><a class="quietbtn" href="${API}/export">Download the map</a>${imp}</div></div>
     ${coverageHtml()}
-    <section class="card" aria-label="Map"><div class="maphead"><div style="font-size:15px"><b>${esc(S.view.map.title)}</b> <span class="note">· current state · ${S.view.map.status === "confirmed" ? "confirmed" : "draft"}</span></div><div class="controls"><span class="note">${S.arrange ? "Drag a box to move it. Its flows follow." : "Information across the top, material left to right below. Click a box for detail."}</span><button type="button" class="quietbtn" data-act="fit">${S.fit ? "Actual size" : "Fit to screen"}</button></div></div><div class="scroller">${mapHtml()}</div></section>
+    ${S.view.map.proposed ? `<div class="card" style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border-color:#e5b98a;background:#fff8f1"><div><b>This is the walk's draft of ${esc(S.view.map.family)}.</b> <span class="note">It sits beside the current map so the two can be compared. Using it replaces the current map; the current one is kept, hidden, with its kaizen and review answers.</span></div><div class="chips"><button type="button" class="quietbtn" data-act="w-open" data-walk="${S.view.map.walk_id}">Back to the walk</button><button type="button" class="go" data-act="w-use" data-walk="${S.view.map.walk_id}">Use this map</button></div></div>` : ""}
+    <section class="card" aria-label="Map"><div class="maphead"><div style="font-size:15px"><b>${esc(S.view.map.title)}</b> <span class="note">· current state · ${S.view.map.proposed ? "walk draft" : S.view.map.status === "confirmed" ? "confirmed" : "draft"}</span></div><div class="controls"><span class="note">${S.arrange ? "Drag a box to move it. Its flows follow." : "Information across the top, material left to right below. Click a box for detail."}</span><button type="button" class="quietbtn" data-act="fit">${S.fit ? "Actual size" : "Fit to screen"}</button></div></div><div class="scroller">${mapHtml()}</div></section>
     <div class="lower">${detailHtml()}<div class="side">${reviewHtml()}${kaizenHtml()}${feedHtml()}${legendHtml()}</div></div>
     ${stagesHtml()}`;
   layoutAfter();
@@ -424,6 +686,7 @@ app.addEventListener("click", async (ev) => {
     if (t.dataset.layer) { S.layers[t.dataset.layer] = !S.layers[t.dataset.layer]; return render(); }
     if (t.dataset.node !== undefined && !t.dataset.act) { if (!t.dataset.node) return; S.sel = t.dataset.node; S.editing = false; S.err = ""; render(); if (!t.closest(".host")) document.getElementById("host").scrollIntoView({ block: "nearest" }); return; }
     const act = t.dataset.act;
+    if (act && act.startsWith("w-")) return await walkClick(t, act);
     if (act === "arrange") { S.arrange = !S.arrange; return render(); }
     if (act === "fit") { S.fit = !S.fit; return render(); }
     if (act === "edit") { S.editing = true; S.err = ""; return render(); }
@@ -435,9 +698,24 @@ app.addEventListener("click", async (ev) => {
     if (act === "startfix") { S.fixing = Number(t.dataset.q); S.err = ""; render(); const ta = document.getElementById("fixtext"); if (ta) ta.focus(); return; }
     if (act === "cancelfix") { S.fixing = null; S.err = ""; return render(); }
     if (act === "savefix") { await post(`/questions/${t.dataset.q}/answer`, { status: "fix", answer: document.getElementById("fixtext").value }); S.fixing = null; S.err = ""; return load(true); }
-  } catch (e) { S.err = e.message; render(); }
+  } catch (e) {
+    S.err = e.message;
+    if (S.panel === "walk" && S.walk) { try { S.walk = (await api(`/walks/${S.walk.id}`)).walk; S.walkEdit = null; } catch (_) { /* keep what is shown */ } }
+    render();
+  }
 });
 app.addEventListener("submit", async (ev) => {
+  if (ev.target.id === "wf") {
+    ev.preventDefault();
+    const f = ev.target, btn = f.querySelector("button[type=submit]");
+    if (btn) btn.disabled = true;
+    try {
+      if (f.dataset.screen === "words") await wpost("/words", { title: f.elements.title.value, kind: f.elements.kind.value, words: f.elements.words.value });
+      else await wpost("/answer", wformBody(f));
+      render(); scrollTo(0, 0);
+    } catch (e) { if (btn) btn.disabled = false; walkErr(e.message); }
+    return;
+  }
   if (ev.target.id !== "editform") return;
   ev.preventDefault();
   const f = ev.target, n = S.view.nodes.find((x) => x.key === S.sel);
@@ -447,6 +725,12 @@ app.addEventListener("submit", async (ev) => {
   try { await post(`/nodes/${n.id}`, body); S.editing = false; S.err = ""; await load(true); } catch (e) { S.err = e.message; render(); }
 });
 app.addEventListener("change", async (ev) => {
+  if (ev.target.id === "wfile") {
+    const file = ev.target.files[0]; if (!file) return;
+    const lbl = ev.target.closest("label"); if (lbl) lbl.firstChild.textContent = "Adding the file…";
+    try { await walkFile(file); render(); } catch (e) { if (lbl) lbl.firstChild.textContent = "Add a file"; walkErr(e.message); }
+    return;
+  }
   const sel = ev.target.closest("select[data-stage]");
   if (sel) { try { await post(`/stages/${sel.dataset.stage}`, { record_kind: sel.value }); await load(true); } catch (e) { S.err = e.message; render(); } return; }
   if (ev.target.id === "importfile") {

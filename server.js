@@ -71,6 +71,7 @@ async function main() {
   await require("./src/archive").init();     // archived tools: off the board, under Settings; deleted for good by Anetix (src/archive.js)
   await require("./src/oidc").init();        // sign in with Google or Microsoft: the identities connected to an account (src/oidc.js)
   await require("./src/vsm").init();         // the value stream map: maps, boxes, flows, review questions, coverage, each tool's daily use (src/vsm.js, docs/VSM.md)
+  await require("./src/vsm-walk").init();    // the mapping walk: its sources, the read, the walk upstream, the draft (src/vsm-walk.js)
   await require("./src/mcp-company").init(); // the company MCP: the records switch, Anetix's lock, feedback.held for a request a connected app filed (src/mcp-company.js, docs/MCP.md)
 
   const app = express();
@@ -244,6 +245,7 @@ async function main() {
   app.use(require("./src/testfloor").router); // the test floor's switch (admin), status and reset
   app.use(require("./src/sample").router);    // /api/c/:slug/modules/:mod/sample*: a demo's sample data (demo companies only)
   app.use(require("./src/vsm").router);       // /api/c/:slug/vsm*: the value stream map, managers and admins; import is admin only (src/vsm.js)
+  app.use(require("./src/vsm-walk").router);  // /api/c/:slug/vsm/walks*: the mapping walk, managers and admins (src/vsm-walk.js)
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module, /c/:slug/staging/m/:module and /c/:slug/test/m/:module

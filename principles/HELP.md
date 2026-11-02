@@ -90,8 +90,21 @@ number nobody records yet; stage scans will fill those in later.
 - **Review** lists the places the map is guessing. "That's right" confirms one; "Needs a fix" asks what is right.
 - **Layers**: Systems (the colors), Agents (which agent would watch each step: a plan, nothing runs yet), Kaizen (the
   improvement bursts, numbered), Timeline (the lead time ladder).
-- The first map is drafted by Anetix from walk-throughs and documents. A guided way to map a plant step by step is
-  coming. The floor does not see the Map; it keeps its own screens.
+- **The mapping walk** builds a map with the manager, one product family at a time. **Map a family** (or **Start the
+  mapping walk** on an empty map) opens it. First add the sources: call and walk-through transcripts, notes, the
+  plant's own documents (a pdf, a text file, a spreadsheet), photos of a whiteboard. **Read the sources** has the agent
+  read them all once (a minute or two) and guess every step. Then the walk asks: which family, the customer and demand,
+  the systems in use, then starts at shipping and goes upstream ("What happens right before Pack and ship?"), with the
+  sources' guess first. Each step gets a card already filled in (who, what tells them to start, where its record
+  lives, what waits before it, any number someone said): **Looks right**, or change what is wrong. "?" stays where
+  nobody knows. Then the supplier, production control in order, a review, and **Draw the map**. Every answer is saved
+  as it is given, so the walk can be closed and picked up again, on a phone walking the floor too. Sources cannot be
+  added after the read; **Read the sources again** starts the walk over from its sources.
+- The drawn map sits beside the family's current map as a **walk draft**, so the two can be compared; every guess on
+  it is a review question. **Use this map** makes it the family's map; the old one is kept, hidden, with its kaizen and
+  review answers, and Anetix can bring it back. **Map another family from the same sources** starts the next family
+  without reading again. Anetix can also run a walk for the plant from a call, and then the manager decides on the
+  board whether to use the map. The floor does not see the Map; it keeps its own screens.
 
 ## Other things on the board
 

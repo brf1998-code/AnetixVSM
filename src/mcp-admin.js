@@ -31,7 +31,7 @@ const pick = (o, keys) => { const out = {}; for (const k of keys) if (o && o[k] 
 
 const surface = {
   server: "anetix-admin", title: "Anetix admin",
-  instructions: "Anetix's own view across every company on this instance: demos, paying sites, loop health, AI spend, requests to Anetix, build runs, and for a review of the last few hours: everything done on the boards (activity_since), the requests on them (list_board_requests) and Ask Anetix conversations (list_assistant_conversations). Read only, with one exception: the new tool request tools (start_tool_request, answer_tool_request, send_tool_request, change_tool_request_design) start and fill in a company's new tool request from a call or a plant walk, when the connection was allowed to write. Fill a request only from what the conversation settled, in the company's own words, and say what is missing instead of making an answer up. Nothing here confirms a design, builds, or puts anything on a floor: a manager does that on the board. It never returns a record from a company's tools. Dollar figures are AI spend unless they say otherwise. Why a build stopped is given as a kind, never the failing line.",
+  instructions: "Anetix's own view across every company on this instance: demos, paying sites, loop health, AI spend, requests to Anetix, build runs, and for a review of the last few hours: everything done on the boards (activity_since), the requests on them (list_board_requests) and Ask Anetix conversations (list_assistant_conversations). Read only, with two exceptions, both only when the connection was allowed to write: the new tool request tools (start_tool_request, answer_tool_request, send_tool_request, change_tool_request_design) start and fill in a company's new tool request from a call or a plant walk, and the mapping walk tools (start_map_walk, add_map_source, read_map_sources, answer_map_walk, draft_map_walk, map_another_family) build a draft of a plant's value stream map from call and walk-through transcripts. Fill either only from what the conversation settled, in the company's own words, and say what is missing instead of making an answer up. Nothing here confirms a design, builds, replaces a map, or puts anything on a floor: a manager does that on the board. It never returns a record from a company's tools. Dollar figures are AI spend unless they say otherwise. Why a build stopped is given as a kind, never the failing line.",
 };
 
 // ---- pure: what leaves --------------------------------------------------------------------------------------------
@@ -341,5 +341,7 @@ const tools = [
 
 // the new tool request tools: two that read, four that write (src/mcp-intake.js)
 tools.push(...require("./mcp-intake").tools);
+// the mapping walk tools: two that read, six that write (src/mcp-vsm.js, the VSM dev copy's milestone M2)
+tools.push(...require("./mcp-vsm").tools);
 
 module.exports = { surface, tools, demoOut, demoRunOut, siteOut, runOut, SITE_KEYS, activityOut, heldIds, WORDLESS, NEVER, RECORD_TOOLS, HELD };

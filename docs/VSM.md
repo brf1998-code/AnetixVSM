@@ -1,6 +1,6 @@
 # Anetix VSM: the living value stream map
 
-*Design, rev 1, 2026-11-01. For review: mark it up, nothing here is built yet beyond the fork. The worked example is
+*Design, rev 2, 2026-11-01. M1 (the Map) and M2 (the mapping walk) are built; section 10 has the status. The worked example is
 Chelsea Clock (the canvas "Chelsea Clock Value Stream Map", 2026-11-01). Grounded in the code as of SymbioticOS
 615a490; file references are to this repo.*
 
@@ -224,6 +224,12 @@ Each step has a gate, as in the roadmap.
 | M0 | Fork, dev instance, Chelsea snapshot | Chelsea's tools open on the dev instance |
 | M1 | Tables, Chelsea's map seeded, the Map view (read only, layers, detail, coverage) | Brendan or Taylor walks Zoe through Chelsea's map on the dev instance |
 | M2 | The mapping walk v1 (read, frame, walk, draft, review) | Run on Chelsea's sources, it finds the hand map's boxes; Taylor runs it for a second plant without help |
+
+Status: M1 live 2026-11-01 (commit 9ab59bf). M2 built 2026-11-01 (`src/vsm-walk.js`, `src/mcp-vsm.js`, the walk panel in
+`public/map.html`; docs/FEATURES.md has the bullet): Brendan chose "confirm the guess" step cards, the board and the
+admin MCP both, and a draft beside the current map with "Use this map". Phase 4 (numbers) is folded into each step's
+card; phase 6 (future state and kaizen) waits for M3. The gate is a real-model run on Chelsea's sources on the dev
+instance, compared with the hand map.
 | M3 | Map and Kaizen joined (`feedback.node_id`, bursts to requests, intake pre-filled from a box) | A burst on Chelsea's map becomes a change live on Chelsea's floor |
 | M4 | Stage events and live numbers | One Chelsea step scanned for a week; its box and ladder show real numbers |
 | M5 | Watchers, then tool agents | A tool agent's message is acted on by a person at Chelsea |
@@ -242,12 +248,15 @@ Each step has a gate, as in the roadmap.
 
 ## 12. Decisions for Brendan
 
-1. Which view a manager lands on: Map or Kaizen?
+1. Which view a manager lands on: Map or Kaizen? *Answered 2026-11-01: Kaizen, with the Map as a tab.*
 2. Who runs the walk: the customer's manager on their own, Anetix as a paid service through the admin MCP, or both?
+   *Answered 2026-11-01: both, from M2 (the board and the admin MCP). The walk confirms the sources' guess one step
+   card at a time, and its map is a draft beside the current one until a manager uses it.*
 3. One map per family plus a plant overview (recommended), or one plant map with a family filter?
-4. Does a stage with an Anetix tool built but not in daily use count toward coverage?
+4. Does a stage with an Anetix tool built but not in daily use count toward coverage? *Answered 2026-11-01: two numbers,
+   tool built and in daily use (worked out from the tool's own use).*
 5. Stage scans: barcode guns, tablets (Arthur's preference), or both?
-6. Does the floor ever see the map (a wall TV), or only their own box's question?
+6. Does the floor ever see the map (a wall TV), or only their own box's question? *For now managers and admins only.*
 7. Where agent messages surface: the map only, the board's notices, the person's station screen, a phone?
 8. Is the map part of the site fee, a service fee, or a tier?
 9. Future state: drafted by the agent from the bursts, or led by the manager with the agent assisting?

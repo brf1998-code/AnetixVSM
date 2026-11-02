@@ -15,6 +15,8 @@
 //   print_jobs   the labels sent to a printer
 //   people       the floor's people by name and role (never a PIN)
 //   managers     the manager accounts' sign-in emails and names (never a password or an authenticator)
+//   value_stream_map  the plant's map as one file (anetix-map-1: stages, maps in use, boxes, flows, review answers)
+//   map_sources  what went into the mapping walks: each source's title and its words (a file is under attachments)
 //   record       what the company's own people said and decided, word for word (floor, manager and named people's
 //                rows of the record; the agent's and the platform's rows are Anetix's Output and carry build summaries
 //                and designs, so they stay out)
@@ -93,6 +95,8 @@ async function exportCompany(slug) {
     note: "Your company's data in Anetix (the Terms of Service, section 10.6): what your people entered and what your tools keep. The tools' code is part of the Anetix service and is not in this file (section 12.1).",
     tools: await toolsOf(slug),
     requests, intakes, attachments, uploads, print_jobs, people, managers, record,
+    value_stream_map: await require("./vsm").exportMap(slug),
+    map_sources: (await q("SELECT walk_id, kind, title, words, attachment_id, created_at FROM platform.vsm_sources WHERE company=$1 ORDER BY id", [slug])).rows,
     site: s || null,
   };
 }

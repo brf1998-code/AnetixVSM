@@ -220,6 +220,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Sign in with Google or Microsoft (2026-10-29)
 - The sign-in map: how everyone signs in, before a way in is taken away (2026-10-29)
 - The value stream map, M1: the Map beside Kaizen (2026-11-01, VSM dev copy)
+- The value stream map, M2: the mapping walk (2026-11-01, VSM dev copy)
 
 ## What this is
 
@@ -604,7 +605,8 @@ Passwords live only in Railway; never commit them.
   words of a failed check (its kind only): a new tool gets its case in `scripts/test-mcp.js` and its call in
   `scripts/e2e/mcp.js`, where a canary row and a canary failure line must be in no answer. An admin MCP tool is read
   only unless it is marked `readOnly: false`, and the only ones that are start and fill in a new tool request
-  (`src/mcp-intake.js`). A write tool runs only on a connection whose person ticked writing on the consent page
+  (`src/mcp-intake.js`) and, in this VSM copy, start, fill in and draw a mapping walk (`src/mcp-vsm.js`; using the
+  drawn map stays on the board). A write tool runs only on a connection whose person ticked writing on the consent page
   (`who.writes`), goes through the same function the board's own route calls, writes under the account's name on the
   record, and never moves anything toward the floor: no tool confirms a design, builds, deploys, withdraws or
   deletes. An app writes only to a request Anetix started (`module_intakes.via`), and a paying site's own request is

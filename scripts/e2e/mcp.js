@@ -241,9 +241,9 @@ async function main() {
   const c = await mcp(AT);
   const listed = await c.listTools();
   const names = listed.tools.map((x) => x.name).sort();
-  const WRITERS = ["answer_tool_request", "change_tool_request_design", "send_tool_request", "start_tool_request"];
-  t("the address offers the thirteen operations tools and the six new tool request tools", names.join() === ["activity_since", "ai_spend", "answer_tool_request", "change_tool_request_design", "get_demo", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "send_tool_request", "sign_in_map", "start_tool_request"].join(), names);
-  t("four say they write, every other one says it only reads, none is destructive, each has a description", listed.tools.every((x) => x.annotations && x.annotations.readOnlyHint === !WRITERS.includes(x.name) && x.annotations.destructiveHint === false && x.description.length > 40));
+  const WRITERS = ["add_map_source", "answer_map_walk", "answer_tool_request", "change_tool_request_design", "draft_map_walk", "map_another_family", "read_map_sources", "send_tool_request", "start_map_walk", "start_tool_request"];
+  t("the address offers the thirteen operations tools, the six new tool request tools and the eight mapping walk tools", names.join() === ["activity_since", "add_map_source", "ai_spend", "answer_map_walk", "answer_tool_request", "change_tool_request_design", "draft_map_walk", "get_demo", "get_map_walk", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_map_walks", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "map_another_family", "read_map_sources", "send_tool_request", "sign_in_map", "start_map_walk", "start_tool_request"].join(), names);
+  t("ten say they write, every other one says it only reads, none is destructive, each has a description", listed.tools.every((x) => x.annotations && x.annotations.readOnlyHint === !WRITERS.includes(x.name) && x.annotations.destructiveHint === false && x.description.length > 40));
   t("the server says what it is", /read only/i.test(c.getInstructions() || "") && c.getServerVersion().name === "anetix-admin");
   const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); let data = null; try { data = JSON.parse(textOf(r)); } catch (e) {} return { r, data, text: textOf(r) }; };
   const all = {};
@@ -298,8 +298,11 @@ async function main() {
   const ro = await call("start_tool_request", { company: "demo" });
   t("a connection allowed without the tick cannot write: the tool says so and nothing is started", ro.r.isError === true && /read only/.test(ro.text) && /connect it again/.test(ro.text) && (await q("SELECT count(*)::int AS n FROM platform.module_intakes")).rows[0].n === 0, ro.text);
   t("and the refusal is in the call log as one that did not work", (await q("SELECT ok, error FROM platform.mcp_calls WHERE tool='start_tool_request' ORDER BY id DESC LIMIT 1")).rows[0].error === "read-only connection");
+  const rw = await call("start_map_walk", { company: "demo" });
+  t("nor start a mapping walk", rw.r.isError === true && /read only/.test(rw.text) && (await q("SELECT count(*)::int AS n FROM platform.vsm_walks")).rows[0].n === 0, rw.text);
   await c.close();
   await writeTools({ admin, secret, sharedMgr, shared, adminId });
+  await walkTools({ admin, secret, sharedMgr, adminId });
 
   // ---- the same, with nothing done by hand: the MCP SDK's own OAuth client finds its way from the 401 alone
   // (discovery, registration, PKCE, the trade, a refresh), the way Claude's does. Only the person's part is played here.
@@ -528,6 +531,79 @@ async function writeTools({ admin, secret, sharedMgr, shared, adminId }) {
   t("the manager confirms on the board, and only then is anything built", conf.status === 200 && ["confirmed", "building", "done"].includes(conf.json.status), conf.text.slice(0, 300));
   const after = await call("get_tool_request", { id });
   t("and the app sees it move on, with nothing left for it to do", ["confirmed", "building", "done"].includes(after.data.status) && /on the board|Built/.test(after.data.next), after.data.next);
+  await c.close();
+}
+// ---- the mapping walk tools: Anetix builds a draft of a plant's value stream map from a conversation (src/mcp-vsm.js) ------
+async function walkTools({ admin, secret, sharedMgr, adminId }) {
+  const SRC = "ZZ-SOURCE-WORDS-5120";
+  const w = await connect(admin, secret, { name: "Claude walker", writes: true });
+  const c = await mcp(w.tokens.access_token);
+  const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); let data = null; try { data = JSON.parse(textOf(r)); } catch (e) {} return { r, data, text: textOf(r) }; };
+  const texts = [];
+  const keep = (x) => { texts.push(x.text); return x; };
+  // the company's own walk, started on the board
+  const board = (await sharedMgr.post("/api/c/demo/vsm/walks", {})).json.walk;
+  await sharedMgr.post(`/api/c/demo/vsm/walks/${board.id}/words`, { title: "theirs", words: "the plant's own notes" });
+
+  t("start_map_walk: a company that is not there, words and nothing made", (await call("start_map_walk", { company: "no-such-co" })).r.isError === true && (await q("SELECT count(*)::int AS n FROM platform.vsm_walks WHERE via='anetix'")).rows[0].n === 0);
+  const st = keep(await call("start_map_walk", { company: "demo" }));
+  const id = st.data && st.data.walk.id;
+  t("start_map_walk: a walk for the company, started by Anetix, on its sources, with what to do next", !st.r.isError && id > 0 && id !== board.id && st.data.walk.writable_here === true && /by Anetix/.test(st.data.walk.started)
+    && st.data.walk.screen.kind === "sources" && /add_map_source/.test(st.data.walk.next) && st.data.walk.board === `${BASE}/c/demo/map`, st.text.slice(0, 400));
+  t("starting again carries on with the same walk while nothing is read", (await call("start_map_walk", { company: "demo" })).data.walk.id === id);
+  const src = keep(await call("add_map_source", { id, title: "Walk-through with Dana and Lee", kind: "transcript", words: `Dana: we ship every afternoon. Lee: I pull from the list. ${SRC}` }));
+  t("add_map_source: the source is added, by title, and its words are not sent back", !src.r.isError && src.data.walk.sources.length === 1 && src.data.walk.sources[0].title === "Walk-through with Dana and Lee" && !src.text.includes(SRC), src.text.slice(0, 300));
+  const theirs = await call("add_map_source", { id: board.id, title: "mine", kind: "notes", words: "overwrite" });
+  t("a walk the company started on the board is not written to", theirs.r.isError === true && /started on the board/.test(theirs.text) && (await q("SELECT count(*)::int AS n FROM platform.vsm_sources WHERE walk_id=$1", [board.id])).rows[0].n === 1, theirs.text);
+  const gt = await call("get_map_walk", { id: board.id });
+  t("a trial's own walk is read, as not writable here", !gt.r.isError && gt.data.writable_here === false && gt.data.sources.length === 1);
+  t("answering before the read is refused in words", (await call("answer_map_walk", { id, family: "Widgets" })).r.isError === true);
+  const rd = keep(await call("read_map_sources", { id }));
+  t("read_map_sources: the agent reads", !rd.r.isError && rd.data.reading === true, rd.text.slice(0, 200));
+  const got = keep(await waitFor("the read", async () => { const g = await call("get_map_walk", { id }); return g.data && g.data.status === "walking" ? g : null; }));
+  t("get_map_walk: what was found, step by step with keys, and the families to pick from", got.data.found.steps.length === 5 && got.data.found.steps.every((x) => /^s\d+$/.test(x.key)) && got.data.found.control.length === 2 && got.data.screen.kind === "family" && /family/.test(got.data.next), got.data.found);
+  t("too late for another source", (await call("add_map_source", { id, title: "late", kind: "notes", words: "late" })).r.isError === true);
+  const steps = got.data.found.steps;
+  const key = (name) => steps.find((x) => x.name === name).key;
+  const an = keep(await call("answer_map_walk", { id, family: "Widgets", customer: { who: "Shops", demand: "40 a week", ships: "daily" }, systems: ["Fishbowl", "QuickBooks"],
+    steps: [{ key: key("Kit parts") }, { key: key("Assemble") }, { name: "Wash", who: "Lee", what: "Washes the parts", waits_before: "?" }, { key: key("Test"), unsure: true }, { key: key("Pack and ship"), numbers: [{ label: "C/T", value: "10 min" }], trigger: { from: "Order entry", how: "system", text: "the order" } }],
+    supplier: { name: "Acme Parts", what: "parts", how_ordered: "email", record_kind: "paper", record_system: "email" },
+    control: [{ key: "c1", name: "Order entry", how: "system", system: "Fishbowl", record_kind: "other" }, { key: "c2", name: "Morning list", how: "paper", system: "whiteboard", record_kind: "paper" }] }));
+  t("answer_map_walk: every part that fits is saved in one call, and the walk is at its review", !an.r.isError && an.data.saved.length === 6 && an.data.not_saved.length === 0 && an.data.walk.screen.kind === "review" && /draft_map_walk/.test(an.data.walk.next), an.text.slice(0, 500));
+  t("the steps stand in the order given, the one the sources missed among them", an.data.walk.walked.map((x) => x.name).join() === "Kit parts,Assemble,Wash,Test,Pack and ship");
+  const badPart = keep(await call("answer_map_walk", { id, steps: [{ key: key("Kit parts"), record_kind: "anetix", tools: ["no-such-tool"] }], systems: ["Fishbowl"] }));
+  t("a part that does not fit is reported back and the rest are kept; the walk is as it was", !badPart.r.isError && badPart.data.saved.join() === "systems" && badPart.data.not_saved[0].what === "steps" && /not one of this company's tools/.test(badPart.data.not_saved[0].why)
+    && badPart.data.walk.walked.length === 5, badPart.text.slice(0, 400));
+  const dr = keep(await call("draft_map_walk", { id }));
+  const drawn = dr.data && (await q("SELECT proposed, family FROM platform.vsm_maps WHERE id=$1", [dr.data.map_id])).rows[0];
+  t("draft_map_walk: the map is drawn beside the family's map, as a draft for the manager", !dr.r.isError && drawn && drawn.proposed === true && drawn.family === "Widgets" && /manager/.test(dr.data.walk.next) && /not available here/.test(dr.data.walk.next), dr.text.slice(0, 300));
+  t("a drawn walk takes no more answers from here", /is drawn/.test((await call("answer_map_walk", { id, systems: ["x"] })).text));
+  const lw = keep(await call("list_map_walks", { company: "demo" }));
+  t("list_map_walks: Anetix's walk and the board's, which is which", lw.data.walks.some((x) => x.id === id && x.writable_here && x.family === "Widgets") && lw.data.walks.some((x) => x.id === board.id && !x.writable_here));
+  const reads = (await q("SELECT count(*)::int AS n FROM platform.record WHERE kind='map_walk_read'")).rows[0].n;
+  const an2 = keep(await call("map_another_family", { id }));
+  t("map_another_family: the next family from the same sources, nothing read again", !an2.r.isError && an2.data.walk.status === "walking" && an2.data.walk.screen.kind === "family" && (await q("SELECT count(*)::int AS n FROM platform.record WHERE kind='map_walk_read'")).rows[0].n === reads, an2.text.slice(0, 300));
+  t("on the record under the account's name, as Anetix through the app", (await q("SELECT actor_name FROM platform.record WHERE kind='map_walk_started' AND actor_role='admin' ORDER BY id DESC LIMIT 1")).rows.every((r) => /Anetix, through/.test(r.actor_name)));
+  // a paying site's own walk is not read here
+  await q("INSERT INTO platform.vsm_walks (company, via, status, frame) VALUES ('acme', 'board', 'walking', '{\"family_name\":\"ZZ-THEIR-FAMILY\"}')");
+  await q("INSERT INTO platform.sites (id, company, stage) VALUES (gen_random_uuid(), 'acme', 'subscribed') ON CONFLICT (company) DO UPDATE SET stage='subscribed'");
+  const own = keep(await call("list_map_walks", { company: "acme" }));
+  t("a paying site's own walk shows only how far it got", own.data.walks.length === 1 && own.data.walks[0].family === null && !own.text.includes("ZZ-THEIR-FAMILY"));
+  await q("DELETE FROM platform.sites WHERE company='acme'");
+  // the pace: reading counts with the sends to the agent
+  const s2 = await call("start_map_walk", { company: "acme" });
+  await call("add_map_source", { id: s2.data.walk.id, title: "notes", kind: "notes", words: "a few words" });
+  await q(`INSERT INTO platform.mcp_calls (account_id, surface, tool, ok, at) SELECT $1, 'admin', 'read_map_sources', true, now() - interval '5 minutes' FROM generate_series(1, 30)`, [adminId]);
+  const paced = await call("read_map_sources", { id: s2.data.walk.id });
+  t("past thirty in an hour the read is refused, and nothing is read", paced.r.isError === true && /in the last hour/.test(paced.text) && (await q("SELECT status FROM platform.vsm_walks WHERE id=$1", [s2.data.walk.id])).rows[0].status === "sources", paced.text);
+  await q("DELETE FROM platform.mcp_calls WHERE grant_id IS NULL AND tool='read_map_sources'");
+  const everything = texts.join("\n");
+  t("no answer of the walk tools carries a tool's record, a source's words or a secret", !everything.includes(MARKER) && !everything.includes(SRC) && !/password_hash|anx_(at|rt|ac)_|secret_enc/.test(everything));
+  t("no answer of the walk tools names a model", !/claude-|opus|sonnet|fable/i.test(everything));
+  t("no words of the walk tools carry an em or en dash", !/[–—]/.test(everything + ro_words(await c.listTools())));
+  // the manager's part stays on the board: using the drawn map
+  const use = await sharedMgr.post(`/api/c/demo/vsm/walks/${id}/use`, {});
+  t("the manager uses the drawn map on the board", use.status === 200 && (await q("SELECT proposed FROM platform.vsm_maps WHERE id=$1", [dr.data.map_id])).rows[0].proposed === false, use.text.slice(0, 200));
   await c.close();
 }
 const ro_words = (listed) => listed.tools.map((x) => `${x.title} ${x.description}`).join("\n");

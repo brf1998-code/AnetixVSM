@@ -78,12 +78,20 @@ t("the sign-in server's description: every path under /oauth/, PKCE S256 only, p
 // ---- what leaves the admin tools
 const A = require("../src/mcp-admin");
 const names = A.tools.map((x) => x.name);
-const WRITERS = ["answer_tool_request", "change_tool_request_design", "send_tool_request", "start_tool_request"];
-t("nineteen tools, each with a name, a description and a run", names.length === 19 && new Set(names).size === 19 && A.tools.every((x) => /^[a-z_]+$/.test(x.name) && x.description.length > 40 && typeof x.run === "function"));
-t("four of them write, all about a new tool request, and every other one only reads", A.tools.filter((x) => x.readOnly === false).map((x) => x.name).sort().join() === WRITERS.join());
+const WRITERS = ["add_map_source", "answer_map_walk", "answer_tool_request", "change_tool_request_design", "draft_map_walk", "map_another_family", "read_map_sources", "send_tool_request", "start_map_walk", "start_tool_request"];
+t("twenty-seven tools, each with a name, a description and a run", names.length === 27 && new Set(names).size === 27 && A.tools.every((x) => /^[a-z_]+$/.test(x.name) && x.description.length > 40 && typeof x.run === "function"));
+t("ten of them write, a new tool request or a mapping walk, and every other one only reads", A.tools.filter((x) => x.readOnly === false).map((x) => x.name).sort().join() === WRITERS.join());
 t("no tool confirms a design, builds, deploys, withdraws or deletes", !names.some((n) => /^(confirm|build|deploy|withdraw|abandon|delete|remove|approve)_|make_.*live/.test(n)));
-t("the instructions say which tools write, and that a manager confirms on the board", /Read only, with one exception/.test(A.surface.instructions) && WRITERS.every((n) => A.surface.instructions.includes(n)) && /a manager does that on the board/.test(A.surface.instructions));
+t("the instructions say which tools write, and that a manager confirms on the board", /Read only, with two exceptions/.test(A.surface.instructions) && /replaces a map/.test(A.surface.instructions) && WRITERS.every((n) => A.surface.instructions.includes(n)) && /a manager does that on the board/.test(A.surface.instructions));
 t("no tool's words carry an em or en dash", !/[\u2013\u2014]/.test(JSON.stringify(A.tools.map((x) => [x.title, x.description])) + A.surface.instructions));
+// ---- the mapping walk's tools (src/mcp-vsm.js, the VSM dev copy's M2)
+const V = require("../src/mcp-vsm");
+t("the walk's tools: two read, six write, and none uses or puts away a map", V.tools.map((x) => x.name).sort().join() === "add_map_source,answer_map_walk,draft_map_walk,get_map_walk,list_map_walks,map_another_family,read_map_sources,start_map_walk" && !V.tools.some((x) => /^(use|abandon|delete|remove|replace)_/.test(x.name)) && V.tools.filter((x) => x.readOnly === false).length === 6);
+const nv = (kind, extra = {}) => V.nextStep({ screen: { kind, ...extra }, sources: [] }, "https://app.anetix.ai/c/acme/map");
+t("each screen of the walk tells an app what to do next", ["sources", "reading", "family", "customer", "systems", "last", "card", "before", "supplier", "control", "review", "drafted", "used"].every((k) => nv(k).length > 20) && /read_map_sources|add_map_source/.test(nv("sources")) && /draft_map_walk/.test(nv("review")));
+t("a drawn walk says the manager decides on the board, with the board's address", /manager/.test(nv("drafted")) && nv("drafted").includes("https://app.anetix.ai/c/acme/map") && /not available here/.test(nv("drafted")));
+t("an answer is never to be made up", /never make a field up|Never make a field up/i.test(nv("card")) && /\?/.test(nv("customer")));
+t("reading the sources is paced with the intake's sends", V.READS.join() === "read_map_sources");
 // the audit tools (2026-10-12): what a line of the record carries
 const line = (kind, after) => A.activityOut({ id: 1, kind, company: "acme", module: "count", actor_role: "manager", actor_name: "Maria", before: "was", after, detail: { round: 2, cost_usd: 1.2, prompt: "x" }, created_at: new Date() });
 t("a request's line carries the words written, who and a small detail", line("feedback_filed", "make the button bigger").words === "make the button bigger" && line("feedback_filed", "x").who === "Maria" && line("feedback_filed", "x").detail.round === 2 && line("feedback_filed", "x").detail.prompt === undefined && line("feedback_filed", "x").detail.cost_usd === undefined);
