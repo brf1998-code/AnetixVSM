@@ -1265,6 +1265,7 @@ router.post("/api/admin/companies/:slug/delete", requireAdmin, async (req, res) 
     await connections.deleteCompany(co.slug);
     await datacheck.deleteCompany(co.slug);
     await people.deleteCompany(co.slug);
+    await require("./vsm").deleteCompany(co.slug);   // its value stream map and its tools' daily use
     await require("./acceptance").deleteCompany(co.slug);
     await require("./runner").deleteCompany(co.slug);   // its processes, its two database logins, its user ids
     counts.record = await require("./record").deleteCompany(co.slug);

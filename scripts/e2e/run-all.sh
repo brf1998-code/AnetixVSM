@@ -225,6 +225,10 @@ run smallfixes             env SOS_CHROMIUM_PATH=$CHROME node scripts/e2e/smallf
 # 2026-10-29: archiving a tool, and deleting one for good (src/archive.js)
 fresh; start "SOS_BROWSER=off"
 run archive                node scripts/e2e/archive.js
+# 2026-11-01 (VSM dev copy): the value stream map, M1 (src/vsm.js): who sees it, import, coverage and daily use, edits,
+# review answers, another company, export and backup
+fresh; start "SOS_BROWSER=off SOS_USE_FLUSH_MS=500"
+run vsm                    node scripts/e2e/vsm.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

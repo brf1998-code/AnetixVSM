@@ -32,6 +32,7 @@ const PLATFORM_TABLES = [
   "web_jobs",   // each look-up a tool asked of the web, and what came back (src/connections.js, the web kind)
   "assist_conversations", "assist_messages",   // Ask Anetix: what each manager asked and was answered, the request cards (src/assist.js)
   "library_templates", "library_copies",   // the tool library across companies: templates, and which company got a copy of what (src/library.js)
+  "vsm_stages", "vsm_maps", "vsm_nodes", "vsm_edges", "vsm_questions", "vsm_kaizen", "module_use",   // the value stream map: stages, maps (before the rows that point at them), boxes, flows, review questions, kaizen, each tool's daily use (src/vsm.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under

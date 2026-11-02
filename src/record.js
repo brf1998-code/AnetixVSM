@@ -39,6 +39,8 @@
 //   app filed; that filing is a feedback_filed row with detail.via "mcp"), src/mcp-company.js
 //   doc_saved (before/after an agent doc), doc_deleted, models_changed
 //   label_set (the checks log), chat_question, chat_answer (a module's chat persona)
+//   map_changed (a box of the value stream map: before/after the fields changed), stage_changed (a stage on the map's
+//   coverage list), map_question_answered (before = the claim, after = the answer), map_imported (src/vsm.js)
 //
 // Who (2026-10-15). actor_role is the session's role. actor_name is the person signed in on the device, else a name the
 // caller passed, else the named account behind the session. actor_account is that account's id whenever the session

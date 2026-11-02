@@ -822,6 +822,8 @@ function attach(app) {
   // an archived tool's screens say so instead of opening (src/archive.js, 2026-10-29)
   const archive = require("./archive");
   app.use(["/c/:company/m/:module", "/c/:company/staging/m/:module", "/c/:company/test/m/:module"], (req, res, next) => (archive.isArchived(req.params.company, req.params.module) ? archive.archivedAnswer(req, res) : next()));
+  // what the map's "in daily use" reads: screens opened and changes made by the company's own people (src/vsm.js)
+  app.use("/c/:company/m/:module", require("./vsm").useMiddleware);
   app.use("/c/:company/m/:module", (req, res, next) => {
     const entry = mounts.get(key(req.params.company, req.params.module));
     if (!entry || !entry.live) return res.status(404).send("module not found");

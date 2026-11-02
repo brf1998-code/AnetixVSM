@@ -4199,3 +4199,28 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Tests.* `scripts/e2e/mcp.js` (the tool on the address, the legacy demo's floor and shared manager password used and
     logged, the admin accounts, no address or hash in the answer), `scripts/test-mcp.js` (nineteen tools).
 
+- **The value stream map, M1: the Map beside Kaizen (2026-11-01, VSM dev copy)**
+  - *What.* A second view for managers and admins, `/c/<slug>/map` (`public/map.html`, `src/vsm.js`, design
+    `docs/VSM.md`): one map per product family, drawn the standard way (production control's steps on top, material
+    left to right below, inventory triangles, data boxes, the timeline ladder), every box colored by where its record
+    lives (`anetix`, `next`, `other`, `paper`, `none`). Layers: Systems, Agents (concept: which agent would watch a step
+    and what they would say to each other, nothing runs), Kaizen (numbered bursts on boxes), Timeline. A box's detail:
+    what happens, what is and is not recorded, the tools on it with their use, the evidence and a quote. The board's
+    band has Kaizen and Map tabs (managers and admins; the floor never sees the map).
+  - *Decisions (Brendan, 2026-11-01).* Managers land on Kaizen, the Map is a tab. Coverage is two numbers: stages with
+    an Anetix tool live, and stages whose tool is in daily use (`module_use`: the company's floor and manager sessions
+    opening a tool's screens and changing something; admin sessions never count; daily = changed on 5 of the last 14
+    days, since Chelsea's first floor works four days). In M1 a manager answers the review questions and makes small
+    edits (a box's name, who, record, tools, data box rows, notes, its place by dragging); boxes and flows are added by
+    an admin's import (format `anetix-map-1`) until the mapping walk (M2). Managers and admins see it.
+  - *Tables.* `vsm_stages`, `vsm_maps`, `vsm_nodes`, `vsm_edges`, `vsm_questions`, `vsm_kaizen`, `module_use`: all in
+    the backup and gone with the company. Flows are stored as two boxes and the sides they leave and enter; the page
+    routes them, so a dragged box keeps its flows.
+  - *Record.* `map_changed`, `stage_changed`, `map_question_answered`, `map_imported`. A drag alone is not recorded.
+  - *Routes.* `GET /api/c/:slug/vsm`, `GET .../vsm/maps/:id`, `POST .../vsm/nodes/:id`, `POST .../vsm/stages/:id`,
+    `POST .../vsm/questions/:id/answer`, `GET .../vsm/export` (managers and admins), `POST .../vsm/import` (admins).
+    Every id is checked against the company in its own WHERE as well as by the guard.
+  - *Tests.* `scripts/e2e/vsm.js`.
+  - *Not yet.* The mapping walk (M2), cards on the board tied to a box (M3), stage scans and live numbers (M4), agents
+    (M5). The Chelsea seed file is kept out of the repo (it carries Chelsea's people and quotes).
+

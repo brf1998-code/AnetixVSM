@@ -73,6 +73,26 @@ tracked today, on paper, a whiteboard or a spreadsheet, who uses it, what has to
 board help. The design comes back in plain words for the manager to confirm, then the first version is built small on
 purpose; everything after that comes through requests like any change.
 
+## The value stream map
+
+Managers and admins have two views, **Kaizen** (this board) and **Map**, as tabs on the band. The Map is the plant's
+value stream, one map per product family: the steps, the information and material moving between them, the stock
+waiting between them, and the timeline at the bottom. Every box is colored by where its record lives: an Anetix tool,
+another system (Fishbowl, Shopify, QuickBooks, HubSpot), paper, email or word of mouth, or no record at all. A "?" is a
+number nobody records yet; stage scans will fill those in later.
+
+- **Coverage** at the top counts the plant's stages: how many have an Anetix tool built, and how many of those tools
+  are in daily use (changed by the plant's own people on 5 or more of the last 14 days). Anetix's own sign-ins do not
+  count as use.
+- **Click a box** for what happens there, what is and is not recorded, the tools on it, the evidence and a quote from
+  the walk-through. **Edit this box** changes its name, who does it, where its record lives, its tools and its data
+  box numbers. **Arrange boxes** lets a manager drag boxes; the flows follow.
+- **Review** lists the places the map is guessing. "That's right" confirms one; "Needs a fix" asks what is right.
+- **Layers**: Systems (the colors), Agents (which agent would watch each step: a plan, nothing runs yet), Kaizen (the
+  improvement bursts, numbered), Timeline (the lead time ladder).
+- The first map is drafted by Anetix from walk-throughs and documents. A guided way to map a plant step by step is
+  coming. The floor does not see the Map; it keeps its own screens.
+
 ## Other things on the board
 
 - **Screens** on a tool shows every screen of it at once; tap one to go there. Its **QR codes** tab has a code for

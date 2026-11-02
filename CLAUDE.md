@@ -6,7 +6,10 @@ history kept) to rebuild the product around two primary views: the **value strea
 
 - Repo: `brf1998-code/AnetixVSM` (private). Push with `./scripts/push.sh "msg"` from this folder; it pushes here,
   never to `SymbioticOS`.
-- Live: a separate Railway project, `anetix-vsm-dev`, on its own railway.app address and its own Postgres.
+- Live: https://anetixvsm-production.up.railway.app, a separate Railway project, `anetix-vsm-dev` (project
+  54a3c151-f964-4130-9d33-36304c2c3a7b, service `AnetixVSM` 2ba29b72-7194-452b-9143-b1371f5e87b7, its own Postgres,
+  environment production 80ccbdd8-67e8-4473-8cf3-509646aeaf31). No WWW_INTERNAL_URL, STRIPE, NTFY, OIDC or edge
+  secret on purpose: the [modprice] "channel to anetix.ai is not set up" error in its logs is expected.
   **Nothing here touches app.anetix.ai, anetix.ai, the `symbiotic-os` Railway project or its database.**
 - Seeded with a snapshot of Chelsea Clock taken from production (tools, versions, records, board history), restored
   through /admin. No production admin or manager accounts and no Stripe, Google or Microsoft keys come across; the
@@ -216,6 +219,7 @@ Index of `docs/FEATURES.md`, in its order:
 - Archiving a tool, and deleting one for good (2026-10-29)
 - Sign in with Google or Microsoft (2026-10-29)
 - The sign-in map: how everyone signs in, before a way in is taken away (2026-10-29)
+- The value stream map, M1: the Map beside Kaizen (2026-11-01, VSM dev copy)
 
 ## What this is
 

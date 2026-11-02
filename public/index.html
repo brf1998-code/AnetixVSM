@@ -21,6 +21,10 @@
   .band h1 small { font-size:12.5px; opacity:.75; font-weight:500; }
   .band h1 img.mark { width:22px; height:22px; border-radius:5px; background:#fff; display:none; }
   .band .right { margin-left:auto; font-size:12px; opacity:.9; white-space:nowrap; }
+  /* the two views, for managers and admins: Kaizen (this board) and the value stream map (public/map.html) */
+  .views { display:inline-flex; gap:2px; background:rgba(255,255,255,.12); border-radius:8px; padding:2px; }
+  .views a { color:#fff; text-decoration:none; font-size:12.5px; font-weight:700; padding:3px 11px; border-radius:6px; opacity:.85; }
+  .views a.on { background:#fff; color:var(--navy); opacity:1; }
   .band .right a { color:#fff; }
   .modstrip { display:flex; gap:6px 10px; flex-wrap:wrap; align-items:center; margin-top:6px; font-size:12px; }
   .modcard { display:inline-flex; gap:7px; align-items:center; padding:2px 8px 2px 4px; border-radius:8px; background:rgba(255,255,255,.07); white-space:nowrap; }
@@ -323,6 +327,7 @@
   <div class="band">
     <div class="inner row">
       <h1><img class="mark" id="comark" alt="">Improvement Board <small id="coname"></small></h1>
+      <nav class="views" id="views" aria-label="Views" hidden><a class="on" href="./" aria-current="page">Kaizen</a><a href="map">Map</a></nav>
       <span id="global-busy"><span class="spin"></span><span id="global-busy-text">working</span></span>
       <span class="right" id="who"></span>
       <span id="askdock"></span>
@@ -1778,6 +1783,7 @@ async function load() {
   const me = window.sosPerson && window.sosPerson.me(), anyPeople = window.sosPerson && window.sosPerson.people().length;
   const meHtml = me ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Who is at this screen. Approvals and requests carry this name.">${esc(me.name)}</a>` : anyPeople ? ` · <a href="#" onclick="window.sosPerson.open();return false" title="Tap your name and type your PIN so approvals and requests carry your name">who is this?</a>` : "";
   // top right: who is here, one Settings link, sign out. The rest (agent settings, checks log, the record) is on the admin page (Brendan, 2026-09-20).
+  document.getElementById("views").hidden = !MGR();   // the Map tab: managers and admins (src/vsm.js)
   document.getElementById("who").innerHTML = `signed in as <b>${esc(DATA.role)}</b>${meHtml}${DATA.role === "admin" ? ' · <a href="/admin">admin</a>' : ""}${MGR() ? ` · <a href="/c/${SLUG}/settings" title="People and PINs, printers and spreadsheets, the wall sign, and what happens when a request arrives">Settings</a>` : ""} · <a href="/logout">sign out</a>`;
   normalizeSel();
   writeSel();   // the URL always shows the pick in force (cleans a stale ?m=, remembers a linked one)
