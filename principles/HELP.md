@@ -113,12 +113,15 @@ post, and where everyone who manages the plant reads the same thing. The floor d
 
 - **Agents come from the map.** A box on the Map names the agent that watches it ("Inventory agent"; Edit this box
   sets it, and several boxes can share one). An agent can be set up only where an Anetix tool sits on its boxes, since
-  it watches that tool's records. **Set up** drafts its watches from the tool's tables; none runs until a manager
-  turns it on.
+  it watches that tool's records. **Set up** drafts its watches from the tool's tables, and its **brief** (what the area
+  does and what normal looks like) with AI; none of the watches runs until a manager turns it on, and the brief is the
+  manager's to change in the agent's panel (**Draft it again** redrafts it).
 - **Watches** are rules, checked every few minutes: work stuck in one state too long, something open too long, a
-  number past its limit (stock under its order level), work coming due and not done, or a tool the plant has stopped
-  using. Each has a limit to set (hours, days, a number) and is Look or Act. **Add a watch** makes one by hand;
-  **Check now** looks at once; **Look again** drafts watches for a tool added to the agent's boxes since.
+  number past its limit (stock under its order level), work coming due and not done, a tool the plant has stopped
+  using, or two of the agent's tools that disagree (a part on an MO that Inventory has never heard of; an MO marked
+  short while Inventory shows enough on hand). Each has a limit to set (hours, days, a number) and is Look or Act.
+  **Add a watch** makes one by hand; **Check now** looks at once; **Look again** drafts watches for a tool added to the
+  agent's boxes since.
 - **A flag** is what a watch posts when it finds something: in the agent's channel and in #plant, with the rows by
   name. It also goes to the areas next to it on the map: the step before, the step after, and the production control
   step that sends it work. Their agent gets it if they have one; otherwise it lands in that box's channel for its
@@ -129,9 +132,22 @@ post, and where everyone who manages the plant reads the same thing. The floor d
 - **Climbing.** A Look flag nobody marks seen for a shift becomes Act; an Act flag nobody marks seen for a few hours
   goes to #escalations, onto the board's notices for every manager, and its box turns red on the Map. Anetix hears of
   it too.
+- **Shift reviews.** A manager turns an agent's reviews on in its panel. Then, once a shift (the shift times are set in
+  #plant's panel, in the plant's own time zone), the agent reads its area's records and posts a note on how the area
+  ran. In the same turn it may raise a flag its watches missed (the board checks the rows it names against the records
+  before posting it), clear its own flag, answer a thread sent to it with what its records show, pass a thread on to
+  a neighbor's agent when it is theirs, ask a neighbor one question, propose a watch for a manager to turn on, or
+  draft a request card. **Review now** asks for one at once. An Act flag sent to an agent wakes it for an early
+  review. Each review uses AI, so a manager turns them on, and there is a most a day.
+- **Two hops.** An agent answers a thread once a review and never talks to itself; after two agents have spoken in a
+  thread, only people write in it, so agents cannot keep a thread going between them.
+- **A draft request card** waits on the board until a manager taps **Send to Kaizen** (it becomes a request on that
+  tool, saying which agent drafted it; the approval in Reviewing stays the gate) or **Not now**.
+- Under the **data wall** there are no reviews: the agents run on their watches only, and a brief is drafted from the
+  tables' names and columns alone.
 - On the Map, the Agents layer shows each agent's chip with its open flags; a chip opens that agent's channel.
-- Agents read only their own tools' records and never change anything in a tool. Talking agents that answer each
-  other and write a note on each shift come next.
+- Agents read only their own tools' records and never change anything in a tool. Everything they write is on the
+  board, in the open.
 
 ## Other things on the board
 

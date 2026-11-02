@@ -17,7 +17,9 @@
 //   managers     the manager accounts' sign-in emails and names (never a password or an authenticator)
 //   value_stream_map  the plant's map as one file (anetix-map-1: stages, maps in use, boxes, flows, review answers)
 //   map_sources  what went into the mapping walks: each source's title and its words (a file is under attachments)
-//   agent_board  the agent board's messages: what the agents' watches flagged and what people wrote, by channel
+//   agent_board  the agent board's messages: what the agents' watches flagged, what the agents wrote in their reviews and
+//                what people wrote, by channel
+//   agent_reviews  when each agent reviewed its area and what it posted (counts; the words are under agent_board)
 //   record       what the company's own people said and decided, word for word (floor, manager and named people's
 //                rows of the record; the agent's and the platform's rows are Anetix's Output and carry build summaries
 //                and designs, so they stay out)
@@ -99,6 +101,7 @@ async function exportCompany(slug) {
     value_stream_map: await require("./vsm").exportMap(slug),
     map_sources: (await q("SELECT walk_id, kind, title, words, attachment_id, created_at FROM platform.vsm_sources WHERE company=$1 ORDER BY id", [slug])).rows,
     agent_board: (await q("SELECT id, channel, thread_id, kind, severity, from_kind, from_name, words, created_at FROM platform.vsm_messages WHERE company=$1 ORDER BY id", [slug])).rows,
+    agent_reviews: (await q("SELECT r.id, a.name AS agent, r.reason, r.status, r.posted, r.started_at, r.finished_at FROM platform.vsm_reviews r JOIN platform.vsm_agents a ON a.id=r.agent_id WHERE r.company=$1 ORDER BY r.id", [slug])).rows,
     site: s || null,
   };
 }

@@ -240,6 +240,16 @@ fresh; start "SOS_BROWSER=off $AG"
 run vsm-agents             env $AG node scripts/e2e/vsm-agents.js
 fresh; start "SOS_BROWSER=off SOS_WATCH_MS=1000"
 run vsm-agents-runner      node scripts/e2e/vsm-agents.js runner
+# 2026-11-02 (VSM dev copy): the agent board, A2 (src/vsm-review.js): briefs, Disagree watches, shift reviews, early
+# reviews, answers and passes under the hop limit, what an agent cannot do, draft cards, the caps and the wall (the prompt
+# log); then the requests a real review sends (a stand-in for the Messages API on 3998); then the shift clock
+RV="SOS_WATCH_MS=0 SOS_AGENT_EARLY_MIN=0 SOS_FLAG_UPDATE_MIN=0 SOS_PROMPT_LOG=$LOG/vsm-review-prompts.jsonl"
+fresh; rm -f "$LOG/vsm-review-prompts.jsonl"; start "SOS_BROWSER=off $RV"
+run vsm-review             env $RV node scripts/e2e/vsm-review.js
+fresh; start "SOS_BROWSER=off SOS_WATCH_MS=0 SOS_FAKE_AGENT=0 ANTHROPIC_API_KEY=stand-in ANTHROPIC_BASE_URL=http://127.0.0.1:3998 SOS_AGENT_REVIEW_STEPS=3"
+run vsm-review-api         node scripts/e2e/vsm-review.js api
+fresh; start "SOS_BROWSER=off SOS_WATCH_MS=1000"
+run vsm-review-shift       node scripts/e2e/vsm-review.js shift
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

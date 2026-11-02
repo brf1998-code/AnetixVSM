@@ -73,6 +73,7 @@ async function main() {
   await require("./src/vsm").init();         // the value stream map: maps, boxes, flows, review questions, coverage, each tool's daily use (src/vsm.js, docs/VSM.md)
   await require("./src/vsm-walk").init();    // the mapping walk: its sources, the read, the walk upstream, the draft (src/vsm-walk.js)
   await require("./src/vsm-agents").init();  // the agent board: agents from the map, watches every SOS_WATCH_MS, flags, routing, climbing (src/vsm-agents.js)
+  await require("./src/vsm-review").init();  // the agent board, A2: the agents' shift reviews, briefs, draft request cards (src/vsm-review.js)
   await require("./src/mcp-company").init(); // the company MCP: the records switch, Anetix's lock, feedback.held for a request a connected app filed (src/mcp-company.js, docs/MCP.md)
 
   const app = express();
@@ -211,7 +212,7 @@ async function main() {
   app.get("/c/:slug/people", auth.requireManager, companyPage("people.html"));
   app.get("/c/:slug/settings", auth.requireManager, companyPage("settings.html"));
   app.get("/c/:slug/map", auth.requireManager, companyPage("map.html"));
-  app.get("/c/:slug/agent-board", auth.requireManager, companyPage("agent-board.html"));   // the agent board, the third view (src/vsm-agents.js, docs/AGENTS.md)   // the value stream map, the board's other view (src/vsm.js, docs/VSM.md)
+  app.get("/c/:slug/agent-board", auth.requireManager, companyPage("agent-board.html"));   // the agent board, the third view (src/vsm-agents.js, src/vsm-review.js, docs/AGENTS.md)
   app.get("/c/:slug/enroll", auth.requireManager, companyPage("enroll.html"));   // a manager account's authenticator setup, its first stop (src/accounts.js)   // the manager's one settings page: people, printers and spreadsheets, the wall sign, what happens when a request arrives
   app.get("/admin", auth.requireAdmin, (_req, res) => res.sendFile(page("admin.html")));
 
@@ -249,6 +250,7 @@ async function main() {
   app.use(require("./src/vsm").router);       // /api/c/:slug/vsm*: the value stream map, managers and admins; import is admin only (src/vsm.js)
   app.use(require("./src/vsm-walk").router);  // /api/c/:slug/vsm/walks*: the mapping walk, managers and admins (src/vsm-walk.js)
   app.use(require("./src/vsm-agents").router); // /api/c/:slug/vsm/agents*, /vsm/watches/:id, /vsm/board*: the agent board, managers and admins (src/vsm-agents.js)
+  app.use(require("./src/vsm-review").router); // /api/c/:slug/vsm/agents/:id/review|reviews|brief, /vsm/agent-settings, /vsm/board/drafts/:id: the agents' reviews (src/vsm-review.js)
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module, /c/:slug/staging/m/:module and /c/:slug/test/m/:module

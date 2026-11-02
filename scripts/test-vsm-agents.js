@@ -84,6 +84,27 @@ const T = "text", TS = "timestamp with time zone", N = "integer", NUMERIC = "num
   t("a box two steps away is not a party", !fromParts.some((p) => p.key === "mech/m3" || p.key === "mech/m4"));
   t("an agent never sends to itself", !V.partiesOf(new Set(["mech/m2", "mech/mo"]), nodes, edges, new Map([...agents, ["inventory-agent", { ...agents.get("inventory-agent"), status: "on" }]]), "inventory-agent").some((p) => p.key === "inventory-agent"));
 
+  // ---- disagree (A2): two of an agent's tools that name the same parts
+  const dis = V.proposeDisagree({ tool: "mo-board", title: "MO Board", tables: mo }, { tool: "inventory-management-system", title: "Inventory", tables: inv });
+  const miss = dis.find((w) => w.spec.test === "missing"), cmpW = dis.find((w) => w.spec.test === "compare");
+  t("disagree: an MO's part Inventory does not know, not done, keyed on the part number", miss && miss.spec.table === "mos" && miss.spec.key_column === "part_no" && miss.spec.other.tool === "inventory-management-system" && miss.spec.other.table === "parts"
+    && miss.spec.where.some((w) => w.column === "done_at" && w.op === "is empty") && miss.tool === "mo-board", dis);
+  t("disagree: an MO marked short while Inventory shows enough on hand (its qty against the MO's qty)", cmpW && cmpW.spec.where.some((w) => w.column === "is_short" && w.value === true) && cmpW.spec.compare.other_column === "qty" && cmpW.spec.compare.op === ">=" && cmpW.spec.compare.column === "qty" && /enough/.test(cmpW.title), cmpW);
+  t("disagree: the other way round drafts nothing (a list of parts is not work)", V.proposeDisagree({ tool: "inventory-management-system", title: "Inventory", tables: inv }, { tool: "mo-board", title: "MO Board", tables: mo }).length === 0);
+  t("disagree: no shared key, nothing drafted", V.proposeDisagree({ tool: "manufacturing-order-board", title: "Manufacturing Order Board", tables: ord }, { tool: "inventory-management-system", title: "Inventory", tables: inv }).length === 0);
+  const others = new Map([["inventory-management-system", inv]]);
+  t("disagree drafts pass the shape check", dis.every((w) => { try { V.checkSpec(w.shape, w.spec, mo, others); return true; } catch (e) { console.log(e.message); return false; } }));
+  const badD = (spec, o = others) => { try { V.checkSpec("disagree", spec, mo, o); return false; } catch (e) { return e.status === 400; } };
+  const okD = { table: "mos", key_column: "part_no", other: { tool: "inventory-management-system", table: "parts", key_column: "part_no" }, test: "missing" };
+  t("disagree: only with another of the agent's tools, its table and its key", badD({ ...okD, other: { ...okD.other, tool: "elsewhere" } }) && badD(okD, new Map()) && badD({ ...okD, other: { ...okD.other, table: "nope" } }) && badD({ ...okD, other: { ...okD.other, key_column: "x\"; DROP" } }) && badD({ ...okD, key_column: "nope" }));
+  t("disagree: a comparison is on numbers, with a known operator", badD({ ...okD, test: "compare", compare: { other_column: "part_no", op: ">=", value: 1 } }) && badD({ ...okD, test: "compare", compare: { other_column: "qty", op: "~", value: 1 } }) && badD({ ...okD, test: "compare", compare: { other_column: "qty", op: ">=" } }));
+  const dsp = V.checkSpec("disagree", { ...okD, where: [{ column: "is_short", op: "=", value: true }], test: "compare", compare: { other_column: "qty", op: ">=", column: "qty" }, other: { ...okD.other, where: [{ column: "name", op: "contains", value: "50%" }] } }, mo, others);
+  const dq2 = V.disagreeQuery("mod_c_mo", mo.get("mos"), "mod_c_inv", dsp);
+  t("disagree: one query, every name qualified, every value a parameter", /FROM "mod_c_mo"\."mos" a WHERE/.test(dq2.sql) && /EXISTS \(SELECT 1 FROM "mod_c_inv"\."parts" b WHERE lower\(btrim\(b\."part_no"::text\)\) = lower\(btrim\(a\."part_no"::text\)\)/.test(dq2.sql)
+    && /b\."qty" >= a\."qty"/.test(dq2.sql) && /a\."is_short" = \$1/.test(dq2.sql) && /b\."name"::text ILIKE \$2/.test(dq2.sql) && dq2.params[0] === true && dq2.params[1] === "%50\\%%" && !/NOT EXISTS/.test(dq2.sql), dq2);
+  const dq3 = V.disagreeQuery("mod_c_mo", mo.get("mos"), "mod_c_inv", V.checkSpec("disagree", okD, mo, others));
+  t("disagree: missing is NOT EXISTS, and a row with no key is left out", /NOT EXISTS/.test(dq3.sql) && /a\."part_no" IS NOT NULL/.test(dq3.sql) && /btrim\(a\."part_no"::text\) <> ''/.test(dq3.sql) && dq3.params.length === 0);
+
   // ---- the push and the limit words
   const p = V.pushOf("Chelsea Clock", "Inventory agent", "level", 3);
   t("the push: the company, the agent, the kind of flag and the count, nothing else", p.title === "A flag climbed" && /Chelsea Clock: Inventory agent/.test(p.message) && /past its limit, 3 found/.test(p.message) && !/[–—]/.test(p.message + p.title));

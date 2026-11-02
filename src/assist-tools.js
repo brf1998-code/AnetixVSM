@@ -47,7 +47,9 @@ async function manifestOf(company, m) {
 // The tool a call is about. In a one-tool conversation it is always that tool; naming another is an error the model
 // passes on. In a whole-company conversation it is looked up by name or title.
 async function toolFor(ctx, asked, { optional = false } = {}) {
-  const all = await modules(ctx.company);
+  // ctx.only: the tools a caller may reach and no others (an agent on the agent board reads only its own area's tools,
+  // src/vsm-review.js); the rest are not there for it, not even by name
+  const all = (await modules(ctx.company)).filter((m) => !ctx.only || ctx.only.includes(m.name));
   if (ctx.scope.kind === "tool") {
     const mine = all.find((m) => m.name === ctx.scope.module);
     if (!mine) throw say("This tool is no longer on the company's board.");

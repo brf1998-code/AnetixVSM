@@ -242,7 +242,7 @@ async function main() {
   const listed = await c.listTools();
   const names = listed.tools.map((x) => x.name).sort();
   const WRITERS = ["add_map_source", "answer_map_walk", "answer_tool_request", "change_tool_request_design", "draft_map_walk", "map_another_family", "read_map_sources", "send_tool_request", "start_map_walk", "start_tool_request"];
-  t("the address offers the thirteen operations tools, the six new tool request tools and the eight mapping walk tools", names.join() === ["activity_since", "add_map_source", "ai_spend", "answer_map_walk", "answer_tool_request", "change_tool_request_design", "draft_map_walk", "get_demo", "get_map_walk", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_map_walks", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "map_another_family", "read_map_sources", "send_tool_request", "sign_in_map", "start_map_walk", "start_tool_request"].join(), names);
+  t("the address offers the thirteen operations tools, the six new tool request tools, the eight mapping walk tools and the agent board's counts", names.join() === ["activity_since", "add_map_source", "agent_board_status", "ai_spend", "answer_map_walk", "answer_tool_request", "change_tool_request_design", "draft_map_walk", "get_demo", "get_map_walk", "get_tool_request", "list_assistant_conversations", "list_board_requests", "list_companies", "list_demos", "list_map_walks", "list_requests_to_anetix", "list_runs", "list_sites", "list_stopped_builds", "list_tool_requests", "loop_health", "map_another_family", "read_map_sources", "send_tool_request", "sign_in_map", "start_map_walk", "start_tool_request"].join(), names);
   t("ten say they write, every other one says it only reads, none is destructive, each has a description", listed.tools.every((x) => x.annotations && x.annotations.readOnlyHint === !WRITERS.includes(x.name) && x.annotations.destructiveHint === false && x.description.length > 40));
   t("the server says what it is", /read only/i.test(c.getInstructions() || "") && c.getServerVersion().name === "anetix-admin");
   const call = async (name, args = {}) => { const r = await c.callTool({ name, arguments: args }); let data = null; try { data = JSON.parse(textOf(r)); } catch (e) {} return { r, data, text: textOf(r) }; };
@@ -601,6 +601,20 @@ async function walkTools({ admin, secret, sharedMgr, adminId }) {
   t("no answer of the walk tools carries a tool's record, a source's words or a secret", !everything.includes(MARKER) && !everything.includes(SRC) && !/password_hash|anx_(at|rt|ac)_|secret_enc/.test(everything));
   t("no answer of the walk tools names a model", !/claude-|opus|sonnet|fable/i.test(everything));
   t("no words of the walk tools carry an em or en dash", !/[–—]/.test(everything + ro_words(await c.listTools())));
+  // the agent board's counts (A2): numbers and status, never a flag's or a note's words
+  const ag = (await q("INSERT INTO platform.vsm_agents (company, key, name, tools, status, reviews) VALUES ('demo', 'mcp-agent', 'MCP agent', '{paperline}', 'on', true) RETURNING id")).rows[0];
+  const fm = (await q(`INSERT INTO platform.vsm_messages (company, channel, kind, severity, from_kind, from_name, agent_id, words) VALUES ('demo', 'a:mcp-agent', 'flag', 'act', 'agent', 'MCP agent', $1, $2) RETURNING id`, [ag.id, `Flag about ${MARKER}`])).rows[0];
+  await q("INSERT INTO platform.vsm_flags (thread_id, company, agent_id, channel, status, severity, climbed_at) VALUES ($1, 'demo', $2, 'a:mcp-agent', 'open', 'act', now())", [fm.id, ag.id]);
+  await q("INSERT INTO platform.vsm_messages (company, channel, kind, from_kind, from_name, agent_id, words) VALUES ('demo', 'a:mcp-agent', 'note', 'agent', 'MCP agent', $1, $2)", [ag.id, `Note about ${MARKER2}`]);
+  await q("INSERT INTO platform.vsm_reviews (company, agent_id, reason, status, model, cost_usd) VALUES ('demo', $1, 'shift', 'done', 'claude-opus-5-5', 0.42)", [ag.id]);
+  const bs = await call("agent_board_status", { company: "demo" });
+  const bsA = bs.data && bs.data.companies[0] && bs.data.companies[0].agents.find((x) => x.agent === "MCP agent");
+  t("agent_board_status: per agent, its flags open and climbed and its reviews, in counts", !bs.r.isError && bsA && bsA.flags_open === 1 && bsA.flags_climbed === 1 && bsA.reviews_done_7d === 1 && bsA.reviews === true && bsA.last_review.reason === "shift", bs.text.slice(0, 400));
+  t("and never the words, the model or the cost", !bs.text.includes(MARKER) && !bs.text.includes(MARKER2) && !/claude-|0\.42|cost/i.test(bs.text), bs.text.slice(0, 400));
+  await q("INSERT INTO platform.sites (id, company, stage) VALUES (gen_random_uuid(), 'demo', 'subscribed') ON CONFLICT (company) DO UPDATE SET stage='subscribed'");
+  const bsOwn = await call("agent_board_status", { company: "demo" });
+  t("a paying site's own agents are numbered, not named", !/MCP agent/.test(bsOwn.text) && /agent \d/.test(bsOwn.text), bsOwn.text.slice(0, 300));
+  await q("DELETE FROM platform.sites WHERE company='demo'");
   // the manager's part stays on the board: using the drawn map
   const use = await sharedMgr.post(`/api/c/demo/vsm/walks/${id}/use`, {});
   t("the manager uses the drawn map on the board", use.status === 200 && (await q("SELECT proposed FROM platform.vsm_maps WHERE id=$1", [dr.data.map_id])).rows[0].proposed === false, use.text.slice(0, 200));

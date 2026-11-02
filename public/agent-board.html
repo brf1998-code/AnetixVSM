@@ -85,6 +85,12 @@
   .err { background:var(--redSoft); color:#7d1a14; border-radius:8px; padding:9px 12px; }
   .empty { padding:24px 16px; text-align:center; color:var(--steel); }
   .phonechan { display:none; }
+  .chip.agent { background:#e7edf6; color:var(--navy); }
+  .looked { font-size:12px; color:var(--steel); }
+  .card2 { border:1px solid var(--line); border-radius:8px; padding:9px 11px; background:#fbfcfd; display:flex; flex-direction:column; gap:4px; }
+  .sec { border-top:1px solid #e9ecf0; padding-top:10px; display:flex; flex-direction:column; gap:7px; }
+  .brief { width:100%; min-height:84px; resize:vertical; }
+  .left { font-size:12px; color:var(--steel); }
   @media (max-width:1200px) { .wrap { grid-template-columns:240px minmax(0,1fr); } .wrap > .right { grid-column:1 / -1; } }
   @media (max-width:760px) { .wrap { grid-template-columns:1fr; padding:12px; } .side { position:static; } .side .chans { display:none; } .phonechan { display:block; padding:10px 12px; } .phonechan select { width:100%; min-height:40px; } .band { padding:8px 12px; } .band .right { margin-left:0; } }
 </style>
@@ -100,9 +106,12 @@
 const SLUG = (location.pathname.split("/")[2] || "").toLowerCase();
 const API = `/api/c/${SLUG}/vsm`;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const SHAPE = { stuck: "Stuck: sat in one state too long", waiting: "Waiting: open too long", level: "Over or under a limit", due: "Coming due, not done", quiet: "Quiet: the tool has not been used" };
+const SHAPE = { stuck: "Stuck: sat in one state too long", waiting: "Waiting: open too long", level: "Over or under a limit", due: "Coming due, not done", quiet: "Quiet: the tool has not been used", disagree: "Disagree: two tools do not match" };
+const KIND = { note: "Note", answer: "Answer", pass: "Passed on", ask: "Question", idea: "Watch idea", draft: "Draft request" };
+const REASON = { shift: "a shift review", early: "an early review", manual: "a review a manager asked for" };
 const STATUS = { open: ["Open", ""], seen: ["Seen", ""], on_it: ["On it", "ok"], resolved: ["Resolved", "ok"], not_a_problem: ["Not a problem", ""], cleared: ["Cleared", "ok"] };
 const params = new URLSearchParams(location.search);
+let lastPoll = 0;   // when the page last read the board (a click's reload counts), so the poll never redraws under a click
 const S = { board: null, agents: null, channel: params.get("channel") || "plant", open: new Set(params.get("thread") ? [Number(params.get("thread"))] : []), threads: {}, asking: null, adding: false, tables: null, err: "", busy: false };
 
 async function api(path, opts) {
@@ -117,7 +126,7 @@ const ago = (t) => { const s = Math.max(0, (Date.now() - new Date(t).getTime()) 
 
 async function load() {
   const [b, a] = await Promise.all([api(`/board?channel=${encodeURIComponent(S.channel)}`), api("/agents")]);
-  S.board = b; S.agents = a;
+  S.board = b; S.agents = a; lastPoll = Date.now();
   for (const id of S.open) S.threads[id] = (await api(`/board/threads/${id}`).catch(() => null));
   render();
 }
@@ -176,14 +185,20 @@ function msgHtml(m) {
   const th = S.open.has(m.id) ? S.threads[m.id] : null;
   const where = S.channel === "plant" || S.channel === "escalations" || m.channel !== S.channel ? ` <span class="note">in ${m.channel === "plant" ? "#plant" : esc(chanName(m.channel))}</span>` : "";
   return `<article class="msg ${f ? `flag ${f.severity === "act" ? "act" : ""} ${closed ? "closed" : ""}` : ""}" data-msg="${m.id}">
-    <div class="top"><span class="who ${m.from_kind === "platform" ? "platform" : ""}">${esc(m.from_name)}</span>${m.from_kind === "watch" ? ' <span class="note">watch</span>' : ""}${where}<span class="when">${esc(ago(m.created_at))}</span>
+    <div class="top"><span class="who ${m.from_kind === "platform" ? "platform" : ""}">${esc(m.from_name)}</span>${m.from_kind === "watch" ? ' <span class="note">watch</span>' : ""}${m.from_kind === "agent" ? ` <span class="chip agent">${esc(f ? "Its review" : KIND[m.kind] || "Agent")}</span>` : ""}${where}<span class="when">${esc(ago(m.created_at))}</span>
       ${f ? `<span class="chip ${f.severity === "act" ? "act" : "look"}">${f.severity === "act" ? "Act" : "Look"}</span><span class="chip ${st[1]}">${esc(st[0])}${f.owner && f.status === "on_it" ? `: ${esc(f.owner)}` : ""}</span>${f.climbed_at ? '<span class="chip act">Climbed to every manager</span>' : ""}` : ""}</div>
-    <div class="words">${esc(m.words)}</div>${sample}${toHtml(m.to)}
+    ${m.kind === "draft" && ev.card ? draftHtml(m) : `<div class="words">${esc(m.words)}</div>`}${sample}${ev.checked ? `<div class="looked">The board checked the rows it named: ${ev.checked.found} of ${ev.checked.named} are in the records.</div>` : ""}${(ev.looked || []).length ? `<div class="looked">Looked at: ${ev.looked.map(esc).join(" · ")}</div>` : ""}${toHtml(m.to)}
     ${f ? flagActs(m) : ""}
     ${m.replies || S.open.has(m.id) ? `<div><button type="button" class="linkish" data-act="thread" data-id="${m.id}">${S.open.has(m.id) ? "Hide the thread" : `${m.replies} ${m.replies === 1 ? "reply" : "replies"}`}</button></div>` : `<div><button type="button" class="linkish" data-act="thread" data-id="${m.id}">Reply</button></div>`}
-    ${th ? `<div class="thread">${th.replies.map((r) => `<div class="reply"><div class="top"><span class="who ${r.from_kind === "platform" ? "platform" : ""}">${esc(r.from_name)}</span><span class="when">${esc(ago(r.created_at))}</span>${r.kind === "climbed" ? '<span class="chip act">Climbed</span>' : r.kind === "raised" ? '<span class="chip act">Now act</span>' : r.kind === "cleared" ? '<span class="chip ok">Cleared</span>' : ""}</div><div class="words">${esc(r.words)}</div></div>`).join("")}
+    ${th ? `<div class="thread">${th.replies.map((r) => `<div class="reply"><div class="top"><span class="who ${r.from_kind === "platform" ? "platform" : ""}">${esc(r.from_name)}</span><span class="when">${esc(ago(r.created_at))}</span>${r.kind === "climbed" ? '<span class="chip act">Climbed</span>' : r.kind === "raised" ? '<span class="chip act">Now act</span>' : r.kind === "cleared" ? '<span class="chip ok">Cleared</span>' : r.from_kind === "agent" && KIND[r.kind] ? `<span class="chip agent">${esc(KIND[r.kind])}</span>` : ""}</div><div class="words">${esc(r.words)}</div>${r.kind === "pass" ? toHtml(r.to) : ""}</div>`).join("")}
       <form class="compose" data-reply="${m.id}" style="padding:0"><textarea name="words" rows="1" maxlength="2000" placeholder="Reply in the thread" aria-label="Reply"></textarea><button type="submit" class="btn go">Send</button></form></div>` : ""}
   </article>`;
+}
+function draftHtml(m) {
+  const c = m.evidence.card, d = m.draft || { state: "draft" };
+  return `<div class="card2"><div class="lbl">A request for ${esc(c.tool_title)}, drafted for you to check</div><div class="words">${esc(c.what)}</div>${c.why ? `<div class="note">Why: ${esc(c.why)}</div>` : ""}
+    ${d.state === "draft" ? `<div class="acts"><button type="button" class="btn go" data-act="draft" data-do="send" data-id="${m.id}">Send to Kaizen</button><button type="button" class="btn quiet" data-act="draft" data-do="dismiss" data-id="${m.id}">Not now</button></div><div class="note">Nothing is filed until you send it; then it is a request on the Kaizen board, where you approve any change as always.</div>`
+      : d.state === "sent" ? `<div><a class="chip ok" href="./" style="text-decoration:none">Sent to Kaizen as request #${esc(d.feedback_id)}${d.decided_by ? ` by ${esc(d.decided_by)}` : ""}</a></div>` : `<div><span class="chip">Not now${d.decided_by ? `, ${esc(d.decided_by)}` : ""}</span></div>`}</div>`;
 }
 function chanName(key) { const c = (S.board.channels || []).find((x) => x.key === key); return c ? c.name : key; }
 
@@ -192,15 +207,23 @@ function agentPanel() {
   if (!S.channel.startsWith("a:")) {
     if (S.channel === "escalations") return `<section class="card panel"><b>Escalations</b><div class="note">Flags nobody picked up. A flag to look at becomes one to act on after a shift with nobody marking it seen; an act flag nobody marks seen climbs here, onto the board's notices for every manager, and to Anetix's phones.</div></section>`;
     if (S.channel.startsWith("b:")) { const c = S.board.channels.find((x) => x.key === S.channel) || {}; return `<section class="card panel"><b>${esc(c.name || "A box")}</b><div class="note">${c.people ? `People: ${esc(c.people)}. ` : ""}This box has no agent, so flags from the areas next to it on the map land here for its people. An agent can be set up once an Anetix tool sits on the box.</div></section>`; }
-    return `<section class="card panel"><b>How the board works</b><div class="note">Each agent watches one area of the map through its Anetix tools. Its watches are rules a manager turns on; when one finds something it posts a flag here, in the agent's channel, and sends it to the areas next to it on the map: their agent if they have one, otherwise their people. Everyone who manages the plant reads the same board.</div></section>`;
+    const st = S.agents.settings || { shift_times: ["15:00"], tz: "America/New_York" };
+    return `<section class="card panel"><b>How the board works</b><div class="note">Each agent watches one area of the map through its Anetix tools. Its watches are rules a manager turns on; when one finds something it posts a flag here, in the agent's channel, and sends it to the areas next to it on the map: their agent if they have one, otherwise their people. Everyone who manages the plant reads the same board.</div>
+      <div class="note">Once a shift, an agent whose reviews you turn on reads its area's records, posts a note on how it ran, and answers what its neighbors sent it. It only reads and writes here: it never changes a record, and a request it drafts waits for you.</div>
+      ${S.agents.walled ? `<div class="note"><b>The data wall is up:</b> the agents run on their watches only, with no reviews.</div>` : ""}
+      <form class="form sec" id="shiftform"><div class="lbl">When the agents review</div>
+        <label>Shift times (one to four, like 07:00, 15:00)<input type="text" name="shift_times" value="${esc(st.shift_times.join(", "))}" maxlength="40"></label>
+        <label>Time zone<input type="text" name="tz" value="${esc(st.tz)}" maxlength="60" list="zones"></label><datalist id="zones">${["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Phoenix", "UTC"].map((z) => `<option value="${z}">`).join("")}</datalist>
+        <div class="acts"><button type="submit" class="btn">Save</button></div>${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}</form></section>`;
   }
   const a = S.agents.agents.find((x) => x.set_up && `a:${x.key}` === S.channel);
   if (!a) return "";
   const live = S.agents.tools;
   const title = (n) => (live.find((t) => t.name === n) || { title: n }).title;
   const wHtml = (w) => {
-    const lim = w.shape === "quiet" ? ["days", w.spec.days, "days"] : w.shape === "due" ? ["within_hours", w.spec.within_hours, "hours"] : w.shape === "level" ? (w.spec.limit_column ? null : ["limit", w.spec.limit, ""]) : ["hours", w.spec.hours, "hours"];
-    const limHtml = lim ? `<label class="row" style="font-weight:600">${w.shape === "due" ? "Within" : w.shape === "level" ? "Limit" : w.shape === "quiet" ? "After" : "Older than"} <input type="number" min="0" step="any" value="${esc(lim[1])}" data-lim="${lim[0]}" data-w="${w.id}" aria-label="Limit for ${esc(w.title)}"> ${lim[2]}</label>` : `<span class="note">under ${esc(String(w.spec.limit_column).replace(/_/g, " "))}</span>`;
+    const lim = w.shape === "disagree" ? null : w.shape === "quiet" ? ["days", w.spec.days, "days"] : w.shape === "due" ? ["within_hours", w.spec.within_hours, "hours"] : w.shape === "level" ? (w.spec.limit_column ? null : ["limit", w.spec.limit, ""]) : ["hours", w.spec.hours, "hours"];
+    const limHtml = lim ? `<label class="row" style="font-weight:600">${w.shape === "due" ? "Within" : w.shape === "level" ? "Limit" : w.shape === "quiet" ? "After" : "Older than"} <input type="number" min="0" step="any" value="${esc(lim[1])}" data-lim="${lim[0]}" data-w="${w.id}" aria-label="Limit for ${esc(w.title)}"> ${lim[2]}</label>`
+      : w.shape === "disagree" ? `<span class="note">against ${esc(title(w.spec.other.tool))} · ${esc(w.spec.other.table)}</span>` : `<span class="note">under ${esc(String(w.spec.limit_column).replace(/_/g, " "))}</span>`;
     return `<div class="w ${w.status === "proposed" ? "proposed" : ""}"><div class="t">${esc(w.title)}</div>
       <div class="note">${esc(SHAPE[w.shape] || w.shape)} · ${esc(title(w.tool))}${w.spec.table ? ` · ${esc(w.spec.table)}` : ""}${w.muted_until && new Date(w.muted_until) > new Date() ? ` · muted until ${esc(new Date(w.muted_until).toLocaleDateString())}` : ""}</div>
       ${w.last_error ? `<div class="err">${esc(w.last_error)}</div>` : w.last_run_at ? `<div class="note">Last looked ${esc(ago(w.last_run_at))}: ${w.last_count ? `${w.last_count} found` : "nothing found"}</div>` : ""}
@@ -214,11 +237,32 @@ function agentPanel() {
     <div class="note">Watches ${a.tools.map((t) => esc(title(t))).join(", ") || "no tool"} on ${a.boxes.map((b) => esc(b.label)).join(", ") || "no box on the map now"}.${a.people ? ` People: ${esc(a.people)}.` : ""}</div>
     <div class="row"><button type="button" class="btn" data-act="check" data-id="${a.id}"${a.status !== "on" ? " disabled" : ""}>Check now</button><button type="button" class="btn quiet" data-act="agent" data-id="${a.id}" data-to="${a.status === "on" ? "paused" : "on"}">${a.status === "on" ? "Pause" : "Turn on"}</button><button type="button" class="btn quiet" data-act="propose" data-id="${a.id}">Look again</button></div>
     ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
+    ${reviewsHtml(a)}
+    <form class="form sec" data-brief="${a.id}"><div class="lbl">Its brief</div><div class="note">What this area does and what normal looks like, in your words. The agent reads it every review.</div>
+      <textarea class="brief" name="brief" maxlength="2000" aria-label="The agent's brief">${esc(a.brief || "")}</textarea>
+      <div class="acts"><button type="submit" class="btn">Save the brief</button><button type="button" class="btn quiet" data-act="draftbrief" data-id="${a.id}">Draft it again</button></div></form>
+    <div class="lbl" style="margin-top:4px">Its watches</div>
     ${proposed.length ? `<div class="lbl">Proposed, waiting for you (${proposed.length})</div>${proposed.map(wHtml).join("")}` : ""}
     <div class="lbl">Running (${on.length})</div>${on.map(wHtml).join("") || `<div class="note">Nothing is running yet. Turn on a proposed watch, or add one.</div>`}
     ${off.length ? `<details><summary class="lbl" style="cursor:pointer">Off (${off.length})</summary>${off.map(wHtml).join("")}</details>` : ""}
     ${S.adding ? addHtml(a) : `<button type="button" class="btn" data-act="add" data-id="${a.id}">Add a watch</button>`}
   </section>`;
+}
+// a time in the plant's own zone, as the shift times are set
+function plantTime(t) {
+  const tz = (S.agents.settings || {}).tz;
+  try { return new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: tz, timeZoneName: "short" }); }
+  catch (e) { return new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }); }
+}
+function reviewsHtml(a) {
+  const walled = S.agents.walled, r = a.last_review;
+  const posted = (p) => { if (!p) return ""; const parts = [["note", "a note"], ["flags", "flag"], ["answers", "answer"], ["passes", "pass"], ["asks", "question"], ["ideas", "watch idea"], ["requests", "draft request"], ["clears", "clear"]].filter(([k]) => p[k]).map(([k, w]) => (k === "note" ? w : `${p[k]} ${w}${p[k] === 1 ? "" : k === "passes" ? "es" : "s"}`)); return parts.length ? `posted ${parts.join(", ")}` : "posted nothing"; };
+  const last = !r ? "No review yet." : r.status === "running" ? `Reviewing now (${esc(REASON[r.reason] || "a review")})…` : r.status === "failed" ? `The last review did not finish (${esc(ago(r.started_at))}): ${esc(r.error || "")}` : `Last: ${esc(REASON[r.reason] || "a review")}, ${esc(ago(r.finished_at || r.started_at))}; ${esc(posted(r.posted))}.`;
+  const left = r && r.posted && (r.posted.left_out || []).length ? `<details><summary class="left" style="cursor:pointer">What the board left out of it (${r.posted.left_out.length})</summary><div class="left">${r.posted.left_out.map(esc).join("<br>")}</div></details>` : "";
+  return `<div class="sec"><div class="row" style="justify-content:space-between"><span class="lbl">Shift reviews</span><span class="chip ${a.reviews && !walled ? "ok" : ""}">${walled ? "Off: the data wall is up" : a.reviews ? "On" : "Off"}</span></div>
+    <div class="note">${a.reviews && !walled ? `Once a shift it reads its area's records, posts a note, and answers what its neighbors send it.${a.next_review ? ` Next: ${esc(plantTime(a.next_review))}.` : ""}` : walled ? "This company keeps its records walled off from Anetix's AI, so the agent runs on its watches only." : "Turn them on to have it read its area once a shift and answer its neighbors. Each review uses AI."}</div>
+    <div class="note">${last}</div>${left}
+    <div class="acts">${walled ? "" : `<button type="button" class="btn ${a.reviews ? "quiet" : "go"}" data-act="reviews" data-id="${a.id}" data-to="${a.reviews ? "off" : "on"}">${a.reviews ? "Turn reviews off" : "Turn reviews on"}</button><button type="button" class="btn" data-act="review" data-id="${a.id}"${a.status !== "on" || (r && r.status === "running") ? " disabled" : ""}>Review now</button>`}</div></div>`;
 }
 function addHtml(a) {
   const t = S.tables;
@@ -230,7 +274,7 @@ function addHtml(a) {
   const times = cols.filter((c) => /timestamp|date/.test(c.type)), nums = cols.filter((c) => /integer|numeric|real|double|smallint|bigint/.test(c.type));
   const sh = S.add.shape;
   return `<form class="form" id="addform" data-agent="${a.id}"><div class="lbl">Add a watch</div>
-    <label>What to watch for<select name="shape">${Object.entries(SHAPE).map(([k, l]) => `<option value="${k}"${k === sh ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    <label>What to watch for<select name="shape">${Object.entries(SHAPE).filter(([k]) => k !== "disagree" || t.length > 1).map(([k, l]) => `<option value="${k}"${k === sh ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
     <label>Tool<select name="tool">${t.map((x) => `<option value="${esc(x.tool)}"${x.tool === tool.tool ? " selected" : ""}>${esc(((S.agents.tools.find((y) => y.name === x.tool)) || { title: x.tool }).title)}</option>`).join("")}</select></label>
     ${sh === "quiet" ? `<label>After how many days with no use<input type="number" name="days" min="1" max="60" value="3"></label>` : `
     <label>Table<select name="table">${opt(tool.tables, table && table.name)}</select></label>
@@ -239,12 +283,34 @@ function addHtml(a) {
     ${sh === "stuck" || sh === "waiting" ? `<label>Measured from<select name="since_column">${opt(times, "")}</select></label><label>Older than (hours, 0 for any)<input type="number" name="hours" min="0" step="any" value="72"></label>` : ""}
     ${sh === "level" ? `<label>The number<select name="column">${opt(nums, "")}</select></label><label>Under or over<select name="op"><option value="under">under</option><option value="over">over</option></select></label><label>The limit: a number, or another column<input type="text" name="limit" placeholder="10 or order_level"></label>` : ""}
     ${sh === "due" ? `<label>The date<select name="date_column">${opt(times, "")}</select></label><label>Within (hours)<input type="number" name="within_hours" min="0" step="any" value="72"></label>` : ""}
+    ${sh === "disagree" ? disagreeFields(t, tool, cols, opt) : ""}
     <label>Only rows where (optional)<span class="row"><select name="wcol"><option value=""></option>${opt(cols, "")}</select><select name="wop">${["is empty", "is not empty", "=", "!=", "<", "<=", ">", ">=", "contains"].map((o) => `<option>${esc(o)}</option>`).join("")}</select><input type="text" name="wval" placeholder="value" style="width:110px"></span></label>`}
     <label>Title: what it looks for, in a line<input type="text" name="title" maxlength="160" required></label>
     <label>How urgent<select name="severity"><option value="look">Look</option><option value="act">Act</option></select></label>
     <div class="acts"><button type="submit" class="btn go">Add and turn on</button><button type="button" class="btn quiet" data-act="canceladd">Cancel</button></div></form>`;
 }
 
+// a Disagree watch: this table's key against another of the agent's tools
+function disagreeFields(t, tool, cols, opt) {
+  const others = t.filter((x) => x.tool !== tool.tool);
+  const isNum = (c) => /integer|numeric|real|double|smallint|bigint/.test(c.type), isText = (c) => /text|character/.test(c.type);
+  const keyGuess = (list) => (list.find((c) => /part_no|part|item|sku|wo_number|mo_no|job_num/.test(c.name)) || list[0] || {}).name;
+  const key = cols.some((c) => c.name === S.add.key_column) ? S.add.key_column : keyGuess(cols.filter(isText));
+  // the other tool and table that know this key by the same name, unless one was picked
+  const knows = (tb) => tb.columns.some((c) => c.name === key && isText(c));
+  const ot = others.find((x) => x.tool === S.add.otool) || others.find((x) => x.tables.some(knows)) || others[0];
+  const otab = ot && (ot.tables.find((x) => x.name === S.add.otable) || ot.tables.find(knows) || ot.tables[0]);
+  const ocols = otab ? otab.columns : [];
+  const okey = ocols.some((c) => c.name === key) ? key : keyGuess(ocols.filter(isText));
+  const qty = (ocols.find((c) => isNum(c) && /^(qty|quantity|on_hand|stock|qty_on_hand)$/.test(c.name)) || {}).name;
+  const titleOf = (n) => ((S.agents.tools.find((y) => y.name === n)) || { title: n }).title;
+  return `<label>This table's key (a part number, a work order)<select name="key_column">${opt(cols.filter(isText), key)}</select></label>
+    <label>Compared with<select name="otool">${others.map((x) => `<option value="${esc(x.tool)}"${x.tool === (ot && ot.tool) ? " selected" : ""}>${esc(titleOf(x.tool))}</option>`).join("")}</select></label>
+    <label>Its table<select name="otable">${opt(ot ? ot.tables : [], otab && otab.name)}</select></label>
+    <label>Its key<select name="okey">${opt(ocols.filter(isText), okey)}</select></label>
+    <label>Flag a row when<select name="test"><option value="missing"${S.add.test !== "compare" ? " selected" : ""}>the other tool does not know its key</option><option value="compare"${S.add.test === "compare" ? " selected" : ""}>the other tool's number compares like this</option></select></label>
+    ${S.add.test === "compare" ? `<span class="row"><select name="ocol" aria-label="The other tool's number">${opt(ocols.filter(isNum), qty)}</select><select name="cop" aria-label="Comparison">${[">=", ">", "<=", "<", "=", "!="].map((o) => `<option>${esc(o)}</option>`).join("")}</select><input type="text" name="cval" placeholder="a number, or this table's column" style="width:180px" aria-label="Compared with"></span>` : ""}`;
+}
 function render() {
   const app = document.getElementById("app");
   if (!S.board) return;
@@ -287,17 +353,23 @@ app.addEventListener("click", (ev) => {
   }
   if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; render(); }).catch((e) => { S.err = e.message; S.adding = false; render(); }); }
   if (act === "canceladd") { S.adding = false; return render(); }
+  if (act === "reviews") return go(() => post(`/agents/${id}`, { reviews: t.dataset.to === "on" }));
+  if (act === "review") return go(() => post(`/agents/${id}/review`, {}));
+  if (act === "draftbrief") return go(() => post(`/agents/${id}/brief`, {}));
+  if (act === "draft") return go(() => post(`/board/drafts/${id}/${t.dataset.do}`, {}));
 });
 app.addEventListener("change", (ev) => {
   const t = ev.target;
   if (t.id === "chansel") { S.channel = t.value; S.open.clear(); S.threads = {}; history.replaceState(null, "", `?channel=${encodeURIComponent(S.channel)}`); return go(async () => {}); }
-  if (t.closest("#addform") && ["shape", "tool", "table"].includes(t.name)) { S.add[t.name] = t.value; if (t.name === "tool") S.add.table = null; return render(); }
+  if (t.closest("#addform") && ["shape", "tool", "table", "key_column", "otool", "otable", "test"].includes(t.name)) { S.add[t.name] = t.value; if (t.name === "tool" || t.name === "table") { if (t.name === "tool") S.add.table = null; S.add.key_column = null; S.add.otool = null; S.add.otable = null; } if (t.name === "key_column") { S.add.otool = null; S.add.otable = null; } if (t.name === "otool") S.add.otable = null; return render(); }
   if (t.dataset.sev) { const w = Number(t.dataset.sev); const watch = S.agents.agents.flatMap((a) => a.watches || []).find((x) => x.id === w); if (watch && watch.status === "on") go(() => post(`/watches/${w}`, { severity: t.value })); }
   if (t.dataset.lim) { const w = Number(t.dataset.w); const watch = S.agents.agents.flatMap((a) => a.watches || []).find((x) => x.id === w); if (watch && watch.status === "on" && t.value !== "") go(() => post(`/watches/${w}`, { [t.dataset.lim]: Number(t.value) })); }
 });
 app.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
+  if (f.dataset.brief) { const brief = f.elements.brief.value; return go(() => post(`/agents/${f.dataset.brief}`, { brief })); }
+  if (f.id === "shiftform") { const shift_times = f.elements.shift_times.value, tz = f.elements.tz.value.trim(); return go(() => post("/agent-settings", { shift_times, tz })); }
   if (f.id === "say") { const words = f.elements.words.value; return go(() => post("/board/messages", { channel: S.channel, words })); }
   if (f.dataset.reply) { const words = f.elements.words.value; return go(() => post("/board/messages", { thread_id: Number(f.dataset.reply), words })); }
   if (f.dataset.ask) { const id = Number(f.dataset.ask), action = S.asking.action, words = f.elements.words.value; return go(async () => { await post(`/board/flags/${id}/${action}`, { words }); S.asking = null; }); }
@@ -311,13 +383,22 @@ app.addEventListener("submit", (ev) => {
       if (shape === "stuck" || shape === "waiting") { spec.since_column = v("since_column"); spec.hours = Number(v("hours")); }
       if (shape === "level") { spec.column = v("column"); spec.op = v("op"); const l = String(v("limit") || "").trim(); if (/^-?\d+(\.\d+)?$/.test(l)) spec.limit = Number(l); else spec.limit_column = l; }
       if (shape === "due") { spec.date_column = v("date_column"); spec.within_hours = Number(v("within_hours")); }
+      if (shape === "disagree") {
+        spec.key_column = v("key_column"); spec.test = v("test"); spec.other = { tool: v("otool"), table: v("otable"), key_column: v("okey") };
+        if (spec.test === "compare") { const c = String(v("cval") || "").trim(); spec.compare = { other_column: v("ocol"), op: v("cop") }; if (/^-?\d+(\.\d+)?$/.test(c)) spec.compare.value = Number(c); else spec.compare.column = c; }
+      }
       if (v("wcol")) { const op = v("wop"); spec.where = [op === "is empty" || op === "is not empty" ? { column: v("wcol"), op } : { column: v("wcol"), op, value: /^-?\d+(\.\d+)?$/.test(v("wval")) ? Number(v("wval")) : v("wval") === "true" ? true : v("wval") === "false" ? false : v("wval") }]; }
     }
     return go(async () => { await post(`/agents/${f.dataset.agent}/watches`, { shape, tool: v("tool"), spec, title: v("title"), severity: v("severity") }); S.adding = false; });
   }
 });
-// new messages come in while the page is open; it does not redraw while someone is typing
-setInterval(() => { const a = document.activeElement; if (a && /TEXTAREA|INPUT|SELECT/.test(a.tagName)) return; if (!S.busy && !S.asking && !S.adding) load().catch(() => {}); }, 15000);
+// new messages come in while the page is open; it does not redraw while someone is typing; every 4 s while a review runs
+setInterval(() => {
+  const a = document.activeElement; if (a && /TEXTAREA|INPUT|SELECT/.test(a.tagName)) return;
+  const reviewing = S.agents && S.agents.agents.some((x) => x.last_review && x.last_review.status === "running");
+  if (Date.now() - lastPoll < (reviewing ? 4000 : 15000)) return;
+  if (!S.busy && !S.asking && !S.adding) load().catch(() => {});
+}, 1000);
 header();
 load().catch((e) => { document.getElementById("app").innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="err">${esc(e.message)}</div></div>`; });
 </script>

@@ -1,7 +1,7 @@
 # The agent board: agents that watch each area of the plant and talk in the open
 
-*Design, rev 3, 2026-11-02. Brendan answered all six decisions (section 8). A1 is built (section 7 has what it is and
-what it leaves for A2). It replaces section 8 of `docs/VSM.md` ("Agents, in three
+*Design, rev 4, 2026-11-02. Brendan answered all six decisions (section 8). A1 and A2 are built (section 7 has what
+each is and what is left). It replaces section 8 of `docs/VSM.md` ("Agents, in three
 steps") with a fuller plan, and becomes milestone M5. Worked example: Chelsea Clock on the dev instance, with the five
 tools it has today.*
 
@@ -206,6 +206,21 @@ column, a short or empty or recount flag, a mismatch note). Limits are in calend
 flag per watch; a flag a person resolved is not raised again for an hour (`SOS_FLAG_RESOLVED_HOLD_MIN`), and a count
 change posts at most once an hour (`SOS_FLAG_UPDATE_MIN`). Left for A2: Disagree watches across two tools, the agents'
 own reviews and shift notes, answers between agents and the hop limit they need, and counts on the admin MCP.
+
+**A2, as built (2026-11-02):** `src/vsm-review.js`. A manager turns each agent's shift reviews on (they use AI, so they
+are behind the manager the way watches are); the shift times are the company's, set in #plant's panel in its own time
+zone (15:00 New York until changed). At a shift time, and early when an Act flag is sent to the agent (at most once an
+hour), the agent gets up to six model calls with Ask Anetix's record tools, held to its own tools, and ends with one
+post: a note, flags its watches missed (the rows it names are read back and must exist), clears of its own flags,
+answers, a pass to a neighbor's agent, one question, watch ideas (checked, kept as proposed) and a draft request card
+(sent to Kaizen only by a manager's tap). Platform code checks every part again and lists what it left out on the
+review, shown in the agent's panel. The hop limit is two, as in 3.5; an agent is not offered closed flags or people's
+taps as things to answer. Disagree watches compare two of an agent's tools by a shared key (missing, or a number past
+a comparison). Setting an agent up drafts its brief with AI. The admin MCP has `agent_board_status`, counts only. Under
+the data wall there are no reviews. Differences from the design: reviews are per agent behind a switch rather than on
+for every agent; the agent cannot read a neighbor's flag thread beyond what its prompt carries (the thread and its
+last eight replies); "ask a person" is a question to a neighbor box's people. Left: the floor's station line
+(decision 6), A3.
 
 ## 8. Decisions for Brendan
 

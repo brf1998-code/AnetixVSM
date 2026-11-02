@@ -35,6 +35,7 @@ const PLATFORM_TABLES = [
   "vsm_stages", "vsm_maps", "vsm_nodes", "vsm_edges", "vsm_questions", "vsm_kaizen", "module_use",   // the value stream map: stages, maps (before the rows that point at them), boxes, flows, review questions, kaizen, each tool's daily use (src/vsm.js)
   "vsm_walks", "vsm_sources",   // the mapping walks and what went into each (before the sources that point at them); their files are attachments (src/vsm-walk.js)
   "vsm_agents", "vsm_watches", "vsm_messages", "vsm_flags",   // the agent board: agents (before the watches that point at them), watches, the board's messages, flags (src/vsm-agents.js)
+  "vsm_agent_settings", "vsm_reviews", "vsm_drafts",   // the agents' shift times, their reviews (after the agents they point at), draft request cards (src/vsm-review.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under

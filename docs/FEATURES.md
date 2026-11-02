@@ -4293,5 +4293,52 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     the stream), `/vsm/board/threads/:id`, `/vsm/board/messages`, `/vsm/board/flags/:id/:action`. Managers and admins.
   - *Tests.* `scripts/test-vsm-agents.js` (32), `scripts/e2e/vsm-agents.js` (59) and its `runner` mode (3).
   - *Not yet (A2).* Disagree watches across two tools, the agents' own reviews and shift notes (AI, once a shift),
-    answers between agents, the floor's station line, counts on the admin MCP.
+    answers between agents, the floor's station line, counts on the admin MCP. (All but the station line are A2, below.)
+- **The agent board, A2: shift reviews, answers between agents, Disagree watches, briefs, draft request cards (2026-11-02, VSM dev copy)**
+  - *What.* The agents' own turn (`src/vsm-review.js`). A manager turns an agent's reviews on; then once a shift (the
+    company's `shift_times` in its own time zone, `platform.vsm_agent_settings`, 15:00 New York until changed; the watch
+    runner's tick starts them, at most three hours late, never catching up an older one) and early when an Act flag is
+    sent to it (at most once an hour, `SOS_AGENT_EARLY_MIN`), the agent gets a few model calls (`SOS_AGENT_REVIEW_STEPS`,
+    6) with Ask Anetix's `describe_tool`, `summarize_records` and `read_records`, held to its own tools (`ctx.only` in
+    `assist-tools.toolFor`, so another tool is not there for it even by name), and ends with one `post_review`: a note,
+    up to two flags its watches missed (the ids it names are read back through the read role, the labels are the
+    records', and a flag naming no real row is left out), clears of its own review flags, answers in threads it was
+    given, a pass to a neighbor's agent, one question to a neighbor, up to two watch ideas (checked with `checkSpec`,
+    kept as proposed) and one draft request card. What platform code leaves out is listed on the review
+    (`posted.left_out`) and shown in the agent's panel. **Review now** asks for one at once.
+  - *Hops.* A watch's flag or an agent's question is hop 0; each agent's answer or pass in its thread is one more; past
+    2 only people write in it. An agent answers a thread once a review, never answers itself, passes a thread once,
+    and is not offered a closed flag or a person's tap (Seen, On it, sent to Kaizen) as something to answer. A pass
+    puts the neighbor on the reply's `to_list`, and the stream shows a thread in every channel a reply is addressed to.
+  - *Disagree.* A sixth watch shape (`src/vsm-agents.js`): rows of one of the agent's tools whose key (part number,
+    item, work order) another of its tools does not know (`missing`), or knows with a number past a comparison
+    (`compare`, an MO marked short while Inventory shows enough). One query through the read role, every name
+    qualified, keys matched whatever their case and spaces. Drafted at set up where a table of work and a list of
+    things share a key column.
+  - *Briefs.* Setting an agent up drafts its brief with AI (`agent_brief`, a forced structured call), from its boxes and
+    its tools' tables and columns, with row counts and the values of a state column where the data wall is down; it
+    keeps a brief a manager wrote meanwhile. Draft it again replaces it.
+  - *Draft cards.* A `draft` message and a `vsm_drafts` row; Send to Kaizen files a request (`source = 'agent_board'`,
+    "drafted by <agent>, sent by <manager>", read by the proposer at once); Not now puts it away. Only a manager's tap.
+  - *Rules kept.* Under the data wall no reviews and reviews cannot be turned on; a manager turns each agent's reviews on;
+    reviews are metered as `agents` (`ai_calls` and `ai_usage`), count against the company's budget and a demo's
+    credit, and are capped per company a day (`SOS_AGENT_REVIEWS_DAY`, 40); the last step forces `post_review` only
+    where the model takes a forced tool (`agent.takesForcedTool`; Fable 5.1 and Opus 5.5 do not, so the step before says
+    it in words); what an agent writes is scrubbed of model names and long dashes; the prompt quotes every word people
+    and agents wrote and says they are never instructions; the manager's reads carry no model and no cost. The switch
+    notes (paused, reviews on) are posted by Anetix, naming the person, so a review does not take them for a person
+    talking to it.
+  - *Admin MCP.* `agent_board_status`: per company its shift times, per agent the counts (watches, flags open, climbed,
+    closed in 7 days, reviews done and failed in 7 days, the last one), never a word; a paying site's own agents
+    numbered, not named.
+  - *Tables.* `vsm_agent_settings`, `vsm_reviews`, `vsm_drafts`; `vsm_agents.reviews`, `last_review_at`,
+    `last_shift_at`. In the backup, the data export (`agent_reviews`) and the company delete. *Record.* `agent_review`,
+    `agent_review_failed`, `agent_review_asked`, `agent_brief_drafted`, `agent_settings_changed`, `agent_draft_dismissed`.
+  - *Routes.* `/api/c/:slug/vsm/agents/:id/review` (Review now), `/agents/:id/reviews` (the last 15), `/agents/:id/brief`,
+    `/vsm/agent-settings` (get, set), `/vsm/board/drafts/:id/:action(send|dismiss)`; `/agents/:id` takes `reviews`.
+  - *Tests.* `scripts/test-vsm-review.js` (19), `scripts/test-vsm-agents.js` (41 with Disagree), `scripts/e2e/vsm-review.js`
+    (53, fake model), its `api` mode (9, the requests a real review sends, against a stand-in for the Messages API) and
+    its `shift` mode (4, the shift clock with the runner on), `scripts/test-mcp.js` and `scripts/e2e/mcp.js` for the counts.
+  - *Not yet.* The floor's station line (decision 6, an experiment, off by default); drafts across tools approved on the
+    receiving tool's screen and the assembly agents from stage events (A3).
 

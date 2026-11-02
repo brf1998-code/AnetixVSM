@@ -224,6 +224,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The value stream map, M1: the Map beside Kaizen (2026-11-01, VSM dev copy)
 - The value stream map, M2: the mapping walk (2026-11-01, VSM dev copy)
 - The agent board, A1: agents from the map, watches, flags routed by the map, climbing (2026-11-02, VSM dev copy)
+- The agent board, A2: shift reviews, answers between agents, Disagree watches, briefs, draft request cards (2026-11-02, VSM dev copy)
 
 ## What this is
 
@@ -373,7 +374,10 @@ tool list, 401 from the API) proves the CLI itself starts.
 - The agent board (`src/vsm-agents.js`, VSM copy): `SOS_WATCH_MS` (300000: how often the watches run; 0 = no runner, the
   tests), `SOS_FLAG_RAISE_MIN` (720: a Look flag nobody marked seen becomes Act), `SOS_FLAG_CLIMB_MIN` (240: an Act flag
   nobody marked seen climbs), `SOS_FLAG_UPDATE_MIN` (60), `SOS_FLAG_RESOLVED_HOLD_MIN` (60), `SOS_AGENT_PUSH` (on; `off`
-  stops the ntfy push for a climbed flag, the notice stays).
+  stops the ntfy push for a climbed flag, the notice stays). Its reviews (`src/vsm-review.js`, A2): `SOS_AGENT_REVIEWS_DAY` (40
+  reviews a company a day), `SOS_AGENT_EARLY_MIN` (60: the least time between an agent's early reviews; 0 in the tests),
+  `SOS_AGENT_REVIEW_STEPS` (6 model calls a review), `SOS_AGENT_REVIEW_TOKENS` (2000 a call). The shift times are set on
+  the board, not here.
 - `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
   (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
   second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts
@@ -613,7 +617,7 @@ Passwords live only in Railway; never commit them.
   `scripts/e2e/mcp.js`, where a canary row and a canary failure line must be in no answer. An admin MCP tool is read
   only unless it is marked `readOnly: false`, and the only ones that are start and fill in a new tool request
   (`src/mcp-intake.js`) and, in this VSM copy, start, fill in and draw a mapping walk (`src/mcp-vsm.js`; using the
-  drawn map stays on the board). A write tool runs only on a connection whose person ticked writing on the consent page
+  drawn map stays on the board; `agent_board_status` there reads the agent board's counts, never its words). A write tool runs only on a connection whose person ticked writing on the consent page
   (`who.writes`), goes through the same function the board's own route calls, writes under the account's name on the
   record, and never moves anything toward the floor: no tool confirms a design, builds, deploys, withdraws or
   deletes. An app writes only to a request Anetix started (`module_intakes.via`), and a paying site's own request is

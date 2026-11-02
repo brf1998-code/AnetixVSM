@@ -1,7 +1,7 @@
 // The agent board, A1 (docs/AGENTS.md, 2026-11-02): agents that each watch one area of the plant, placed by the value
 // stream map, and talk on one public board that every manager and admin can read. A1 is the part with no AI: the
 // board, agents taken from the map, watches (plain rules over a tool's records), routing along the map, climbing, and
-// what people do with a flag. The agents' own shift reviews come in A2.
+// what people do with a flag. A2 (src/vsm-review.js) adds the agents' own shift reviews, and here the Disagree watch.
 //
 // Brendan's calls (2026-11-02):
 //   - The board is its own tab: Kaizen | Map | Agents (public/agent-board.html at /c/<slug>/agent-board; /c/<slug>/agents
@@ -23,6 +23,8 @@
 //               level    a number under (or over) a limit or another column
 //               due      a date within a number of hours, the work not done
 //               quiet    the tool not changed by the plant's own people for a number of days, where it was before
+//               disagree (A2) rows of one tool that another of the agent's tools does not know by their key (a part
+//                        number, a work order), or knows with a number past a comparison (marked short, yet on hand)
 //   flags     a watch that finds rows opens one flag (a thread on the board) and keeps it while the rows are there,
 //             updating its count; when they clear, it says so and closes. One open flag per watch at a time.
 //   routing   a new flag goes to the agent's channel and #plant, and to the immediate parties on the map: the box right
@@ -129,12 +131,12 @@ const UPDATE_MIN = () => num(process.env.SOS_FLAG_UPDATE_MIN, 60);
 const HOLD_MIN = () => num(process.env.SOS_FLAG_RESOLVED_HOLD_MIN, 60);
 const PUSH = () => String(process.env.SOS_AGENT_PUSH || "on").toLowerCase() !== "off";
 const MUTE_DAYS = 7;
-const SHAPES = ["stuck", "waiting", "level", "due", "quiet"];
+const SHAPES = ["stuck", "waiting", "level", "due", "quiet", "disagree"];
 const SEVERITY = ["look", "act"];
 const OPEN_FLAG = ["open", "seen", "on_it"];
 const MATERIAL = ["push", "pull", "fifo", "supermarket", "supply", "ship"];
 const INFO = ["info_system", "info_word"];
-const SHAPE_WORDS = { stuck: "work has sat in one state too long", waiting: "something has waited too long", level: "a number is past its limit", due: "work is coming due and is not done", quiet: "a tool has gone quiet" };
+const SHAPE_WORDS = { stuck: "work has sat in one state too long", waiting: "something has waited too long", level: "a number is past its limit", due: "work is coming due and is not done", quiet: "a tool has gone quiet", disagree: "two tools disagree", review: "the agent's own review found something" };
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const notFound = (what) => Object.assign(new Error(`no such ${what}`), { status: 404 });
@@ -176,7 +178,7 @@ function agentsFrom(nodes, rows, live) {
   }
   for (const r of rows) {
     if (!by.has(r.key)) by.set(r.key, { key: r.key, name: r.name, boxes: [], tools: [], off_map: true });
-    Object.assign(by.get(r.key), { id: r.id, status: r.status, brief: r.brief, people: r.people, set_up: true, tools_at_setup: r.tools });
+    Object.assign(by.get(r.key), { id: r.id, status: r.status, brief: r.brief, people: r.people, set_up: true, tools_at_setup: r.tools, reviews: Boolean(r.reviews), last_review_at: r.last_review_at || null });
   }
   return [...by.values()].map((a) => ({ ...a, status: a.set_up ? a.status : "not_set_up", can_set_up: a.tools.length > 0 }));
 }
@@ -264,6 +266,38 @@ async function proposeFor(tool, title, tables, valuesOf) {
   out.push({ shape: "quiet", tool, severity: "look", title: `${title}: not used by the plant`, spec: { days: 3 } });
   return out.slice(0, 8).concat(out.length > 8 ? [out[out.length - 1]] : []).filter((w, i, a) => a.findIndex((x) => x.title === w.title) === i);
 }
+// Disagree (A2, Geoff's data accuracy): two of an agent's tools that name the same thing by the same key (a part number,
+// a work order). A is a table of work (it has a done column, a state or a time); B is a list of things (a quantity, no
+// done column). Drafted: a row of A whose key B has never heard of; and, where A marks a row short and B keeps a
+// quantity, a row marked short while B shows enough on hand. Pure. a, b: { tool, title, tables }.
+const KEY_COL = /^(part_no|part_number|part|item|item_no|item_number|sku|wo_number|work_order|mo_no|mo_number|job_num|job_no|job_number)$/;
+const QTY_COL = /^(qty|quantity|on_hand|stock|qty_on_hand)$/;
+function proposeDisagree(a, b) {
+  const out = [];
+  const isList = (cols) => cols.some((c) => isNum(c) && QTY_COL.test(c.name)) && !doneCol(cols);
+  const isWork = (cols) => Boolean(doneCol(cols) || find(cols, /^(stage|status|state)$/, isText) || sinceCol(cols, null));
+  for (const [ta, ca] of a.tables) {
+    if (SKIP_TABLE.test(ta) || !isWork(ca)) continue;
+    for (const key of ca.filter((c) => isText(c) && KEY_COL.test(c.name))) {
+      for (const [tb, cb] of b.tables) {
+        if (SKIP_TABLE.test(tb) || !isList(cb)) continue;
+        const kb = cb.find((c) => c.name === key.name && isText(c));
+        if (!kb) continue;
+        const done = doneCol(ca), notDone = done ? [{ column: done, op: "is empty" }] : [];
+        const base = { table: ta, key_column: key.name, label_column: labelCol(ca), where: notDone, other: { tool: b.tool, table: tb, key_column: kb.name, where: [] } };
+        out.push({ shape: "disagree", tool: a.tool, severity: "look", title: `${a.title}: ${words(ta)} with ${/^[aeiou]/i.test(key.name) ? "an" : "a"} ${words(key.name)} ${b.title} does not know`, spec: { ...base, test: "missing" } });
+        const short = ca.find((c) => isBool(c) && /^(is_short|short)$/.test(c.name));
+        const qty = cb.find((c) => isNum(c) && QTY_COL.test(c.name));
+        if (short && qty) {
+          const need = ca.find((c) => isNum(c) && /^(qty_needed|need_qty|qty_short|short_qty|qty_required|required_qty|qty|quantity)$/.test(c.name));
+          out.push({ shape: "disagree", tool: a.tool, severity: "look", title: `${a.title}: ${words(ta)} marked short while ${b.title} shows ${need ? "enough" : "some"} on hand`,
+            spec: { ...base, where: [{ column: short.name, op: "=", value: true }, ...notDone], test: "compare", compare: need ? { other_column: qty.name, op: ">=", column: need.name } : { other_column: qty.name, op: ">", value: 0 } } });
+        }
+      }
+    }
+  }
+  return out.filter((w, i, all) => all.findIndex((x) => x.title === w.title) === i).slice(0, 3);
+}
 
 // ---- a watch's spec, checked; and its query ------------------------------------------------------------------------
 const OPS = ["=", "!=", "<", "<=", ">", ">=", "contains", "is empty", "is not empty"];
@@ -273,16 +307,9 @@ function colOf(cols, name, what, test, testWords) {
   if (test && !test(c)) throw bad(`${what}: ${c.name} is not ${testWords}.`);
   return c.name;
 }
-// -> the spec as it will be stored. tables: Map(table -> cols). Throws bad(...) with what is wrong.
-function checkSpec(shape, raw, tables) {
-  if (!SHAPES.includes(shape)) throw bad(`A watch is one of: ${SHAPES.join(", ")}.`);
-  const s = raw && typeof raw === "object" ? raw : {};
-  if (shape === "quiet") { const days = Math.round(Number(s.days)); if (!(days >= 1 && days <= 60)) throw bad("A quiet watch counts 1 to 60 days."); return { days }; }
-  const table = String(s.table || "");
-  if (!tables.has(table)) throw bad(`Name one of the tool's tables: ${[...tables.keys()].join(", ")}.`);
-  const cols = tables.get(table);
-  const hours = (v, what) => { const h = Number(v); if (!(h >= 0 && h <= 8760)) throw bad(`${what} is 0 to 8760 hours.`); return Math.round(h * 100) / 100; };
-  const where = (Array.isArray(s.where) ? s.where : []).slice(0, 6).map((w) => {
+// conditions on one table, checked: [{ column, op, value }]
+function checkWhere(cols, raw) {
+  return (Array.isArray(raw) ? raw : []).slice(0, 6).map((w) => {
     const op = String((w && w.op) || "=");
     if (!OPS.includes(op)) throw bad(`A condition's comparison is one of: ${OPS.join(", ")}.`);
     const column = colOf(cols, w && w.column, "A condition");
@@ -290,8 +317,41 @@ function checkSpec(shape, raw, tables) {
     if (w.value === undefined || w.value === null || (typeof w.value === "object")) throw bad(`A condition on ${column} needs a value.`);
     return { column, op, value: typeof w.value === "boolean" || typeof w.value === "number" ? w.value : line(w.value, 120) };
   });
+}
+const CMP = ["<", "<=", ">", ">=", "=", "!="];
+// -> the spec as it will be stored. tables: Map(table -> cols). others: Map(tool -> Map(table -> cols)), the other tools
+// a disagree watch may read (the agent's own). Throws bad(...) with what is wrong.
+function checkSpec(shape, raw, tables, others) {
+  if (!SHAPES.includes(shape)) throw bad(`A watch is one of: ${SHAPES.join(", ")}.`);
+  const s = raw && typeof raw === "object" ? raw : {};
+  if (shape === "quiet") { const days = Math.round(Number(s.days)); if (!(days >= 1 && days <= 60)) throw bad("A quiet watch counts 1 to 60 days."); return { days }; }
+  const table = String(s.table || "");
+  if (!tables.has(table)) throw bad(`Name one of the tool's tables: ${[...tables.keys()].join(", ")}.`);
+  const cols = tables.get(table);
+  const hours = (v, what) => { const h = Number(v); if (!(h >= 0 && h <= 8760)) throw bad(`${what} is 0 to 8760 hours.`); return Math.round(h * 100) / 100; };
+  const where = checkWhere(cols, s.where);
   const label_column = s.label_column ? colOf(cols, s.label_column, "The name column") : labelCol(cols);
   const out = { table, label_column, where };
+  if (shape === "disagree") {
+    const o = s.other && typeof s.other === "object" ? s.other : {};
+    const otherTool = String(o.tool || "");
+    const ot = others && others.get(otherTool);
+    if (!ot) throw bad(`A disagree watch compares with another of the agent's tools${others && others.size ? `: ${[...others.keys()].join(", ")}` : ", and it has only one"}.`);
+    if (!ot.has(String(o.table || ""))) throw bad(`Name one of ${otherTool}'s tables: ${[...ot.keys()].join(", ")}.`);
+    const ocols = ot.get(String(o.table));
+    out.key_column = colOf(cols, s.key_column, "The key");
+    out.other = { tool: otherTool, table: String(o.table), key_column: colOf(ocols, o.key_column, "The other tool's key"), where: checkWhere(ocols, o.where) };
+    out.test = s.test === "compare" ? "compare" : "missing";
+    if (out.test === "compare") {
+      const c = s.compare && typeof s.compare === "object" ? s.compare : {};
+      const op = String(c.op || ">=");
+      if (!CMP.includes(op)) throw bad(`The comparison is one of: ${CMP.join(", ")}.`);
+      out.compare = { other_column: colOf(ocols, c.other_column, "The other tool's number", isNum, "a number"), op };
+      if (c.column) out.compare.column = colOf(cols, c.column, "This tool's number", isNum, "a number");
+      else { const v = Number(c.value); if (!Number.isFinite(v)) throw bad("Compare with a number, or with a column of this tool."); out.compare.value = v; }
+    }
+    return out;
+  }
   if (shape === "stuck" || shape === "waiting") {
     out.since_column = colOf(cols, s.since_column, "The time column", isTime, "a date or time");
     out.hours = hours(s.hours == null ? 72 : s.hours, "How long");
@@ -337,6 +397,46 @@ function watchQuery(schema, cols, shape, spec) {
   const sql = `SELECT count(*) OVER () AS total, ${hasId ? `${qi("id")} AS id` : "NULL AS id"}, ${qi(spec.label_column)}::text AS label FROM ${qi(schema)}.${qi(spec.table)}${parts.length ? ` WHERE ${parts.join(" AND ")}` : ""} ORDER BY ${order} LIMIT 10`;
   return { sql, params };
 }
+// conditions on one table under an alias, the same comparisons as assist-tools' whereSql (two tables in one query need
+// every name qualified). Names are checked by checkSpec before this; values are parameters. Pure.
+function condsSql(alias, where, params) {
+  const { qi } = tools_();
+  return (where || []).map((w) => {
+    const c = `${alias}.${qi(w.column)}`;
+    if (w.op === "is empty") return `${c} IS NULL`;
+    if (w.op === "is not empty") return `${c} IS NOT NULL`;
+    params.push(w.op === "contains" ? `%${String(w.value).replace(/[\\%_]/g, (m) => "\\" + m)}%` : w.value);
+    const p = `$${params.length}`;
+    if (w.op === "contains") return `${c}::text ILIKE ${p}`;
+    return `${c} ${w.op === "!=" ? "IS DISTINCT FROM" : w.op} ${p}`;
+  });
+}
+// A disagree watch's rows: rows of A (its conditions) that B does not know by the key, or that B knows with its number
+// past the comparison. Keys match whatever their case and spaces. Both tools are read through the company's read role,
+// which can read every one of its live tools. -> { sql, params }. Pure.
+function disagreeQuery(schemaA, colsA, schemaB, spec) {
+  const { qi } = tools_();
+  const params = [];
+  const outer = condsSql("a", spec.where, params);
+  const ak = `a.${qi(spec.key_column)}`;
+  outer.push(`${ak} IS NOT NULL`, `btrim(${ak}::text) <> ''`);
+  const inner = [`lower(btrim(b.${qi(spec.other.key_column)}::text)) = lower(btrim(${ak}::text))`, ...condsSql("b", spec.other.where, params)];
+  if (spec.test === "compare") {
+    const c = spec.compare;
+    const rhs = c.column ? `a.${qi(c.column)}` : (params.push(c.value), `$${params.length}::numeric`);
+    inner.push(`b.${qi(c.other_column)} ${c.op === "!=" ? "IS DISTINCT FROM" : c.op} ${rhs}`);
+  }
+  outer.push(`${spec.test === "compare" ? "" : "NOT "}EXISTS (SELECT 1 FROM ${qi(schemaB)}.${qi(spec.other.table)} b WHERE ${inner.join(" AND ")})`);
+  const hasId = colsA.some((c) => c.name === "id");
+  const sql = `SELECT count(*) OVER () AS total, ${hasId ? "a.\"id\" AS id" : "NULL AS id"}, a.${qi(spec.label_column)}::text AS label FROM ${qi(schemaA)}.${qi(spec.table)} a WHERE ${outer.join(" AND ")} ORDER BY 3 LIMIT 10`;
+  return { sql, params };
+}
+// The other tools a disagree watch may compare with: the agent's own, but the watch's tool. -> Map(tool -> tables)
+async function othersFor(company, tools, but) {
+  const out = new Map();
+  for (const t of tools || []) if (t !== but) out.set(t, (await tools_().tablesOf(company, t)).tables);
+  return out;
+}
 // -> { count, sample: [{ id, label }] } or throws with words
 async function evaluate(company, w) {
   if (w.shape === "quiet") {
@@ -349,8 +449,18 @@ async function evaluate(company, w) {
   const { tablesOf, readOnly } = tools_();
   const { schema, tables } = await tablesOf(company, w.tool);
   if (!tables.has(w.spec.table)) throw bad(`the tool no longer keeps a table called ${w.spec.table}`);
-  const spec = checkSpec(w.shape, w.spec, tables);   // the tool may have changed since the watch was made
-  const { sql, params } = watchQuery(schema, tables.get(spec.table), w.shape, spec);
+  let sql, params;
+  if (w.shape === "disagree") {
+    const other = String((w.spec.other || {}).tool || "");
+    const live = (await liveTools(company)).some((t) => t.name === other);
+    if (!live) throw bad(`the other tool, ${other}, is not on the floor`);
+    const ob = await tablesOf(company, other);
+    const spec = checkSpec(w.shape, w.spec, tables, new Map([[other, ob.tables]]));
+    ({ sql, params } = disagreeQuery(schema, tables.get(spec.table), ob.schema, spec));
+  } else {
+    const spec = checkSpec(w.shape, w.spec, tables);   // the tool may have changed since the watch was made
+    ({ sql, params } = watchQuery(schema, tables.get(spec.table), w.shape, spec));
+  }
   let rows;
   try { rows = await readOnly(company, sql, params); } catch (e) { throw asBad(e); }
   return { count: rows.length ? Number(rows[0].total) : 0, sample: rows.map((r) => ({ id: r.id, label: line(r.label, 80) })) };
@@ -391,11 +501,13 @@ async function openFlag(w, res) {
   const words = w.shape === "quiet"
     ? `${w.title} in the last ${lim}: nobody at the plant changed anything in it, where they did before.`
     : `${w.title}${lim ? ` (${lim})` : ""}: ${res.count} found${sampleWords(res.count, res.sample)}.`;
-  const evidence = { tool: w.tool, table: w.spec.table || null, shape: w.shape, count: res.count, sample: res.sample.slice(0, 10) };
+  const evidence = { tool: w.tool, table: w.spec.table || null, shape: w.shape, count: res.count, sample: res.sample.slice(0, 10), ...(w.spec.other ? { other: { tool: w.spec.other.tool, table: w.spec.other.table } } : {}) };
   const m = await post({ company: w.company, channel: `a:${agent.key}`, kind: "flag", severity: w.severity, from_kind: "watch", from_name: agent.name, agent_id: agent.id, watch_id: w.id, to_list: to, evidence, words });
   await q(`INSERT INTO platform.vsm_flags (thread_id, company, agent_id, watch_id, channel, status, severity, count, evidence, boxes) VALUES ($1,$2,$3,$4,$5,'open',$6,$7,$8::jsonb,$9::jsonb)`,
     [m.id, w.company, agent.id, w.id, m.channel, w.severity, res.count, JSON.stringify(evidence), JSON.stringify(boxes)]);
   await record.record("agent_flag", { company: w.company, module: w.tool, actor: "agent", after: words, detail: { agent: agent.key, watch: w.id, thread: m.id, count: res.count, to: to.map((t) => t.key) } });
+  // an urgent flag wakes the neighbors' agents for an early review (A2; only those whose reviews a manager turned on)
+  if (w.severity === "act") for (const p of to) if (p.kind === "agent") require("./vsm-review").wake(w.company, p.key);
   return m;
 }
 // one run of a watch at a time in this process: the 5 minute runner and a manager's "Check now" may meet
@@ -458,6 +570,8 @@ async function tick() {
     for (const w of due) await runWatch(w).catch((e) => console.error(`[agents] watch ${w.id}:`, e.message));
     await climb();
   } finally { running = false; }
+  // the agents' shift reviews (A2), on their own guard so a long review never holds up the watches
+  require("./vsm-review").tick().catch((e) => console.error("[agents] reviews:", e.message));
 }
 async function climb() {
   const raise = (await q(`UPDATE platform.vsm_flags SET severity='act', raised_at=now() WHERE status='open' AND severity='look' AND raised_at IS NULL
@@ -465,6 +579,8 @@ async function climb() {
   for (const f of raise) {
     await post({ company: f.company, channel: f.channel, thread_id: f.thread_id, kind: "raised", severity: "act", from_kind: "platform", from_name: "Anetix", agent_id: f.agent_id, watch_id: f.watch_id,
       words: "Nobody has marked this seen, so it is now marked to act on." });
+    const root = (await q("SELECT to_list FROM platform.vsm_messages WHERE id=$1", [f.thread_id])).rows[0];
+    for (const p of (root && root.to_list) || []) if (p.kind === "agent") require("./vsm-review").wake(f.company, p.key);
   }
   const up = (await q(`UPDATE platform.vsm_flags SET climbed_at=now() WHERE status='open' AND severity='act' AND climbed_at IS NULL
                          AND greatest(opened_at, coalesce(raised_at, opened_at)) < now() - ($1::numeric * interval '1 minute') RETURNING *`, [CLIMB_MIN()])).rows;
@@ -479,7 +595,7 @@ async function climb() {
     if (PUSH()) {
       const co = (await q("SELECT name FROM platform.companies WHERE slug=$1", [f.company])).rows[0] || { name: f.company };
       const pub = require("./mcpauth").PUBLIC;
-      const p = pushOf(co.name, agent.name, w.shape, f.count);
+      const p = pushOf(co.name, agent.name, w.shape || (f.evidence || {}).shape, f.count);
       require("./notify").notify(p.title, p.message, { priority: 4, tags: ["rotating_light"], ...(pub ? { click: `${pub}/c/${f.company}/agent-board?thread=${f.thread_id}` } : {}) });
     }
   }
@@ -504,7 +620,8 @@ async function overview(company) {
     const o = open.find((x) => x.agent_id === a.id) || {};
     a.open = o.n || 0; a.climbed = o.climbed || 0;
   }
-  return { agents, tools: live };
+  const st = await require("./vsm-review").stateFor(company, agents);
+  return { agents, tools: live, settings: st.settings, walled: st.walled };
 }
 async function setUp(req, company, key) {
   const k = slugify(key);
@@ -520,28 +637,39 @@ async function setUp(req, company, key) {
   await post({ company, channel: `a:${row.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: row.id,
     words: `${row.name} is set up. It watches ${a.tools.length === 1 ? "one tool" : `${a.tools.length} tools`} and proposed ${proposed} ${proposed === 1 ? "watch" : "watches"}; none runs until a manager turns it on.` });
   await record.record("agent_set_up", { company, actor: record.actor(req), detail: { agent: row.key, tools: row.tools, proposed } });
+  // A2: the agent drafts its brief with AI, in the background; no credit or no key leaves it to the manager to write
+  require("./vsm-review").draftBrief(company, row.id, { auto: true }).catch((e) => post({ company, channel: `a:${row.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: row.id,
+    words: `${row.name} could not draft its brief just now${e.code === "cap" || e.status === 402 || e.status === 429 ? " (no AI credit left)" : ""}. Write it in its panel, or press Draft it again later.` }).catch(() => {}));
   return row;
 }
 async function proposeWatches(company, agent, by) {
   const live = await liveTools(company);
   const existing = (await q("SELECT title FROM platform.vsm_watches WHERE agent_id=$1", [agent.id])).rows.map((r) => r.title);
   let n = 0;
+  const mine = [];
+  const add = async (p, tables, others) => {
+    if (existing.includes(p.title)) return;
+    let spec;
+    try { spec = checkSpec(p.shape, p.spec, tables, others); } catch (e) { return; }
+    await q(`INSERT INTO platform.vsm_watches (company, agent_id, shape, tool, spec, title, severity, status, created_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,'proposed',$8)`,
+      [company, agent.id, p.shape, p.tool, JSON.stringify(spec), p.title.slice(0, 160), p.severity, `${by} (drafted from the tool's tables)`]);
+    existing.push(p.title); n++;
+  };
   for (const tool of agent.tools) {
     const t = live.find((x) => x.name === tool); if (!t) continue;
     const { tablesOf, readOnly, qi } = tools_();
     const { schema, tables } = await tablesOf(company, tool);
+    mine.push({ tool, title: t.title, tables });
     const valuesOf = async (table, col) => {
       try { return await readOnly(company, `SELECT ${qi(col)}::text AS v, count(*)::int AS n FROM ${qi(schema)}.${qi(table)} GROUP BY 1 ORDER BY 2 DESC LIMIT 12`, []); }
       catch (e) { return []; }
     };
-    for (const p of await proposeFor(tool, t.title, tables, valuesOf)) {
-      if (existing.includes(p.title)) continue;
-      let spec;
-      try { spec = checkSpec(p.shape, p.spec, tables); } catch (e) { continue; }
-      await q(`INSERT INTO platform.vsm_watches (company, agent_id, shape, tool, spec, title, severity, status, created_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,'proposed',$8)`,
-        [company, agent.id, p.shape, tool, JSON.stringify(spec), p.title.slice(0, 160), p.severity, `${by} (drafted from the tool's tables)`]);
-      existing.push(p.title); n++;
-    }
+    for (const p of await proposeFor(tool, t.title, tables, valuesOf)) await add(p, tables);
+  }
+  // two of its tools that name the same things: where they disagree (A2)
+  for (const a of mine) for (const b of mine) {
+    if (a.tool === b.tool) continue;
+    for (const p of proposeDisagree(a, b)) await add(p, a.tables, new Map([[b.tool, b.tables]]));
   }
   return n;
 }
@@ -555,10 +683,23 @@ async function editAgent(req, company, id, b) {
   const sets = [], vals = [company, id], changed = {};
   if (b.status !== undefined) { if (!["on", "paused"].includes(b.status)) throw bad("An agent is on or paused."); vals.push(b.status); sets.push(`status=$${vals.length}`); changed.status = b.status; }
   if (b.brief !== undefined) { vals.push(txt(b.brief, 2000)); sets.push(`brief=$${vals.length}`); changed.brief = vals[vals.length - 1]; }
+  if (b.reviews !== undefined) {
+    const on = b.reviews === true;
+    if (on && (await require("./datawall").isWalled(company))) throw bad("This company keeps its records walled off from Anetix's AI, so its agents run on their watches only.");
+    vals.push(on); sets.push(`reviews=$${vals.length}`); changed.reviews = on;
+    // the next shift time is the first one: no catching up on a shift that already passed
+    if (on && !a.reviews) sets.push("last_shift_at=now()");
+  }
   if (!sets.length) throw bad("nothing to change");
   await q(`UPDATE platform.vsm_agents SET ${sets.join(", ")}, updated_at=now() WHERE company=$1 AND id=$2`, vals);
-  if (changed.status && changed.status !== a.status) await post({ company, channel: `a:${a.key}`, kind: "note", from_kind: "person", from_name: whoOf(req), agent_id: a.id, words: changed.status === "paused" ? `${a.name} is paused; its watches stop until it is on again.` : `${a.name} is on again.` });
-  await record.record("agent_changed", { company, actor: record.actor(req), before: JSON.stringify({ status: a.status, brief: a.brief }), after: JSON.stringify(changed), detail: { agent: a.key } });
+  // switches are said by Anetix, naming who, so an agent's review does not take them for a person talking to it
+  if (changed.status && changed.status !== a.status) await post({ company, channel: `a:${a.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: a.id, words: changed.status === "paused" ? `${whoOf(req)} paused ${a.name}; its watches stop until it is on again.` : `${whoOf(req)} turned ${a.name} on again.` });
+  if (changed.reviews !== undefined && changed.reviews !== Boolean(a.reviews)) {
+    const s = await require("./vsm-review").settingsOf(company);
+    await post({ company, channel: `a:${a.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: a.id,
+      words: changed.reviews ? `${whoOf(req)} turned on ${a.name}'s shift reviews: it reviews its area at ${s.shift_times.join(", ")} (${s.tz}), and early when a neighbor sends it an urgent flag.` : `${whoOf(req)} turned off ${a.name}'s shift reviews. Its watches still run.` });
+  }
+  await record.record("agent_changed", { company, actor: record.actor(req), before: JSON.stringify({ status: a.status, brief: a.brief, reviews: Boolean(a.reviews) }), after: JSON.stringify(changed), detail: { agent: a.key } });
   return agentOf(company, id);
 }
 async function tablesFor(company, id) {
@@ -576,7 +717,7 @@ async function addWatch(req, company, id, b) {
   if (!a.tools.includes(tool)) throw bad(`${a.name} watches ${a.tools.join(", ")}; a watch is on one of those.`);
   const shape = String(b.shape || "");
   const { tables } = shape === "quiet" ? { tables: new Map() } : await tools_().tablesOf(company, tool);
-  const spec = checkSpec(shape, b.spec, tables);
+  const spec = checkSpec(shape, b.spec, tables, shape === "disagree" ? await othersFor(company, a.tools, tool) : null);
   const title = line(b.title, 160); if (!title) throw bad("A watch needs a title: what it looks for, in a line.");
   const severity = SEVERITY.includes(b.severity) ? b.severity : "look";
   const row = (await q(`INSERT INTO platform.vsm_watches (company, agent_id, shape, tool, spec, title, severity, status, created_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,'on',$8) RETURNING *`,
@@ -597,7 +738,8 @@ async function editWatch(req, company, wid, b) {
   for (const k of ["hours", "within_hours", "days", "limit"]) if (b[k] !== undefined) lim[k] = b[k];
   if (Object.keys(lim).length) {
     const { tables } = w.shape === "quiet" ? { tables: new Map() } : await tools_().tablesOf(company, w.tool);
-    next.spec = checkSpec(w.shape, { ...w.spec, ...lim }, tables);
+    const others = w.shape === "disagree" ? new Map([[w.spec.other.tool, (await tools_().tablesOf(company, w.spec.other.tool)).tables]]) : null;
+    next.spec = checkSpec(w.shape, { ...w.spec, ...lim }, tables, others);
   }
   await q("UPDATE platform.vsm_watches SET status=$3, title=$4, severity=$5, spec=$6::jsonb, muted_until=$7, updated_at=now() WHERE company=$1 AND id=$2",
     [company, wid, next.status, next.title, next.severity, JSON.stringify(next.spec), next.muted_until]);
@@ -680,22 +822,26 @@ async function stream(company, { channel = "plant", before = null, limit = 50 } 
   const vals = [company, lim];
   let where = "m.company=$1 AND m.thread_id IS NULL";
   if (channel === "escalations") where += " AND EXISTS (SELECT 1 FROM platform.vsm_flags f WHERE f.thread_id=m.id AND f.climbed_at IS NOT NULL)";
-  else if (channel.startsWith("a:")) { vals.push(channel, JSON.stringify([{ kind: "agent", key: channel.slice(2) }])); where += ` AND (m.channel=$3 OR m.to_list @> $4::jsonb)`; }
-  else if (channel.startsWith("b:")) { vals.push(channel, JSON.stringify([{ kind: "box", key: channel.slice(2) }])); where += ` AND (m.channel=$3 OR m.to_list @> $4::jsonb)`; }
+  // an area's channel: what was posted in it, what was sent to it, and the threads an agent passed on to it (A2)
+  else if (channel.startsWith("a:")) { vals.push(channel, JSON.stringify([{ kind: "agent", key: channel.slice(2) }])); where += ` AND (m.channel=$3 OR m.to_list @> $4::jsonb OR EXISTS (SELECT 1 FROM platform.vsm_messages x WHERE x.thread_id=m.id AND x.to_list @> $4::jsonb))`; }
+  else if (channel.startsWith("b:")) { vals.push(channel, JSON.stringify([{ kind: "box", key: channel.slice(2) }])); where += ` AND (m.channel=$3 OR m.to_list @> $4::jsonb OR EXISTS (SELECT 1 FROM platform.vsm_messages x WHERE x.thread_id=m.id AND x.to_list @> $4::jsonb))`; }
   if (before) { vals.push(Number(before) || 0); where += ` AND m.id < $${vals.length}`; }
-  const roots = (await q(`SELECT m.*, f.status AS flag_status, f.severity AS flag_severity, f.count AS flag_count, f.owner, f.feedback_id, f.climbed_at, f.raised_at, f.closed_at, f.status_by,
+  const roots = (await q(`SELECT m.*, ${FLAG_COLS}, ${DRAFT_COLS},
                                  (SELECT count(*)::int FROM platform.vsm_messages r WHERE r.thread_id=m.id) AS replies,
                                  (SELECT max(r.created_at) FROM platform.vsm_messages r WHERE r.thread_id=m.id) AS last_reply_at
-                            FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id
+                            FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id LEFT JOIN platform.vsm_drafts d ON d.message_id=m.id
                            WHERE ${where} ORDER BY greatest(m.created_at, coalesce((SELECT max(r.created_at) FROM platform.vsm_messages r WHERE r.thread_id=m.id), m.created_at)) DESC, m.id DESC LIMIT $2`, vals)).rows;
   return roots.map(msgOut);
 }
-const msgOut = (m) => ({ id: m.id, channel: m.channel, thread_id: m.thread_id, kind: m.kind, severity: m.severity, from_kind: m.from_kind, from_name: m.from_name, to: m.to_list || [], evidence: m.evidence, words: m.words, created_at: m.created_at,
+const FLAG_COLS = "f.status AS flag_status, f.severity AS flag_severity, f.count AS flag_count, f.owner, f.feedback_id, f.climbed_at, f.raised_at, f.closed_at, f.status_by";
+const DRAFT_COLS = "d.state AS draft_state, d.feedback_id AS draft_feedback_id, d.decided_by AS draft_decided_by";
+const msgOut = (m) => ({ id: m.id, channel: m.channel, thread_id: m.thread_id, kind: m.kind, severity: m.severity, from_kind: m.from_kind, from_name: m.from_name, to: m.to_list || [], evidence: m.evidence, words: m.words, hops: m.hops || 0, created_at: m.created_at,
   ...(m.flag_status !== undefined && m.flag_status !== null ? { flag: { status: m.flag_status, severity: m.flag_severity, count: m.flag_count, owner: m.owner, feedback_id: m.feedback_id, climbed_at: m.climbed_at, raised_at: m.raised_at, closed_at: m.closed_at, status_by: m.status_by } } : {}),
+  ...(m.draft_state ? { draft: { state: m.draft_state, feedback_id: m.draft_feedback_id, decided_by: m.draft_decided_by } } : {}),
   ...(m.replies !== undefined ? { replies: m.replies, last_reply_at: m.last_reply_at } : {}) });
 async function thread(company, id) {
-  const root = (await q(`SELECT m.*, f.status AS flag_status, f.severity AS flag_severity, f.count AS flag_count, f.owner, f.feedback_id, f.climbed_at, f.raised_at, f.closed_at, f.status_by
-                           FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id WHERE m.company=$1 AND m.id=$2 AND m.thread_id IS NULL`, [company, id])).rows[0];
+  const root = (await q(`SELECT m.*, ${FLAG_COLS}, ${DRAFT_COLS}
+                           FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id LEFT JOIN platform.vsm_drafts d ON d.message_id=m.id WHERE m.company=$1 AND m.id=$2 AND m.thread_id IS NULL`, [company, id])).rows[0];
   if (!root) throw notFound("thread");
   const replies = (await q("SELECT * FROM platform.vsm_messages WHERE company=$1 AND thread_id=$2 ORDER BY id", [company, id])).rows;
   return { root: msgOut(root), replies: replies.map(msgOut) };
@@ -721,6 +867,7 @@ async function chips(company) {
   return { agents: agents.map((a) => ({ key: a.key, name: a.name, status: a.status, open: a.open, climbed: a.climbed, can_set_up: a.can_set_up })), climbed_boxes: climbedBoxes };
 }
 async function deleteCompany(company) {
+  await require("./vsm-review").deleteCompany(company);
   for (const t of ["vsm_flags", "vsm_messages", "vsm_watches", "vsm_agents"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 
@@ -756,6 +903,7 @@ router.post(`${B}/messages`, requireManager, small, async (req, res) => res.json
 router.post(`${B}/flags/${ID}/:action(seen|on_it|resolved|not_a_problem|reopen|request)`, requireManager, small, async (req, res) => res.json({ ok: true, result: await flagAction(req, slugOf(req), Number(req.params.id), req.params.action, req.body || {}) }));
 
 module.exports = {
-  init, SCHEMA, TABLES, router, tick, climb, runWatch, evaluate, checkSpec, watchQuery, proposeFor, limitWords, agentsFrom, partiesOf, pushOf, overview, setUp, addWatch, editWatch, checkNow,
+  init, SCHEMA, TABLES, router, tick, climb, runWatch, evaluate, checkSpec, watchQuery, disagreeQuery, condsSql, proposeFor, proposeDisagree, limitWords, agentsFrom, partiesOf, pushOf, overview, setUp, addWatch, editWatch, checkNow,
   flagAction, channels, stream, thread, say, chips, deleteCompany, SHAPES, SHAPE_WORDS, slugify,
+  post, partiesFor, liveTools, labelCol, othersFor, OPEN_FLAG,   // for the agents' reviews (src/vsm-review.js)
 };

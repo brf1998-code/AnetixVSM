@@ -15,6 +15,8 @@
 //     scanned. Here an app adds words: a transcript, notes, an email.
 //   - What leaves: the walk's own state (what was read from the sources, what was settled), never a row from a company's
 //     tool, never a file's bytes, never the words of a source (the app has them already), never a model or a secret.
+// And one read of the agent board (A2, 2026-11-02): agent_board_status, its counts and status per company and agent, never
+// the words of a flag, a note or an answer (they carry the plant's records).
 const { z } = require("zod");
 const { q } = require("./db");
 const { byOf, plantsOwn, AI_STARTS, PER_HOUR } = require("./mcp-intake");
@@ -187,6 +189,37 @@ const tools = [
       const w = await mine(id);
       const r = await words(() => walk().draft(w.company, w.id, ctxOf(who)));
       return { drawn: true, ...r, walk: await shown(await load(w.id)) };
+    },
+  },
+  {
+    // The agent board (A2, docs/AGENTS.md section 5): counts and status, never the words. A flag's words and an agent's note
+    // carry the plant's records, the same rule as an Ask Anetix answer that read records.
+    name: "agent_board_status", title: "The agent boards",
+    description: "Each company's agent board in counts: its shift times, and per agent whether it is on and its shift reviews are on, how many tools it reads, its watches (on, proposed), its flags (open, climbed to every manager, closed in the last 7 days) and its reviews (done and failed in the last 7 days, and the last one). Counts and status only: never a flag's, a note's or an answer's words. A paying site's own agents are numbered, not named.",
+    input: { company: z.string().optional().describe("A company's slug; leave out for every company with an agent") },
+    async run({ company }) {
+      const slug = company ? slugArg(company) : null;
+      const agents = (await q(`SELECT a.id, a.company, a.key, a.name, a.status, a.reviews, coalesce(array_length(a.tools, 1), 0) AS tools,
+          (SELECT count(*)::int FROM platform.vsm_watches w WHERE w.agent_id=a.id AND w.status='on') AS watches_on,
+          (SELECT count(*)::int FROM platform.vsm_watches w WHERE w.agent_id=a.id AND w.status='proposed') AS watches_proposed,
+          (SELECT count(*)::int FROM platform.vsm_flags f WHERE f.agent_id=a.id AND f.status IN ('open','seen','on_it')) AS flags_open,
+          (SELECT count(*)::int FROM platform.vsm_flags f WHERE f.agent_id=a.id AND f.status IN ('open','seen','on_it') AND f.climbed_at IS NOT NULL) AS flags_climbed,
+          (SELECT count(*)::int FROM platform.vsm_flags f WHERE f.agent_id=a.id AND f.closed_at > now() - interval '7 days') AS flags_closed_7d,
+          (SELECT count(*)::int FROM platform.vsm_reviews r WHERE r.agent_id=a.id AND r.status='done' AND r.started_at > now() - interval '7 days') AS reviews_done_7d,
+          (SELECT count(*)::int FROM platform.vsm_reviews r WHERE r.agent_id=a.id AND r.status='failed' AND r.started_at > now() - interval '7 days') AS reviews_failed_7d,
+          (SELECT row_to_json(x) FROM (SELECT r.reason, r.status, r.started_at FROM platform.vsm_reviews r WHERE r.agent_id=a.id ORDER BY r.id DESC LIMIT 1) x) AS last_review
+        FROM platform.vsm_agents a WHERE ($1::text IS NULL OR a.company=$1) ORDER BY a.company, a.id LIMIT 500`, [slug])).rows;
+      const out = new Map();
+      for (const a of agents) {
+        if (!out.has(a.company)) {
+          const st = (await q("SELECT shift_times, tz FROM platform.vsm_agent_settings WHERE company=$1", [a.company])).rows[0];
+          out.set(a.company, { company: a.company, own: await plantsOwn(a.company), shift_times: st ? st.shift_times : ["15:00"], time_zone: st ? st.tz : "America/New_York", agents: [] });
+        }
+        const c = out.get(a.company);
+        const { id, company: _c, key, name, ...counts } = a;
+        c.agents.push({ agent: c.own ? `agent ${c.agents.length + 1}` : name, ...counts });
+      }
+      return { companies: [...out.values()].map(({ own, ...c }) => c), note: "Counts only. The words are on each company's agent board, which its managers read." };
     },
   },
 ];

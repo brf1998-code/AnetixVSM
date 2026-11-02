@@ -576,6 +576,8 @@ async function runAgent({ model, system, dir, prompt, readOnly = false, capUsd, 
 // other model that refuses is added for the life of the process, so the
 // second call does not pay for the 400.
 const noForcedTool = new Set(MODELS.filter((m) => m.forcedTool === false).map((m) => m.id));
+// whether a model takes a forced tool choice (src/vsm-review.js asks before its last step)
+const takesForcedTool = (model) => !noForcedTool.has(model);
 // `blocks`: optional content blocks (images, pdf documents, extra text) that
 // go in front of the prompt text, for callers that hand the model attachments.
 async function runStructured({ model, system, prompt, schema, toolName, maxTokens, blocks, company }) {
@@ -874,6 +876,7 @@ module.exports = {
   fakeFromSchema,
   atWall,   // the data wall's choke point and the prompt log (src/datawall.js)
   noteApi,  // a failed call to the API, to the phones (src/credit.js); for a caller with its own call, as src/assist.js
+  takesForcedTool,
   runAgent, runStructured, runChat, runWeb, webAnswer, webJson, WEB_TOOLS, recordUsage, haveKey, fakeMode, guidanceFor, platformDocs, modelFor, modelInfo, buildModelFor, canBuild,
   MODELS, PRICE_ONLY, ALL_MODELS, JOBS, COMPANY_JOBS, AB_JOBS, inTier, cleanSettings, instanceModels, setInstanceModels, defaultModels, companyPins, pickModel, keepArm,
   SUMMARY_MODELS, SUMMARY_CHOICES, summaryModel,
