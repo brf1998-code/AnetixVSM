@@ -1,7 +1,7 @@
 {
-  "name": "symbiotic-os",
+  "name": "anetix-vsm",
   "version": "0.2.0",
-  "description": "Symbiotic Operating System - an operating system for factories that forms around the operation",
+  "description": "Anetix VSM dev copy of Symbiotic OS: the living value stream map beside the Kaizen board (development only, not app.anetix.ai)",
   "main": "server.js",
   "private": true,
   "scripts": {

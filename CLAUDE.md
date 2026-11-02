@@ -1,3 +1,23 @@
+# THIS IS THE VSM DEV COPY (read first)
+
+This folder is `sos-vsm`, a copy of Symbiotic OS made on 2026-11-01 (from `SymbioticOS` main at 615a490, full
+history kept) to rebuild the product around two primary views: the **value stream map** of the whole plant and the
+**Kaizen board**. Design: `docs/VSM.md`.
+
+- Repo: `brf1998-code/AnetixVSM` (private). Push with `./scripts/push.sh "msg"` from this folder; it pushes here,
+  never to `SymbioticOS`.
+- Live: a separate Railway project, `anetix-vsm-dev`, on its own railway.app address and its own Postgres.
+  **Nothing here touches app.anetix.ai, anetix.ai, the `symbiotic-os` Railway project or its database.**
+- Seeded with a snapshot of Chelsea Clock taken from production (tools, versions, records, board history), restored
+  through /admin. No production admin or manager accounts and no Stripe, Google or Microsoft keys come across; the
+  dev instance has its own SOS_CONNECTION_KEY and SESSION_SECRET. Treat Chelsea's records here as the customer's
+  data: no screenshots or exports leave Anetix.
+- Fixes made on production can be pulled in: `git fetch upstream && git merge upstream/main` (the `upstream`
+  remote is SymbioticOS). The tenancy decision of 2026-09-17 still holds: one product, never a fork per customer.
+  This copy is a product branch that either merges back or replaces main; decide before a second customer uses it.
+
+Everything below is the production guide as it stood at the copy, and still describes how the code works.
+
 # Symbiotic OS: Workspace Guide (current as of 2026-10-20)
 
 **This file is the single source of truth for how this repo and the live

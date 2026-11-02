@@ -1,3 +1,5 @@
+> **Anetix VSM dev copy.** Development only, not app.anetix.ai. See the top of CLAUDE.md and docs/VSM.md.
+
 # Symbiotic OS — factory instance
 
 One application per factory. It hosts the improvement board, every module (live
