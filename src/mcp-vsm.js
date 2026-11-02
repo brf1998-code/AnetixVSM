@@ -195,7 +195,7 @@ const tools = [
     // The agent board (A2, docs/AGENTS.md section 5): counts and status, never the words. A flag's words and an agent's note
     // carry the plant's records, the same rule as an Ask Anetix answer that read records.
     name: "agent_board_status", title: "The agent boards",
-    description: "Each company's agent board in counts: its shift times, and per agent whether it is on and its shift reviews are on, how many tools it reads, its watches (on, proposed), its flags (open, climbed to every manager, closed in the last 7 days) and its reviews (done and failed in the last 7 days, and the last one). Counts and status only: never a flag's, a note's or an answer's words. A paying site's own agents are numbered, not named.",
+    description: "Each company's agent board in counts: its shift times, its records drafted for tools (waiting, made and declined in the last 7 days), the stage events its tools reported in the last 7 days, and per agent whether it is on and its shift reviews are on, how many tools it reads, its watches (on, proposed), its flags (open, climbed to every manager, closed in the last 7 days) and its reviews (done and failed in the last 7 days, and the last one). Counts and status only: never a flag's, a note's or an answer's words. A paying site's own agents are numbered, not named.",
     input: { company: z.string().optional().describe("A company's slug; leave out for every company with an agent") },
     async run({ company }) {
       const slug = company ? slugArg(company) : null;
@@ -213,7 +213,10 @@ const tools = [
       for (const a of agents) {
         if (!out.has(a.company)) {
           const st = (await q("SELECT shift_times, tz FROM platform.vsm_agent_settings WHERE company=$1", [a.company])).rows[0];
-          out.set(a.company, { company: a.company, own: await plantsOwn(a.company), shift_times: st ? st.shift_times : ["15:00"], time_zone: st ? st.tz : "America/New_York", agents: [] });
+          const dr = (await q(`SELECT count(*) FILTER (WHERE state IN ('waiting','taking'))::int AS waiting, count(*) FILTER (WHERE state='taken' AND decided_at > now() - interval '7 days')::int AS made_7d,
+                                      count(*) FILTER (WHERE state='declined' AND decided_at > now() - interval '7 days')::int AS declined_7d FROM platform.vsm_record_drafts WHERE company=$1`, [a.company])).rows[0];
+          const se = (await q("SELECT count(*)::int AS n FROM platform.vsm_stage_events WHERE company=$1 AND at > now() - interval '7 days'", [a.company])).rows[0].n;
+          out.set(a.company, { company: a.company, own: await plantsOwn(a.company), shift_times: st ? st.shift_times : ["15:00"], time_zone: st ? st.tz : "America/New_York", drafts_for_tools: dr, stage_events_7d: se, agents: [] });
         }
         const c = out.get(a.company);
         const { id, company: _c, key, name, ...counts } = a;

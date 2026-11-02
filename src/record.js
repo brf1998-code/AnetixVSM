@@ -48,7 +48,9 @@
 //   agent_flag_cleared, agent_flag_climbed, agent_flag_seen / _on_it / _resolved / _not_a_problem / _reopen,
 //   agent_board_message; its reviews (src/vsm-review.js, A2): agent_review (detail: what it posted, the model, the
 //   cost), agent_review_failed, agent_review_asked, agent_brief_drafted, agent_settings_changed (the shift times),
-//   agent_draft_dismissed (a draft sent is feedback_filed, via agent_board)
+//   agent_draft_dismissed (a draft sent is feedback_filed, via agent_board); drafts across tools (src/vsm-drafts.js,
+//   A3): agent_record_drafted, agent_draft_taken, agent_draft_declined (actor: the person on the tool's screen),
+//   agent_draft_withdrawn, agent_drafts_floor (the floor switch per tool). A box's steps change with map_changed.
 //
 // Who (2026-10-15). actor_role is the session's role. actor_name is the person signed in on the device, else a name the
 // caller passed, else the named account behind the session. actor_account is that account's id whenever the session

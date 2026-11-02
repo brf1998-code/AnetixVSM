@@ -106,8 +106,9 @@
 const SLUG = (location.pathname.split("/")[2] || "").toLowerCase();
 const API = `/api/c/${SLUG}/vsm`;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const SHAPE = { stuck: "Stuck: sat in one state too long", waiting: "Waiting: open too long", level: "Over or under a limit", due: "Coming due, not done", quiet: "Quiet: the tool has not been used", disagree: "Disagree: two tools do not match" };
-const KIND = { note: "Note", answer: "Answer", pass: "Passed on", ask: "Question", idea: "Watch idea", draft: "Draft request" };
+const SHAPE = { stuck: "Stuck: sat in one state too long", waiting: "Waiting: open too long", level: "Over or under a limit", due: "Coming due, not done", quiet: "Quiet: the tool has not been used", disagree: "Disagree: two tools do not match", stage: "At a step: open too long, or too much open" };
+const KIND = { note: "Note", answer: "Answer", pass: "Passed on", ask: "Question", idea: "Watch idea", draft: "Draft request", record: "Draft for a tool" };
+const REC = { waiting: ["Waiting on the tool's screen", ""], taking: ["Being made", "ok"], taken: ["Made", "ok"], declined: ["Declined", ""], withdrawn: ["Withdrawn", ""], expired: ["Expired", ""] };
 const REASON = { shift: "a shift review", early: "an early review", manual: "a review a manager asked for" };
 const STATUS = { open: ["Open", ""], seen: ["Seen", ""], on_it: ["On it", "ok"], resolved: ["Resolved", "ok"], not_a_problem: ["Not a problem", ""], cleared: ["Cleared", "ok"] };
 const params = new URLSearchParams(location.search);
@@ -187,7 +188,7 @@ function msgHtml(m) {
   return `<article class="msg ${f ? `flag ${f.severity === "act" ? "act" : ""} ${closed ? "closed" : ""}` : ""}" data-msg="${m.id}">
     <div class="top"><span class="who ${m.from_kind === "platform" ? "platform" : ""}">${esc(m.from_name)}</span>${m.from_kind === "watch" ? ' <span class="note">watch</span>' : ""}${m.from_kind === "agent" ? ` <span class="chip agent">${esc(f ? "Its review" : KIND[m.kind] || "Agent")}</span>` : ""}${where}<span class="when">${esc(ago(m.created_at))}</span>
       ${f ? `<span class="chip ${f.severity === "act" ? "act" : "look"}">${f.severity === "act" ? "Act" : "Look"}</span><span class="chip ${st[1]}">${esc(st[0])}${f.owner && f.status === "on_it" ? `: ${esc(f.owner)}` : ""}</span>${f.climbed_at ? '<span class="chip act">Climbed to every manager</span>' : ""}` : ""}</div>
-    ${m.kind === "draft" && ev.card ? draftHtml(m) : `<div class="words">${esc(m.words)}</div>`}${sample}${ev.checked ? `<div class="looked">The board checked the rows it named: ${ev.checked.found} of ${ev.checked.named} are in the records.</div>` : ""}${(ev.looked || []).length ? `<div class="looked">Looked at: ${ev.looked.map(esc).join(" · ")}</div>` : ""}${toHtml(m.to)}
+    ${m.kind === "draft" && ev.card ? draftHtml(m) : m.kind === "record" && ev.tool ? recordHtml(m) : `<div class="words">${esc(m.words)}</div>`}${sample}${ev.checked ? `<div class="looked">The board checked the rows it named: ${ev.checked.found} of ${ev.checked.named} are in the records.</div>` : ""}${(ev.looked || []).length ? `<div class="looked">Looked at: ${ev.looked.map(esc).join(" · ")}</div>` : ""}${toHtml(m.to)}
     ${f ? flagActs(m) : ""}
     ${m.replies || S.open.has(m.id) ? `<div><button type="button" class="linkish" data-act="thread" data-id="${m.id}">${S.open.has(m.id) ? "Hide the thread" : `${m.replies} ${m.replies === 1 ? "reply" : "replies"}`}</button></div>` : `<div><button type="button" class="linkish" data-act="thread" data-id="${m.id}">Reply</button></div>`}
     ${th ? `<div class="thread">${th.replies.map((r) => `<div class="reply"><div class="top"><span class="who ${r.from_kind === "platform" ? "platform" : ""}">${esc(r.from_name)}</span><span class="when">${esc(ago(r.created_at))}</span>${r.kind === "climbed" ? '<span class="chip act">Climbed</span>' : r.kind === "raised" ? '<span class="chip act">Now act</span>' : r.kind === "cleared" ? '<span class="chip ok">Cleared</span>' : r.from_kind === "agent" && KIND[r.kind] ? `<span class="chip agent">${esc(KIND[r.kind])}</span>` : ""}</div><div class="words">${esc(r.words)}</div>${r.kind === "pass" ? toHtml(r.to) : ""}</div>`).join("")}
@@ -200,6 +201,17 @@ function draftHtml(m) {
     ${d.state === "draft" ? `<div class="acts"><button type="button" class="btn go" data-act="draft" data-do="send" data-id="${m.id}">Send to Kaizen</button><button type="button" class="btn quiet" data-act="draft" data-do="dismiss" data-id="${m.id}">Not now</button></div><div class="note">Nothing is filed until you send it; then it is a request on the Kaizen board, where you approve any change as always.</div>`
       : d.state === "sent" ? `<div><a class="chip ok" href="./" style="text-decoration:none">Sent to Kaizen as request #${esc(d.feedback_id)}${d.decided_by ? ` by ${esc(d.decided_by)}` : ""}</a></div>` : `<div><span class="chip">Not now${d.decided_by ? `, ${esc(d.decided_by)}` : ""}</span></div>`}</div>`;
 }
+// a record an agent drafted for a tool (A3): made on that tool's own screen, so the card links there
+function recordHtml(m) {
+  const ev = m.evidence, r = m.record || { state: "waiting" }, st = REC[r.state] || [r.state, ""];
+  const fields = Object.entries(ev.fields || {}).map(([k, v]) => `${esc((ev.labels || {})[k] || k.replace(/_/g, " "))}: <b>${esc(v === true ? "yes" : v === false ? "no" : v)}</b>`).join(" · ");
+  const open = r.state === "waiting" || r.state === "taking";
+  const href = `/c/${encodeURIComponent(SLUG)}/m/${encodeURIComponent(ev.tool)}${ev.screen && /^\/[A-Za-z0-9/_-]*$/.test(ev.screen) ? ev.screen : "/"}`;
+  const words = String(m.words || "").replace(/^Drafted [^:]*:\s*[^.]*\.\s*/, "");
+  return `<div class="card2"><div class="lbl">${esc(ev.tool_title || ev.tool)} · ${esc(ev.kind_label || ev.kind)}</div><div>${fields}</div>${words ? `<div class="note">${esc(words)}</div>` : ""}
+    <div class="row"><span class="chip ${st[1]}">${esc(st[0])}${r.state === "taken" && r.ref ? `: ${esc(r.ref)}` : ""}${r.decided_by && !open ? `, ${esc(r.decided_by)}` : r.state === "taking" && r.held_by ? `: ${esc(r.held_by)}` : ""}</span>${r.state === "declined" && r.note ? `<span class="note">${esc(r.note)}</span>` : ""}</div>
+    <div class="acts"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="${href}">Open ${esc(ev.tool_title || ev.tool)}</a>${open ? `<button type="button" class="btn quiet" data-act="withdraw" data-id="${m.id}">Withdraw</button>` : ""}</div></div>`;
+}
 function chanName(key) { const c = (S.board.channels || []).find((x) => x.key === key); return c ? c.name : key; }
 
 // ---------- the agent's panel: its boxes, its watches, set up and turn on
@@ -211,6 +223,7 @@ function agentPanel() {
     return `<section class="card panel"><b>How the board works</b><div class="note">Each agent watches one area of the map through its Anetix tools. Its watches are rules a manager turns on; when one finds something it posts a flag here, in the agent's channel, and sends it to the areas next to it on the map: their agent if they have one, otherwise their people. Everyone who manages the plant reads the same board.</div>
       <div class="note">Once a shift, an agent whose reviews you turn on reads its area's records, posts a note on how it ran, and answers what its neighbors sent it. It only reads and writes here: it never changes a record, and a request it drafts waits for you.</div>
       ${S.agents.walled ? `<div class="note"><b>The data wall is up:</b> the agents run on their watches only, with no reviews.</div>` : ""}
+      ${draftToolsHtml()}
       <form class="form sec" id="shiftform"><div class="lbl">When the agents review</div>
         <label>Shift times (one to four, like 07:00, 15:00)<input type="text" name="shift_times" value="${esc(st.shift_times.join(", "))}" maxlength="40"></label>
         <label>Time zone<input type="text" name="tz" value="${esc(st.tz)}" maxlength="60" list="zones"></label><datalist id="zones">${["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Phoenix", "UTC"].map((z) => `<option value="${z}">`).join("")}</datalist>
@@ -221,11 +234,11 @@ function agentPanel() {
   const live = S.agents.tools;
   const title = (n) => (live.find((t) => t.name === n) || { title: n }).title;
   const wHtml = (w) => {
-    const lim = w.shape === "disagree" ? null : w.shape === "quiet" ? ["days", w.spec.days, "days"] : w.shape === "due" ? ["within_hours", w.spec.within_hours, "hours"] : w.shape === "level" ? (w.spec.limit_column ? null : ["limit", w.spec.limit, ""]) : ["hours", w.spec.hours, "hours"];
-    const limHtml = lim ? `<label class="row" style="font-weight:600">${w.shape === "due" ? "Within" : w.shape === "level" ? "Limit" : w.shape === "quiet" ? "After" : "Older than"} <input type="number" min="0" step="any" value="${esc(lim[1])}" data-lim="${lim[0]}" data-w="${w.id}" aria-label="Limit for ${esc(w.title)}"> ${lim[2]}</label>`
+    const lim = w.shape === "stage" ? (w.spec.measure === "wip" ? ["limit", w.spec.limit, "open"] : ["hours", w.spec.hours, "hours"]) : w.shape === "disagree" ? null : w.shape === "quiet" ? ["days", w.spec.days, "days"] : w.shape === "due" ? ["within_hours", w.spec.within_hours, "hours"] : w.shape === "level" ? (w.spec.limit_column ? null : ["limit", w.spec.limit, ""]) : ["hours", w.spec.hours, "hours"];
+    const limHtml = lim ? `<label class="row" style="font-weight:600">${w.shape === "due" ? "Within" : w.shape === "level" ? "Limit" : w.shape === "quiet" ? "After" : w.shape === "stage" ? (w.spec.measure === "wip" ? "More than" : "Open longer than") : "Older than"} <input type="number" min="0" step="any" value="${esc(lim[1])}" data-lim="${lim[0]}" data-w="${w.id}" aria-label="Limit for ${esc(w.title)}"> ${lim[2]}</label>`
       : w.shape === "disagree" ? `<span class="note">against ${esc(title(w.spec.other.tool))} · ${esc(w.spec.other.table)}</span>` : `<span class="note">under ${esc(String(w.spec.limit_column).replace(/_/g, " "))}</span>`;
     return `<div class="w ${w.status === "proposed" ? "proposed" : ""}"><div class="t">${esc(w.title)}</div>
-      <div class="note">${esc(SHAPE[w.shape] || w.shape)} · ${esc(title(w.tool))}${w.spec.table ? ` · ${esc(w.spec.table)}` : ""}${w.muted_until && new Date(w.muted_until) > new Date() ? ` · muted until ${esc(new Date(w.muted_until).toLocaleDateString())}` : ""}</div>
+      <div class="note">${esc(SHAPE[w.shape] || w.shape)} · ${esc(title(w.tool))}${w.spec.table ? ` · ${esc(w.spec.table)}` : ""}${w.shape === "stage" ? ` · step ${esc(w.spec.step)}` : ""}${w.muted_until && new Date(w.muted_until) > new Date() ? ` · muted until ${esc(new Date(w.muted_until).toLocaleDateString())}` : ""}</div>
       ${w.last_error ? `<div class="err">${esc(w.last_error)}</div>` : w.last_run_at ? `<div class="note">Last looked ${esc(ago(w.last_run_at))}: ${w.last_count ? `${w.last_count} found` : "nothing found"}</div>` : ""}
       <div class="row">${limHtml}<select data-sev="${w.id}" aria-label="How urgent"><option value="look"${w.severity === "look" ? " selected" : ""}>Look</option><option value="act"${w.severity === "act" ? " selected" : ""}>Act</option></select>
         ${w.status === "on" ? `<button type="button" class="btn quiet" data-act="watch" data-w="${w.id}" data-to="off">Turn off</button>` : `<button type="button" class="btn go" data-act="watch" data-w="${w.id}" data-to="on">Turn on</button>`}
@@ -234,7 +247,7 @@ function agentPanel() {
   const proposed = a.watches.filter((w) => w.status === "proposed"), on = a.watches.filter((w) => w.status === "on"), off = a.watches.filter((w) => w.status === "off");
   return `<section class="card panel" aria-label="${esc(a.name)}">
     <div class="row" style="justify-content:space-between"><b style="font-size:16px">${esc(a.name)}</b><span class="chip ${a.status === "on" ? "ok" : ""}">${a.status === "on" ? "On" : "Paused"}</span></div>
-    <div class="note">Watches ${a.tools.map((t) => esc(title(t))).join(", ") || "no tool"} on ${a.boxes.map((b) => esc(b.label)).join(", ") || "no box on the map now"}.${a.people ? ` People: ${esc(a.people)}.` : ""}</div>
+    <div class="note">Watches ${[a.tools.length ? a.tools.map((t) => esc(title(t))).join(", ") : "", (a.steps || []).length ? `the work reported at ${a.steps.map((x) => esc(x.step)).join(", ")}` : ""].filter(Boolean).join(" and ") || "nothing yet"} on ${a.boxes.map((b) => esc(b.label)).join(", ") || "no box on the map now"}.${a.people ? ` People: ${esc(a.people)}.` : ""}</div>
     <div class="row"><button type="button" class="btn" data-act="check" data-id="${a.id}"${a.status !== "on" ? " disabled" : ""}>Check now</button><button type="button" class="btn quiet" data-act="agent" data-id="${a.id}" data-to="${a.status === "on" ? "paused" : "on"}">${a.status === "on" ? "Pause" : "Turn on"}</button><button type="button" class="btn quiet" data-act="propose" data-id="${a.id}">Look again</button></div>
     ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
     ${reviewsHtml(a)}
@@ -254,9 +267,16 @@ function plantTime(t) {
   try { return new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: tz, timeZoneName: "short" }); }
   catch (e) { return new Date(t).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }); }
 }
+function draftToolsHtml() {
+  const tools = S.agents.draft_tools || [];
+  if (!tools.length) return `<div class="sec"><div class="lbl">Tools that take drafts</div><div class="note">None yet. A tool takes an agent's drafts (a material request, a work order) once it has a drafts tray on its own screen: ask for one on the Kaizen board.</div></div>`;
+  return `<div class="sec"><div class="lbl">Tools that take drafts</div><div class="note">An agent may draft a record for its own tools and its neighbors'. A person makes it on the tool's own screen, or declines it. Managers always can; the floor only where you open it.</div>
+    ${tools.map((t) => `<div class="row" style="justify-content:space-between"><span><b>${esc(t.title)}</b> <span class="note">${t.kinds.map((k) => esc(k.label)).join(", ")}${t.waiting ? ` · ${t.waiting} waiting` : ""}</span></span>
+      <button type="button" class="btn ${t.floor ? "" : "quiet"}" data-act="floordrafts" data-mod="${esc(t.module)}" data-to="${t.floor ? "off" : "on"}" aria-pressed="${t.floor}">${t.floor ? "The floor can make them" : "Managers only"}</button></div>`).join("")}</div>`;
+}
 function reviewsHtml(a) {
   const walled = S.agents.walled, r = a.last_review;
-  const posted = (p) => { if (!p) return ""; const parts = [["note", "a note"], ["flags", "flag"], ["answers", "answer"], ["passes", "pass"], ["asks", "question"], ["ideas", "watch idea"], ["requests", "draft request"], ["clears", "clear"]].filter(([k]) => p[k]).map(([k, w]) => (k === "note" ? w : `${p[k]} ${w}${p[k] === 1 ? "" : k === "passes" ? "es" : "s"}`)); return parts.length ? `posted ${parts.join(", ")}` : "posted nothing"; };
+  const posted = (p) => { if (!p) return ""; const parts = [["note", "a note"], ["flags", "flag"], ["answers", "answer"], ["passes", "pass"], ["asks", "question"], ["ideas", "watch idea"], ["requests", "draft request"], ["records", "draft for a tool"], ["clears", "clear"]].filter(([k]) => p[k]).map(([k, w]) => (k === "note" ? w : `${p[k]} ${w}${p[k] === 1 ? "" : k === "passes" ? "es" : k === "records" ? "" : "s"}`)); return parts.length ? `posted ${parts.join(", ")}` : "posted nothing"; };
   const last = !r ? "No review yet." : r.status === "running" ? `Reviewing now (${esc(REASON[r.reason] || "a review")})…` : r.status === "failed" ? `The last review did not finish (${esc(ago(r.started_at))}): ${esc(r.error || "")}` : `Last: ${esc(REASON[r.reason] || "a review")}, ${esc(ago(r.finished_at || r.started_at))}; ${esc(posted(r.posted))}.`;
   const left = r && r.posted && (r.posted.left_out || []).length ? `<details><summary class="left" style="cursor:pointer">What the board left out of it (${r.posted.left_out.length})</summary><div class="left">${r.posted.left_out.map(esc).join("<br>")}</div></details>` : "";
   return `<div class="sec"><div class="row" style="justify-content:space-between"><span class="lbl">Shift reviews</span><span class="chip ${a.reviews && !walled ? "ok" : ""}">${walled ? "Off: the data wall is up" : a.reviews ? "On" : "Off"}</span></div>
@@ -274,9 +294,10 @@ function addHtml(a) {
   const times = cols.filter((c) => /timestamp|date/.test(c.type)), nums = cols.filter((c) => /integer|numeric|real|double|smallint|bigint/.test(c.type));
   const sh = S.add.shape;
   return `<form class="form" id="addform" data-agent="${a.id}"><div class="lbl">Add a watch</div>
-    <label>What to watch for<select name="shape">${Object.entries(SHAPE).filter(([k]) => k !== "disagree" || t.length > 1).map(([k, l]) => `<option value="${k}"${k === sh ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
-    <label>Tool<select name="tool">${t.map((x) => `<option value="${esc(x.tool)}"${x.tool === tool.tool ? " selected" : ""}>${esc(((S.agents.tools.find((y) => y.name === x.tool)) || { title: x.tool }).title)}</option>`).join("")}</select></label>
-    ${sh === "quiet" ? `<label>After how many days with no use<input type="number" name="days" min="1" max="60" value="3"></label>` : `
+    <label>What to watch for<select name="shape">${Object.entries(SHAPE).filter(([k]) => (k !== "disagree" || t.length > 1) && (k !== "stage" || (a.steps || []).length) && (k === "stage" || t.length)).map(([k, l]) => `<option value="${k}"${k === sh ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+    ${sh === "stage" ? "" : `<label>Tool<select name="tool">${t.map((x) => `<option value="${esc(x.tool)}"${x.tool === tool.tool ? " selected" : ""}>${esc(((S.agents.tools.find((y) => y.name === x.tool)) || { title: x.tool }).title)}</option>`).join("")}</select></label>`}
+    ${sh === "stage" ? `<label>The step<select name="stepix">${(a.steps || []).map((x, i) => `<option value="${i}">${esc(x.step)} (${esc(((S.agents.tools.find((y) => y.name === x.module)) || { title: x.module }).title)})</option>`).join("")}</select></label>
+      <label>Flag when<select name="measure"><option value="open">work is open there longer than</option><option value="wip">more work is open there than</option></select></label><label>Hours, or how many<input type="number" name="slimit" min="0" step="any" value="8"></label>` : sh === "quiet" ? `<label>After how many days with no use<input type="number" name="days" min="1" max="60" value="3"></label>` : `
     <label>Table<select name="table">${opt(tool.tables, table && table.name)}</select></label>
     <label>The name each row goes by<select name="label_column">${opt(cols, (cols.find((c) => /part_no|number|name|title|item/.test(c.name)) || cols[0] || {}).name)}</select></label>
     ${sh === "stuck" ? `<label>The state column<select name="state_column">${opt(cols.filter((c) => /text|character/.test(c.type)), "")}</select></label><label>States that count as still open (comma between)<input type="text" name="states" placeholder="queued, at station"></label>` : ""}
@@ -351,12 +372,14 @@ app.addEventListener("click", (ev) => {
     if (t.dataset.to === "on") { if (lim && lim.value !== "") body[lim.dataset.lim] = Number(lim.value); if (sev) body.severity = sev.value; }
     return go(() => post(`/watches/${id}`, body));
   }
-  if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; render(); }).catch((e) => { S.err = e.message; S.adding = false; render(); }); }
+  if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; if (!r.tools.length) S.add.shape = "stage"; render(); }).catch((e) => { S.err = e.message; S.adding = false; render(); }); }
   if (act === "canceladd") { S.adding = false; return render(); }
   if (act === "reviews") return go(() => post(`/agents/${id}`, { reviews: t.dataset.to === "on" }));
   if (act === "review") return go(() => post(`/agents/${id}/review`, {}));
   if (act === "draftbrief") return go(() => post(`/agents/${id}/brief`, {}));
   if (act === "draft") return go(() => post(`/board/drafts/${id}/${t.dataset.do}`, {}));
+  if (act === "withdraw") return go(() => post(`/record-drafts/${id}/withdraw`, {}));
+  if (act === "floordrafts") return go(() => post(`/draft-tools/${encodeURIComponent(t.dataset.mod)}`, { floor: t.dataset.to === "on" }));
 });
 app.addEventListener("change", (ev) => {
   const t = ev.target;
@@ -376,7 +399,12 @@ app.addEventListener("submit", (ev) => {
   if (f.id === "addform") {
     const v = (n) => (f.elements[n] ? f.elements[n].value : undefined);
     const shape = v("shape"), spec = {};
-    if (shape === "quiet") spec.days = Number(v("days"));
+    if (shape === "stage") {
+      const ag = S.agents.agents.find((x) => String(x.id) === String(f.dataset.agent)) || {};
+      const st = (ag.steps || [])[Number(v("stepix"))] || {};
+      spec.module = st.module; spec.step = st.step; spec.measure = v("measure");
+      if (spec.measure === "wip") spec.limit = Number(v("slimit")); else spec.hours = Number(v("slimit"));
+    } else if (shape === "quiet") spec.days = Number(v("days"));
     else {
       spec.table = v("table"); spec.label_column = v("label_column");
       if (shape === "stuck") { spec.state_column = v("state_column"); spec.states = String(v("states") || "").split(",").map((s) => s.trim()).filter(Boolean); }

@@ -213,6 +213,11 @@ function hasPrinter(manifest) {
 //   ai.models / ai.modelFor(role)
 //   ai.judge({ task, input, answer }) a judgment the tool cannot write down ahead of time, answered in the shape
 //                   `answer` describes (a JSON schema); same cap, wall and usage record as chat
+//   drafts          (the agent board, A3) the drafts agents made for this tool, if module.json declares "drafts":
+//                   list(req), claim(req, id), finish(req, id, { ref }), decline(req, id, { note }); who acts is the
+//                   platform's (req.sosRole, req.sosPerson), and only the floor's version of a tool acts (src/vsm-drafts.js)
+//   vsm.event([req,] { step, ref, kind, qty })  (VSM M4) report work at a step: start, wait, finish or scrap
+//                   (src/vsm-stages.js); only the floor's version of a tool reports
 //   connections.<name>  the surface of each connection module.json declares
 //                   (src/connections.js): files -> status(); printer ->
 //                   print(req, template, data), preview(template, data), status(); erp -> query(), status();
@@ -261,8 +266,18 @@ async function judge(company, mod, onTest, args) {
 function moduleServices(company, mod, manifest, version, lane = "live") {
   const agent = require("./agent");
   const onTest = lane === "test";
+  const D = () => require("./vsm-drafts"), St = () => require("./vsm-stages");
   return {
     manifest,
+    // In the tool's own process these arrive through src/runner.js, which turns the request's ticket back into the
+    // person the platform signed in; here (a tool kept in the platform's process) req is the platform's own request.
+    drafts: {
+      list: (req) => D().listFor(company, mod, D().whoOf(req)),
+      claim: (req, id) => D().claim(company, mod, D().whoOf(req), id, lane),
+      finish: (req, id, opts) => D().finish(company, mod, D().whoOf(req), id, opts, lane),
+      decline: (req, id, opts) => D().decline(company, mod, D().whoOf(req), id, opts, lane),
+    },
+    vsm: { event: (a, b) => { const req = b === undefined ? null : a, ev = b === undefined ? a : b; return St().event(company, mod, lane, req ? D().whoOf(req) : null, ev); } },
     connections: require("./connections").surfaces(company, mod, version, manifest, lane),
     peer(name) {
       const entry = mounts.get(key(company, name));

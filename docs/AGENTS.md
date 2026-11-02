@@ -1,6 +1,6 @@
 # The agent board: agents that watch each area of the plant and talk in the open
 
-*Design, rev 4, 2026-11-02. Brendan answered all six decisions (section 8). A1 and A2 are built (section 7 has what
+*Design, rev 5, 2026-11-02. Brendan answered decisions 1 to 10 (section 8). A1, A2 and A3 are built (section 7 has what
 each is and what is left). It replaces section 8 of `docs/VSM.md` ("Agents, in three
 steps") with a fuller plan, and becomes milestone M5. Worked example: Chelsea Clock on the dev instance, with the five
 tools it has today.*
@@ -222,6 +222,17 @@ for every agent; the agent cannot read a neighbor's flag thread beyond what its 
 last eight replies); "ask a person" is a question to a neighbor box's people. Left: the floor's station line
 (decision 6), A3.
 
+**A3, as built (2026-11-02):** `src/vsm-drafts.js` and `src/vsm-stages.js`, with the Paper Airplane Line as the reference
+tool. A review may draft a record for its own tools or its neighbors' that declare `"drafts"` in module.json; the draft
+waits until a person makes it on that tool's own screen (`ctx.drafts.claim` then `finish`, the tool's own logic between)
+or declines it with a line; managers always, the floor only where a manager opened the tool. Who acts comes from the
+platform's own record of the request (a ticket per request), never from the tool's code. Stage events
+(`ctx.vsm.event`) give a box tied to steps its live numbers on the Map, an agent with no tool of its own, stage
+watches and `stage_numbers` in its review. Differences from the design: the assembly agents exist once a box is tied
+to steps that a tool reports (Chelsea has none yet); the floor's station line is still to come. The gate (a person at
+Chelsea acts on a draft an agent wrote) needs one of Chelsea's tools to take drafts: a Kaizen request for a drafts tray
+on MO Board or the Inventory Request, built and approved like any change.
+
 ## 8. Decisions for Brendan
 
 1. Where the board lives: its own view beside Kaizen and Map, or only inside the Map as a side panel? *Answered: its own
@@ -240,3 +251,14 @@ last eight replies); "ask a person" is a question to a neighbor box's people. Le
 6. Should the floor ever see a flag, as one line on its own station screen? *Answered: worth an experiment, since nobody
    knows how people will take it. Not in A1; when it comes it is a switch per agent, off by default, and a line on that
    box's station screen only.*
+7. A3, how an agent's draft for another tool reaches it: the tool takes it (a drafts service lent to tools; each tool
+   opts in through one normal Kaizen change that adds a drafts tray to its own screen, and its own create logic runs),
+   a platform tray on every tool page calling a route the tool names, or the board writing the row? *Answered: the tool
+   takes it.*
+8. Which tools an agent may draft into: its own, its own and its neighbors' on the map, or any? *Answered: its own and
+   its neighbors' (the same parties a flag goes to).*
+9. Who approves a draft on the tool's screen? *Answered: managers always; a manager can open a tool's drafts to the
+   floor (people signed in by name and PIN), off by default.*
+10. Stage events (VSM M4): with A3 or after? *Answered: both now: the platform side of stage events (the service tools
+    call, live numbers on the map, the assembly agents' watches); Chelsea's tools opt in later.*
+

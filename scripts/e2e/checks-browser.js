@@ -58,7 +58,7 @@ const R = runner(), t = R.t;
   await waitFor("the fix round to reach the gate", async () => { const x = await runOf(r2); return x.step === "await_deploy" && x.status === "waiting"; }, 60000);
   await b.waitForFunction((id) => /checks passed:/.test((document.querySelector(`[data-key="run:${id}"]`) || {}).textContent || ""), r2, { timeout: 15000 });
   const gate = await card.evaluate((el) => el.textContent);   // the counts sit folded under "What was checked" (the launch audit 1.8)
-  t("at the gate: one quiet line on what was checked", /Checked before it reached you/.test(gate) && /checks passed: 6 endpoints answer · 4 promises kept \(1 new\) · 4 screens opened/.test(gate) && !/no browser/.test(gate), gate);
+  t("at the gate: one quiet line on what was checked", /Checked before it reached you/.test(gate) && /checks passed: 7 endpoints answer · 4 promises kept \(1 new\) · 4 screens opened/.test(gate) && !/no browser/.test(gate), gate);
   await card.locator("button", { hasText: /Make it live/ }).click();
   await waitFor("r2 live", async () => (await runOf(r2)).status === "deployed");
 

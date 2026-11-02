@@ -2,9 +2,17 @@
 // ctx.db is a query function pinned to this module's schema.
 // ctx.requireManager gates shift controls and settings.
 module.exports = function makeRouter(ctx) {
-  const { express, db, requireManager, connections } = ctx;
+  const { express, db, requireManager, connections, drafts, vsm } = ctx;
   const router = express.Router();
   router.use(express.json());
+
+  // Stage events (what the platform lends on ctx.vsm): a traveler joining a station's queue, finished there, or
+  // scrapped at the test, so the plant's map shows each station's live numbers. Never in the way of the floor: a
+  // platform that does not lend it, or a refusal, changes nothing here.
+  async function stage(req, step, ref, kind) {
+    if (!vsm || !vsm.event) return;
+    try { await vsm.event(req, { step, ref, kind }); } catch (e) { /* the line keeps running */ }
+  }
 
   // A traveler label, printed on the label printer this device is paired
   // with (the platform's connection "labels": ctx.connections.labels).
@@ -167,7 +175,7 @@ module.exports = function makeRouter(ctx) {
   });
 
   // ---- shifts --------------------------------------------------------------
-  router.post("/api/shift/start", requireManager, async (_req, res) => {
+  router.post("/api/shift/start", requireManager, async (_req, res) => {   // _req: the request (kept for the stage events)
     await tick();
     if (await currentShift()) return res.status(409).json({ error: "a shift is already running" });
     const seconds = Number(await setting("shift_seconds", 120));
@@ -186,6 +194,7 @@ module.exports = function makeRouter(ctx) {
          VALUES ($1,$2,$3,$4,$5,$6,'at_station',now()) RETURNING id`,
         [job, shift.id, cfg.mix_colors ? pick(MIX.color) : "white", cfg.mix_folds ? pick(MIX.fold) : "dart", cfg.use_clips ? pick(MIX.clip) : "none", first.id])).rows[0];
       await db("INSERT INTO traveler_log (traveler_id, station_id, shift_id, event) VALUES ($1,$2,$3,'arrived')", [t.id, first.id, shift.id]);
+      await stage(_req, first.name, job, "wait");
     }
     res.json({ ok: true, shift });
   });
@@ -272,6 +281,7 @@ module.exports = function makeRouter(ctx) {
         [t.id, qc === "pass" ? "done" : "scrap", shift.id, d, qc]);
       await db("INSERT INTO traveler_log (traveler_id, station_id, shift_id, event, operator, seconds) VALUES ($1,$2,$3,$4,$5,$6)",
         [t.id, here.id, shift.id, qc === "pass" ? "completed" : "scrapped", operator, seconds]);
+      await stage(req, here.name, t.job_num, qc === "pass" ? "finish" : "scrap");
       return res.json({ ok: true, finished: true });
     }
 
@@ -280,6 +290,8 @@ module.exports = function makeRouter(ctx) {
     await db("INSERT INTO traveler_log (traveler_id, station_id, shift_id, event, operator, seconds) VALUES ($1,$2,$3,'completed',$4,$5)",
       [t.id, here.id, shift.id, operator, seconds]);
     await db("INSERT INTO traveler_log (traveler_id, station_id, shift_id, event) VALUES ($1,$2,$3,'arrived')", [t.id, next.id, shift.id]);
+    await stage(req, here.name, t.job_num, "finish");
+    await stage(req, next.name, t.job_num, "wait");
     res.json({ ok: true, next: next.name });
   });
 
@@ -321,6 +333,32 @@ module.exports = function makeRouter(ctx) {
     await db("UPDATE inventory SET qty = qty + $2 WHERE item=$1 AND location='line'", [r.item, r.qty]);
     await db("UPDATE material_requests SET status='delivered', delivered_at=now() WHERE id=$1", [r.id]);
     res.json({ ok: true });
+  });
+
+  // ---- drafts from agents (what the platform lends on ctx.drafts; module.json "drafts"): a material request an agent
+  // drafted waits here until someone who may act on it makes it, which runs this tool's own request logic, or declines
+  router.get("/api/drafts", async (req, res) => {
+    if (!drafts) return res.json({ can_act: false, drafts: [] });
+    res.json(await drafts.list(req));
+  });
+  router.post("/api/drafts/:id/make", async (req, res) => {
+    try {
+      const d = await drafts.claim(req, req.params.id);
+      const f = d.fields || {};
+      if (d.kind !== "material_request" || !ITEMS.includes(f.item)) {
+        await drafts.decline(req, d.id, { note: "The stockroom does not stock that item." });
+        return res.status(400).json({ error: "the stockroom does not stock that item" });
+      }
+      const st = f.station ? (await db("SELECT id FROM stations WHERE seq=$1", [f.station])).rows[0] : null;
+      const r = (await db("INSERT INTO material_requests (station_id, item, qty, requested_by) VALUES ($1,$2,$3,$4) RETURNING *",
+        [st ? st.id : null, f.item, Math.max(1, Math.min(50, Number(f.qty) || 1)), "an agent's draft"])).rows[0];
+      await drafts.finish(req, d.id, { ref: `request ${r.id}` });
+      res.json({ ok: true, request: r });
+    } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+  });
+  router.post("/api/drafts/:id/decline", async (req, res) => {
+    try { res.json(await drafts.decline(req, req.params.id, { note: (req.body || {}).note })); }
+    catch (e) { res.status(e.status || 400).json({ error: e.message }); }
   });
 
   // ---- reset (manager): clears travelers, shifts, requests; restocks the line

@@ -20,6 +20,8 @@
 //   agent_board  the agent board's messages: what the agents' watches flagged, what the agents wrote in their reviews and
 //                what people wrote, by channel
 //   agent_reviews  when each agent reviewed its area and what it posted (counts; the words are under agent_board)
+//   agent_record_drafts  the records agents drafted for a tool, and what became of each
+//   stage_events  the work the tools reported at each step (start, wait, finish, scrap), the last 365 days
 //   record       what the company's own people said and decided, word for word (floor, manager and named people's
 //                rows of the record; the agent's and the platform's rows are Anetix's Output and carry build summaries
 //                and designs, so they stay out)
@@ -102,6 +104,8 @@ async function exportCompany(slug) {
     map_sources: (await q("SELECT walk_id, kind, title, words, attachment_id, created_at FROM platform.vsm_sources WHERE company=$1 ORDER BY id", [slug])).rows,
     agent_board: (await q("SELECT id, channel, thread_id, kind, severity, from_kind, from_name, words, created_at FROM platform.vsm_messages WHERE company=$1 ORDER BY id", [slug])).rows,
     agent_reviews: (await q("SELECT r.id, a.name AS agent, r.reason, r.status, r.posted, r.started_at, r.finished_at FROM platform.vsm_reviews r JOIN platform.vsm_agents a ON a.id=r.agent_id WHERE r.company=$1 ORDER BY r.id", [slug])).rows,
+    agent_record_drafts: (await q("SELECT id, module, kind, fields, why, agent_name, state, ref, note, decided_by, decided_at, created_at FROM platform.vsm_record_drafts WHERE company=$1 ORDER BY id", [slug])).rows,
+    stage_events: (await q("SELECT module, step, ref, kind, qty, person, at FROM platform.vsm_stage_events WHERE company=$1 AND at > now() - interval '365 days' ORDER BY id LIMIT 200000", [slug])).rows,
     site: s || null,
   };
 }

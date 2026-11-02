@@ -4340,5 +4340,48 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     (53, fake model), its `api` mode (9, the requests a real review sends, against a stand-in for the Messages API) and
     its `shift` mode (4, the shift clock with the runner on), `scripts/test-mcp.js` and `scripts/e2e/mcp.js` for the counts.
   - *Not yet.* The floor's station line (decision 6, an experiment, off by default); drafts across tools approved on the
-    receiving tool's screen and the assembly agents from stage events (A3).
+    receiving tool's screen and the assembly agents from stage events (A3, below).
+- **The agent board, A3, and stage events (VSM M4): drafts across tools made on the tool's own screen, live numbers on the map (2026-11-02, VSM dev copy)**
+  - *Decisions (Brendan, 2026-11-02, AGENTS.md 7 to 10).* The tool takes a draft (a service lent to tools; each tool opts
+    in through one normal Kaizen change); an agent drafts into its own tools and its neighbors' on the map; managers
+    always act on a draft, the floor only on a tool a manager opened (off by default); stage events built now, the
+    platform side, Chelsea's tools opting in later.
+  - *Drafts across tools* (`src/vsm-drafts.js`). A tool declares in module.json `"drafts"` the kinds it takes and their
+    fields (text, integer, number, date, boolean; choices, limits); the module gate checks it (`layout-drafts`). A
+    review's `records` output is checked against the declaration and the agent's draftable tools (its own and the
+    tools on its near boxes, `vsm-agents.nearBoxes`), posted as a `record` message addressed to the receiving box's
+    agent or people, and kept in `vsm_record_drafts` (waiting, taking, taken, declined, withdrawn, expired). The tool
+    reaches it on `ctx.drafts`: `list(req)`, `claim(req, id)` (held two minutes; a lapsed claim returns to waiting),
+    `finish(req, id, { ref })`, `decline(req, id, { note })`; only the floor's version of a tool acts. The board shows
+    each draft's state with Open (the tool's screen) and Withdraw; #plant's panel lists the tools that take drafts with
+    the floor switch (`vsm_tool_settings`). A draft nobody makes expires after `SOS_DRAFT_DAYS`; at most
+    `SOS_DRAFTS_WAITING` wait for a tool. The agent reads what became of its last drafts, a decline's words too.
+  - *Who acts* (`src/runner.js`). A tool's own process is told the visitor's role in headers, and its code could say
+    anything back; so each proxied request carries `x-sos-ticket`, the child hands it back with `drafts.*` and
+    `vsm.event`, and the platform reads the person from its own record of the request (same company, tool and lane,
+    while the request lasts). A tool kept in the platform's process gets the platform's own request.
+  - *Stage events* (`src/vsm-stages.js`). `ctx.vsm.event(req, { step, ref, kind, qty })`, kind start, wait, finish or
+    scrap, kept in `vsm_stage_events` (only the floor's version of a tool; `SOS_STAGE_EVENTS_DAY` a company a day). A
+    box's editor on the Map ties it to steps the tools have reported (`detail.steps`, also through the map's import and
+    export); `mapView` returns `live`: per box cycle time, wait in line, WIP and the oldest open, finished, scrapped,
+    first-pass yield, finished a day; the waits between boxes on the material flow; the lead time to the last box
+    (`SOS_STAGE_WINDOW_DAYS`, 7). The data box shows them beside the numbers people said, the ladder uses them, the
+    selected box lists them.
+  - *Agents on steps.* A box tied to steps can have an agent with no tool of its own (`vsm_agents.steps`); set up, it
+    drafts a stage watch a step ("work open too long"); the stage watch is work open at a step past some hours, or more
+    open than a number; its review gets `stage_numbers` (the numbers, what is open longest, the last events).
+  - *The reference tool.* Paper Airplane Line (repo seed) reports each station (a traveler waits at a station when it
+    arrives, finishes there, or is scrapped at the test) and takes `material_request` drafts on its Stockroom screen
+    (Make it runs its own request logic; Decline asks why). MODULE-CONTRACT.md has "Drafts from agents" and "Stage
+    events" so a build can opt a tool in.
+  - *Rules kept.* An agent never writes a tool's record: a person makes the draft on the tool's own screen; the floor
+    sees no draft unless a manager opened that tool; no model or cost in what a company reads; the admin MCP's
+    `agent_board_status` counts drafts and stage events, never their words; every decision on the record
+    (`agent_record_drafted`, `agent_draft_taken`, `agent_draft_declined`, `agent_draft_withdrawn`, `agent_drafts_floor`);
+    the drafts, the switch and the events are in the backup, the data export (`agent_record_drafts`, `stage_events`) and
+    go with the company.
+  - *Tests.* `scripts/test-vsm-a3.js` (29), `scripts/e2e/vsm-a3.js` (42, with tools in their own process and again
+    inline), the module gate's suite, `scripts/test-mcp.js` and `scripts/e2e/mcp.js` for the counts.
+  - *Not yet.* Chelsea's own tools opting in (each a Kaizen change: a drafts tray on MO Board, stage events on its
+    stages); scanners or tablets for stage scans (VSM decision 5); the floor's station line (decision 6).
 

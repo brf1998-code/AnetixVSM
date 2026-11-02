@@ -245,7 +245,8 @@ async function mapView(company, id) {
   const kaizen = (await q(`SELECT id, node_key, n, title, why, status, feedback_id FROM platform.vsm_kaizen WHERE company=$1 AND map_id=$2 ORDER BY n`, [company, id])).rows;
   const questions = (await q(`SELECT id, map_key, node_key, where_label, claim, why, confidence, status, answer, answered_by, answered_at
                                 FROM platform.vsm_questions WHERE company=$1 AND (map_key IS NULL OR map_key=$2) ORDER BY (status='open') DESC, sort, id`, [company, map.key])).rows;
-  return { map, nodes, edges, kaizen, questions, tools: await tools(company), agents: await require("./vsm-agents").chips(company) };
+  return { map, nodes, edges, kaizen, questions, tools: await tools(company), agents: await require("./vsm-agents").chips(company),
+    live: await require("./vsm-stages").liveFor(company, nodes, edges) };   // the boxes' numbers from stage events, null when none is tied to a step
 }
 
 // ---- small edits (M1): a box's words, record, tools, who, data box rows and place
@@ -273,12 +274,17 @@ async function editNode(req, company, id, body) {
     vals.push(k === "data" ? JSON.stringify(v) : v);
     sets.push(`${k}=$${vals.length}${k === "data" ? "::jsonb" : ""}`);
   }
-  if (body.notes !== undefined) { vals.push(txt(body.notes, 2000)); sets.push(`detail = jsonb_set(detail, '{notes}', to_jsonb($${vals.length}::text))`); changed.notes = vals[vals.length - 1]; }
+  // the box's own words and ties kept in detail, merged in one patch: its notes, the agent that watches it (the agent
+  // board) and the steps of the tools' stage events that are its work (src/vsm-stages.js, A3)
+  const patch = {};
+  if (body.notes !== undefined) patch.notes = changed.notes = txt(body.notes, 2000);
   if (body.agent_name !== undefined) {
     const name = txt(body.agent_name, 60).replace(/\s+/g, " ");
     if (name && !/[a-z0-9]/i.test(name)) throw bad("an agent's name needs a letter or a digit");
-    vals.push(name); sets.push(`detail = jsonb_set(${sets.some((x) => x.startsWith("detail")) ? sets.pop().replace(/^detail = /, "") : "detail"}, '{agent_name}', to_jsonb($${vals.length}::text))`); changed.agent_name = name;
+    patch.agent_name = changed.agent_name = name;
   }
+  if (body.steps !== undefined) patch.steps = changed.steps = await require("./vsm-stages").cleanSteps(company, body.steps);
+  if (Object.keys(patch).length) { vals.push(JSON.stringify(patch)); sets.push(`detail = coalesce(detail, '{}'::jsonb) || $${vals.length}::jsonb`); }
   if (!sets.length) throw bad("nothing to change");
   if (changed.modules) {
     const known = new Set((await q(`SELECT name FROM platform.modules WHERE company=$1`, [company])).rows.map((r) => r.name));
@@ -290,7 +296,7 @@ async function editNode(req, company, id, body) {
   await q(`UPDATE platform.vsm_maps SET updated_at=now() WHERE id=$1`, [before.map_id]);
   const moveOnly = Object.keys(changed).every((k) => k === "x" || k === "y");
   if (!moveOnly) {
-    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, k === "notes" || k === "agent_name" ? (before.detail || {})[k] || "" : before[k]]));
+    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, ["notes", "agent_name", "steps"].includes(k) ? (before.detail || {})[k] || (k === "steps" ? [] : "") : before[k]]));
     await record.record("map_changed", { company, actor: record.actor(req), before: JSON.stringify(was), after: JSON.stringify(changed), detail: { box: before.key, label: before.label, map_id: before.map_id } });
   }
   return (await q(`SELECT id, key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence, updated_at, updated_by FROM platform.vsm_nodes WHERE id=$1`, [id])).rows[0];
@@ -385,6 +391,9 @@ function cleanDetail(d) {
   const o = d && typeof d === "object" ? d : {};
   const out = {};
   for (const k of ["what", "recorded", "missing", "anetix", "agent", "agent_name", "kaizen", "quote", "quote_by", "source", "notes"]) if (o[k]) out[k] = txt(o[k], 1200);
+  // the steps of the tools' stage events that are the box's work (src/vsm-stages.js): kept by shape here, read only
+  // against the company's own events
+  if (Array.isArray(o.steps)) { const st = o.steps.slice(0, 12).map((x) => ({ module: txt(x && x.module, 60), step: txt(x && x.step, 60) })).filter((x) => x.module && x.step); if (st.length) out.steps = st; }
   return out;
 }
 async function importMap(req, company, doc) {
@@ -426,7 +435,8 @@ async function importMap(req, company, doc) {
 
 async function deleteCompany(company) {
   await require("./vsm-walk").deleteCompany(company);   // the mapping walks and their sources (their files are attachments, deleted with the company's)
-  await require("./vsm-agents").deleteCompany(company); // the agent board: agents, watches, messages, flags
+  await require("./vsm-agents").deleteCompany(company); // the agent board: agents, watches, messages, flags, reviews, drafts
+  await require("./vsm-stages").deleteCompany(company); // the stage events
   for (const t of ["vsm_questions", "vsm_kaizen", "vsm_edges", "vsm_nodes", "vsm_maps", "vsm_stages", "module_use"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 

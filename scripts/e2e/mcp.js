@@ -610,6 +610,7 @@ async function walkTools({ admin, secret, sharedMgr, adminId }) {
   const bs = await call("agent_board_status", { company: "demo" });
   const bsA = bs.data && bs.data.companies[0] && bs.data.companies[0].agents.find((x) => x.agent === "MCP agent");
   t("agent_board_status: per agent, its flags open and climbed and its reviews, in counts", !bs.r.isError && bsA && bsA.flags_open === 1 && bsA.flags_climbed === 1 && bsA.reviews_done_7d === 1 && bsA.reviews === true && bsA.last_review.reason === "shift", bs.text.slice(0, 400));
+  t("and the company's drafts for tools and stage events, in counts", bs.data && typeof bs.data.companies[0].drafts_for_tools.waiting === "number" && typeof bs.data.companies[0].stage_events_7d === "number");
   t("and never the words, the model or the cost", !bs.text.includes(MARKER) && !bs.text.includes(MARKER2) && !/claude-|0\.42|cost/i.test(bs.text), bs.text.slice(0, 400));
   await q("INSERT INTO platform.sites (id, company, stage) VALUES (gen_random_uuid(), 'demo', 'subscribed') ON CONFLICT (company) DO UPDATE SET stage='subscribed'");
   const bsOwn = await call("agent_board_status", { company: "demo" });

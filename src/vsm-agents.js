@@ -23,6 +23,7 @@
 //               level    a number under (or over) a limit or another column
 //               due      a date within a number of hours, the work not done
 //               quiet    the tool not changed by the plant's own people for a number of days, where it was before
+//               stage    (A3) work open at a step of the stage events too long, or too much of it (src/vsm-stages.js)
 //               disagree (A2) rows of one tool that another of the agent's tools does not know by their key (a part
 //                        number, a work order), or knows with a number past a comparison (marked short, yet on hand)
 //   flags     a watch that finds rows opens one flag (a thread on the board) and keeps it while the rows are there,
@@ -131,12 +132,12 @@ const UPDATE_MIN = () => num(process.env.SOS_FLAG_UPDATE_MIN, 60);
 const HOLD_MIN = () => num(process.env.SOS_FLAG_RESOLVED_HOLD_MIN, 60);
 const PUSH = () => String(process.env.SOS_AGENT_PUSH || "on").toLowerCase() !== "off";
 const MUTE_DAYS = 7;
-const SHAPES = ["stuck", "waiting", "level", "due", "quiet", "disagree"];
+const SHAPES = ["stuck", "waiting", "level", "due", "quiet", "disagree", "stage"];
 const SEVERITY = ["look", "act"];
 const OPEN_FLAG = ["open", "seen", "on_it"];
 const MATERIAL = ["push", "pull", "fifo", "supermarket", "supply", "ship"];
 const INFO = ["info_system", "info_word"];
-const SHAPE_WORDS = { stuck: "work has sat in one state too long", waiting: "something has waited too long", level: "a number is past its limit", due: "work is coming due and is not done", quiet: "a tool has gone quiet", disagree: "two tools disagree", review: "the agent's own review found something" };
+const SHAPE_WORDS = { stuck: "work has sat in one state too long", waiting: "something has waited too long", level: "a number is past its limit", due: "work is coming due and is not done", quiet: "a tool has gone quiet", disagree: "two tools disagree", stage: "work has sat at a step too long", review: "the agent's own review found something" };
 
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 const notFound = (what) => Object.assign(new Error(`no such ${what}`), { status: 404 });
@@ -154,7 +155,7 @@ async function init() {
 
 // ---- the map: who the agents are and where they sit ----------------------------------------------------------------
 async function mapBoxes(company) {
-  const nodes = (await q(`SELECT m.id AS map_id, m.key AS map_key, m.family, n.key, n.kind, n.label, n.who, n.modules, coalesce(n.detail->>'agent_name','') AS agent_name
+  const nodes = (await q(`SELECT m.id AS map_id, m.key AS map_key, m.family, n.key, n.kind, n.label, n.who, n.modules, coalesce(n.detail->>'agent_name','') AS agent_name, coalesce(n.detail->'steps','[]'::jsonb) AS steps
                             FROM platform.vsm_nodes n JOIN platform.vsm_maps m ON m.id=n.map_id
                            WHERE n.company=$1 AND NOT m.proposed AND m.replaced_at IS NULL ORDER BY m.sort, m.id, n.id`, [company])).rows;
   const edges = (await q(`SELECT e.map_id, e.from_key, e.to_key, e.kind FROM platform.vsm_edges e JOIN platform.vsm_maps m ON m.id=e.map_id
@@ -171,20 +172,22 @@ function agentsFrom(nodes, rows, live) {
   for (const n of nodes) {
     const name = line(n.agent_name, 60); if (!name) continue;
     const key = slugify(name); if (!key) continue;
-    if (!by.has(key)) by.set(key, { key, name, boxes: [], tools: [] });
+    if (!by.has(key)) by.set(key, { key, name, boxes: [], tools: [], steps: [] });
     const a = by.get(key);
     a.boxes.push({ map_key: n.map_key, family: n.family, key: n.key, label: n.label, who: n.who || "" });
     for (const m of n.modules || []) if (liveSet.has(m) && !a.tools.includes(m)) a.tools.push(m);
+    // the steps of the stage events tied to its boxes (A3): data to watch even on a box with no tool of its own
+    for (const st of Array.isArray(n.steps) ? n.steps : []) if (st && st.module && st.step && !a.steps.some((x) => x.module === st.module && x.step === st.step)) a.steps.push({ module: st.module, step: st.step });
   }
   for (const r of rows) {
-    if (!by.has(r.key)) by.set(r.key, { key: r.key, name: r.name, boxes: [], tools: [], off_map: true });
+    if (!by.has(r.key)) by.set(r.key, { key: r.key, name: r.name, boxes: [], tools: [], steps: [], off_map: true });
     Object.assign(by.get(r.key), { id: r.id, status: r.status, brief: r.brief, people: r.people, set_up: true, tools_at_setup: r.tools, reviews: Boolean(r.reviews), last_review_at: r.last_review_at || null });
   }
-  return [...by.values()].map((a) => ({ ...a, status: a.set_up ? a.status : "not_set_up", can_set_up: a.tools.length > 0 }));
+  return [...by.values()].map((a) => ({ ...a, status: a.set_up ? a.status : "not_set_up", can_set_up: a.tools.length > 0 || a.steps.length > 0 }));
 }
 // The immediate parties of a set of boxes: the box right before (material in), right after (material out) and the
 // production control box with an information flow in. Customers and suppliers are not parties. Pure.
-function partiesOf(ownKeys, nodes, edges, agentsByKey, ownAgentKey) {
+function nearOf(ownKeys, nodes, edges) {
   const byMapKey = new Map(nodes.map((n) => [`${n.map_id}/${n.key}`, n]));
   const own = nodes.filter((n) => ownKeys.has(`${n.map_key}/${n.key}`));
   const near = new Map();
@@ -198,6 +201,10 @@ function partiesOf(ownKeys, nodes, edges, agentsByKey, ownAgentKey) {
       near.set(`${other.map_key}/${other.key}`, other);
     }
   }
+  return near;
+}
+function partiesOf(ownKeys, nodes, edges, agentsByKey, ownAgentKey) {
+  const near = nearOf(ownKeys, nodes, edges);
   const out = [], seen = new Set();
   for (const [k, n] of near) {
     const ak = slugify(n.agent_name);
@@ -439,6 +446,7 @@ async function othersFor(company, tools, but) {
 }
 // -> { count, sample: [{ id, label }] } or throws with words
 async function evaluate(company, w) {
+  if (w.shape === "stage") return require("./vsm-stages").evaluateStage(company, w.spec);
   if (w.shape === "quiet") {
     const days = w.spec.days || 3;
     const r = (await q(`SELECT coalesce(sum(changes) FILTER (WHERE day > current_date - $3::int), 0)::int AS recent,
@@ -480,6 +488,7 @@ function limitWords(shape, spec) {
   if (shape === "due") return `within ${span(spec.within_hours)}`;
   if (shape === "level") return `${spec.op} ${spec.limit_column ? String(spec.limit_column).replace(/_/g, " ") : spec.limit}`;
   if (shape === "quiet") return `${spec.days} ${spec.days === 1 ? "day" : "days"}`;
+  if (shape === "stage") return spec.measure === "wip" ? `more than ${spec.limit} open` : `open over ${span(spec.hours)}`;
   return "";
 }
 const sampleWords = (count, sample) => { const l = sample.map((s) => s.label).filter(Boolean).slice(0, 5); return l.length ? ` (${l.join(", ")}${count > l.length ? ", and more" : ""})` : ""; };
@@ -493,6 +502,13 @@ async function partiesFor(company, agent, tool) {
   const withTool = mine.filter((n) => (n.modules || []).includes(tool));
   const own = new Set((withTool.length ? withTool : mine).map((n) => `${n.map_key}/${n.key}`));
   return { to: partiesOf(own, nodes, edges, agents, agent.key), boxes: [...own] };
+}
+// the boxes next to an agent's own on the map (before, after, the control box that sends it work), with their tools:
+// the tools an agent may draft into besides its own (A3, decision 8)
+async function nearBoxes(company, agent) {
+  const { nodes, edges } = await mapBoxes(company);
+  const own = new Set(nodes.filter((n) => slugify(n.agent_name) === agent.key).map((n) => `${n.map_key}/${n.key}`));
+  return { own: nodes.filter((n) => own.has(`${n.map_key}/${n.key}`)), near: [...nearOf(own, nodes, edges).values()] };
 }
 async function openFlag(w, res) {
   const agent = await agentRow(w.agent_id);
@@ -572,6 +588,8 @@ async function tick() {
   } finally { running = false; }
   // the agents' shift reviews (A2), on their own guard so a long review never holds up the watches
   require("./vsm-review").tick().catch((e) => console.error("[agents] reviews:", e.message));
+  // drafts for other tools nobody made in time expire (A3)
+  require("./vsm-drafts").sweep().catch((e) => console.error("[agents] drafts:", e.message));
 }
 async function climb() {
   const raise = (await q(`UPDATE platform.vsm_flags SET severity='act', raised_at=now() WHERE status='open' AND severity='look' AND raised_at IS NULL
@@ -629,13 +647,13 @@ async function setUp(req, company, key) {
   const a = agents.find((x) => x.key === k);
   if (!a) throw notFound("agent on the map");
   if (a.set_up) throw bad(`${a.name} is set up already.`);
-  if (!a.tools.length) throw bad(`${a.name} has no Anetix tool on its boxes yet, so there is nothing for it to watch. Its boxes get a channel, and a flag about them reaches their people.`);
+  if (!a.tools.length && !a.steps.length) throw bad(`${a.name} has no Anetix tool on its boxes yet, so there is nothing for it to watch. Its boxes get a channel, and a flag about them reaches their people.`);
   const people = [...new Set(a.boxes.map((b) => b.who).filter(Boolean))].join("; ").slice(0, 300);
-  const row = (await q(`INSERT INTO platform.vsm_agents (company, key, name, boxes, tools, people, status, created_by) VALUES ($1,$2,$3,$4::jsonb,$5,$6,'on',$7) RETURNING *`,
-    [company, a.key, a.name, JSON.stringify(a.boxes), a.tools, people, whoOf(req)])).rows[0];
+  const row = (await q(`INSERT INTO platform.vsm_agents (company, key, name, boxes, tools, steps, people, status, created_by) VALUES ($1,$2,$3,$4::jsonb,$5,$6::jsonb,$7,'on',$8) RETURNING *`,
+    [company, a.key, a.name, JSON.stringify(a.boxes), a.tools, JSON.stringify(a.steps), people, whoOf(req)])).rows[0];
   const proposed = await proposeWatches(company, row, whoOf(req));
   await post({ company, channel: `a:${row.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: row.id,
-    words: `${row.name} is set up. It watches ${a.tools.length === 1 ? "one tool" : `${a.tools.length} tools`} and proposed ${proposed} ${proposed === 1 ? "watch" : "watches"}; none runs until a manager turns it on.` });
+    words: `${row.name} is set up. It watches ${[a.tools.length ? (a.tools.length === 1 ? "one tool" : `${a.tools.length} tools`) : "", a.steps.length ? `${a.steps.length === 1 ? "one step" : `${a.steps.length} steps`} of the stage events` : ""].filter(Boolean).join(" and ")} and proposed ${proposed} ${proposed === 1 ? "watch" : "watches"}; none runs until a manager turns it on.` });
   await record.record("agent_set_up", { company, actor: record.actor(req), detail: { agent: row.key, tools: row.tools, proposed } });
   // A2: the agent drafts its brief with AI, in the background; no credit or no key leaves it to the manager to write
   require("./vsm-review").draftBrief(company, row.id, { auto: true }).catch((e) => post({ company, channel: `a:${row.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: row.id,
@@ -670,6 +688,14 @@ async function proposeWatches(company, agent, by) {
   for (const a of mine) for (const b of mine) {
     if (a.tool === b.tool) continue;
     for (const p of proposeDisagree(a, b)) await add(p, a.tables, new Map([[b.tool, b.tables]]));
+  }
+  // the steps of the stage events on its boxes: work open there too long (A3)
+  for (const p of require("./vsm-stages").proposeStage(agent.steps)) {
+    if (existing.includes(p.title)) continue;
+    let spec; try { spec = require("./vsm-stages").checkStageSpec(p.spec, agent.steps); } catch (e) { continue; }
+    await q(`INSERT INTO platform.vsm_watches (company, agent_id, shape, tool, spec, title, severity, status, created_by) VALUES ($1,$2,'stage',$3,$4::jsonb,$5,$6,'proposed',$7)`,
+      [company, agent.id, p.tool, JSON.stringify(spec), p.title.slice(0, 160), p.severity, `${by} (drafted from its steps)`]);
+    existing.push(p.title); n++;
   }
   return n;
 }
@@ -713,9 +739,17 @@ async function tablesFor(company, id) {
 }
 async function addWatch(req, company, id, b) {
   const a = await agentOf(company, id);
+  const shape = String(b.shape || "");
+  if (shape === "stage") {
+    const spec = require("./vsm-stages").checkStageSpec(b.spec, a.steps || []);
+    const title = line(b.title, 160); if (!title) throw bad("A watch needs a title: what it looks for, in a line.");
+    const row = (await q(`INSERT INTO platform.vsm_watches (company, agent_id, shape, tool, spec, title, severity, status, created_by) VALUES ($1,$2,'stage',$3,$4::jsonb,$5,$6,'on',$7) RETURNING *`,
+      [company, a.id, spec.module, JSON.stringify(spec), title, SEVERITY.includes(b.severity) ? b.severity : "look", whoOf(req)])).rows[0];
+    await record.record("agent_watch_added", { company, module: spec.module, actor: record.actor(req), after: title, detail: { agent: a.key, watch: row.id, shape, spec } });
+    return row;
+  }
   const tool = String(b.tool || "");
   if (!a.tools.includes(tool)) throw bad(`${a.name} watches ${a.tools.join(", ")}; a watch is on one of those.`);
-  const shape = String(b.shape || "");
   const { tables } = shape === "quiet" ? { tables: new Map() } : await tools_().tablesOf(company, tool);
   const spec = checkSpec(shape, b.spec, tables, shape === "disagree" ? await othersFor(company, a.tools, tool) : null);
   const title = line(b.title, 160); if (!title) throw bad("A watch needs a title: what it looks for, in a line.");
@@ -736,7 +770,10 @@ async function editWatch(req, company, wid, b) {
   // the limit only: hours, within, days, the number; the rest of the spec is the watch itself
   const lim = {};
   for (const k of ["hours", "within_hours", "days", "limit"]) if (b[k] !== undefined) lim[k] = b[k];
-  if (Object.keys(lim).length) {
+  if (Object.keys(lim).length && w.shape === "stage") {
+    const ag = (await q("SELECT steps FROM platform.vsm_agents WHERE id=$1", [w.agent_id])).rows[0] || {};
+    next.spec = require("./vsm-stages").checkStageSpec({ ...w.spec, ...lim }, ag.steps || []);
+  } else if (Object.keys(lim).length) {
     const { tables } = w.shape === "quiet" ? { tables: new Map() } : await tools_().tablesOf(company, w.tool);
     const others = w.shape === "disagree" ? new Map([[w.spec.other.tool, (await tools_().tablesOf(company, w.spec.other.tool)).tables]]) : null;
     next.spec = checkSpec(w.shape, { ...w.spec, ...lim }, tables, others);
@@ -829,19 +866,21 @@ async function stream(company, { channel = "plant", before = null, limit = 50 } 
   const roots = (await q(`SELECT m.*, ${FLAG_COLS}, ${DRAFT_COLS},
                                  (SELECT count(*)::int FROM platform.vsm_messages r WHERE r.thread_id=m.id) AS replies,
                                  (SELECT max(r.created_at) FROM platform.vsm_messages r WHERE r.thread_id=m.id) AS last_reply_at
-                            FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id LEFT JOIN platform.vsm_drafts d ON d.message_id=m.id
+                            FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id LEFT JOIN platform.vsm_drafts d ON d.message_id=m.id LEFT JOIN platform.vsm_record_drafts rd ON rd.message_id=m.id
                            WHERE ${where} ORDER BY greatest(m.created_at, coalesce((SELECT max(r.created_at) FROM platform.vsm_messages r WHERE r.thread_id=m.id), m.created_at)) DESC, m.id DESC LIMIT $2`, vals)).rows;
   return roots.map(msgOut);
 }
 const FLAG_COLS = "f.status AS flag_status, f.severity AS flag_severity, f.count AS flag_count, f.owner, f.feedback_id, f.climbed_at, f.raised_at, f.closed_at, f.status_by";
-const DRAFT_COLS = "d.state AS draft_state, d.feedback_id AS draft_feedback_id, d.decided_by AS draft_decided_by";
+const DRAFT_COLS = "d.state AS draft_state, d.feedback_id AS draft_feedback_id, d.decided_by AS draft_decided_by, rd.id AS rec_id, rd.state AS rec_state, rd.held_until AS rec_held_until, rd.held_by AS rec_held_by, rd.ref AS rec_ref, rd.note AS rec_note, rd.decided_by AS rec_decided_by";
 const msgOut = (m) => ({ id: m.id, channel: m.channel, thread_id: m.thread_id, kind: m.kind, severity: m.severity, from_kind: m.from_kind, from_name: m.from_name, to: m.to_list || [], evidence: m.evidence, words: m.words, hops: m.hops || 0, created_at: m.created_at,
   ...(m.flag_status !== undefined && m.flag_status !== null ? { flag: { status: m.flag_status, severity: m.flag_severity, count: m.flag_count, owner: m.owner, feedback_id: m.feedback_id, climbed_at: m.climbed_at, raised_at: m.raised_at, closed_at: m.closed_at, status_by: m.status_by } } : {}),
   ...(m.draft_state ? { draft: { state: m.draft_state, feedback_id: m.draft_feedback_id, decided_by: m.draft_decided_by } } : {}),
+  // a record an agent drafted for a tool (A3): where it is now; a claim that lapsed reads as waiting again
+  ...(m.rec_id ? { record: { id: m.rec_id, state: m.rec_state === "taking" && m.rec_held_until && new Date(m.rec_held_until) < new Date() ? "waiting" : m.rec_state, held_by: m.rec_held_by, ref: m.rec_ref, note: m.rec_note, decided_by: m.rec_decided_by } } : {}),
   ...(m.replies !== undefined ? { replies: m.replies, last_reply_at: m.last_reply_at } : {}) });
 async function thread(company, id) {
   const root = (await q(`SELECT m.*, ${FLAG_COLS}, ${DRAFT_COLS}
-                           FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id LEFT JOIN platform.vsm_drafts d ON d.message_id=m.id WHERE m.company=$1 AND m.id=$2 AND m.thread_id IS NULL`, [company, id])).rows[0];
+                           FROM platform.vsm_messages m LEFT JOIN platform.vsm_flags f ON f.thread_id=m.id LEFT JOIN platform.vsm_drafts d ON d.message_id=m.id LEFT JOIN platform.vsm_record_drafts rd ON rd.message_id=m.id WHERE m.company=$1 AND m.id=$2 AND m.thread_id IS NULL`, [company, id])).rows[0];
   if (!root) throw notFound("thread");
   const replies = (await q("SELECT * FROM platform.vsm_messages WHERE company=$1 AND thread_id=$2 ORDER BY id", [company, id])).rows;
   return { root: msgOut(root), replies: replies.map(msgOut) };
@@ -868,6 +907,7 @@ async function chips(company) {
 }
 async function deleteCompany(company) {
   await require("./vsm-review").deleteCompany(company);
+  await require("./vsm-drafts").deleteCompany(company);
   for (const t of ["vsm_flags", "vsm_messages", "vsm_watches", "vsm_agents"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 
@@ -878,7 +918,7 @@ const slugOf = (req) => String(req.params.slug || "").toLowerCase();
 const small = express.json({ limit: "32kb" });
 const ID = ":id(\\d{1,9})";
 const A = "/api/c/:slug/vsm/agents", B = "/api/c/:slug/vsm/board";
-router.get(A, requireManager, async (req, res) => res.json(await overview(slugOf(req))));
+router.get(A, requireManager, async (req, res) => { const slug = slugOf(req); res.json({ ...(await overview(slug)), draft_tools: await require("./vsm-drafts").toolsView(slug) }); });
 router.post(A, requireManager, small, async (req, res) => res.json({ ok: true, agent: await setUp(req, slugOf(req), (req.body || {}).key) }));
 router.post(`${A}/${ID}`, requireManager, small, async (req, res) => res.json({ ok: true, agent: await editAgent(req, slugOf(req), Number(req.params.id), req.body || {}) }));
 router.get(`${A}/${ID}/tables`, requireManager, async (req, res) => res.json({ tools: await tablesFor(slugOf(req), Number(req.params.id)) }));
@@ -886,10 +926,11 @@ router.get(`${A}/${ID}/tables`, requireManager, async (req, res) => res.json({ t
 // watches for what it does not watch yet
 router.post(`${A}/${ID}/propose`, requireManager, async (req, res) => {
   const slug = slugOf(req), a = await agentOf(slug, Number(req.params.id));
-  const now = ((await overview(slug)).agents.find((x) => x.key === a.key) || {}).tools || [];
-  const tools = [...new Set([...a.tools, ...now])];
-  if (tools.length !== a.tools.length) await q("UPDATE platform.vsm_agents SET tools=$2, updated_at=now() WHERE id=$1", [a.id, tools]);
-  res.json({ ok: true, proposed: await proposeWatches(slug, { ...a, tools }, whoOf(req)) });
+  const cur = (await overview(slug)).agents.find((x) => x.key === a.key) || {};
+  const tools = [...new Set([...a.tools, ...(cur.tools || [])])];
+  const steps = cur.steps || a.steps || [];   // the steps tied to its boxes now (A3)
+  await q("UPDATE platform.vsm_agents SET tools=$2, steps=$3::jsonb, updated_at=now() WHERE id=$1", [a.id, tools, JSON.stringify(steps)]);
+  res.json({ ok: true, proposed: await proposeWatches(slug, { ...a, tools, steps }, whoOf(req)) });
 });
 router.post(`${A}/${ID}/check`, requireManager, async (req, res) => res.json({ ok: true, results: await checkNow(slugOf(req), Number(req.params.id)) }));
 router.post(`${A}/${ID}/watches`, requireManager, small, async (req, res) => res.json({ ok: true, watch: await addWatch(req, slugOf(req), Number(req.params.id), req.body || {}) }));
@@ -905,5 +946,5 @@ router.post(`${B}/flags/${ID}/:action(seen|on_it|resolved|not_a_problem|reopen|r
 module.exports = {
   init, SCHEMA, TABLES, router, tick, climb, runWatch, evaluate, checkSpec, watchQuery, disagreeQuery, condsSql, proposeFor, proposeDisagree, limitWords, agentsFrom, partiesOf, pushOf, overview, setUp, addWatch, editWatch, checkNow,
   flagAction, channels, stream, thread, say, chips, deleteCompany, SHAPES, SHAPE_WORDS, slugify,
-  post, partiesFor, liveTools, labelCol, othersFor, OPEN_FLAG,   // for the agents' reviews (src/vsm-review.js)
+  post, partiesFor, liveTools, labelCol, othersFor, OPEN_FLAG, nearOf, nearBoxes, mapBoxes,   // for the agents' reviews (src/vsm-review.js) and drafts (A3)
 };

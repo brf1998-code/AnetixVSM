@@ -230,6 +230,24 @@ async function restart(rec) {
 }
 function kill(rec) { try { rec.proc.kill("SIGKILL"); } catch (e) { /* already gone */ } }
 
+// ---- the person in a request, for what the platform lends (the agent board's A3) --------------------------------
+// A tool's code is told the visitor's role in headers, and could say anything back. Where the platform must know who
+// acts (making an agent's draft, a stage event's person), the request carries a ticket the platform made for it; the
+// child hands the ticket back with the call and the platform reads the person from its own record of the request,
+// which ends with the request. A ticket from another company, tool or lane, or one that has ended, is no one.
+const tickets = new Map();   // ticket -> { company, lane, mod, role, person, personId, until }
+function newTicket(req, company, lane, mod) {
+  if (tickets.size > 2000) { const t0 = Date.now(); for (const [k, v] of tickets) if (v.until < t0) tickets.delete(k); }
+  const t = crypto.randomBytes(16).toString("hex");
+  tickets.set(t, { company, lane, mod, role: req.sosRole || null, person: req.sosPerson || null, personId: req.sosPersonId || null, until: Date.now() + REQUEST_TIMEOUT_MS + 5000 });
+  return t;
+}
+function ticketPerson(rec, mod, ticket) {
+  const t = tickets.get(String(ticket || ""));
+  if (!t || t.company !== rec.company || t.lane !== rec.lane || t.mod !== mod || t.until < Date.now()) return {};
+  return { sosRole: t.role, sosPerson: t.person || undefined, sosPersonId: t.personId || undefined };
+}
+
 // ---- what the platform lends, asked for by the child ------------------------------------------------
 async function serve(rec, m) {
   const reply = (extra) => { try { rec.proc.send({ op: "svc-reply", id: m.id, ...extra }); } catch (e) { /* gone */ } };
@@ -250,6 +268,11 @@ async function serve(rec, m) {
     else if (m.name === "conn.web.start") value = await conn(a.name).start(a.question, a.opts);
     else if (m.name === "conn.web.result") value = await conn(a.name).result(a.id);
     else if (m.name === "conn.print") value = await conn(a.name).print({ headers: { cookie: /^[a-f0-9]{24}$/.test(String(a.device || "")) ? `sos_device=${a.device}` : "" } }, a.template, a.data);
+    else if (m.name === "drafts.list") value = await svc.drafts.list(ticketPerson(rec, m.mod, a.ticket));
+    else if (m.name === "drafts.claim") value = await svc.drafts.claim(ticketPerson(rec, m.mod, a.ticket), a.id);
+    else if (m.name === "drafts.finish") value = await svc.drafts.finish(ticketPerson(rec, m.mod, a.ticket), a.id, a.opts || {});
+    else if (m.name === "drafts.decline") value = await svc.drafts.decline(ticketPerson(rec, m.mod, a.ticket), a.id, a.opts || {});
+    else if (m.name === "vsm.event") { const who = a.ticket ? ticketPerson(rec, m.mod, a.ticket) : null; value = await (who ? svc.vsm.event(who, a.ev || {}) : svc.vsm.event(a.ev || {})); }
     else throw new Error("the platform lends no such thing");
     reply({ value: value === undefined ? null : JSON.parse(JSON.stringify(value)) });
   } catch (e) { reply({ error: String((e && e.message) || e).slice(0, 500), status: e && e.status }); }
@@ -357,7 +380,9 @@ function restartHung(rec, why) {
 function proxy(req, res, { company, lane, mod }) {
   const rec = children.get(key(company, lane));
   if (!rec || rec.dead || !rec.loaded.has(mod)) return plain(res, 503, "This tool is starting up again. Try again in a moment.", { "Retry-After": "2" });
-  const headers = { ...forwardHeaders(req.headers), ...identityHeaders(req, deviceOf(req)), host: String(req.headers.host || "localhost"), "x-sos-runner": rec.token };
+  const ticket = newTicket(req, company, lane, mod);
+  res.on("close", () => tickets.delete(ticket));
+  const headers = { ...forwardHeaders(req.headers), ...identityHeaders(req, deviceOf(req)), host: String(req.headers.host || "localhost"), "x-sos-runner": rec.token, "x-sos-ticket": ticket };
   // the platform's own body parser has usually read a JSON body already; hand on what it read
   const parsed = req._body === true && req.body !== undefined ? Buffer.from(JSON.stringify(req.body)) : null;
   if (parsed) { headers["content-type"] = "application/json"; headers["content-length"] = String(parsed.length); }
@@ -437,4 +462,5 @@ async function deleteCompany(company) {
   await dbroles.dropCompany(company);
 }
 
-module.exports = { init, selfTest, enabled, state, MODE, userFor, load, unload, stop, stopAll, proxy, call, probe, status, deleteCompany, timedOut, HANG_LIMIT, identityHeaders, forwardHeaders, answerHeaders, permissionFlags, children, REQUEST_TIMEOUT_MS, LOAD_TIMEOUT_MS };
+// newTicket and ticketPerson: the agent board's A3, the person behind a request's ticket (scripts/test-vsm-drafts.js)
+module.exports = { newTicket, ticketPerson, init, selfTest, enabled, state, MODE, userFor, load, unload, stop, stopAll, proxy, call, probe, status, deleteCompany, timedOut, HANG_LIMIT, identityHeaders, forwardHeaders, answerHeaders, permissionFlags, children, REQUEST_TIMEOUT_MS, LOAD_TIMEOUT_MS };

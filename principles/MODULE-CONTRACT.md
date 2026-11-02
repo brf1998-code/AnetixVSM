@@ -87,6 +87,13 @@ module.exports = function makeRouter(ctx) {
   (a JSON schema). See "Steps that need judgment" below; a first version uses
   it whenever the design says the tool works something out from a file or
   words it has not seen before.
+- `ctx.drafts` lets a tool take records the plant's agents drafted for it (a
+  material request, a work order), when module.json declares `"drafts"`. See
+  "Drafts from agents" below. Only when the request asks for it.
+- `ctx.vsm.event(req, { step, ref, kind, qty })` reports work at a step for
+  the plant's value stream map: `kind` is `start`, `wait`, `finish` or
+  `scrap`; `step` is the work's name ("Nose Folds"), `ref` what moved (the job
+  or MO number). See "Stage events" below. Only when the request asks for it.
 - `ctx.manifest` is the parsed module.json.
 - `ctx.connections.<name>` is each connection module.json declares, with a
   small fixed surface per kind (see Connections below). This is the only way
@@ -247,6 +254,66 @@ before a connection is set up (say "not connected yet" where it matters,
 A barcode or QR scanner in keyboard mode needs nothing to connect: give the
 page a scan field that keeps focus, treats Enter as the end of a scan, and
 looks the code up. Say in the tour what to scan and where labels print.
+
+## Drafts from agents (when the request asks a tool to take them)
+
+The plant's agents (on the agent board) may draft a record for a tool: a
+material request for the stockroom, a work order. The draft waits until a
+person makes it on this tool's own screen, where the tool's own logic runs, or
+declines it. The tool never makes it on its own.
+
+module.json declares each kind it takes, with its fields:
+
+```json
+"drafts": {
+  "material_request": {
+    "label": "a material request for the stockroom",
+    "screen": "/stock",
+    "fields": {
+      "item": { "type": "text", "required": true, "choices": ["paper_white", "clip"], "label": "the item" },
+      "qty": { "type": "integer", "required": true, "min": 1, "max": 50, "label": "how many" }
+    }
+  }
+}
+```
+
+Field types: `text`, `integer`, `number`, `date` (2026-11-30), `boolean`. The
+platform checks a draft's fields against this before it reaches the tool.
+
+routes.js adds three routes, and the screen named by `screen` shows the
+drafts with **Make it** and **Decline** (with a line on why):
+
+```js
+router.get("/api/drafts", async (req, res) => res.json(await ctx.drafts.list(req)));   // { can_act, drafts }
+router.post("/api/drafts/:id/make", async (req, res) => {
+  try {
+    const d = await ctx.drafts.claim(req, req.params.id);   // { id, kind, fields }, held for this person
+    const row = ...make it with this tool's own logic, from d.fields...;
+    await ctx.drafts.finish(req, d.id, { ref: `request ${row.id}` });
+    res.json({ ok: true });
+  } catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+router.post("/api/drafts/:id/decline", async (req, res) => {
+  try { res.json(await ctx.drafts.decline(req, req.params.id, { note: (req.body || {}).note })); }
+  catch (e) { res.status(e.status || 400).json({ error: e.message }); }
+});
+```
+
+Always pass `req`: the platform decides who may act (a manager always; the
+floor only where a manager opened it), never the tool. Show the tray only
+when `can_act` is true and there are drafts. A claim that is never finished
+lapses after two minutes, so an error between claim and finish leaves the
+draft waiting. Add `/api/drafts` to `smoke`.
+
+## Stage events (when the request asks a tool to report work at a step)
+
+`await ctx.vsm.event(req, { step, ref, kind })` where the work happens: `wait`
+when a job joins a step's queue, `start` when work on it begins, `finish` when
+it is done there, `scrap` when it is scrapped there. Use the step's name as
+the floor says it, and the job's own number as `ref`, the same at every step
+so the map can follow it. Wrap it so a refusal never stops the floor:
+`try { await ctx.vsm.event(req, ev); } catch (e) {}`. Only the floor's version
+of a tool reports; a preview's events are not kept.
 
 ## Steps that need judgment
 

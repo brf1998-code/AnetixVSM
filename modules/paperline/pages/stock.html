@@ -22,11 +22,16 @@
   th, td { text-align:left; padding:8px 10px; font-size:14px; border-top:1px solid var(--line); }
   th { color:var(--steel); font-size:11px; text-transform:uppercase; letter-spacing:.05em; border-top:none; }
   .low { color:var(--down); font-weight:800; }
+  .draft { border-left:4px solid var(--navy); flex-wrap:wrap; }
+  .draft .why { color:var(--steel); font-size:13px; }
+  .draft input { flex:1 1 180px; min-height:44px; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:14px; }
+  button.quiet { background:#e5e9ee; color:var(--ink); }
 </style>
 </head>
 <body>
   <h1>Stockroom</h1>
   <div class="sub">Deliver what the stations ask for. Delivering moves it from the stockroom to the line.</div>
+  <div id="draftbox" hidden><h3>Drafted by the plant's agents</h3><div class="sub">Make it as a request, or decline it with a line on why.</div><div id="drafts" style="margin-top:8px"></div></div>
   <h3>Open requests</h3>
   <div id="requests"></div>
   <h3>Inventory</h3>
@@ -56,13 +61,42 @@ async function load() {
   document.getElementById("erpnote").textContent = !d.erp ? "" : d.erp.error ? `ERP: not connected yet (${d.erp.error})` : d.erp.rows.length ? `ERP figures as of ${new Date(d.erp.fetched_at).toLocaleTimeString()}${d.erp.fresh ? "" : " (the ERP is not answering right now; these are the last figures it gave)"}` : "ERP: connected, but it returned no rows for these items.";
   document.getElementById("delivered").innerHTML = d.delivered.map(q => `${q.qty} × ${LABEL[q.item] || q.item} to ${esc(q.station_name || "?")} at ${new Date(q.delivered_at).toLocaleTimeString()}`).join("<br>") || "none yet";
 }
+async function loadDrafts() {
+  const r = await fetch(base + "/api/drafts");
+  if (!r.ok) return;
+  const d = await r.json();
+  const box = document.getElementById("draftbox");
+  box.hidden = !d.can_act || !d.drafts.length;
+  document.getElementById("drafts").innerHTML = (d.drafts || []).map((x) => `
+    <div class="card draft" data-draft="${Number(x.id)}"><div class="grow"><b>${Number(x.fields.qty) || 1} × ${esc(LABEL[x.fields.item] || x.fields.item)}</b>${x.fields.station ? ` <span class="who">for station ${Number(x.fields.station)}</span>` : ""}
+      <div class="who">Drafted by ${esc(x.agent || "an agent")}${x.state === "taking" ? ` · ${esc(x.held_by || "someone")} is making it` : ""}</div>${x.why ? `<div class="why">${esc(x.why)}</div>` : ""}</div>
+      <button onclick="makeDraft(${Number(x.id)})">Make it</button><button class="quiet" onclick="askDecline(${Number(x.id)})">Decline</button></div>`).join("");
+}
+async function makeDraft(id) {
+  const r = await fetch(`${base}/api/drafts/${id}/make`, { method: "POST" });
+  if (!r.ok) alert((await r.json().catch(() => ({}))).error || "failed");
+  load(); loadDrafts();
+}
+function askDecline(id) {
+  const card = document.querySelector(`[data-draft="${id}"]`);
+  if (!card || card.querySelector("input")) return;
+  card.insertAdjacentHTML("beforeend", `<input type="text" maxlength="300" placeholder="Why not?" aria-label="Why not"><button class="quiet" onclick="declineDraft(${id})">Send</button>`);
+  card.querySelector("input").focus();
+}
+async function declineDraft(id) {
+  const card = document.querySelector(`[data-draft="${id}"]`);
+  const note = card ? card.querySelector("input").value : "";
+  const r = await fetch(`${base}/api/drafts/${id}/decline`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+  if (!r.ok) alert((await r.json().catch(() => ({}))).error || "failed");
+  loadDrafts();
+}
 async function deliver(id) {
   const r = await fetch(`${base}/api/requests/${id}/deliver`, { method:"POST" });
   if (!r.ok) alert((await r.json().catch(() => ({}))).error || "failed");
   load();
 }
-load();
-setInterval(load, 6000);
+load(); loadDrafts();
+setInterval(() => { load(); if (!document.querySelector("#drafts input")) loadDrafts(); }, 6000);
 </script>
 </body>
 </html>

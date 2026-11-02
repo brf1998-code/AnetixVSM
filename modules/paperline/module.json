@@ -27,7 +27,8 @@
     "/api/station/1",
     "/api/stock",
     "/station/1",
-    "/stock"
+    "/stock",
+    "/api/drafts"
   ],
   "connections": {
     "stock": {
@@ -76,6 +77,38 @@
             "reorder_at"
           ],
           "about": "every stock item the line uses, with what the ERP says is on hand and its reorder point"
+        }
+      }
+    }
+  },
+  "drafts": {
+    "material_request": {
+      "label": "a material request for the stockroom",
+      "screen": "/stock",
+      "fields": {
+        "item": {
+          "type": "text",
+          "required": true,
+          "choices": [
+            "paper_white",
+            "paper_blue",
+            "paper_yellow",
+            "clip"
+          ],
+          "label": "Item"
+        },
+        "qty": {
+          "type": "integer",
+          "required": true,
+          "min": 1,
+          "max": 50,
+          "label": "Quantity"
+        },
+        "station": {
+          "type": "integer",
+          "min": 1,
+          "max": 5,
+          "label": "Station"
         }
       }
     }

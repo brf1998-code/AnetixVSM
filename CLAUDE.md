@@ -225,6 +225,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The value stream map, M2: the mapping walk (2026-11-01, VSM dev copy)
 - The agent board, A1: agents from the map, watches, flags routed by the map, climbing (2026-11-02, VSM dev copy)
 - The agent board, A2: shift reviews, answers between agents, Disagree watches, briefs, draft request cards (2026-11-02, VSM dev copy)
+- The agent board, A3, and stage events (VSM M4): drafts across tools made on the tool's own screen, live numbers on the map (2026-11-02, VSM dev copy)
 
 ## What this is
 
@@ -377,7 +378,9 @@ tool list, 401 from the API) proves the CLI itself starts.
   stops the ntfy push for a climbed flag, the notice stays). Its reviews (`src/vsm-review.js`, A2): `SOS_AGENT_REVIEWS_DAY` (40
   reviews a company a day), `SOS_AGENT_EARLY_MIN` (60: the least time between an agent's early reviews; 0 in the tests),
   `SOS_AGENT_REVIEW_STEPS` (6 model calls a review), `SOS_AGENT_REVIEW_TOKENS` (2000 a call). The shift times are set on
-  the board, not here.
+  the board, not here. Drafts across tools (`src/vsm-drafts.js`, A3): `SOS_DRAFT_DAYS` (7: a draft nobody makes expires),
+  `SOS_DRAFTS_WAITING` (10 waiting a tool). Stage events (`src/vsm-stages.js`): `SOS_STAGE_EVENTS_DAY` (20000 a company
+  a day), `SOS_STAGE_WINDOW_DAYS` (7: the window of the live numbers).
 - `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
   (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
   second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts
@@ -595,7 +598,10 @@ Passwords live only in Railway; never commit them.
   mountStaged / restore already do), and a request reaches it WITHOUT the
   visitor's cookies. A platform feature a module needs is lent on `ctx` over
   the fork's private channel (add it to both `registry.moduleServices` and the
-  child's `services()`), never by widening what the child can reach directly.
+  child's `services()`), never by widening what the child can reach directly. Where the platform must know who acts
+  (`ctx.drafts`, `ctx.vsm.event`, the VSM copy's A3), the child hands back the request's `x-sos-ticket` and the platform
+  reads the person from its own record of the request in flight (`runner.newTicket` / `ticketPerson`), never from what
+  the child says.
 - Outside systems are connections (`src/connections.js`): declared in
   module.json, set up on the connections page, lent as
   `ctx.connections.<name>`. A new kind gets a surface there, its settings and

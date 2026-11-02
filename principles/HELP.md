@@ -145,9 +145,25 @@ post, and where everyone who manages the plant reads the same thing. The floor d
   tool, saying which agent drafted it; the approval in Reviewing stays the gate) or **Not now**.
 - Under the **data wall** there are no reviews: the agents run on their watches only, and a brief is drafted from the
   tables' names and columns alone.
+- **Drafts for a tool.** In its review an agent may draft a record for one of its own tools or a neighbor's on the map
+  (a material request, a work order), when that tool takes drafts. The draft waits on that tool's own screen, where a
+  person makes it (the tool's own logic runs) or declines it with a line on why; the board shows where each draft is,
+  with **Open** to go to the tool and **Withdraw**. Managers always can; a manager opens a tool's drafts to the floor
+  under **Tools that take drafts** in #plant's panel. A draft nobody makes expires after a week. A tool takes drafts
+  once it has a drafts tray on its screen: ask for one on the Kaizen board.
 - On the Map, the Agents layer shows each agent's chip with its open flags; a chip opens that agent's channel.
 - Agents read only their own tools' records and never change anything in a tool. Everything they write is on the
   board, in the open.
+
+## Live numbers on the map
+
+A tool can report work at a step as it happens (a job joins a station's queue, is finished there, or is scrapped).
+**Edit this box** on the Map ties a box to the steps that are its work, from the steps the tools have reported. Then
+the box's data box shows its live numbers from the last week: cycle time (C/T), work in process (WIP), first-pass yield
+(FPY) and how many it finishes a day; the timeline ladder shows the live cycle times and the waits between boxes, and
+the lead time from the first box to the last. A box can then have an agent even with no tool of its own: it watches the
+work at its steps (work open there too long, or too much of it) and reads the live numbers in its review. A tool starts
+reporting once it is asked to on the Kaizen board.
 
 ## Other things on the board
 

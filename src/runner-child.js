@@ -79,6 +79,7 @@ function ask(mod, name, args) {
 const mounted = new Map();   // mod -> { router, version }
 let peers = new Set();       // the company's tools that are live right now (ctx.peer)
 
+const ticketOf = (req) => (req && req.headers && typeof req.headers["x-sos-ticket"] === "string" ? req.headers["x-sos-ticket"] : null);
 function services(mod, spec) {
   const connections = {};
   for (const [name, kind] of Object.entries(spec.connections || {})) {
@@ -112,6 +113,15 @@ function services(mod, spec) {
     connections,
     peer(name) { return peers.has(name) && SCHEMA.test(spec.peerSchemas[name] || "") ? scopedDb(spec.peerSchemas[name], { readOnly: true }) : null; },
     agentDoc: (name) => ask(mod, "agentDoc", { name }),
+    // the agent board's drafts and the stage events (src/vsm-drafts.js, src/vsm-stages.js): the request's ticket goes
+    // back with the call, so the platform knows the person from its own record of the request, not from this code
+    drafts: {
+      list: (req) => ask(mod, "drafts.list", { ticket: ticketOf(req) }),
+      claim: (req, id) => ask(mod, "drafts.claim", { ticket: ticketOf(req), id }),
+      finish: (req, id, opts) => ask(mod, "drafts.finish", { ticket: ticketOf(req), id, opts: opts || {} }),
+      decline: (req, id, opts) => ask(mod, "drafts.decline", { ticket: ticketOf(req), id, opts: opts || {} }),
+    },
+    vsm: { event: (a, b) => { const req = b === undefined ? null : a, ev = b === undefined ? a : b; return ask(mod, "vsm.event", { ticket: req ? ticketOf(req) : null, ev: ev || {} }); } },
     ai: { models: spec.models || [], modelFor: (role) => ask(mod, "ai.modelFor", { role }), chat: (args) => ask(mod, "ai.chat", args || {}), judge: (args) => ask(mod, "ai.judge", args || {}) },
   };
 }

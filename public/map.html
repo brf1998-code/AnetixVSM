@@ -86,6 +86,7 @@
   .agent .fl { background:var(--amber); color:#fff; border-radius:999px; padding:0 6px; font-size:10.5px; }
   .agent .fl.up { background:var(--red); }
   .node.alarm { box-shadow:0 0 0 3px #fff, 0 0 0 6px var(--red); }
+  .live { color:var(--navy); font-weight:600; }
   .ladder { position:absolute; display:flex; font-size:11.5px; color:var(--steel); }
   .ladder .w { border-top:2px solid var(--ink); text-align:center; padding-top:4px; flex:none; }
   .ladder .p { border:2px solid var(--ink); border-top:none; display:flex; align-items:flex-end; justify-content:center; padding-bottom:4px; flex:none; }
@@ -247,7 +248,11 @@ function route(e, nodes) {
   if (horiz(e.from_side)) return [p, [r[0], p[1]], r];
   return [p, [p[0], r[1]], r];
 }
-const dataH = (n) => (n.kind === "process" ? Math.max(40, 14 + 16 * (2 + (n.data || []).length + (n.who ? 1 : 0))) : 0);
+// a box's live numbers from the tools' stage events (src/vsm-stages.js), when it is tied to a step
+const liveOf = (n) => (S.view && S.view.live && S.view.live.nodes ? S.view.live.nodes[n.key] || null : null);
+const mins = (m) => (m == null ? "?" : m < 1 ? "under 1 min" : m < 90 ? `${m} min` : m < 2880 ? `${Math.round(m / 6) / 10} h` : `${Math.round(m / 144) / 10} d`);
+const liveRows = (lv) => (lv ? [`<b>Live</b> <span class="live">C/T ${esc(mins(lv.cycle_min))} · WIP ${lv.wip}</span>`, `<span class="live">${lv.fpy == null ? "" : `FPY ${lv.fpy}% · `}${lv.per_day} a day</span>`] : []);
+const dataH = (n) => (n.kind === "process" ? Math.max(40, 14 + 16 * (2 + (n.data || []).length + (n.who ? 1 : 0) + liveRows(liveOf(n)).length)) : 0);
 
 function mapHtml() {
   const v = S.view, nodes = byKey(), L = v.map.layout || {};
@@ -300,7 +305,7 @@ function mapHtml() {
     const cls = `node ${n.kind} r-${n.record_kind}${n.key === S.sel ? " sel" : ""}${climbed.has(`${v.map.key}/${n.key}`) ? " alarm" : ""}`;
     html += `<button type="button" class="${cls}" data-node="${esc(n.key)}" style="left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px" aria-label="${esc(n.label)}${n.sub ? ", " + esc(n.sub) : ""}: ${esc(REC[n.record_kind])}"><span><b>${esc(n.label)}</b>${n.sub ? `<span class="s">${esc(n.sub)}</span>` : ""}</span></button>`;
     if (n.kind === "process") {
-      const rows = [`<b>Stage</b> ${esc((n.stage_refs || []).join(", ") || "?")}`].concat(n.who ? [`<b>Who</b> ${esc(n.who)}`] : [], (n.data || []).map((d) => `<b>${esc(d.label)}</b> <span class="${d.value === "?" ? "unk" : ""}">${esc(d.value)}</span>`), [`<b>Record</b> ${esc(n.record_system || REC[n.record_kind])}`]);
+      const rows = [`<b>Stage</b> ${esc((n.stage_refs || []).join(", ") || "?")}`].concat(n.who ? [`<b>Who</b> ${esc(n.who)}`] : [], (n.data || []).map((d) => `<b>${esc(d.label)}</b> <span class="${d.value === "?" ? "unk" : ""}">${esc(d.value)}</span>`), liveRows(liveOf(n)), [`<b>Record</b> ${esc(n.record_system || REC[n.record_kind])}`]);
       html += `<div class="databox" data-node="${esc(n.key)}" style="left:${n.x}px;top:${n.y + n.h + 8}px;width:${n.w}px;min-height:${dataH(n)}px">${rows.join("<br>")}</div>`;
     }
     if (S.layers.agents && n.detail && n.detail.agent_name) {
@@ -314,14 +319,17 @@ function mapHtml() {
   }
   if (S.layers.kz) for (const z of v.kaizen) { const n = nodes[z.node_key]; if (n) html += `<button type="button" class="kz" data-node="${esc(n.key)}" style="left:${n.x + n.w - 18}px;top:${n.y - 18}px" title="${esc(z.title)}" aria-label="Kaizen ${z.n}: ${esc(z.title)}">${z.n}</button>`; }
   if (S.layers.ladder && procs.length) {
-    const inv = (n) => { const e = v.edges.find((x) => x.to_key === n.key && x.inventory); return e ? e.inventory.label || "?" : "?"; };
-    const ct = (n) => { const d = (n.data || []).find((r) => /^(C\/T|Time on rack)$/i.test(r.label)); return d ? d.value : "?"; };
+    const waits = (v.live && v.live.waits) || {};
+    const inv = (n, prev) => { const w = prev && waits[`${prev.key}>${n.key}`]; if (w) return `${mins(w.wait_min)} live`; const e = v.edges.find((x) => x.to_key === n.key && x.inventory); return e ? e.inventory.label || "?" : "?"; };
+    const ct = (n) => { const lv = liveOf(n); if (lv && lv.cycle_min != null) return `${mins(lv.cycle_min)} live`; const d = (n.data || []).find((r) => /^(C\/T|Time on rack)$/i.test(r.label)); return d ? d.value : "?"; };
     let x0 = Math.max(0, procs[0].x - 64), cells = "";
     let at = x0;
+    let prev = null;
     for (const n of procs) {
-      cells += `<div class="w" style="width:${n.x - at}px">${esc(inv(n))}</div><div class="p" style="width:${n.w}px">${esc(ct(n))}</div>`;
-      at = n.x + n.w;
+      cells += `<div class="w" style="width:${n.x - at}px">${esc(inv(n, prev))}</div><div class="p" style="width:${n.w}px">${esc(ct(n))}</div>`;
+      at = n.x + n.w; prev = n;
     }
+    if (v.live && v.live.lead) cells += `<div class="w" style="width:200px;border-top:none;padding-left:14px;text-align:left"><b>Lead time ${esc(mins(v.live.lead.lead_min))}</b><br>live, ${v.live.lead.refs} through in ${v.live.days} days</div>`;
     html += `<div class="ladder" id="ladder" data-min="${ladderY}" style="left:${x0}px;top:${ladderY}px;height:52px">${cells}</div>`;
     H = Math.max(H, ladderY + 70);
   }
@@ -370,12 +378,31 @@ function detailHtml() {
     <div><h2 style="font-size:21px;line-height:1.25">${esc(n.label)}</h2><div class="note" style="font-size:13px">${esc([n.sub, n.who && !n.who.startsWith(n.sub || "\u0000") ? n.who : ""].filter(Boolean).join(" · "))}${n.stage_refs && n.stage_refs.length ? ` · stage ${esc(n.stage_refs.join(", "))}` : ""}</div></div>
     <div class="chips"><span class="chip" style="${recStyle}">${esc(REC[n.record_kind])}</span>${n.record_system ? `<span>${esc(n.record_system)}</span>` : ""}<span class="chip" style="background:${c[1]};color:${c[2]}">${esc(c[0])}</span></div>
     ${tools.length ? `<div class="tools"><div class="lbl">Anetix tools on this box</div>${tools.map((t) => `<div><a href="/c/${esc(SLUG)}/m/${esc(t.name)}/">${esc(t.title)}</a> <span class="note">${t.live ? (t.daily ? "in daily use" : `built; changed on ${t.days_changed} of the last ${S.ov.coverage.rule.days} days`) : t.archived ? "archived" : "not live"}</span></div>`).join("")}</div>` : ""}
+    ${liveDetail(n)}
     <div class="grid2">${field("What happens", d.what)}${field("Recorded today", d.recorded)}${field("Not recorded", d.missing)}${field("In Anetix", d.anetix)}${field("Agent (concept)", d.agent, "var(--navy)")}${field("Kaizen", d.kaizen, "var(--amberDeep)")}${field("Notes", d.notes)}</div>
     ${d.quote ? `<figure class="quote"><blockquote>“${esc(d.quote)}”</blockquote><figcaption>${esc(d.quote_by || "")}</figcaption></figure>` : ""}
     ${kz.length ? `<div><div class="lbl" style="color:var(--amberDeep)">Kaizen bursts here</div>${kz.map((z) => `<div><b>${z.n}.</b> ${esc(z.title)}</div>`).join("")}</div>` : ""}
     ${qs.length ? `<div><div class="lbl">Questions about this box</div>${qs.map((q) => `<div>${esc(q.claim)} <span class="st-${q.status}">${q.status === "open" ? "open" : q.status === "confirmed" ? "confirmed" : "needs a fix"}</span></div>`).join("")}</div>` : ""}
     <div class="note">${d.source ? `Source: ${esc(d.source)}` : ""}${n.updated_by ? ` · last changed by ${esc(n.updated_by)}` : ""}</div>
   </section>`;
+}
+// the steps of the tools' stage events that are this box's work: the ones reported lately, and the box's own
+function stepsField(n) {
+  const mine = Array.isArray((n.detail || {}).steps) ? n.detail.steps : [];
+  const seen = S.steps || [];
+  const all = seen.map((x) => ({ module: x.module, title: x.title || x.module, step: x.step })).concat(mine.filter((m) => !seen.some((x) => x.module === m.module && x.step === m.step)).map((m) => ({ ...m, title: ((S.view.tools.find((t) => t.name === m.module)) || { title: m.module }).title })));
+  if (!all.length) return `<div class="note">Steps of the tools' stage events show here once a tool reports work at them; then a box can be tied to its steps for live numbers.</div>`;
+  return `<fieldset style="border:none;padding:0;display:flex;flex-direction:column;gap:4px"><legend class="lbl" style="margin-bottom:4px">Its steps, as the tools report them (for live numbers)</legend>
+    ${all.map((x, i) => `<label style="flex-direction:row;align-items:center;gap:8px;font-weight:500"><input type="checkbox" name="step" value="${i}"${mine.some((m) => m.module === x.module && m.step === x.step) ? " checked" : ""}> ${esc(x.step)} <span class="note">${esc(x.title)}</span></label>`).join("")}</fieldset>`;
+}
+function liveDetail(n) {
+  const steps = Array.isArray((n.detail || {}).steps) ? n.detail.steps : [];
+  if (!steps.length) return "";
+  const lv = liveOf(n), title = (m) => ((S.view.tools.find((t) => t.name === m)) || { title: m }).title;
+  const days = (S.view.live || {}).days || 7;
+  return `<div class="tools"><div class="lbl">Live from the floor, last ${days} days</div>
+    <div class="note">Steps: ${steps.map((x) => `${esc(x.step)} (${esc(title(x.module))})`).join(", ")}</div>
+    ${lv && lv.events ? `<div>Cycle time <b>${esc(mins(lv.cycle_min))}</b> (${lv.runs} runs)${lv.queue_min != null ? ` · waits in line <b>${esc(mins(lv.queue_min))}</b>` : ""} · work in process <b>${lv.wip}</b>${lv.oldest_open_min != null ? ` (oldest ${esc(mins(lv.oldest_open_min))})` : ""} · first pass <b>${lv.fpy == null ? "?" : `${lv.fpy}%`}</b> · <b>${lv.per_day}</b> a day</div>` : `<div class="note">No work reported at these steps in the last ${days} days.</div>`}</div>`;
 }
 function editHtml(n) {
   const opts = Object.entries(REC).map(([k, l]) => `<option value="${k}"${k === n.record_kind ? " selected" : ""}>${esc(l)}</option>`).join("");
@@ -388,6 +415,7 @@ function editHtml(n) {
     <div class="row2"><label>Where its record lives<select name="record_kind">${opts}</select></label><label>Which system or paper<input type="text" name="record_system" value="${esc(n.record_system)}" maxlength="120"></label></div>
     ${tools ? `<fieldset style="border:none;padding:0;display:flex;flex-direction:column;gap:4px"><legend class="lbl" style="margin-bottom:4px">Anetix tools on this box</legend>${tools}</fieldset>` : ""}
     ${n.kind === "process" ? `<div><div class="lbl" style="margin-bottom:4px">Data box (? for a number nobody knows yet)</div><div id="drows" style="display:flex;flex-direction:column;gap:6px">${rows}</div><button type="button" class="quietbtn" data-act="addrow" style="margin-top:6px">Add a row</button></div>` : ""}
+    ${stepsField(n)}
     <label>The agent that watches it (several boxes may share one; leave empty for none)<input type="text" name="agent_name" value="${esc((n.detail || {}).agent_name || "")}" maxlength="60" placeholder="Inventory agent"></label>
     <label>Notes<textarea name="notes" maxlength="2000">${esc((n.detail || {}).notes || "")}</textarea></label>
     ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
@@ -706,7 +734,7 @@ app.addEventListener("click", async (ev) => {
     if (act && act.startsWith("w-")) return await walkClick(t, act);
     if (act === "arrange") { S.arrange = !S.arrange; return render(); }
     if (act === "fit") { S.fit = !S.fit; return render(); }
-    if (act === "edit") { S.editing = true; S.err = ""; return render(); }
+    if (act === "edit") { S.editing = true; S.err = ""; render(); api("/steps").then((r) => { S.steps = r.steps || []; if (S.editing) render(); }).catch(() => {}); return; }
     if (act === "canceledit") { S.editing = false; S.err = ""; return render(); }
     if (act === "addrow") { document.getElementById("drows").insertAdjacentHTML("beforeend", `<div class="dr"><input type="text" name="dl" aria-label="Label"><input type="text" name="dv" value="?" aria-label="Value"><button type="button" class="x" data-act="droprow" aria-label="Remove this row">×</button></div>`); return; }
     if (act === "droprow") { t.closest(".dr").remove(); return; }
@@ -738,6 +766,11 @@ app.addEventListener("submit", async (ev) => {
   const f = ev.target, n = S.view.nodes.find((x) => x.key === S.sel);
   const body = { label: f.label.value, sub: f.sub.value, who: f.who.value, record_kind: f.record_kind.value, record_system: f.record_system.value, notes: f.notes.value, agent_name: f.agent_name.value,
     modules: [...f.querySelectorAll("input[name=mod]:checked")].map((i) => i.value) };
+  if (f.querySelector("input[name=step]")) {
+    const mine = Array.isArray((n.detail || {}).steps) ? n.detail.steps : [], seen = S.steps || [];
+    const all = seen.map((x) => ({ module: x.module, step: x.step })).concat(mine.filter((m) => !seen.some((x) => x.module === m.module && x.step === m.step)));
+    body.steps = [...f.querySelectorAll("input[name=step]:checked")].map((i) => all[Number(i.value)]).filter(Boolean);
+  }
   if (n.kind === "process") { const ls = [...f.querySelectorAll("input[name=dl]")], vs = [...f.querySelectorAll("input[name=dv]")]; body.data = ls.map((l, i) => ({ label: l.value, value: vs[i].value })).filter((r) => r.label.trim()); }
   try { await post(`/nodes/${n.id}`, body); S.editing = false; S.err = ""; await load(true); } catch (e) { S.err = e.message; render(); }
 });

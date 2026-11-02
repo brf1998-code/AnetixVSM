@@ -200,7 +200,23 @@ async function inputFor(company, a, reason) {
   }
   const last = (await q("SELECT words FROM platform.vsm_messages WHERE company=$1 AND agent_id=$2 AND from_kind='agent' AND kind='note' ORDER BY id DESC LIMIT 1", [company, a.id])).rows[0];
   const settings = await settingsOf(company);
-  return { now: new Date(), tz: settings.tz, reason, agent: { id: a.id, key: a.key, name: a.name, brief: a.brief, people: a.people, boxes: a.boxes || [] }, tools, neighbors, watches, flags, inbox, last_note: last ? last.words : null };
+  // A3: the tools it may draft a record into (its own and its neighbors' that take drafts), with whom a draft goes to
+  const D = require("./vsm-drafts");
+  const declared = await D.declared(company);
+  const { near } = await A().nearBoxes(company, a);
+  const draftable = new Map();
+  for (const mod of a.tools) if (declared.has(mod)) draftable.set(mod, { ...declared.get(mod), to: [] });
+  for (const n of near) for (const mod of n.modules || []) {
+    if (!declared.has(mod)) continue;
+    if (!draftable.has(mod)) draftable.set(mod, { ...declared.get(mod), to: [] });
+    const t = draftable.get(mod);
+    const ak = A().slugify(n.agent_name);
+    const party = neighbors.find((p) => (p.kind === "agent" && p.key === ak) || (p.kind === "box" && p.key === `${n.map_key}/${n.key}`));
+    if (party && !t.to.some((x) => x.key === party.key)) t.to.push(party);
+  }
+  const drafts = await D.recentOf(company, a.id);
+  return { now: new Date(), tz: settings.tz, reason, agent: { id: a.id, key: a.key, name: a.name, brief: a.brief, people: a.people, boxes: a.boxes || [] }, tools, steps: Array.isArray(a.steps) ? a.steps : [], neighbors, watches, flags, inbox,
+    draftable, drafts, last_note: last ? last.words : null };
 }
 const REASON_WORDS = { shift: "This is your shift review.", early: "This is an early review: a neighbor sent you an urgent flag.", manual: "A manager asked for a review now." };
 function inputText(i) {
@@ -213,6 +229,16 @@ function inputText(i) {
   L.push(`Your tools (the only ones you can read): ${i.tools.map((t) => `${t.title} (${t.name})`).join("; ") || "none on the floor"}.`);
   L.push(`Your brief, from the plant's manager: ${i.agent.brief ? q_(i.agent.brief) : "(none written yet)"}`);
   L.push(`Your neighbors on the map: ${i.neighbors.map((n) => n.kind === "agent" ? `${n.name} (an agent, key ${n.key})` : `${n.name} (a box with no agent, key ${n.key}${n.people ? `, people: ${n.people}` : ""})`).join("; ") || "none"}.`);
+  if ((i.steps || []).length) L.push(`Your steps (the tools report work at them as stage events; read them with stage_numbers): ${i.steps.map((x) => `${x.step} (${x.module})`).join("; ")}.`);
+  const dt = i.draftable ? [...i.draftable.entries()] : [];
+  if (dt.length) {
+    L.push("", "Tools you may draft a record into (records: a person makes it on that tool's own screen, or declines it):");
+    for (const [mod, t] of dt) for (const [k, kd] of Object.entries(t.kinds)) L.push(`- tool ${mod} (${t.title}), kind ${k}: ${kd.label}. Fields: ${Object.entries(kd.fields).map(([f, fs]) => `${f} (${fs.type}${fs.required ? ", needed" : ""}${fs.choices ? `, one of ${fs.choices.join("/")}` : ""}${fs.min !== undefined ? `, at least ${fs.min}` : ""}${fs.max !== undefined ? `, at most ${fs.max}` : ""})`).join(", ")}.`);
+  }
+  if ((i.drafts || []).length) {
+    L.push("", "Your recent drafts (do not draft the same thing again while one waits):");
+    for (const d of i.drafts) L.push(`- ${d.kind} for ${d.module}: ${JSON.stringify(d.fields)}, ${d.state}${d.ref ? ` as ${d.ref}` : ""}${d.note ? `, ${d.decided_by || "someone"} said ${q_(d.note)}` : ""}`);
+  }
   L.push("", "Your watches:");
   for (const w of i.watches) L.push(`- (${w.status}) ${w.title}${w.status === "on" ? `: last found ${w.last_count == null ? "not run yet" : w.last_count}${w.last_error ? `, cannot run: ${w.last_error}` : ""}` : ""}`);
   if (!i.watches.length) L.push("- none");
@@ -236,7 +262,7 @@ function inputText(i) {
 
 const SYSTEM = `You are one of the agents on a manufacturing plant's agent board, in Anetix. Each agent watches one area of the plant, placed there by the plant's value stream map, and reads only that area's Anetix tools. The board is public: every manager at the plant reads everything you post, and so do the other agents.
 
-You get one turn now. Read your area's records with describe_tool, summarize_records and read_records, then call post_review once, with:
+You get one turn now. Read your area's records with describe_tool, summarize_records and read_records (and stage_numbers, for the steps where the tools report work as it happens), then call post_review once, with:
 - note: three to five short lines on how your area actually ran: what moved, what is waiting, anything out of the ordinary. If the records show nothing happened, say that in one line.
 - flags: something wrong that your watches did not already flag (your open flags are listed; never flag the same thing twice). Give the tool, the table and the ids of the rows, so the board can check them against the records. "act" only when someone should do something this shift.
 - clears: your own review flags (marked "from your review") that the records show are no longer true, with a line on why.
@@ -245,6 +271,7 @@ You get one turn now. Read your area's records with describe_tool, summarize_rec
 - ask: one question to a neighbor (an agent, or a box's people), when your records raise something only they would know.
 - watch_ideas: a rule you keep wishing you had, for a manager to turn on (shapes below).
 - request: a change to one of your tools that would fix something you keep seeing, as a draft request card a manager may send to the plant's Kaizen board.
+- records: a record for one of the tools listed as taking drafts (a material request, a work order), in that tool's own fields, when your records show it is needed now. It waits on that tool's screen until a person makes it or declines it. Never draft what one of your drafts already asks for while it waits.
 Leave out every part you have nothing for. Most turns need only a note.
 
 Rules:
@@ -261,6 +288,7 @@ Watch shapes for watch_ideas (the spec fields; names must be the tool's own tabl
 - due: { table, date_column, within_hours, where, label_column }
 - disagree: { table, key_column, where, other: { tool, table, key_column, where }, test: "missing" or "compare", compare: { other_column, op, column or value } } (other is another of your tools)
 - quiet: { days }
+- stage: { module, step, measure: "open" (work started or waiting at the step longer than hours) or "wip" (more open than limit), hours or limit } (one of your steps)
 where: [{ column, op: one of = != < <= > >= contains "is empty" "is not empty", value }]`;
 
 const POST_SCHEMA = {
@@ -275,12 +303,15 @@ const POST_SCHEMA = {
     passes: { type: "array", maxItems: 2, items: { type: "object", required: ["thread_id", "to", "words"], properties: { thread_id: { type: "integer" }, to: { type: "string" }, words: { type: "string" } } } },
     ask: { type: "object", required: ["to", "words"], properties: { to: { type: "string" }, words: { type: "string" } } },
     watch_ideas: { type: "array", maxItems: 2, items: { type: "object", required: ["shape", "tool", "title", "spec"], properties: {
-      shape: { type: "string", enum: ["stuck", "waiting", "level", "due", "disagree", "quiet"] }, tool: { type: "string" }, title: { type: "string" }, spec: { type: "object" }, why: { type: "string" } } } },
+      shape: { type: "string", enum: ["stuck", "waiting", "level", "due", "disagree", "quiet", "stage"] }, tool: { type: "string" }, title: { type: "string" }, spec: { type: "object" }, why: { type: "string" } } } },
+    records: { type: "array", maxItems: 2, items: { type: "object", required: ["tool", "kind", "fields"], properties: { tool: { type: "string" }, kind: { type: "string" }, fields: { type: "object" }, why: { type: "string" }, thread_id: { type: "integer" } } } },
     request: { type: "object", required: ["tool", "what"], properties: { tool: { type: "string" }, what: { type: "string" }, why: { type: "string" }, thread_id: { type: "integer" } } },
   },
 };
 const LAST_WORDS = "This is your last step: call post_review now with what you have, and no other tool.";
-const POST_DEF = { name: POST, description: "Posts your turn on the board: your note, and any flags, clears, answers, passes, question, watch ideas or request draft. Call it once, at the end.", input_schema: POST_SCHEMA };
+const POST_DEF = { name: POST, description: "Posts your turn on the board: your note, and any flags, clears, answers, passes, question, watch ideas, request card or records drafted for a tool. Call it once, at the end.", input_schema: POST_SCHEMA };
+// A3: an agent with steps reads the stage events at them (src/vsm-stages.js forAgent): no record of a tool's own
+const STAGE_DEF = { name: "stage_numbers", description: "The live numbers at your steps from the tools' stage events over the last days: cycle time, work in process now, first-pass yield, finished a day; what has been open longest; and the last events. No arguments.", input_schema: { type: "object", properties: {}, additionalProperties: false } };
 
 // ---- one review ------------------------------------------------------------------------------------------------------
 const running = new Set();   // agent ids with a review going in this process
@@ -315,7 +346,8 @@ async function run(company, a, reviewId, reason) {
     const ctx = T().newCtx({ company, role: "manager", scope: { kind: "company" }, walled: false, person: a.name });
     ctx.only = input.tools.map((t) => t.name);
     const titles = new Map(input.tools.map((t) => [t.name, t.title]));
-    const defs = [...READS.map((n) => T().TOOLS.find((t) => t.name === n)).map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })), POST_DEF];
+    const defs = [...(input.tools.length ? READS.map((n) => T().TOOLS.find((t) => t.name === n)).map((t) => ({ name: t.name, description: t.description, input_schema: t.input_schema })) : []), ...(input.steps.length ? [STAGE_DEF] : []), POST_DEF];
+    const offered = new Set(defs.map((d) => d.name));
     const system = [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }];
     const messages = [{ role: "user", content: inputText(input) }];
     const reads = [];
@@ -334,9 +366,15 @@ async function run(company, a, reviewId, reason) {
       if (!uses.length) { messages.push({ role: "user", content: [{ type: "text", text: step === STEPS() - 2 ? LAST_WORDS : "Call post_review now with what you have." }] }); continue; }
       const results = [];
       for (const u of uses) {
-        if (!READS.includes(u.name)) { results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify({ error: `There is no tool called ${String(u.name).slice(0, 40)} here.` }), is_error: true }); continue; }
-        steps.push(require("./assist").stepLabel(u.name, u.input, titles, { kind: "company" }));
-        const res = await T().call(ctx, u.name, u.input);
+        if (!offered.has(u.name) || u.name === POST) { results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify({ error: `There is no tool called ${String(u.name).slice(0, 40)} here.` }), is_error: true }); continue; }
+        let res;
+        if (u.name === "stage_numbers") {
+          steps.push("Reading the live numbers at its steps");
+          res = { ok: true, text: JSON.stringify(await require("./vsm-stages").forAgent(company, input.steps)).slice(0, 30000) };
+        } else {
+          steps.push(require("./assist").stepLabel(u.name, u.input, titles, { kind: "company" }));
+          res = await T().call(ctx, u.name, u.input);
+        }
         reads.push(`${res.ok ? "ok" : "error"}: ${res.text.slice(0, 600)}`);   // for the fake note only
         results.push({ type: "tool_result", tool_use_id: u.id, content: res.text, ...(res.ok ? {} : { is_error: true }) });
       }
@@ -372,7 +410,7 @@ async function callModel({ model, system, defs, messages, company, force }) {
 }
 
 // Fake mode (SOS_FAKE_AGENT=1, the tests): no model. The brief may carry [[read {...}]], [[flag {...}]], [[ask {...}]],
-// [[pass {...}]], [[watch {...}]], [[draft {...}]], [[clear]], and [[answer {...}]] / [[passto {...}]] naming any thread
+// [[pass {...}]], [[watch {...}]], [[draft {...}]], [[record {...}]], [[clear]], and [[answer {...}]] / [[passto {...}]] naming any thread
 // (so the tests can see what is refused); the first step makes the reads, the next posts. With none, the agent posts a
 // note and answers every thread it may.
 let fakeIds = 0;
@@ -393,6 +431,7 @@ function fakeStep(step, a, input, reads) {
   const ak = directives(a.brief, "ask"); if (ak.length) out.ask = { to: ak[0].to, words: ak[0].words || `Fake question from ${a.name}.` };
   const wa = directives(a.brief, "watch"); if (wa.length) out.watch_ideas = wa;
   const dr = directives(a.brief, "draft"); if (dr.length) out.request = dr[0];
+  const rc = directives(a.brief, "record"); if (rc.length) out.records = rc;
   if (/\[\[clear\]\]/.test(a.brief || "")) out.clears = input.flags.filter((f) => !f.watch_id).map((f) => ({ thread_id: f.thread_id, words: "Fake: the records show it is fixed." }));
   return { content: [{ type: "tool_use", id: `toolu_fake_p${++fakeIds}`, name: POST, input: out }], costUsd: 0 };
 }
@@ -479,11 +518,16 @@ async function apply(company, a, reviewId, out, input, steps) {
   }
   // watches for a manager to turn on
   for (const w of (Array.isArray(out.watch_ideas) ? out.watch_ideas : []).slice(0, 2)) {
-    const tool = String(w.tool || ""), shape = String(w.shape || "");
-    if (!input.tools.some((t) => t.name === tool)) { leave("a watch", `${line(tool, 40)} is not one of its tools`); continue; }
+    const shape = String(w.shape || "");
+    const tool = shape === "stage" ? String((w.spec || {}).module || w.tool || "") : String(w.tool || "");
+    if (shape !== "stage" && !input.tools.some((t) => t.name === tool)) { leave("a watch", `${line(tool, 40)} is not one of its tools`); continue; }
     try {
-      const { tables } = shape === "quiet" ? { tables: new Map() } : await T().tablesOf(company, tool);
-      const spec = V.checkSpec(shape, w.spec, tables, shape === "disagree" ? await V.othersFor(company, input.tools.map((t) => t.name), tool) : null);
+      let spec;
+      if (shape === "stage") spec = require("./vsm-stages").checkStageSpec(w.spec, input.steps);
+      else {
+        const { tables } = shape === "quiet" ? { tables: new Map() } : await T().tablesOf(company, tool);
+        spec = V.checkSpec(shape, w.spec, tables, shape === "disagree" ? await V.othersFor(company, input.tools.map((t) => t.name), tool) : null);
+      }
       const title = scrub(w.title, 160).replace(/\s*\n+\s*/g, " ");
       if (!title) throw bad("no title");
       if ((await q("SELECT 1 FROM platform.vsm_watches WHERE agent_id=$1 AND title=$2", [a.id, title])).rows.length) throw bad("it has that watch already");
@@ -491,6 +535,16 @@ async function apply(company, a, reviewId, out, input, steps) {
       await V.post({ ...base, kind: "idea", words: `Proposed a watch: ${title}.${w.why ? ` ${scrub(w.why, 300)}` : ""} A manager turns it on in my panel.` });
       posted.ideas++;
     } catch (e) { leave("a watch", line(e.message, 120)); }
+  }
+  // records drafted for a tool (A3): its own or a neighbor's that takes drafts, in that tool's fields, held for a person
+  for (const x of (Array.isArray(out.records) ? out.records : []).slice(0, 2)) {
+    try {
+      const t = input.draftable.get(String((x && x.tool) || ""));
+      const thread = Number(x.thread_id) || null;
+      const okThread = thread && (input.flags.some((f) => f.thread_id === thread) || input.inbox.some((m) => m.thread_id === thread)) ? thread : null;
+      await require("./vsm-drafts").create(company, a, { ...x, thread_id: okThread }, input.draftable, { reviewId, to: t ? t.to : [] });
+      posted.records = (posted.records || 0) + 1;
+    } catch (e) { leave("a record", line(e.message, 160)); }
   }
   // a request card, held for a manager
   if (out.request && typeof out.request === "object") {

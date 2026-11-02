@@ -235,6 +235,11 @@ card; phase 6 (future state and kaizen) waits for M3. The gate is a real-model r
 instance, compared with the hand map.
 | M3 | Map and Kaizen joined (`feedback.node_id`, bursts to requests, intake pre-filled from a box) | A burst on Chelsea's map becomes a change live on Chelsea's floor |
 | M4 | Stage events and live numbers | One Chelsea step scanned for a week; its box and ladder show real numbers |
+
+Status: M4's platform side built 2026-11-02 with the agent board's A3 (`src/vsm-stages.js`: `ctx.vsm.event`, a box's
+steps in its editor, live numbers on the data boxes and the ladder, stage watches; the Paper Airplane Line reports its
+stations). The gate waits for a Chelsea tool that reports its stages, and for decision 5 (scanners or tablets).
+
 | M5 | Watchers, then tool agents | A tool agent's message is acted on by a person at Chelsea |
 | M6 | Decide: merge back into SymbioticOS or replace it | Before a second customer's production data goes on the copy (the 2026-09-17 tenancy rule) |
 

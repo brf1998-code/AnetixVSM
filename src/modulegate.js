@@ -291,6 +291,8 @@ function checkLayout(files) {
     for (const [name, d] of Object.entries(decl.connections)) {
       if (d.kind === "printer") for (const t of d.templates) if (files[`labels/${t}.zpl`] == null) add("layout-connections", "module.json", `connection "${name}" names a label "${t}" but labels/${t}.zpl is not in the module`, "every label a printer connection names is a file in labels/");
     }
+    // drafts from agents (the agent board, A3): the kinds of record the tool takes, each with its fields
+    for (const e of require("./vsm-drafts").checkDeclaration(manifest.drafts).errors) add("layout-drafts", "module.json", e, "a tool that takes drafts from agents declares each kind and its fields in module.json \"drafts\" (MODULE-CONTRACT.md, Drafts from agents)");
   }
   return found;
 }

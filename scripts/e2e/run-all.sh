@@ -250,6 +250,14 @@ fresh; start "SOS_BROWSER=off SOS_WATCH_MS=0 SOS_FAKE_AGENT=0 ANTHROPIC_API_KEY=
 run vsm-review-api         node scripts/e2e/vsm-review.js api
 fresh; start "SOS_BROWSER=off SOS_WATCH_MS=1000"
 run vsm-review-shift       node scripts/e2e/vsm-review.js shift
+# 2026-11-02 (VSM dev copy): the agent board, A3 (src/vsm-drafts.js, src/vsm-stages.js) with the Paper Airplane Line as
+# the reference tool: stage events, live numbers on the map, stage watches, drafts across tools made on the tool's own
+# screen; once with tools in their own process (the ticket) and once with them in the platform's
+A3="SOS_WATCH_MS=0 SOS_AGENT_EARLY_MIN=0 SOS_PROMPT_LOG=$LOG/vsm-a3-prompts.jsonl"
+fresh; rm -f "$LOG/vsm-a3-prompts.jsonl"; start "SOS_BROWSER=off $A3"
+run vsm-a3                 env $A3 node scripts/e2e/vsm-a3.js
+fresh; rm -f "$LOG/vsm-a3-prompts.jsonl"; start "SOS_BROWSER=off SOS_MODULE_RUNNER=inline $A3"
+run vsm-a3-inline          env $A3 node scripts/e2e/vsm-a3.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

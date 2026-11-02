@@ -41,10 +41,10 @@ const PAGE = "/c/demo/m/paperline/";
   const g1 = await settle(u1.runId);
   const c1 = g1.evidence.checks;
   t("a UI build reaches the gate with its checks on the run", atGate(g1) && c1 && c1.ok === true && g1.evidence.visual_check.ok === true, lastErr(g1));
-  t("the endpoints answered, as this company's manager and not as the platform", c1.smoke.ok && c1.smoke.checked.length === 6 && c1.smoke.checked.every((s) => s.status === 200), c1.smoke);
+  t("the endpoints answered, as this company's manager and not as the platform", c1.smoke.ok && c1.smoke.checked.length === 7 && c1.smoke.checked.every((s) => s.status === 200), c1.smoke);
   t("all three promises were kept, none new in a UI build", c1.acceptance.total === 3 && c1.acceptance.passed === 3 && c1.acceptance.added.length === 0 && c1.acceptance.retired === 0, c1.acceptance);
   t("every screen was opened in a real browser", c1.pages.mode === "browser" && c1.pages.screens === 4 && c1.pages.problems.length === 0, c1.pages);
-  t("the run log says all of it in one line", /6 endpoints answered; 3 checks passed; 4 screens opened in a browser with no new script errors/.test((g1.log || []).map((l) => l.note).join("\n")));
+  t("the run log says all of it in one line", /7 endpoints answered; 3 checks passed; 4 screens opened in a browser with no new script errors/.test((g1.log || []).map((l) => l.note).join("\n")));
   // a check wrote a request into the staged copy; the preview must start from the floor's data again
   const stagedStock = (await mgr.get("/c/demo/staging/m/paperline/api/stock")).json, liveStock = (await mgr.get("/c/demo/m/paperline/api/stock")).json;
   t("rows the checks wrote are gone from the preview, and never touched the floor", !stagedStock.requests.some((r) => r.requested_by === "Check") && !liveStock.requests.some((r) => r.requested_by === "Check"), stagedStock.requests);
