@@ -745,7 +745,7 @@ async function decideDraft(req, company, messageId, action) {
   if (d.thread_id) await q("UPDATE platform.vsm_flags SET feedback_id=coalesce(feedback_id, $2) WHERE thread_id=$1", [d.thread_id, fb.id]);
   await V.post({ company, channel: m.channel, thread_id: messageId, kind: "action", from_kind: "person", from_name: by, agent_id: d.agent_id, words: `${by} sent it to the Kaizen board (#${fb.id}).` });
   await record.record("feedback_filed", { company, module: d.tool, actor: record.actor(req), feedback_id: fb.id, after: message, detail: { via: "agent_board", draft: messageId } });
-  const reading = await require("./arrival").start(fb.id, { force: true }).catch(() => false);
+  const reading = await require("./arrival").start(fb.id, {}).catch(() => false);   // the company's own switch and hourly limit (round 3); otherwise it waits for Review with AI
   return { state: "sent", feedback_id: fb.id, proposing: reading };
 }
 

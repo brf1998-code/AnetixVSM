@@ -239,13 +239,13 @@ const tickets = new Map();   // ticket -> { company, lane, mod, role, person, pe
 function newTicket(req, company, lane, mod) {
   if (tickets.size > 2000) { const t0 = Date.now(); for (const [k, v] of tickets) if (v.until < t0) tickets.delete(k); }
   const t = crypto.randomBytes(16).toString("hex");
-  tickets.set(t, { company, lane, mod, role: req.sosRole || null, person: req.sosPerson || null, personId: req.sosPersonId || null, until: Date.now() + REQUEST_TIMEOUT_MS + 5000 });
+  tickets.set(t, { company, lane, mod, role: req.sosRole || null, person: req.sosPerson || null, personId: req.sosPersonId || null, method: String(req.method || "GET").toUpperCase(), until: Date.now() + REQUEST_TIMEOUT_MS + 5000 });
   return t;
 }
 function ticketPerson(rec, mod, ticket) {
   const t = tickets.get(String(ticket || ""));
   if (!t || t.company !== rec.company || t.lane !== rec.lane || t.mod !== mod || t.until < Date.now()) return {};
-  return { sosRole: t.role, sosPerson: t.person || undefined, sosPersonId: t.personId || undefined };
+  return { sosRole: t.role, sosPerson: t.person || undefined, sosPersonId: t.personId || undefined, sosMethod: t.method };
 }
 
 // ---- what the platform lends, asked for by the child ------------------------------------------------

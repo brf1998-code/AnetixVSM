@@ -275,6 +275,10 @@ run vsm-audit-r1           env $R1 node scripts/e2e/vsm-audit-r1.js
 R2="SOS_WATCH_MS=0"
 fresh; start "SOS_BROWSER=off $R2"
 run vsm-audit-r2           env $R2 node scripts/e2e/vsm-audit-r2.js
+# 2026-11-03 (VSM dev copy): round 3: drafts only on a tap, requests from the board read as the company has it set, a
+# paused agent's flags wait, a reopened flag climbs again, refusals in words, a lapsed claim expires
+fresh; start "SOS_BROWSER=off $R2"
+run vsm-audit-r3           env $R2 node scripts/e2e/vsm-audit-r3.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

@@ -59,7 +59,9 @@ async function event(company, mod, lane, who, ev) {
   }
   if (today.get(day) >= PER_DAY()) throw bad("This company has reported as many stage events as it may today.", 429);
   today.set(day, today.get(day) + 1);
-  await q("INSERT INTO platform.vsm_stage_events (company, module, step, ref, kind, qty, person) VALUES ($1,$2,$3,$4,$5,$6,$7)", [company, mod, step, ref, kind, qty, who && who.name ? clean(who.name, 80) : null]);
+  // a page that only opens is not a person's act: its event is kept, with no one's name on it (round 3)
+  const named = who && who.name && !["GET", "HEAD", "OPTIONS"].includes(String(who.method || "").toUpperCase());
+  await q("INSERT INTO platform.vsm_stage_events (company, module, step, ref, kind, qty, person) VALUES ($1,$2,$3,$4,$5,$6,$7)", [company, mod, step, ref, kind, qty, named ? clean(who.name, 80) : null]);
   return { ok: true, kept: true };
 }
 // the steps the tools have reported lately, for a box's editor

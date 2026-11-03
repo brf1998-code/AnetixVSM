@@ -230,6 +230,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The floor's side of the map: who each screen is for, a box's station screen, the agent's line on it (2026-11-02, VSM dev copy)
 - The VSM audit's round 1 (2026-11-03, VSM dev copy)
 - The VSM audit's round 2 (2026-11-03, VSM dev copy)
+- The VSM audit's round 3 (2026-11-03, VSM dev copy)
 
 ## What this is
 
@@ -611,7 +612,8 @@ Passwords live only in Railway; never commit them.
   child's `services()`), never by widening what the child can reach directly. Where the platform must know who acts
   (`ctx.drafts`, `ctx.vsm.event`, the VSM copy's A3), the child hands back the request's `x-sos-ticket` and the platform
   reads the person from its own record of the request in flight (`runner.newTicket` / `ticketPerson`), never from what
-  the child says.
+  the child says. The ticket keeps the request's method: a draft is claimed, made or declined only in a request that is
+  not a page load (`vsm-drafts.mustAct`), and a stage event reported while a page only opens carries no one's name.
 - Outside systems are connections (`src/connections.js`): declared in
   module.json, set up on the connections page, lent as
   `ctx.connections.<name>`. A new kind gets a surface there, its settings and

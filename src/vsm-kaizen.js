@@ -140,7 +140,7 @@ async function fileFrom(req, company, o) {
                          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'map',$9,$10,$11) RETURNING id`,
       [company, tool, `/c/${company}/map`, screen, words, by.slice(0, 80), mine ? req.sosPersonId : null, require("./arrival").newToken(), o.kaizen ? o.kaizen.id : null, tie.map_key, tie.node_key])).rows[0];
     await record.record("feedback_filed", { company, module: tool, actor: record.actor(req), feedback_id: fb.id, after: words, detail: { via: "map", box: tie.node_key, map: tie.map_key, ...(o.kaizen ? { kaizen: o.kaizen.n } : {}) } });
-    const proposing = await require("./arrival").start(fb.id, { force: true }).catch(() => false);
+    const proposing = await require("./arrival").start(fb.id, {}).catch(() => false);   // the company's own switch and hourly limit (round 3); otherwise it waits for Review with AI
     made = { as, feedback_id: fb.id, tool, proposing };
   } else if (as === "plant") {
     const fb = (await q(`INSERT INTO platform.feedback (company, module, page, screen, message, name, person_id, kind, source, source_ref, map_key, node_key)

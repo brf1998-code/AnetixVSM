@@ -73,6 +73,8 @@ t("the canned draft of fake mode is mostly kept, one burst left out", fc.bursts.
 
 // ---- the floor: a page's screen
 const routes = ["/", "/station", "/station/:seq", "/stock"];
+const lit = ["/station/:seq", "/station/new", "/:any"];
+t("a word beats a parameter where both fit (round 3)", F.routeOf(lit, "/station/new") === "/station/new" && F.routeOf(lit, "/station/4") === "/station/:seq" && F.routeOf(lit, "/stock") === "/:any");
 t("a page is on the most specific screen that fits it", F.routeOf(routes, "/station/3") === "/station/:seq" && F.routeOf(routes, "/station") === "/station" && F.routeOf(routes, "/station/") === "/station" && F.routeOf(routes, "/") === "/" && F.routeOf(routes, "/stock?x=1") === "/stock");
 t("a page on no screen is on none", F.routeOf(routes, "/nope") === null && F.routeOf(routes, "/station/3/4") === null);
 t("only a live screen of the tool, never a preview or the test floor", F.liveRel("acme", "line", "/c/acme/m/line/station/2") === "/station/2" && F.liveRel("acme", "line", "/c/acme/m/line") === "/" && F.liveRel("acme", "line", "/c/acme/staging/m/line/station/2") === null
@@ -97,6 +99,9 @@ t("boxes of different kinds never match", W.matchBoxes([{ key: "x", kind: "contr
 const AG = require("../src/vsm-agents"), V = require("../src/vsm");
 t("a database's own error is said plainly", AG.whyNotRun({ code: "42883", message: "operator does not exist: text >= integer" }) === "its limit and the column it compares do not match (words against a number, or a date against a number)"
   && /not in the tool any more/.test(AG.whyNotRun({ code: "42703" })) && AG.whyNotRun({ message: "boom" }) === "the tool's records could not be read" && AG.whyNotRun({ status: 400, message: "Name one of the tool's tables." }) === "Name one of the tool's tables.");
+const refused = (doc, re) => { try { V.checkImport(doc); return false; } catch (e) { return e.status === 400 && re.test(e.message); } };
+t("a map file with an empty entry, or a list that is not a list, is refused in words (round 3)", refused({ format: "anetix-map-1", maps: [{ key: "m", nodes: [null] }] }, /entry 1 is empty/)
+  && refused({ format: "anetix-map-1", maps: "x" }, /maps is a list/) && refused({ format: "anetix-map-1", maps: [{ key: "m", nodes: [{ key: "a", kind: "process" }], edges: [7] }] }, /flows: entry 1/) && refused(null, /not an Anetix map/));
 const imp = V.checkImport({ format: "anetix-map-1", maps: [{ key: "m", nodes: [{ key: "a", kind: "process", label: "A" }], kaizen: [{ node: "a", n: 1, title: "x", status: "filed", feedback_id: 12 }, { node: "a", n: 2, title: "y", status: "weird", feedback_id: 13 }] }] });
 t("an import keeps a filed burst filed with its request's number; anything else is open with none", imp.maps[0].kaizen[0].status === "filed" && imp.maps[0].kaizen[0].feedback_id === 12 && imp.maps[0].kaizen[1].status === "open" && imp.maps[0].kaizen[1].feedback_id === null);
 

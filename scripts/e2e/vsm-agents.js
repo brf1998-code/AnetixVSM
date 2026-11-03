@@ -111,7 +111,8 @@ async function main() {
   t("a flag that is closed takes no Seen; Reopen opens it", (await mgr.post(`${A}/board/flags/${flag2}/seen`)).status === 400 && (await mgr.post(`${A}/board/flags/${flag2}/reopen`)).json.result.status === "open");
 
   // ---- climbing: nobody marks it seen
-  await q("UPDATE platform.vsm_flags SET opened_at = now() - interval '13 hours' WHERE thread_id=$1", [flag2]);
+  // it was reopened just above, and a reopened flag's clock starts at the reopen (the VSM audit, round 3)
+  await q("UPDATE platform.vsm_flags SET opened_at = now() - interval '13 hours', reopened_at = now() - interval '13 hours' WHERE thread_id=$1", [flag2]);
   await mgr.post(`${A}/agents/${line.id}/check`);
   let f2 = (await q("SELECT * FROM platform.vsm_flags WHERE thread_id=$1", [flag2])).rows[0];
   t("a look flag nobody marked seen for a shift is raised to act", f2.severity === "act" && f2.raised_at && !f2.climbed_at);

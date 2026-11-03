@@ -155,9 +155,10 @@ async function declared(company) {
 
 // ---- who acts ---------------------------------------------------------------------------------------------------
 // who: the platform's word for the person in the request (req.sosRole, req.sosPerson), never the tool's
+// method: the request's own (a ticket's, src/runner.js, or the platform's request for a tool kept in its process)
 function whoOf(req) {
   const r = req || {};
-  return { role: r.sosRole || null, name: r.sosPerson ? line(r.sosPerson, 80) : r.sosRole === "admin" ? "Anetix" : r.sosRole === "manager" ? "a manager" : r.sosRole === "floor" ? "someone on the floor" : null, personId: r.sosPersonId || null };
+  return { method: String(r.sosMethod || r.method || "").toUpperCase() || null, role: r.sosRole || null, name: r.sosPerson ? line(r.sosPerson, 80) : r.sosRole === "admin" ? "Anetix" : r.sosRole === "manager" ? "a manager" : r.sosRole === "floor" ? "someone on the floor" : null, personId: r.sosPersonId || null };
 }
 async function floorOn(company, mod) {
   const r = (await q("SELECT floor_drafts FROM platform.vsm_tool_settings WHERE company=$1 AND module=$2", [company, mod])).rows[0];
@@ -180,8 +181,12 @@ async function listFor(company, mod, who) {
   return { can_act: true, drafts: rows.map((d) => shown(d, decl ? decl.kinds : {})) };
 }
 const idOf = (id) => { const n = Number(id); if (!Number.isInteger(n) || n < 1 || n > 999999999) throw bad("no such draft", 404); return n; };
+// A person acts on a draft with a tap: a page that only opens (a GET) never claims, makes or declines one, whatever its
+// code does (the VSM audit, round 3, 2026-11-03: a ticket proved a request was in flight, not that a person chose to act).
+const READS = ["GET", "HEAD", "OPTIONS"];
 async function mustAct(company, mod, who, lane) {
   if (lane && lane !== "live") throw bad("Drafts are made on the floor's version of the tool, not on a preview or the test floor.", 409);
+  if (who && who.method && READS.includes(who.method)) throw bad("A draft is made or declined with a tap on the tool's screen, never by opening a page.", 405);
   if (!(await canAct(company, mod, who))) throw bad(who && who.role === "floor" ? "Drafts from agents are made by a manager on this tool, unless a manager opens them to the floor." : "Sign in to act on a draft.", 403);
 }
 async function claim(company, mod, who, id, lane) {
@@ -287,7 +292,9 @@ async function toolsView(company) {
     waiting: (counts.find((c) => c.module === t.module) || {}).waiting || 0, floor: Boolean((floor.find((f) => f.module === t.module) || {}).floor_drafts) }));
 }
 async function sweep() {
-  const gone = (await q(`UPDATE platform.vsm_record_drafts SET state='expired', decided_at=now(), held_until=NULL WHERE state='waiting' AND created_at < now() - ($1::numeric * interval '1 day') RETURNING *`, [DRAFT_DAYS()])).rows;
+  // a claim that lapsed (someone opened it and never made it) counts as waiting: it expires too (round 3)
+  const gone = (await q(`UPDATE platform.vsm_record_drafts SET state='expired', decided_at=now(), held_until=NULL
+                          WHERE (state='waiting' OR (state='taking' AND (held_until IS NULL OR held_until < now()))) AND created_at < now() - ($1::numeric * interval '1 day') RETURNING *`, [DRAFT_DAYS()])).rows;
   for (const d of gone) await say(d, `Nobody made it in ${DRAFT_DAYS()} days, so it expired.`, null).catch(() => {});
   return gone.length;
 }

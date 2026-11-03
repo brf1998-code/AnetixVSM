@@ -287,7 +287,7 @@ function floorLineHtml(a) {
   const st = a.stations || [], sh = a.floor_shown_7d;
   return `<div class="sec"><div class="row" style="justify-content:space-between"><span class="lbl">Its line on the floor</span><span class="chip ${a.floor_line ? "ok" : ""}">${a.floor_line ? "On" : "Off"}</span></div>
     <div class="note">An experiment: its most urgent open flag shows as one line on the station screens of its boxes, for the floor to read. Nothing can be changed there; you still mark a flag Seen or On it here.</div>
-    <div class="note">${st.length ? `Station screens: ${st.map((x) => `${esc(x.screen)} (${esc(x.tool)}) for ${esc(x.box)}`).join("; ")}.` : "None of its boxes has a station screen yet. Pick one in the box's editor on the Map."}${sh ? ` In the last 7 days ${sh.flags} of its flags showed there, looked at ${sh.views} time${sh.views === 1 ? "" : "s"} (counted once each ten minutes).` : ""}</div>
+    <div class="note">${st.length ? `Station screens: ${st.map((x) => `${esc(x.screen)} (${esc(x.tool)}) for ${esc(x.box)}`).join("; ")}.` : "None of its boxes has a station screen yet. Pick one in the box's editor on the Map."}${sh ? ` In the last 7 days ${sh.flags} of its flags showed there, on screen in ${sh.views} ten-minute stretch${sh.views === 1 ? "" : "es"}.` : ""}</div>
     <div class="acts"><button type="button" class="btn ${a.floor_line ? "quiet" : "go"}" data-act="floorline" data-id="${a.id}" data-to="${a.floor_line ? "off" : "on"}">${a.floor_line ? "Take it off the floor" : "Show it on the floor"}</button></div></div>`;
 }
 function reviewsHtml(a) {

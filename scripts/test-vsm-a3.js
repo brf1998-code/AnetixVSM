@@ -40,6 +40,9 @@ const throws = (fn, re) => { try { fn(); return false; } catch (e) { return e.st
   const rec = { company: "acme", lane: "live" };
   t("a ticket gives back the person the platform signed in", R.ticketPerson(rec, "paperline", tk).sosRole === "floor" && R.ticketPerson(rec, "paperline", tk).sosPerson === "Kai");
   t("for its own company, tool and lane only", !R.ticketPerson({ company: "other", lane: "live" }, "paperline", tk).sosRole && !R.ticketPerson(rec, "kpis", tk).sosRole && !R.ticketPerson({ company: "acme", lane: "staged" }, "paperline", tk).sosRole);
+  const tg = R.newTicket({ sosRole: "manager", method: "GET" }, "acme", "live", "paperline"), tp = R.newTicket({ sosRole: "manager", method: "POST" }, "acme", "live", "paperline");
+  t("a ticket keeps the request's method, so a page that only opens is told from a tap (round 3)", R.ticketPerson(rec, "paperline", tg).sosMethod === "GET" && R.ticketPerson(rec, "paperline", tp).sosMethod === "POST"
+    && D.whoOf(R.ticketPerson(rec, "paperline", tg)).method === "GET" && D.whoOf({ sosRole: "manager", method: "post" }).method === "POST");
   t("a made-up ticket is no one", !R.ticketPerson(rec, "paperline", "f".repeat(32)).sosRole && !R.ticketPerson(rec, "paperline", null).sosRole);
 
   // ---- stage events: what is kept

@@ -50,7 +50,8 @@ const txt = (v, n) => String(v == null ? "" : v).replace(/\r\n?/g, "\n").trim().
 const whoOf = (req) => (req && ((req.sosAccount && (req.sosAccount.name || req.sosAccount.login)) || req.sosPerson)) || (req && req.sosRole === "admin" ? "Anetix" : "a manager");
 
 // ---- pure ----------------------------------------------------------------------------------------------------------
-// The route of a screen a page address is on: the most specific route that fits (so /station/:seq beats /station).
+// The route of a screen a page address is on: the most specific route that fits. More parts first, then the one with a
+// word where the other has a :parameter (so /station/new beats /station/:seq for /station/new; round 3), then length.
 function routeOf(routes, rel) {
   const r = String(rel || "/").split("?")[0].replace(/\/+$/, "") || "/";
   const fits = (route) => {
@@ -58,7 +59,14 @@ function routeOf(routes, rel) {
     const re = new RegExp("^" + String(route).replace(/\/+$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/:[^/]+/g, "[^/]+") + "$");
     return re.test(r);
   };
-  return [...routes].sort((a, b) => String(b).length - String(a).length).find(fits) || null;
+  const parts = (x) => String(x).replace(/\/+$/, "").split("/").filter(Boolean);
+  const order = (a, b) => {
+    const pa = parts(a), pb = parts(b);
+    if (pa.length !== pb.length) return pb.length - pa.length;
+    for (let i = 0; i < pa.length; i++) { const la = !pa[i].startsWith(":"), lb = !pb[i].startsWith(":"); if (la !== lb) return la ? -1 : 1; }
+    return String(b).length - String(a).length;
+  };
+  return [...routes].sort(order).find(fits) || null;
 }
 // A live tool screen's address, split: /c/<slug>/m/<tool>/<rest>. A preview or the test floor is not one.
 function liveRel(company, mod, page) {

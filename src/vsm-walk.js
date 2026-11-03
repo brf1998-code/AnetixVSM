@@ -536,7 +536,17 @@ function reviewOf(w) {
 }
 
 // ---- answering: one screen at a time from the board, or several at once from a connected app ----------------------------
+// At most a few walk transactions hold a connection at once: each one also runs queries on the pool (the record, the
+// answers' look-ups), so ten at once could take every connection and wait on each other for good (the VSM audit, round 3).
+const WALK_TX_MAX = 4;
+let walkTx = 0;
+const walkWaiting = [];
 async function inWalk(company, id, fn) {
+  if (walkTx >= WALK_TX_MAX) await new Promise((r) => walkWaiting.push(r));
+  walkTx++;
+  try { return await inWalkTx(company, id, fn); } finally { walkTx--; const next = walkWaiting.shift(); if (next) next(); }
+}
+async function inWalkTx(company, id, fn) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -1027,7 +1037,9 @@ const W = "/api/c/:slug/vsm/walks";
 const ID = ":id(\\d{1,9})";
 router.get(W, requireManager, async (req, res) => res.json({ walks: await list(slugOf(req)) }));
 router.post(W, requireManager, small, async (req, res) => {
-  const r = await start(slugOf(req), { ...ctxOf(req), fromWalk: (req.body || {}).from_walk ? Number(req.body.from_walk) : null });
+  const fw = (req.body || {}).from_walk;
+  if (fw != null && fw !== "" && !/^\d{1,9}$/.test(String(fw))) throw bad("from_walk is a walk's number.");
+  const r = await start(slugOf(req), { ...ctxOf(req), fromWalk: fw ? Number(fw) : null });
   res.json({ ok: true, walk: await shown(req, r.id) });
 });
 router.get(`${W}/${ID}`, requireManager, async (req, res) => res.json({ walk: await shown(req, Number(req.params.id)) }));

@@ -141,7 +141,8 @@ post, and where everyone who manages the plant reads the same thing. The floor d
 - **Agents come from the map.** A box on the Map names the agent that watches it ("Inventory agent"; Edit this box
   sets it, and several boxes can share one). An agent can be set up where an Anetix tool sits on its boxes, since it
   watches that tool's records, or where its boxes are tied to steps a tool reports (Live numbers on the map, below).
-  **Pause** stops its watches and reviews until it is turned on again. **Set up** (under On the map, not set up; on a phone, under the channel picker) drafts its watches from the tool's tables, and its **brief** (what the area
+  **Pause** stops its watches and reviews until it is turned on again; its open flags wait too (they do not become Act
+  or climb), and their clock starts again when it is on. **Set up** (under On the map, not set up; on a phone, under the channel picker) drafts its watches from the tool's tables, and its **brief** (what the area
   does and what normal looks like) with AI; none of the watches runs until a manager turns it on, and the brief is the
   manager's to change in the agent's panel (**Draft it again** redrafts it).
 - **Watches** are rules, checked every few minutes: work stuck in one state too long, something open too long, a
@@ -181,7 +182,7 @@ post, and where everyone who manages the plant reads the same thing. The floor d
   tables' names and columns alone.
 - **Drafts for a tool.** In its review an agent may draft a record for one of its own tools or a neighbor's on the map
   (a material request, a work order), when that tool takes drafts. The draft waits on that tool's own screen, where a
-  person makes it (the tool's own logic runs) or declines it with a line on why; the board shows where each draft is,
+  person makes it with a tap (the tool's own logic runs; opening the screen alone never does) or declines it with a line on why; the board shows where each draft is,
   with **Open** to go to the tool and **Withdraw** (for good: it asks first). Managers always can; a manager opens a tool's drafts to the floor
   under **Tools that take drafts** in #plant's panel. A draft nobody makes expires after a week. A tool takes drafts
   once it has a drafts tray on its screen: ask for one on the Kaizen board.

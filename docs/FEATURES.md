@@ -4523,3 +4523,27 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     all), the stage cases in `scripts/test-vsm-a3.js` (36 in all).
   - *Not done.* The audit's low items beyond these; a walk put away more than two weeks ago is still kept, and opened by its
     address (`/c/<slug>/map?walk=<number>`) it can be brought back, but the Map no longer lists it.
+- **The VSM audit's round 3 (2026-11-03, VSM dev copy)**
+  - *Why.* The audit's low items (project doc `claude/vsm-audit-2026-11-02.md`), done before anything touches Chelsea's
+    floor. Brendan: "go ahead for a short round 3".
+  - *A draft is made with a tap.* The ticket a tool's request carries keeps the request's method (`runner.newTicket`,
+    `ticketPerson` gives `sosMethod`); `vsm-drafts.mustAct` refuses a claim, a make or a decline in a GET, HEAD or
+    OPTIONS (405), so tool code cannot act on a draft when a page only opens. A stage event reported in such a request
+    is kept with no one's name. A tool kept in the platform's process reads the platform request's own method.
+  - *Requests from the map and the board read on arrival as the company has it set.* Make it a request, Send to Kaizen
+    and a burst or a box's change to a tool start the proposer through `arrival.start` without `force`, so a company's
+    propose-on-arrival switch and its hourly limit hold; otherwise the request waits for Review with AI. (Ask Anetix's
+    Send to Reviewing, from production, still forces; not VSM code.)
+  - *Flags.* A paused agent's flags neither become Act nor climb (and so push nothing); when it is turned on again its
+    flags' clock starts then (`vsm_agents.on_since`). A flag reopened by a person, or by its watch coming back within the
+    hour, starts its clock again and can climb again (`vsm_flags.reopened_at`, `climbed_at` cleared).
+  - *Smaller.* A word beats a :parameter in the station screen's route (`/station/new` over `/station/:seq`). The board
+    and `agent_board_status` say a floor screen's views as ten-minute stretches. At most four walk transactions hold a
+    database connection at once (`inWalk`), so the queries inside them always find one. `from_walk` that is not a number
+    and a map file with an empty entry, or a list that is not one, are refused in words (400), not a 500. A draft someone
+    claimed and never made expires with the ones nobody made.
+  - *Left as they are, on purpose.* `/who/line` answers for any live screen a page names (by design: the line is what the
+    board shows a manager). In inline runner mode a tool could pass a made-up request (inline is already unfit for a
+    second company, and /admin says when it is in use).
+  - *Tests.* `scripts/e2e/vsm-audit-r3.js` (15); the ticket's method in `scripts/test-vsm-a3.js`, the route order and the
+    import refusals in `scripts/test-vsm-m3.js`.

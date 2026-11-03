@@ -244,6 +244,12 @@ the board keeps a reply typed and left through its look every 15 seconds, and sa
 (inside a flag's form, or held in sight above the messages); on a phone the agents not set up are under the channel
 picker. Stage watches and an agent's open work read a part-scrapped run as still open.
 
+**Round 3 of the audit (2026-11-03):** a paused agent's flags neither raise nor climb, and their clock starts again when
+it is on (`vsm_agents.on_since`); a reopened flag, by a person or by its watch coming back, starts its clock again and
+can climb again (`vsm_flags.reopened_at`); a request sent from the board is read on arrival only as the company has it
+set (its switch and hourly limit), like any other; a draft is made or declined on a tool's screen only with a tap, never
+by a page load.
+
 **The floor's line, as built (2026-11-02):** `src/vsm-floor.js`. A box's editor on the Map picks its station screen (a
 live screen of one of its own tools); a manager tags who each screen is for on the QR codes tab, and a screen picked as a
 station screen becomes the floor's. On an agent's panel, Its line on the floor (off by default) shows the agent's most

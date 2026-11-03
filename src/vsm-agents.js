@@ -121,7 +121,9 @@ CREATE TABLE IF NOT EXISTS platform.vsm_flags (
 CREATE INDEX IF NOT EXISTS vsm_messages_company ON platform.vsm_messages (company, id DESC);
 CREATE INDEX IF NOT EXISTS vsm_messages_thread ON platform.vsm_messages (thread_id);
 CREATE INDEX IF NOT EXISTS vsm_flags_company ON platform.vsm_flags (company, status);
-CREATE INDEX IF NOT EXISTS vsm_watches_agent ON platform.vsm_watches (agent_id);`;
+CREATE INDEX IF NOT EXISTS vsm_watches_agent ON platform.vsm_watches (agent_id);
+ALTER TABLE platform.vsm_agents ADD COLUMN IF NOT EXISTS on_since TIMESTAMPTZ;
+ALTER TABLE platform.vsm_flags ADD COLUMN IF NOT EXISTS reopened_at TIMESTAMPTZ;`;
 
 const TABLES = ["vsm_agents", "vsm_watches", "vsm_messages", "vsm_flags"];
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
@@ -573,7 +575,7 @@ async function runWatchOnce(w) {
       if (last && last.status === "cleared" && ago < REOPEN_MIN() * 60e3) {
         const agent = await agentRow(w.agent_id);
         const evidence = { tool: w.tool, table: w.spec.table || null, shape: w.shape, count: res.count, sample: res.sample.slice(0, 10) };
-        await q("UPDATE platform.vsm_flags SET status='open', closed_at=NULL, count=$2, evidence=$3::jsonb, last_true_at=now(), updated_msg_at=now(), status_by=NULL, status_at=now() WHERE thread_id=$1", [last.thread_id, res.count, JSON.stringify(evidence)]);
+        await q("UPDATE platform.vsm_flags SET status='open', closed_at=NULL, count=$2, evidence=$3::jsonb, last_true_at=now(), updated_msg_at=now(), status_by=NULL, status_at=now(), reopened_at=now(), climbed_at=NULL WHERE thread_id=$1", [last.thread_id, res.count, JSON.stringify(evidence)]);
         await post({ company: w.company, channel: last.channel, thread_id: last.thread_id, kind: "update", from_kind: "watch", from_name: agent.name, agent_id: agent.id, watch_id: w.id, evidence,
           words: `Back again: ${res.count} found${sampleWords(res.count, res.sample)}.` });
         return { reopened: last.thread_id, count: res.count };
@@ -617,17 +619,22 @@ async function tick() {
   // drafts for other tools nobody made in time expire (A3)
   require("./vsm-drafts").sweep().catch((e) => console.error("[agents] drafts:", e.message));
 }
+// A flag's clock: from when it opened, or was opened again, or its agent was turned on again, whichever is last. A paused
+// agent's flags neither raise nor climb (the VSM audit, round 3, 2026-11-03: they climbed and pushed while it was paused,
+// and a reopened flag kept its old climb and never climbed again).
+const CLOCK = `greatest(f.opened_at, coalesce(f.reopened_at, f.opened_at), coalesce((SELECT a.on_since FROM platform.vsm_agents a WHERE a.id=f.agent_id), f.opened_at))`;
+const AGENT_ON = "NOT EXISTS (SELECT 1 FROM platform.vsm_agents a WHERE a.id=f.agent_id AND a.status='paused')";
 async function climb() {
-  const raise = (await q(`UPDATE platform.vsm_flags SET severity='act', raised_at=now() WHERE status='open' AND severity='look' AND raised_at IS NULL
-                            AND opened_at < now() - ($1::numeric * interval '1 minute') RETURNING *`, [RAISE_MIN()])).rows;
+  const raise = (await q(`UPDATE platform.vsm_flags f SET severity='act', raised_at=now() WHERE f.status='open' AND f.severity='look' AND f.raised_at IS NULL AND ${AGENT_ON}
+                            AND ${CLOCK} < now() - ($1::numeric * interval '1 minute') RETURNING f.*`, [RAISE_MIN()])).rows;
   for (const f of raise) {
     await post({ company: f.company, channel: f.channel, thread_id: f.thread_id, kind: "raised", severity: "act", from_kind: "platform", from_name: "Anetix", agent_id: f.agent_id, watch_id: f.watch_id,
       words: "Nobody has marked this seen, so it is now marked to act on." });
     const root = (await q("SELECT to_list FROM platform.vsm_messages WHERE id=$1", [f.thread_id])).rows[0];
     for (const p of (root && root.to_list) || []) if (p.kind === "agent") require("./vsm-review").wake(f.company, p.key);
   }
-  const up = (await q(`UPDATE platform.vsm_flags SET climbed_at=now() WHERE status='open' AND severity='act' AND climbed_at IS NULL
-                         AND greatest(opened_at, coalesce(raised_at, opened_at)) < now() - ($1::numeric * interval '1 minute') RETURNING *`, [CLIMB_MIN()])).rows;
+  const up = (await q(`UPDATE platform.vsm_flags f SET climbed_at=now() WHERE f.status='open' AND f.severity='act' AND f.climbed_at IS NULL AND ${AGENT_ON}
+                         AND greatest(${CLOCK}, coalesce(f.raised_at, f.opened_at)) < now() - ($1::numeric * interval '1 minute') RETURNING f.*`, [CLIMB_MIN()])).rows;
   for (const f of up) {
     const agent = (await agentRow(f.agent_id)) || { key: "", name: "An agent" };
     const root = (await q("SELECT words FROM platform.vsm_messages WHERE id=$1", [f.thread_id])).rows[0] || { words: "" };
@@ -737,7 +744,11 @@ async function agentOf(company, id) {
 async function editAgent(req, company, id, b) {
   const a = await agentOf(company, id);
   const sets = [], vals = [company, id], changed = {};
-  if (b.status !== undefined) { if (!["on", "paused"].includes(b.status)) throw bad("An agent is on or paused."); vals.push(b.status); sets.push(`status=$${vals.length}`); changed.status = b.status; }
+  if (b.status !== undefined) {
+    if (!["on", "paused"].includes(b.status)) throw bad("An agent is on or paused.");
+    vals.push(b.status); sets.push(`status=$${vals.length}`); changed.status = b.status;
+    if (b.status === "on" && a.status !== "on") sets.push("on_since=now()");   // its flags' clocks start again (round 3)
+  }
   if (b.brief !== undefined) { vals.push(txt(b.brief, 2000)); sets.push(`brief=$${vals.length}`); changed.brief = vals[vals.length - 1]; }
   if (b.reviews !== undefined) {
     const on = b.reviews === true;
@@ -843,8 +854,9 @@ async function flagAction(req, company, threadId, action, b) {
   if (action === "reopen" && OPEN_FLAG.includes(f.status)) throw bad("This flag is open.");
   if (action !== "reopen" && !OPEN_FLAG.includes(f.status)) throw bad("This flag is closed. Reopen it first.");
   const closing = ["resolved", "not_a_problem"].includes(action);
-  await q(`UPDATE platform.vsm_flags SET status=$3, owner=CASE WHEN $3='on_it' THEN $4 ELSE owner END, status_by=$4, status_at=now(), closed_at=CASE WHEN $5 THEN now() ELSE NULL END WHERE company=$1 AND thread_id=$2`,
-    [company, threadId, ACTIONS[action], by, closing]);
+  await q(`UPDATE platform.vsm_flags SET status=$3, owner=CASE WHEN $3='on_it' THEN $4 ELSE owner END, status_by=$4, status_at=now(), closed_at=CASE WHEN $5 THEN now() ELSE NULL END,
+              reopened_at=CASE WHEN $6 THEN now() ELSE reopened_at END, climbed_at=CASE WHEN $6 THEN NULL ELSE climbed_at END WHERE company=$1 AND thread_id=$2`,
+    [company, threadId, ACTIONS[action], by, closing, action === "reopen"]);
   if (action === "not_a_problem" && f.watch_id) await q("UPDATE platform.vsm_watches SET muted_until=now() + ($2::int * interval '1 day') WHERE id=$1", [f.watch_id, MUTE_DAYS]);
   const said = { seen: `${by} has seen this.`, on_it: `${by} is on it.`, resolved: `${by} resolved it: ${note}`, not_a_problem: `${by}: not a problem. ${note} This watch is muted for ${MUTE_DAYS} days.`, reopen: `${by} reopened it.${note ? ` ${note}` : ""}` }[action];
   await post({ company, channel: f.channel, thread_id: threadId, kind: "action", from_kind: "person", from_name: by, agent_id: f.agent_id, watch_id: f.watch_id, words: said });
@@ -873,7 +885,7 @@ async function makeRequest(req, company, f, note) {
   await q("UPDATE platform.vsm_flags SET feedback_id=$2 WHERE thread_id=$1", [f.thread_id, fb.id]);
   await post({ company, channel: f.channel, thread_id: f.thread_id, kind: "action", from_kind: "person", from_name: by, agent_id: f.agent_id, watch_id: f.watch_id, words: `${by} made this a request on the Kaizen board (#${fb.id}).` });
   await record.record("feedback_filed", { company, module: tool, actor: record.actor(req), feedback_id: fb.id, after: message, detail: { via: "agent_board", thread: f.thread_id, ...(walled ? { walled: true } : {}) } });
-  const reading = walled ? false : await require("./arrival").start(fb.id, { force: true }).catch(() => false);
+  const reading = walled ? false : await require("./arrival").start(fb.id, {}).catch(() => false);   // the company's own switch and hourly limit (round 3); otherwise it waits for Review with AI
   return { feedback_id: fb.id, proposing: reading };
 }
 

@@ -361,20 +361,29 @@ async function exportMap(company) {
   return { format: "anetix-map-1", company, exported_at: new Date().toISOString(), stages, maps, questions };
 }
 // Checked for shape before anything is written; the whole replace is one transaction.
+// every list in a map file is a list of entries, each an object (round 3: a null entry was a 500)
+function entries(v, n, what) {
+  if (v == null) return [];
+  if (!Array.isArray(v)) throw bad(`${what} is a list`);
+  const out = v.slice(0, n);
+  const i = out.findIndex((x) => !x || typeof x !== "object" || Array.isArray(x));
+  if (i >= 0) throw bad(`${what}: entry ${i + 1} is empty or not an entry`);
+  return out;
+}
 function checkImport(doc) {
-  if (!doc || doc.format !== "anetix-map-1") throw bad("not an Anetix map file (format anetix-map-1)");
-  const stages = (doc.stages || []).slice(0, 200).map((s, i) => {
+  if (!doc || typeof doc !== "object" || doc.format !== "anetix-map-1") throw bad("not an Anetix map file (format anetix-map-1)");
+  const stages = entries(doc.stages, 200, "stages").map((s, i) => {
     if (!txt(s.ref, 12) || !txt(s.name, 120)) throw bad(`stage ${i + 1} needs a ref and a name`);
     return { ref: txt(s.ref, 12), name: txt(s.name, 120), who: txt(s.who, 200), record_kind: one(s.record_kind || "none", RECORD_KINDS, "a stage's record"),
       record_system: txt(s.record_system, 160), modules: strList(s.modules, 8, 60), anetix_note: txt(s.anetix_note, 300), phase: txt(s.phase, 20), target: txt(s.target, 160), sort: i };
   });
   const keys = new Set();
-  const maps = (doc.maps || []).slice(0, 20).map((m, mi) => {
+  const maps = entries(doc.maps, 20, "maps").map((m, mi) => {
     const key = txt(m.key, 40);
     if (!KEY.test(key) || keys.has(key)) throw bad(`map ${mi + 1} needs a unique key (letters, digits, - and _)`);
     keys.add(key);
     const nodeKeys = new Set();
-    const nodes = (m.nodes || []).slice(0, 200).map((n) => {
+    const nodes = entries(m.nodes, 200, `map ${mi + 1}'s boxes`).map((n) => {
       const k = txt(n.key, 40);
       if (!KEY.test(k) || nodeKeys.has(k)) throw bad(`map ${key}: every box needs a unique key`);
       nodeKeys.add(k);
@@ -383,7 +392,7 @@ function checkImport(doc) {
         modules: strList(n.modules, 8, 60), x: int(n.x || 0, 0, 6000), y: int(n.y || 0, 0, 4000), w: int(n.w || 144, 40, 1200), h: int(n.h || 64, 24, 600),
         data: nodeFields.data(n.data), detail: cleanDetail(n.detail), confidence: one(n.confidence || "assumed", CONFIDENCE, `box ${k}'s confidence`) };
     });
-    const edges = (m.edges || []).slice(0, 400).map((e, i) => {
+    const edges = entries(m.edges, 400, `map ${mi + 1}'s flows`).map((e, i) => {
       const from = txt(e.from, 40), to = txt(e.to, 40);
       if (!nodeKeys.has(from) || !nodeKeys.has(to)) throw bad(`map ${key}: flow ${i + 1} joins a box that is not on the map`);
       return { from, to, kind: one(e.kind, EDGE_KINDS, `flow ${i + 1}'s kind`), label: txt(e.label, 80), from_side: one(e.from_side || "right", SIDES, "a side"), to_side: one(e.to_side || "left", SIDES, "a side"),
@@ -392,17 +401,18 @@ function checkImport(doc) {
     });
     // a burst that became a request stays filed (the VSM audit, 2026-11-03: it came back open and could be filed twice); its
     // link to the request is kept only where that request is this company's (importMap checks)
-    const kaizen = (m.kaizen || []).slice(0, 50).map((z) => ({ node: z.node && nodeKeys.has(txt(z.node, 40)) ? txt(z.node, 40) : null, n: int(z.n || 0, 0, 999), title: txt(z.title, 160), why: txt(z.why, 400), status: ["open", "dismissed", "filed"].includes(z.status) ? z.status : "open",
+    const kaizen = entries(m.kaizen, 50, `map ${mi + 1}'s kaizen bursts`).map((z) => ({ node: z.node && nodeKeys.has(txt(z.node, 40)) ? txt(z.node, 40) : null, n: int(z.n || 0, 0, 999), title: txt(z.title, 160), why: txt(z.why, 400), status: ["open", "dismissed", "filed"].includes(z.status) ? z.status : "open",
       feedback_id: z.status === "filed" && Number.isSafeInteger(Number(z.feedback_id)) && Number(z.feedback_id) > 0 && Number(z.feedback_id) < 2147483647 ? Number(z.feedback_id) : null,
       evidence: z.evidence && typeof z.evidence === "object" ? { kind: txt(z.evidence.kind, 20), text: txt(z.evidence.text, 300) } : null, source: z.source === "agent" ? "agent" : "map", becomes: ["change", "plant", "new_tool"].includes(z.becomes) ? z.becomes : null }));
-    const layout = { bands: (((m.layout || {}).bands) || []).slice(0, 10).map((b) => ({ label: txt(b.label, 60), note: txt(b.note, 200), x: int(b.x, 0, 6000), y: int(b.y, 0, 4000), w: int(b.w, 10, 6000), h: int(b.h, 10, 4000) })),
+    const lay = m.layout && typeof m.layout === "object" ? m.layout : {};
+    const layout = { bands: entries(lay.bands, 10, `map ${mi + 1}'s bands`).map((b) => ({ label: txt(b.label, 60), note: txt(b.note, 200), x: int(b.x, 0, 6000), y: int(b.y, 0, 4000), w: int(b.w, 10, 6000), h: int(b.h, 10, 4000) })),
       ladder_y: (m.layout || {}).ladder_y != null ? int(m.layout.ladder_y, 0, 4000) : null,
       // what the agents would say to each other on this map: a concept until the agents exist (docs/VSM.md, section 8)
-      feed: (((m.layout || {}).feed) || []).slice(0, 20).map((f) => ({ from: txt(f.from, 40), to: txt(f.to, 40), text: txt(f.text, 300), tag: txt(f.tag, 60), now: /^possible/i.test(String(f.tag || "")) })) };
+      feed: entries(lay.feed, 20, `map ${mi + 1}'s feed`).map((f) => ({ from: txt(f.from, 40), to: txt(f.to, 40), text: txt(f.text, 300), tag: txt(f.tag, 60), now: /^possible/i.test(String(f.tag || "")) })) };
     return { key, family: txt(m.family, 80) || key, title: txt(m.title, 120) || key, state: m.state === "future" ? "future" : "current", status: m.status === "confirmed" ? "confirmed" : "draft", layout, nodes, edges, kaizen, sort: mi,
       parent: m.state === "future" && m.parent ? txt(m.parent, 40) : null };
   });
-  const questions = (doc.questions || []).slice(0, 300).map((x, i) => ({ map: x.map && keys.has(txt(x.map, 40)) ? txt(x.map, 40) : null, node: txt(x.node, 40) || null, where: txt(x.where, 80),
+  const questions = entries(doc.questions, 300, "questions").map((x, i) => ({ map: x.map && keys.has(txt(x.map, 40)) ? txt(x.map, 40) : null, node: txt(x.node, 40) || null, where: txt(x.where, 80),
     claim: (() => { const c = txt(x.claim, 600); if (!c) throw bad(`question ${i + 1} needs words`); return c; })(), why: txt(x.why, 1000),
     confidence: CONFIDENCE.includes(x.confidence) ? x.confidence : (x.confidence === "unknown" ? "assumed" : "assumed"), status: ANSWERS.includes(x.status) ? x.status : "open", answer: txt(x.answer, 2000), sort: i }));
   return { stages, maps, questions };
