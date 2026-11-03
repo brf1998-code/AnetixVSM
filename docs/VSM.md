@@ -237,8 +237,10 @@ instance, compared with the hand map.
 | M3 | Map and Kaizen joined (`feedback.node_id`, bursts to requests, intake pre-filled from a box) | A burst on Chelsea's map becomes a change live on Chelsea's floor |
 
 Status: M3 built 2026-11-02 (`src/vsm-kaizen.js`; docs/FEATURES.md has the bullet). Differences from section 4: a request
-is tied to a box by keys (`feedback.map_key`, `feedback.node_key`), not `node_id`, because an import and a walk's "Use
-this map" keep a box's key and change its id. A request on a box with no tool is a plant request (`kind` 'plant'): no AI
+is tied to a box by keys (`feedback.map_key`, `feedback.node_key`), not `node_id`, because an import keeps a box's key
+and changes its id. A walk's draft has keys of its own, so since 2026-11-03 "Use this map" matches its boxes to the old
+map's (a shared stage, the same name, the same tools) and gives each matched box the old key, agent, station screen,
+steps and bursts; a request on an old box with no match follows the hidden map and shows as "was on the map". A request on a box with no tool is a plant request (`kind` 'plant'): no AI
 reads it and a manager moves it along. Phase 6 of the walk is the future state, drafted by the agent from the current map
 (decision 9) as its own map beside the current one, with bursts each tied to evidence on the map; the walk's own screens
 end at "Use this map", and the future state is drafted from the map. The gate waits for a real burst on Chelsea's map.

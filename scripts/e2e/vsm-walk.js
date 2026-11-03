@@ -151,6 +151,15 @@ const HAND = {
   t("nor reach it through its own slug", (await other.get(`${W("walkco")}/${id}`)).status === 404 && (await other.post(`${W("walkco")}/${id}/answer`, { screen: "review" })).status === 404 && (await other.post(`${W("walkco")}/${id}/use`)).status === 404);
   t("the ids in the routes take digits only", (await mgr.get(`${W()}/0x1`)).status === 404);
 
+  // ---- what the plant set on the old map's boxes carries over (the VSM audit, 2026-11-03): a box the walk also drew keeps
+  // its requests, agent, notes and kaizen; a box it did not draw keeps its requests, named as no longer on the map
+  const hand = (await q("SELECT id FROM platform.vsm_maps WHERE company='demo' AND key='widgets-hand'")).rows[0];
+  await q(`INSERT INTO platform.vsm_nodes (company, map_id, key, kind, label, x, y, detail) VALUES ('demo',$1,'test','process','Test',400,300,'{"agent_name":"Test agent","notes":"Checked by Ana"}'::jsonb)`, [hand.id]);
+  await q("INSERT INTO platform.vsm_kaizen (company, map_id, node_key, n, title) VALUES ('demo',$1,'test',2,'A gauge at test')", [hand.id]);
+  const handNodes = (await mgr.get(`/api/c/demo/vsm/maps/${hand.id}`)).json.nodes;
+  const onTest = await mgr.post(`/api/c/demo/vsm/nodes/${handNodes.find((n) => n.key === "test").id}/request`, { as: "plant", words: "Move the test bench" });
+  const onBuild = await mgr.post(`/api/c/demo/vsm/nodes/${handNodes.find((n) => n.key === "a").id}/request`, { as: "plant", words: "Label the build bins" });
+
   // ---- use it
   const used = await mgr.post(`${W()}/${id}/use`);
   const ov2 = (await mgr.get("/api/c/demo/vsm")).json;
@@ -159,6 +168,17 @@ const HAND = {
   t("the old map is kept, hidden, with its kaizen and review answers moved aside with it", old.length === 1 && /^widgets-hand-r\d+$/.test(old[0].key) && (await q("SELECT count(*)::int n FROM platform.vsm_kaizen k JOIN platform.vsm_maps m ON m.id=k.map_id WHERE m.replaced_at IS NOT NULL")).rows[0].n === 1
     && (await q("SELECT count(*)::int n FROM platform.vsm_questions WHERE map_key=$1", [old[0].key])).rows[0].n === 1);
   t("a company with a stage list keeps it", ov2.stages.length === 2 && used.json.stages_made === 0);
+  const nv = (await mgr.get(`/api/c/demo/vsm/maps/${used.json.map_id}`)).json;
+  const tb = nv.nodes.find((n) => n.label === "Test");
+  t("the walk's box that matches an old one takes its key and its agent, keeps the walk's own notes, and keeps its flows", tb && tb.key === "test" && tb.detail.agent_name === "Test agent" && tb.detail.notes === "Sam may test only some"
+    && nv.edges.some((e) => e.to_key === "test" || e.from_key === "test") && !nv.nodes.some((n) => /^~carry/.test(n.key)), nv.nodes.map((n) => n.key));
+  t("its requests and its kaizen burst are on the new map", nv.cards.some((c) => c.id === onTest.json.feedback_id && c.node_key === "test") && nv.kaizen.some((z) => z.node_key === "test" && z.title === "A gauge at test"));
+  const bx = (await mgr.get("/api/c/demo/board")).json.boxes;
+  t("the board finds the box; a box with no match is named, as no longer on the map", bx["widgets-hand/test"] && bx["widgets-hand/test"].map_id === used.json.map_id
+    && Object.entries(bx).some(([k, b]) => /^widgets-hand-r\d+\/a$/.test(k) && b.gone && b.label === "Build" && !b.map_id), bx);
+  t("Use this map says what carried over and what did not", used.json.carried >= 2 && used.json.bursts_moved === 1 && used.json.not_carried.includes("Build"), used.json);
+  t("the agent named on the box is on the new map", (await mgr.get("/api/c/demo/vsm/agents")).json.agents.some((a) => a.key === "test-agent" && a.boxes.some((b) => b.key === "test")));
+  t("a request on a box with no match is not lost", (await q("SELECT map_key FROM platform.feedback WHERE id=$1", [onBuild.json.feedback_id])).rows[0].map_key === old[0].key);
   t("the walk's questions now count", ov2.questions_open > 1);
 
   // ---- another family from the same sources, without reading again

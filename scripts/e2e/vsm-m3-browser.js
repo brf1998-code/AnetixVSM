@@ -82,6 +82,19 @@ const A = "/api/c/demo/vsm";
   const asmId = (await q("SELECT n.id FROM platform.vsm_nodes n JOIN platform.vsm_maps m ON m.id=n.map_id WHERE m.key='planes' AND n.key='asm'")).rows[0].id;
   await mgr.post(`${A}/nodes/${asmId}`, { screen: { module: "paperline", route: "/station/:seq" } });
 
+  // ---- a form being typed in survives a redraw the page makes on its own (the VSM audit, 2026-11-03)
+  await q("INSERT INTO platform.vsm_questions (company, map_key, node_key, where_label, claim, status, sort) VALUES ('demo','planes','asm','Assembly','Assembly is one step','open',1)");
+  await p.goto(`${BASE}/c/demo/map?mapkey=planes&box=asm`);
+  await p.waitForSelector(".detail h2");
+  await p.click('[data-act="edit"]');
+  await p.waitForSelector('#editform textarea[name="notes"]');
+  await p.fill('#editform textarea[name="notes"]', "typed before the redraw");
+  await p.click('#editform [data-act="addrow"]').catch(() => {});
+  await p.click('[data-act="confirm"]');
+  await p.waitForFunction(() => /confirmed/i.test((document.querySelector('section[aria-label="Review"]') || {}).textContent || ""));
+  t("a review answer redraws the page, and the box being edited keeps what was typed", Boolean(await p.$("#editform")) && (await p.$eval('#editform textarea[name="notes"]', (x) => x.value)) === "typed before the redraw");
+  await p.click('[data-act="canceledit"]');
+
   // ---- the board: a box's cards, a plant request's buttons, back to the map
   await p.goto(`${BASE}/c/demo/?box=planes/ship`);
   await p.waitForSelector(".card");

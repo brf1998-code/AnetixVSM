@@ -4391,7 +4391,8 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     start a request, a kaizen burst becomes a request in one tap, and the walk's last phase, the future state. Decision 9
     (Brendan, 2026-11-02): the agent drafts the future state and the manager keeps it.
   - *A request on a box* (`src/vsm-kaizen.js`). `feedback.map_key` and `feedback.node_key` tie a request to a box by keys
-    (a key survives an import and a walk's "Use this map", an id does not; the agent board ties boxes the same way). The
+    (a key survives an import, an id does not; "Use this map" carries keys over since round 1 of the audit, below; the
+    agent board ties boxes the same way). The
     board's payload has `boxes` (label, map); a card shows "On the map: <box>" (a tap filters the board to that box,
     `?box=<map>/<box>`, as the tool filter does) and Show on map (`map?mapkey=&box=`). A request an agent drafted and a
     manager sent from the agent board sits on the flag's box when it is one box. The box's panel on the Map lists its
@@ -4445,3 +4446,47 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     board already shows a manager for agents a manager switched on; the tag route is managers only, on a path the tool
     page policy does not open; screen tags are in the backup and go with the company.
   - *Tests.* In `scripts/test-vsm-m3.js` and `scripts/e2e/vsm-m3.js` and `-browser.js` (the line on a phone).
+- **The VSM audit's round 1 (2026-11-03, VSM dev copy)**
+  - *Why.* The audit of 2026-11-02 (project doc `claude/vsm-audit-2026-11-02.md`: three independent reads, security,
+    correctness, product and docs). Brendan: "go for the round 1 updates". The hard rules held; these are what a week of
+    real use would hit.
+  - *Use this map keeps what the plant set on its boxes* (`src/vsm-walk.js` `matchBoxes`, `carryOver`). A walk's draft has
+    keys of its own, so every request, agent, station screen and step tie was left on a box nobody could find. Now each
+    box of the draft is matched to a box of the map it replaces (same kind; a shared stage of the plant's list counts
+    most, then the same name, a name sharing most words or held in the other, the same tools; a lone supplier or
+    customer), takes its key (flows and review questions follow), and keeps its agent, station screen, live-number steps
+    and notes (the walk's own notes win); its kaizen bursts move with it. A request on an old box with no match follows
+    the hidden map; the board names it "was on the map" with no link. A note above the map says what carried over.
+  - *One review of an agent at a time* (`src/vsm-review.js` start). The mark is set before the first await, so five
+    flags waking an agent in one tick start one review; the hour between early reviews is checked under the same mark;
+    a shift that finds its agent reviewing waits for the next tick instead of being lost. The inbox's clock is the start
+    of the last review that finished (`vsm_agents.last_done_at`), so a failed review no longer swallows what came in.
+    The data wall is read before each step: a wall going up mid-review stops it.
+  - *Make it a request on a flag a review raised* (`src/vsm-agents.js` makeRequest): its tool comes from the flag's
+    evidence when it has no watch, and the card sits on the flag's box when it is one box.
+  - *The data wall on requests from the board.* Under the wall, a request from a flag carries the watch's name and its
+    count, not the rows it named, and waits for Review with AI; an agent's draft card (written from records before the
+    wall went up) is not sent at all, and says why.
+  - *A watch that comes back.* A flag its watch cleared and that is true again within `SOS_FLAG_REOPEN_MIN` (60) opens
+    again in its own thread ("Back again"), with no new mentions or wake, instead of a new thread every five minutes.
+  - *Why a watch cannot run* is one plain sentence (`whyNotRun`: a list or column gone, a limit that does not match its
+    column, too slow, not allowed), never the database's own words; those go to the server log.
+  - *The map page keeps what is being typed.* A redraw the page makes on its own (a review answer, a burst filed, the
+    future draft's look every three seconds) puts the edit form, the ask form and the fix box back as they were, with
+    the cursor; the future draft opens on its own only when nobody is typing.
+  - *One future draft at a time* (`startFuture` marks before its first await). *A filed burst stays filed* through an
+    export and import, with its request's number when that request is the company's.
+  - *Files.* A walk photo keeps the type its name says, never the browser's (an SVG sent as `image/svg+xml` named .png is
+    a png). `/api/attachments/:id` shows only photos and pdfs in the browser, everything else downloads, and everything
+    but a pdf goes out with `Content-Security-Policy: sandbox`, so no stored file runs script on the app's address
+    (this covers the new tool request's attachments too).
+  - *Plain words.* Table and column names on the agent board without underscores; the Add a watch form in the plant's
+    words; "instance", "stage events" and "malware scan" gone from what a company reads; the map's concept card of agent
+    traffic is gone now that agents run. HELP.md: Use this map's carry-over, Pause, Unmute, Reopen, the flag that comes
+    back, the data wall on requests, one review at a time, what the board left out, Download and Import, the stage
+    table, the 24-step limit, Not started, and the stale lines.
+  - *Tests.* `scripts/e2e/vsm-audit-r1.js` (18), cases in `scripts/e2e/vsm-walk.js` (carry-over; 71 in all),
+    `scripts/e2e/vsm-m3-browser.js` (a typed form survives a redraw), `scripts/test-vsm-m3.js` (box matching, the error
+    words, an import's filed burst).
+  - *Not yet (round 2).* The stage-number edge cases (lead time across the window, rework, a partial scrap); the actions
+    with no way back; the agent board on a phone; the design drift and decisions written into the docs.

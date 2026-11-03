@@ -230,7 +230,7 @@ async function load(keepSel) {
   // the Agents layer opens on its own the first time once an agent on this company's map is running
   if (!S.layersAuto) { S.layersAuto = true; if ((((S.view.agents || {}).agents) || []).some((a) => a.status === "on")) S.layers.agents = true; }
   if (!keepSel || !S.view.nodes.some((n) => n.key === S.sel)) S.sel = (S.view.nodes.find((n) => n.kind === "control") || S.view.nodes[0] || {}).key || null;
-  render();
+  render({ keep: Boolean(keepSel) });
 }
 
 // ---------- coverage
@@ -400,7 +400,7 @@ function detailHtml() {
     ${tools.length ? `<div class="tools"><div class="lbl">Anetix tools on this box</div>${tools.map((t) => `<div><a href="/c/${esc(SLUG)}/m/${esc(t.name)}/">${esc(t.title)}</a> <span class="note">${t.live ? (t.daily ? "in daily use" : `built; changed on ${t.days_changed} of the last ${S.ov.coverage.rule.days} days`) : t.archived ? "archived" : "not live"}</span></div>`).join("")}</div>` : ""}
     ${liveDetail(n)}
     ${d.screen ? `<div class="note">Station screen: <b>${esc(d.screen.label || d.screen.route)}</b> (${esc(toolTitle(d.screen.module))}). ${agentOf(d.agent_name || "") && agentOf(d.agent_name).status === "on" ? "Its agent's line shows there when its switch is on." : ""}</div>` : ""}
-    <div class="grid2">${field("What happens", d.what)}${field("Recorded today", d.recorded)}${field("Not recorded", d.missing)}${field("In Anetix", d.anetix)}${field("Agent (concept)", d.agent, "var(--navy)")}${field("Kaizen", d.kaizen, "var(--amberDeep)")}${field("In the future state", d.future, "#1d5535")}${field("Notes", d.notes)}</div>
+    <div class="grid2">${field("What happens", d.what)}${field("Recorded today", d.recorded)}${field("Not recorded", d.missing)}${field("In Anetix", d.anetix)}${field("Agent notes", d.agent, "var(--navy)")}${field("Kaizen", d.kaizen, "var(--amberDeep)")}${field("In the future state", d.future, "#1d5535")}${field("Notes", d.notes)}</div>
     ${d.quote ? `<figure class="quote"><blockquote>“${esc(d.quote)}”</blockquote><figcaption>${esc(d.quote_by || "")}</figcaption></figure>` : ""}
     ${kz.filter((z) => z.status !== "dismissed").length ? `<div><div class="lbl" style="color:var(--amberDeep)">Kaizen bursts here</div>${kz.filter((z) => z.status !== "dismissed").map((z) => burstHtml(z, n)).join("")}</div>` : ""}
     ${boxCardsHtml(n)}
@@ -413,7 +413,7 @@ function stepsField(n) {
   const mine = Array.isArray((n.detail || {}).steps) ? n.detail.steps : [];
   const seen = S.steps || [];
   const all = seen.map((x) => ({ module: x.module, title: x.title || x.module, step: x.step })).concat(mine.filter((m) => !seen.some((x) => x.module === m.module && x.step === m.step)).map((m) => ({ ...m, title: ((S.view.tools.find((t) => t.name === m.module)) || { title: m.module }).title })));
-  if (!all.length) return `<div class="note">Steps of the tools' stage events show here once a tool reports work at them; then a box can be tied to its steps for live numbers.</div>`;
+  if (!all.length) return `<div class="note">The steps show here once a tool reports work at them; then a box can be tied to its steps for live numbers.</div>`;
   return `<fieldset style="border:none;padding:0;display:flex;flex-direction:column;gap:4px"><legend class="lbl" style="margin-bottom:4px">Its steps, as the tools report them (for live numbers)</legend>
     ${all.map((x, i) => `<label style="flex-direction:row;align-items:center;gap:8px;font-weight:500"><input type="checkbox" name="step" value="${i}"${mine.some((m) => m.module === x.module && m.step === x.step) ? " checked" : ""}> ${esc(x.step)} <span class="note">${esc(x.title)}</span></label>`).join("")}</fieldset>`;
 }
@@ -437,7 +437,8 @@ function burstHtml(z, n) {
   const ev = z.evidence && z.evidence.kind ? `<div class="ev">${esc(EVW[z.evidence.kind] || "")}${z.evidence.text ? `: ${z.evidence.kind === "quote" ? `“${esc(z.evidence.text)}”` : esc(z.evidence.text)}` : ""}</div>` : "";
   const node = n || S.view.nodes.find((x) => x.key === z.node_key);
   let tail = "";
-  if (z.status === "filed") tail = `<div class="acts2"><span class="stw ${esc(z.card_status || "")}">Request #${z.feedback_id}${z.card_kind === "plant" ? ", a plant request" : z.card_kind === "module_request" ? ", a new tool" : z.card_module ? `, ${esc(toolTitle(z.card_module))}` : ""}: ${esc(STW[z.card_status] || z.card_status || "")}</span>${node ? `<a class="quietbtn" href="${boardLink(node)}">Open on the board</a>` : ""}</div>`;
+  if (z.status === "filed" && !z.feedback_id) tail = `<div class="acts2"><span class="stw">Sent to the Kaizen board before this map was imported</span></div>`;
+  else if (z.status === "filed") tail = `<div class="acts2"><span class="stw ${esc(z.card_status || "")}">Request #${z.feedback_id}${z.card_kind === "plant" ? ", a plant request" : z.card_kind === "module_request" ? ", a new tool" : z.card_module ? `, ${esc(toolTitle(z.card_module))}` : ""}: ${esc(STW[z.card_status] || z.card_status || "")}</span>${node ? `<a class="quietbtn" href="${boardLink(node)}">Open on the board</a>` : ""}</div>`;
   else if (z.status === "dismissed") tail = `<div class="acts2"><span class="stw">Put away${z.decided_by ? ` by ${esc(z.decided_by)}` : ""}</span><button type="button" class="quietbtn" data-act="kz-back" data-z="${z.id}">Bring back</button></div>`;
   else if (node && !S.view.map.proposed) {
     const best = (as, tool) => (z.becomes === as && (!tool || as === "change") ? "go" : "quietbtn");
@@ -487,15 +488,17 @@ function watchDraft() {
   if (!f || S.view.map.state === "future") return;
   const had = S.awaitFuture !== undefined ? S.awaitFuture : (f.future ? f.future.id : null);
   const fresh = (x) => x && !x.drafting && x.future && x.future.id !== had;
-  if (S.awaitFuture !== undefined && fresh(f)) { delete S.awaitFuture; openMap(f.future.id); return; }
+  if (S.awaitFuture !== undefined && fresh(f) && !typing()) { delete S.awaitFuture; openMap(f.future.id); return; }
   if (!f.drafting) { delete S.awaitFuture; return; }
   const from = S.view.map.id;
   draftT = setTimeout(async () => {
     try {
       const v = await api(`/maps/${from}`);
       if (S.view && S.view.map.id === from) {
-        if (fresh(v.future)) { delete S.awaitFuture; S.ov = await api(""); return openMap(v.future.future.id); }
-        S.view.future = v.future; S.awaitFuture = had; render();
+        // the draft is there: open it, unless someone is typing; then the Future state tab shows it is ready
+        if (fresh(v.future) && !typing()) { delete S.awaitFuture; S.ov = await api(""); return openMap(v.future.future.id); }
+        if (fresh(v.future)) { delete S.awaitFuture; S.ov = await api(""); S.view.future = v.future; return render({ keep: true }); }
+        S.view.future = v.future; S.awaitFuture = had; render({ keep: true });
       }
     } catch (e) { /* the next look tries again */ }
     watchDraft();
@@ -636,7 +639,7 @@ function wScreenHtml(sc) {
       const size = (s) => (s.file ? `${Math.max(1, Math.round(s.size / 1024))} KB` : `${s.chars.toLocaleString()} characters`);
       return `<h2>What goes into the walk</h2>
         <p class="note">Add everything first: call and walk-through transcripts, your notes, the plant's own process documents, photos of a whiteboard or a traveler. The agent reads them all once and makes its best guess at every step; then you confirm each one, walking upstream from shipping.</p>
-        ${w.sources.length ? `<div class="srcs">${w.sources.map((s) => `<div class="src"><b>${esc(s.title)}</b><span class="note">${esc(kinds[s.kind] || s.kind)} · ${size(s)}${s.gone ? " · removed by the malware scan" : ""}</span><button type="button" class="x" data-act="w-rmsrc" data-src="${s.id}" aria-label="Remove ${esc(s.title)}">×</button></div>`).join("")}</div>` : `<div class="note">No sources yet.</div>`}
+        ${w.sources.length ? `<div class="srcs">${w.sources.map((s) => `<div class="src"><b>${esc(s.title)}</b><span class="note">${esc(kinds[s.kind] || s.kind)} · ${size(s)}${s.gone ? " · removed: it did not pass the file check" : ""}</span><button type="button" class="x" data-act="w-rmsrc" data-src="${s.id}" aria-label="Remove ${esc(s.title)}">×</button></div>`).join("")}</div>` : `<div class="note">No sources yet.</div>`}
         <form id="wf" data-screen="words" class="form">
           <div class="row2"><label>What it is<input type="text" name="title" maxlength="120" placeholder="Walk-through with the floor, Oct 30"></label><label>Kind<select name="kind"><option value="transcript">Transcript of a call or walk-through</option><option value="notes">Notes</option><option value="email">Email</option><option value="document">Document</option></select></label></div>
           <label>The words<textarea name="words" rows="6" placeholder="Paste a transcript, or type what you saw and heard"></textarea></label>
@@ -770,8 +773,10 @@ async function walkClick(t, act) {
   if (act === "w-open") return openWalk(Number(t.dataset.walk));
   if (act === "w-use") {
     const m = S.view && S.view.map;
-    if (!confirm(`Use this map for ${m ? m.family : "this family"}? The current map is kept, hidden, with its kaizen and review answers, and Anetix can bring it back.`)) return;
+    if (!confirm(`Use this map for ${m ? m.family : "this family"}? Where a box on it matches a box on the current map, it keeps that box's requests, agent, station screen and kaizen. The current map is kept, hidden, with its review answers, and Anetix can bring it back.`)) return;
     const r = await post(`/walks/${t.dataset.walk}/use`, {});
+    // what carried over, said once above the map
+    S.notice = r.replaced ? `This is ${m ? m.family : "the family"}'s map now. ${r.carried} box${r.carried === 1 ? "" : "es"} kept what the old map had on them${r.bursts_moved ? `, with ${r.bursts_moved} kaizen burst${r.bursts_moved === 1 ? "" : "s"}` : ""}.${(r.not_carried || []).length ? ` No match on the new map for: ${r.not_carried.join(", ")}; their requests stay on the board, marked as no longer on the map.` : ""}` : "";
     S.mapId = r.map_id; history.replaceState(null, "", `?map=${r.map_id}`); return load(false);
   }
   if (!S.walk) return;
@@ -800,7 +805,25 @@ async function walkFile(file) {
   await wpost("/file", { filename: file.name, mime: file.type, data });
 }
 
-function render() {
+// A redraw from the page's own looking (a review answer, a burst filed, the future draft's poll) keeps the forms a
+// person is typing in as they are, with the cursor where it was (the VSM audit, 2026-11-03: the 3-second poll wiped
+// them). A redraw a form asked for itself (a save that failed, with its error) draws it fresh.
+function snapForms() {
+  const out = [];
+  for (const id of ["editform", "askform", "fixtext"]) { const el = document.getElementById(id); if (el) out.push({ id, el, ctx: id === "fixtext" ? S.fixing : S.sel }); }
+  const a = document.activeElement;
+  return { out, active: a && a !== document.body ? a : null, start: a && a.selectionStart, end: a && a.selectionEnd };
+}
+function putForms(k) {
+  for (const x of k.out) {
+    const now = document.getElementById(x.id);
+    if (now && now !== x.el && (x.id === "fixtext" ? S.fixing === x.ctx : S.sel === x.ctx)) now.replaceWith(x.el);
+  }
+  if (k.active && document.contains(k.active) && document.activeElement !== k.active) { k.active.focus({ preventScroll: true }); try { k.active.setSelectionRange(k.start, k.end); } catch (e) { /* not a text box */ } }
+}
+const typing = () => S.editing || S.asking || S.fixing != null || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+function render(opts = {}) {
+  const kept = opts.keep ? snapForms() : null;
   const app = document.getElementById("app");
   if (!S.ov) return;
   if (S.panel === "walk" && S.walk) { app.innerHTML = walkHtml(); return; }
@@ -827,13 +850,15 @@ function render() {
       <div class="controls" role="group" aria-label="Layers"><span class="lbl">Layers</span>${layer("sys", "Systems")}${layer("agents", "Agents")}${layer("kz", "Kaizen")}${layer("ladder", "Timeline")}</div></div>
     <div class="controls">${stateSeg}${walkBtns}<button type="button" class="pill ${S.arrange ? "on" : ""}" data-act="arrange" aria-pressed="${S.arrange}">${S.arrange ? "Done arranging" : "Arrange boxes"}</button><a class="quietbtn" href="${API}/export">Download the map</a>${imp}</div></div>
     ${coverageHtml()}
+    ${S.notice ? `<div class="card" role="status" style="padding:12px 16px;display:flex;gap:10px;align-items:flex-start;justify-content:space-between;border-color:#9fc0a8;background:#f2f8f3"><div>${esc(S.notice)}</div><button type="button" class="quietbtn" data-act="notice-x" aria-label="Close this note">Close</button></div>` : ""}
     ${futureBarHtml()}
     ${S.view.map.proposed ? `<div class="card" style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border-color:#e5b98a;background:#fff8f1"><div><b>This is the walk's draft of ${esc(S.view.map.family)}.</b> <span class="note">It sits beside the current map so the two can be compared. Using it replaces the current map; the current one is kept, hidden, with its kaizen and review answers.</span></div><div class="chips"><button type="button" class="quietbtn" data-act="w-open" data-walk="${S.view.map.walk_id}">Back to the walk</button><button type="button" class="go" data-act="w-use" data-walk="${S.view.map.walk_id}">Use this map</button></div></div>` : ""}
     <section class="card" aria-label="Map"><div class="maphead"><div style="font-size:15px"><b>${esc(S.view.map.title)}</b> <span class="note">· ${S.view.map.state === "future" ? "future state" : "current state"} · ${S.view.map.proposed ? "walk draft" : S.view.map.status === "confirmed" ? (S.view.map.state === "future" ? "kept" : "confirmed") : "draft"}</span></div><div class="controls"><span class="note">${S.arrange ? "Drag a box to move it. Its flows follow." : "Information across the top, material left to right below. Click a box for detail."}</span><button type="button" class="quietbtn" data-act="fit">${S.fit ? "Actual size" : "Fit to screen"}</button></div></div><div class="scroller">${mapHtml()}</div></section>
-    <div class="lower">${detailHtml()}<div class="side">${reviewHtml()}${kaizenHtml()}${feedHtml()}${legendHtml()}</div></div>
+    <div class="lower">${detailHtml()}<div class="side">${reviewHtml()}${kaizenHtml()}${legendHtml()}</div></div>
     ${stagesHtml()}`;
   layoutAfter();
   if (keep) { const s2 = document.querySelector(".scroller"); s2.scrollLeft = keep[0]; s2.scrollTop = keep[1]; }
+  if (kept) putForms(kept);
 }
 addEventListener("resize", () => { if (S.view && !drag) layoutAfter(); });
 
@@ -851,6 +876,7 @@ app.addEventListener("click", async (ev) => {
     const act = t.dataset.act;
     if (act && act.startsWith("w-")) return await walkClick(t, act);
     if (act === "arrange") { S.arrange = !S.arrange; return render(); }
+    if (act === "notice-x") { S.notice = ""; return render(); }
     // M3: a burst to a request, put away and back; a box's own request; the future state
     if (act === "kz-file") {
       t.disabled = true;

@@ -265,6 +265,11 @@ M3="SOS_WATCH_MS=0 SOS_FAKE_FUTURE_MS=1500 SOS_PROMPT_LOG=$LOG/vsm-m3-prompts.js
 fresh; rm -f "$LOG/vsm-m3-prompts.jsonl"; start "SOS_BROWSER=off $M3"
 run vsm-m3                 env $M3 node scripts/e2e/vsm-m3.js
 [ -z "$QUICK" ] && run vsm-m3-browser env $M3 node scripts/e2e/vsm-m3-browser.js
+# 2026-11-03 (VSM dev copy): round 1 of the VSM audit: one review at a time, a review flag to a request, the data wall on
+# requests from the board, a watch that comes back, one future draft at a time, filed bursts through an import, files
+R1="SOS_WATCH_MS=0 SOS_AGENT_EARLY_MIN=0"
+fresh; start "SOS_BROWSER=off $R1"
+run vsm-audit-r1           env $R1 node scripts/e2e/vsm-audit-r1.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

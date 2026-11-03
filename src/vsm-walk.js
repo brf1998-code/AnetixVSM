@@ -224,7 +224,10 @@ async function addFile(company, id, body, opts = {}) {
   if (t.files >= MAX_FILES) throw bad(`This walk already has ${MAX_FILES} files. Remove one first.`);
   if (Number(t.bytes) + buf.length > MAX_FILE_BYTES_TOTAL) throw bad(`The files together would be more than ${MAX_FILE_BYTES_TOTAL / 1048576} MB, more than one read can take.`);
   const ext = filename.toLowerCase().split(".").pop();
-  const mime = kind === "pdf" ? "application/pdf" : (/^image\//.test(String(body.mime || "")) ? String(body.mime).toLowerCase() : IMAGE_MIME[ext] || "image/jpeg");
+  // the type kept is one of the five this screen takes, never what the browser said (the VSM audit, 2026-11-03: a .png
+  // that was an SVG with a script, sent as image/svg+xml, was kept as that and served on the app's own address)
+  const said = String(body.mime || "").toLowerCase();
+  const mime = kind === "pdf" ? "application/pdf" : IMAGE_MIME[ext] || Object.values(IMAGE_MIME).find((m) => m === said) || "image/jpeg";
   const a = (await q(`INSERT INTO platform.attachments (company, walk_id, filename, mime, size, bytes, scan, scanned_at, scan_sig) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
     [company, id, filename, mime, buf.length, buf, sc.scan, sc.scanned_at, sc.scan_sig])).rows[0];
   const row = (await q(`INSERT INTO platform.vsm_sources (company, walk_id, kind, title, attachment_id, size, added_by, via) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
@@ -860,18 +863,88 @@ async function abandon(company, id, opts = {}) {
     await record.record("map_walk_abandoned", { company, actor: opts.actor, detail: { walk: id } });
   });
 }
+// Which box of the walk's draft is which box of the map it replaces (the VSM audit, 2026-11-03: a walk's boxes have keys
+// of their own, so "Use this map" left every request, agent, station screen and step tie on a box nobody could find).
+// Pure: [{ new: key, old: key }]. Same kind only; a shared stage of the plant's list counts most, then the same name, then
+// a name that shares most of its words or holds the other, then the same tools; a lone supplier or customer is itself.
+// Each box is matched at most once, best pair first; a pair needs some real likeness.
+function matchBoxes(oldNodes, newNodes) {
+  const words = (s) => new Set(norm(s).split(" ").filter((w) => w.length > 2));
+  const pairs = [];
+  for (const n of newNodes || []) for (const o of oldNodes || []) {
+    if (n.kind !== o.kind) continue;
+    let score = 0;
+    const sr = new Set(o.stage_refs || []);
+    score += 10 * (n.stage_refs || []).filter((r) => sr.has(r)).length;
+    const a = norm(n.label), b = norm(o.label);
+    if (a && a === b) score += 8;
+    else if (a && b) {
+      const wa = words(a), wb = words(b), both = [...wa].filter((w) => wb.has(w)).length, any = new Set([...wa, ...wb]).size;
+      if (any && both / any >= 0.5) score += 4;
+      if ((a.length > 3 && b.includes(a)) || (b.length > 3 && a.includes(b))) score += 3;
+    }
+    const om = new Set(o.modules || []);
+    score += 2 * (n.modules || []).filter((m) => om.has(m)).length;
+    if (["supplier", "customer"].includes(n.kind) && newNodes.filter((x) => x.kind === n.kind).length === 1 && oldNodes.filter((x) => x.kind === n.kind).length === 1) score += 6;
+    if (score >= 4) pairs.push({ new: n.key, old: o.key, score });
+  }
+  pairs.sort((x, y) => y.score - x.score);
+  const usedNew = new Set(), usedOld = new Set(), out = [];
+  for (const p of pairs) { if (usedNew.has(p.new) || usedOld.has(p.old)) continue; usedNew.add(p.new); usedOld.add(p.old); out.push({ new: p.new, old: p.old }); }
+  return out;
+}
+// The walk's boxes take the keys of the boxes they replace, and keep what the plant set on them that a walk does not ask:
+// the agent that watches it, its station screen, the steps of its live numbers, its notes. Its open kaizen bursts move
+// with it. A request on a box with no match follows the hidden map, so the board says the box is no longer on the map.
+// Runs inside use()'s transaction.
+async function carryOver(client, company, target, draftMap, aside) {
+  const old = (await client.query("SELECT key, kind, label, stage_refs, modules, detail FROM platform.vsm_nodes WHERE map_id=$1", [target.id])).rows;
+  const fresh = (await client.query("SELECT key, kind, label, stage_refs, modules, detail FROM platform.vsm_nodes WHERE map_id=$1", [draftMap.id])).rows;
+  const pairs = matchBoxes(old, fresh);
+  const oldKeys = new Set(old.map((o) => o.key)), taken = new Set(pairs.map((p) => p.old));
+  // every key that changes goes through a temporary key first, so no two boxes of the draft share one on the way
+  const renames = pairs.filter((p) => p.new !== p.old).map((p) => ({ from: p.new, to: p.old }));
+  const used = new Set(fresh.map((n) => n.key).filter((k) => !renames.some((r) => r.from === k)).concat(renames.map((r) => r.to)));
+  for (const n of fresh) {
+    if (pairs.some((p) => p.new === n.key) || !taken.has(n.key)) continue;
+    let k = `${n.key.slice(0, 36)}-w`, i = 2;
+    while (used.has(k) || oldKeys.has(k)) k = `${n.key.slice(0, 34)}-w${i++}`;
+    used.add(k); renames.push({ from: n.key, to: k });
+  }
+  const rekey = async (from, to) => {
+    await client.query("UPDATE platform.vsm_nodes SET key=$3 WHERE map_id=$1 AND key=$2", [draftMap.id, from, to]);
+    await client.query("UPDATE platform.vsm_edges SET from_key=$3 WHERE map_id=$1 AND from_key=$2", [draftMap.id, from, to]);
+    await client.query("UPDATE platform.vsm_edges SET to_key=$3 WHERE map_id=$1 AND to_key=$2", [draftMap.id, from, to]);
+    await client.query("UPDATE platform.vsm_questions SET node_key=$4 WHERE company=$1 AND map_key=$2 AND node_key=$3", [company, draftMap.key, from, to]);
+  };
+  for (let i = 0; i < renames.length; i++) await rekey(renames[i].from, `~carry${i}`);
+  for (let i = 0; i < renames.length; i++) await rekey(`~carry${i}`, renames[i].to);
+  for (const p of pairs) {
+    const o = old.find((x) => x.key === p.old), n = fresh.find((x) => x.key === p.new), od = o.detail || {}, keep = {};
+    if (od.agent_name) keep.agent_name = od.agent_name;
+    if (Array.isArray(od.steps) && od.steps.length) keep.steps = od.steps;
+    if (od.screen && (n.modules || []).includes(od.screen.module)) keep.screen = od.screen;
+    if (od.notes && !(n.detail || {}).notes) keep.notes = od.notes;
+    if (Object.keys(keep).length) await client.query("UPDATE platform.vsm_nodes SET detail = coalesce(detail, '{}'::jsonb) || $3::jsonb WHERE map_id=$1 AND key=$2", [draftMap.id, p.old, JSON.stringify(keep)]);
+  }
+  const moved = taken.size ? (await client.query("UPDATE platform.vsm_kaizen SET map_id=$3 WHERE company=$1 AND map_id=$2 AND node_key = ANY($4) RETURNING id", [company, target.id, draftMap.id, [...taken]])).rows.length : 0;
+  const left = old.filter((o) => !taken.has(o.key));
+  if (left.length) await client.query("UPDATE platform.feedback SET map_key=$3 WHERE company=$1 AND map_key=$2 AND node_key = ANY($4)", [company, target.key, aside, left.map((o) => o.key)]);
+  return { carried: pairs.length, bursts_moved: moved, not_carried: left.filter((o) => ["process", "control"].includes(o.kind)).map((o) => o.label) };
+}
 // "Use this map" (the board only): the draft becomes the family's map. The map it replaces is kept, hidden (replaced_at
 // set, its key moved aside with its review answers), so nothing is lost; a company with no stage list yet gets one
-// from the map's boxes, so its coverage counts.
+// from the map's boxes, so its coverage counts. What the plant set on the old map's boxes carries over (carryOver).
 async function use(company, id, opts = {}) {
   return inWalk(company, id, async (w, client) => {
     if (w.status !== "drafted" || !w.map_id) throw bad("There is no drawn map to use. Finish the walk and draw it first.");
     const m = (await client.query("SELECT * FROM platform.vsm_maps WHERE company=$1 AND id=$2 AND proposed AND replaced_at IS NULL", [company, w.map_id])).rows[0];
     if (!m) throw bad("The drawn map is gone. Draw it again.");
     const target = w.frame.replaces ? (await client.query("SELECT * FROM platform.vsm_maps WHERE company=$1 AND key=$2 AND replaced_at IS NULL AND NOT proposed", [company, w.frame.replaces])).rows[0] : null;
-    let key = slugify(w.frame.family_name) || "family";
+    let key = slugify(w.frame.family_name) || "family", carried = null;
     if (target) {
       const aside = `${target.key.slice(0, 28)}-r${target.id}`;
+      carried = await carryOver(client, company, target, m, aside);
       await client.query("UPDATE platform.vsm_maps SET key=$3, replaced_at=now(), updated_at=now() WHERE company=$1 AND id=$2", [company, target.id, aside]);
       await client.query("UPDATE platform.vsm_questions SET map_key=$3 WHERE company=$1 AND map_key=$2", [company, target.key, aside]);
       key = target.key;
@@ -893,8 +966,8 @@ async function use(company, id, opts = {}) {
       }
     }
     w.status = "used";
-    await record.record("map_walk_used", { company, actor: opts.actor, detail: { walk: w.id, map_id: m.id, key, replaced: target ? target.id : null, stages_made: stages } });
-    return { map_id: m.id, key, replaced: target ? { id: target.id, title: target.title } : null, stages_made: stages };
+    await record.record("map_walk_used", { company, actor: opts.actor, detail: { walk: w.id, map_id: m.id, key, replaced: target ? target.id : null, stages_made: stages, ...(carried || {}) } });
+    return { map_id: m.id, key, replaced: target ? { id: target.id, title: target.title } : null, stages_made: stages, ...(carried || {}) };
   });
 }
 
@@ -958,6 +1031,6 @@ router.post(`${W}/${ID}/abandon`, requireManager, async (req, res) => { await ab
 router.post(`${W}/${ID}/use`, requireManager, async (req, res) => { const r = await use(slugOf(req), Number(req.params.id), ctxOf(req)); res.json({ ok: true, ...r, walk: await shown(req, Number(req.params.id)) }); });
 
 module.exports = {
-  init, SCHEMA, TABLES, router, start, addWords, addFile, removeSource, read, extract, cleanExtraction, fakeExtraction, answer, answerMany, draft, buildDraft, reopen, reread, abandon, use,
+  init, SCHEMA, TABLES, router, start, addWords, addFile, removeSource, read, extract, cleanExtraction, fakeExtraction, answer, answerMany, draft, buildDraft, reopen, reread, abandon, use, matchBoxes,
   view, list, getWalk, screenOf, SCREEN_WORDS, familyOptions, deleteCompany, EXTRACT_SCHEMA, STATUS_WORDS, OPEN, MAX_STEPS, MAX_CONTROL, MAX_SOURCES, MAX_WORDS, MAX_WORDS_TOTAL, fileKind, sameName,
 };

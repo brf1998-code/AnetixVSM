@@ -130,6 +130,9 @@ const RAISE_MIN = () => num(process.env.SOS_FLAG_RAISE_MIN, 720);
 const CLIMB_MIN = () => num(process.env.SOS_FLAG_CLIMB_MIN, 240);
 const UPDATE_MIN = () => num(process.env.SOS_FLAG_UPDATE_MIN, 60);
 const HOLD_MIN = () => num(process.env.SOS_FLAG_RESOLVED_HOLD_MIN, 60);
+// a flag its watch cleared and that comes back within this many minutes opens again in its own thread, instead of a new
+// thread every five minutes for a number hovering at its limit (the VSM audit, 2026-11-03)
+const REOPEN_MIN = () => num(process.env.SOS_FLAG_REOPEN_MIN, 60);
 const PUSH = () => String(process.env.SOS_AGENT_PUSH || "on").toLowerCase() !== "off";
 const MUTE_DAYS = 7;
 const SHAPES = ["stuck", "waiting", "level", "due", "quiet", "disagree", "stage"];
@@ -534,11 +537,23 @@ async function runWatch(w) {
   busy.add(w.id);
   try { return await runWatchOnce(w); } finally { busy.delete(w.id); }
 }
+// Why a watch could not run, in one plain sentence (the VSM audit, 2026-11-03: a database's own error, like "operator
+// does not exist: text >= integer", was posted to the board word for word). A refusal of our own already reads plainly.
+function whyNotRun(e) {
+  if (e && e.status && e.message) return line(e.message, 300);
+  const c = String((e && e.code) || "");
+  if (c === "42703" || c === "42P01") return "a list or a column it reads is not in the tool any more";
+  if (["42883", "22P02", "22007", "22008", "42804", "22003"].includes(c)) return "its limit and the column it compares do not match (words against a number, or a date against a number)";
+  if (c === "57014") return "the tool's records took too long to read";
+  if (c === "42501") return "it is not allowed to read that list";
+  return "the tool's records could not be read";
+}
 async function runWatchOnce(w) {
   let res;
   try { res = await evaluate(w.company, w); }
   catch (e) {
-    const msg = line(e.message || "it could not be read", 300);
+    if (!e || !e.status) console.error(`[agents] watch ${w.id} (${w.company}):`, e && e.message);
+    const msg = whyNotRun(e);
     await q("UPDATE platform.vsm_watches SET last_run_at=now(), last_error=$2 WHERE id=$1", [w.id, msg]);
     if (w.last_error !== msg) {
       const agent = await agentRow(w.agent_id);
@@ -550,9 +565,19 @@ async function runWatchOnce(w) {
   const open = (await q("SELECT * FROM platform.vsm_flags WHERE watch_id=$1 AND status = ANY($2) ORDER BY thread_id DESC LIMIT 1", [w.id, OPEN_FLAG])).rows[0];
   if (res.count > 0) {
     if (!open) {
-      const last = (await q("SELECT status, closed_at FROM platform.vsm_flags WHERE watch_id=$1 ORDER BY thread_id DESC LIMIT 1", [w.id])).rows[0];
+      const last = (await q("SELECT thread_id, status, closed_at, channel FROM platform.vsm_flags WHERE watch_id=$1 ORDER BY thread_id DESC LIMIT 1", [w.id])).rows[0];
+      const ago = last && last.closed_at ? Date.now() - new Date(last.closed_at).getTime() : Infinity;
       // a person marked it resolved a moment ago: give the fix time to show in the records before flagging again
-      if (last && last.status === "resolved" && last.closed_at && Date.now() - new Date(last.closed_at).getTime() < HOLD_MIN() * 60e3) return { held: true, count: res.count };
+      if (last && last.status === "resolved" && ago < HOLD_MIN() * 60e3) return { held: true, count: res.count };
+      // the watch itself cleared it a moment ago: the same flag is back, in its own thread, with no new mentions or wake
+      if (last && last.status === "cleared" && ago < REOPEN_MIN() * 60e3) {
+        const agent = await agentRow(w.agent_id);
+        const evidence = { tool: w.tool, table: w.spec.table || null, shape: w.shape, count: res.count, sample: res.sample.slice(0, 10) };
+        await q("UPDATE platform.vsm_flags SET status='open', closed_at=NULL, count=$2, evidence=$3::jsonb, last_true_at=now(), updated_msg_at=now(), status_by=NULL, status_at=now() WHERE thread_id=$1", [last.thread_id, res.count, JSON.stringify(evidence)]);
+        await post({ company: w.company, channel: last.channel, thread_id: last.thread_id, kind: "update", from_kind: "watch", from_name: agent.name, agent_id: agent.id, watch_id: w.id, evidence,
+          words: `Back again: ${res.count} found${sampleWords(res.count, res.sample)}.` });
+        return { reopened: last.thread_id, count: res.count };
+      }
       const m = await openFlag(w, res);
       return { opened: m.id, count: res.count };
     }
@@ -658,7 +683,7 @@ async function setUp(req, company, key) {
     [company, a.key, a.name, JSON.stringify(a.boxes), a.tools, JSON.stringify(a.steps), people, whoOf(req)])).rows[0];
   const proposed = await proposeWatches(company, row, whoOf(req));
   await post({ company, channel: `a:${row.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: row.id,
-    words: `${row.name} is set up. It watches ${[a.tools.length ? (a.tools.length === 1 ? "one tool" : `${a.tools.length} tools`) : "", a.steps.length ? `${a.steps.length === 1 ? "one step" : `${a.steps.length} steps`} of the stage events` : ""].filter(Boolean).join(" and ")} and proposed ${proposed} ${proposed === 1 ? "watch" : "watches"}; none runs until a manager turns it on.` });
+    words: `${row.name} is set up. It watches ${[a.tools.length ? (a.tools.length === 1 ? "one tool" : `${a.tools.length} tools`) : "", a.steps.length ? `the work the tools report at ${a.steps.length === 1 ? "one step" : `${a.steps.length} steps`}` : ""].filter(Boolean).join(" and ")} and proposed ${proposed} ${proposed === 1 ? "watch" : "watches"}; none runs until a manager turns it on.` });
   await record.record("agent_set_up", { company, actor: record.actor(req), detail: { agent: row.key, tools: row.tools, proposed } });
   // A2: the agent drafts its brief with AI, in the background; no credit or no key leaves it to the manager to write
   require("./vsm-review").draftBrief(company, row.id, { auto: true }).catch((e) => post({ company, channel: `a:${row.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: row.id,
@@ -828,21 +853,27 @@ async function flagAction(req, company, threadId, action, b) {
 }
 // "Make it a request": a card on the Kaizen board, on the flag's tool, carrying the evidence; the proposer reads it at
 // once, as a card sent from Ask Anetix does. The manager's approval in Reviewing stays the gate.
+// The VSM audit (2026-11-03): a flag an agent's review raised has no watch, so its tool comes from its evidence; the card
+// sits on the flag's box when it is one box; and under the data wall the card carries the watch's title and count, not
+// the rows a flag names (a record's values never reach a model there), and waits for the manager's Review with AI.
 async function makeRequest(req, company, f, note) {
   if (f.feedback_id) throw bad(`This flag is already request #${f.feedback_id}.`);
-  const w = f.watch_id ? (await q("SELECT tool FROM platform.vsm_watches WHERE id=$1", [f.watch_id])).rows[0] : null;
-  const tool = w && w.tool;
+  const w = f.watch_id ? (await q("SELECT tool, title FROM platform.vsm_watches WHERE id=$1", [f.watch_id])).rows[0] : null;
+  const tool = (w && w.tool) || (f.evidence && f.evidence.tool) || null;
   const row = tool ? await require("./registry").getModule(company, tool) : null;
-  if (!row || !row.live_version) throw bad("This flag's tool is not on the floor, so the request has nowhere to go. Write it on the Kaizen board.");
-  const root = (await q("SELECT words FROM platform.vsm_messages WHERE id=$1", [f.thread_id])).rows[0];
-  const message = `From the agent board: ${root.words}${note ? `\n\n${note}` : ""}`.slice(0, 2000);
+  if (!row || !row.live_version || row.archived_at) throw bad("This flag's tool is not on the floor, so the request has nowhere to go. Write it on the Kaizen board.");
+  const walled = await require("./datawall").isWalled(company);
+  const root = (await q("SELECT words, from_name FROM platform.vsm_messages WHERE id=$1", [f.thread_id])).rows[0];
+  const said = walled ? `${w ? w.title : `A flag from ${root.from_name}`}${Number.isInteger(f.count) && f.count > 0 ? `: ${f.count} found` : ""}.` : root.words;
+  const message = `From the agent board: ${said}${note ? `\n\n${note}` : ""}`.slice(0, 2000);
   const by = whoOf(req);
-  const fb = (await q(`INSERT INTO platform.feedback (company, module, page, message, name, person_id, reply_token, source, source_ref) VALUES ($1,$2,$3,$4,$5,$6,$7,'agent_board',$8) RETURNING id, module`,
-    [company, tool, `/c/${company}/m/${tool}/`, message, by.slice(0, 80), req.sosPersonId || null, require("./arrival").newToken(), f.thread_id])).rows[0];
+  const one = Array.isArray(f.boxes) && f.boxes.length === 1 ? String(f.boxes[0]).split("/") : null;
+  const fb = (await q(`INSERT INTO platform.feedback (company, module, page, message, name, person_id, reply_token, source, source_ref, map_key, node_key) VALUES ($1,$2,$3,$4,$5,$6,$7,'agent_board',$8,$9,$10) RETURNING id, module`,
+    [company, tool, `/c/${company}/m/${tool}/`, message, by.slice(0, 80), req.sosPersonId || null, require("./arrival").newToken(), f.thread_id, one ? one[0] : null, one ? one[1] : null])).rows[0];
   await q("UPDATE platform.vsm_flags SET feedback_id=$2 WHERE thread_id=$1", [f.thread_id, fb.id]);
   await post({ company, channel: f.channel, thread_id: f.thread_id, kind: "action", from_kind: "person", from_name: by, agent_id: f.agent_id, watch_id: f.watch_id, words: `${by} made this a request on the Kaizen board (#${fb.id}).` });
-  await record.record("feedback_filed", { company, module: tool, actor: record.actor(req), feedback_id: fb.id, after: message, detail: { via: "agent_board", thread: f.thread_id } });
-  const reading = await require("./arrival").start(fb.id, { force: true }).catch(() => false);
+  await record.record("feedback_filed", { company, module: tool, actor: record.actor(req), feedback_id: fb.id, after: message, detail: { via: "agent_board", thread: f.thread_id, ...(walled ? { walled: true } : {}) } });
+  const reading = walled ? false : await require("./arrival").start(fb.id, { force: true }).catch(() => false);
   return { feedback_id: fb.id, proposing: reading };
 }
 
@@ -955,5 +986,5 @@ router.post(`${B}/flags/${ID}/:action(seen|on_it|resolved|not_a_problem|reopen|r
 module.exports = {
   init, SCHEMA, TABLES, router, tick, climb, runWatch, evaluate, checkSpec, watchQuery, disagreeQuery, condsSql, proposeFor, proposeDisagree, limitWords, agentsFrom, partiesOf, pushOf, overview, setUp, addWatch, editWatch, checkNow,
   flagAction, channels, stream, thread, say, chips, deleteCompany, SHAPES, SHAPE_WORDS, slugify,
-  post, partiesFor, liveTools, labelCol, othersFor, OPEN_FLAG, nearOf, nearBoxes, mapBoxes,   // for the agents' reviews (src/vsm-review.js) and drafts (A3)
+  post, partiesFor, liveTools, labelCol, othersFor, OPEN_FLAG, nearOf, nearBoxes, mapBoxes, whyNotRun,   // for the agents' reviews (src/vsm-review.js) and drafts (A3)
 };

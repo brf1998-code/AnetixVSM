@@ -228,6 +228,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The agent board, A3, and stage events (VSM M4): drafts across tools made on the tool's own screen, live numbers on the map (2026-11-02, VSM dev copy)
 - The value stream map, M3: the Map and the Kaizen board joined, and the future state (2026-11-02, VSM dev copy)
 - The floor's side of the map: who each screen is for, a box's station screen, the agent's line on it (2026-11-02, VSM dev copy)
+- The VSM audit's round 1 (2026-11-03, VSM dev copy)
 
 ## What this is
 
@@ -376,14 +377,16 @@ tool list, 401 from the API) proves the CLI itself starts.
 - `SOS_REPRICE_DELAY_MS` (1500): how long after a tool goes live the site's fee is looked at again (`src/modprice.js`).
 - The agent board (`src/vsm-agents.js`, VSM copy): `SOS_WATCH_MS` (300000: how often the watches run; 0 = no runner, the
   tests), `SOS_FLAG_RAISE_MIN` (720: a Look flag nobody marked seen becomes Act), `SOS_FLAG_CLIMB_MIN` (240: an Act flag
-  nobody marked seen climbs), `SOS_FLAG_UPDATE_MIN` (60), `SOS_FLAG_RESOLVED_HOLD_MIN` (60), `SOS_AGENT_PUSH` (on; `off`
+  nobody marked seen climbs), `SOS_FLAG_UPDATE_MIN` (60), `SOS_FLAG_RESOLVED_HOLD_MIN` (60), `SOS_FLAG_REOPEN_MIN` (60: a flag its watch cleared that is back
+  within this opens again in its own thread), `SOS_AGENT_PUSH` (on; `off`
   stops the ntfy push for a climbed flag, the notice stays). Its reviews (`src/vsm-review.js`, A2): `SOS_AGENT_REVIEWS_DAY` (40
   reviews a company a day), `SOS_AGENT_EARLY_MIN` (60: the least time between an agent's early reviews; 0 in the tests),
   `SOS_AGENT_REVIEW_STEPS` (6 model calls a review), `SOS_AGENT_REVIEW_TOKENS` (2000 a call). The shift times are set on
   the board, not here. Drafts across tools (`src/vsm-drafts.js`, A3): `SOS_DRAFT_DAYS` (7: a draft nobody makes expires),
   `SOS_DRAFTS_WAITING` (10 waiting a tool). Stage events (`src/vsm-stages.js`): `SOS_STAGE_EVENTS_DAY` (20000 a company
   a day), `SOS_STAGE_WINDOW_DAYS` (7: the window of the live numbers). M3 (`src/vsm-kaizen.js`) and the floor's line
-  (`src/vsm-floor.js`) need none; `SOS_FAKE_FUTURE_MS` is the tests' slow fake future-state draft, never on Railway.
+  (`src/vsm-floor.js`) need none; `SOS_FAKE_FUTURE_MS` and `SOS_FAKE_WALK_MS` are the tests' slow fake future-state draft
+  and walk read, never on Railway. `SOS_USE_FLUSH_MS` (60000): how often each tool's daily use is written (`src/vsm.js`).
 - `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
   (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
   second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts

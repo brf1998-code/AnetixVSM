@@ -349,7 +349,7 @@ async function exportMap(company) {
   for (const m of (await q(`SELECT id, key, family, title, state, status, layout, parent_key AS parent FROM platform.vsm_maps WHERE company=$1 AND NOT proposed AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows) {
     const nodes = (await q(`SELECT key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence FROM platform.vsm_nodes WHERE map_id=$1 ORDER BY id`, [m.id])).rows;
     const edges = (await q(`SELECT from_key AS "from", to_key AS "to", kind, label, from_side, to_side, from_at, to_at, inventory FROM platform.vsm_edges WHERE map_id=$1 ORDER BY sort, id`, [m.id])).rows;
-    const kaizen = (await q(`SELECT node_key AS node, n, title, why, status, evidence, source, becomes FROM platform.vsm_kaizen WHERE map_id=$1 ORDER BY n`, [m.id])).rows;
+    const kaizen = (await q(`SELECT node_key AS node, n, title, why, status, evidence, source, becomes, feedback_id FROM platform.vsm_kaizen WHERE map_id=$1 ORDER BY n`, [m.id])).rows;
     const { id, ...rest } = m;
     maps.push({ ...rest, nodes, edges, kaizen });
   }
@@ -387,8 +387,10 @@ function checkImport(doc) {
         from_at: Math.max(0, Math.min(1, Number(e.from_at) || 0.5)), to_at: Math.max(0, Math.min(1, Number(e.to_at) || 0.5)),
         inventory: e.inventory ? { label: txt(e.inventory.label, 40), note: txt(e.inventory.note, 200) } : null, sort: i };
     });
-    // a burst that became a request keeps its words on import, not the link: the request belongs to the company's board
-    const kaizen = (m.kaizen || []).slice(0, 50).map((z) => ({ node: z.node && nodeKeys.has(txt(z.node, 40)) ? txt(z.node, 40) : null, n: int(z.n || 0, 0, 999), title: txt(z.title, 160), why: txt(z.why, 400), status: ["open", "dismissed"].includes(z.status) ? z.status : "open",
+    // a burst that became a request stays filed (the VSM audit, 2026-11-03: it came back open and could be filed twice); its
+    // link to the request is kept only where that request is this company's (importMap checks)
+    const kaizen = (m.kaizen || []).slice(0, 50).map((z) => ({ node: z.node && nodeKeys.has(txt(z.node, 40)) ? txt(z.node, 40) : null, n: int(z.n || 0, 0, 999), title: txt(z.title, 160), why: txt(z.why, 400), status: ["open", "dismissed", "filed"].includes(z.status) ? z.status : "open",
+      feedback_id: z.status === "filed" && Number.isSafeInteger(Number(z.feedback_id)) && Number(z.feedback_id) > 0 && Number(z.feedback_id) < 2147483647 ? Number(z.feedback_id) : null,
       evidence: z.evidence && typeof z.evidence === "object" ? { kind: txt(z.evidence.kind, 20), text: txt(z.evidence.text, 300) } : null, source: z.source === "agent" ? "agent" : "map", becomes: ["change", "plant", "new_tool"].includes(z.becomes) ? z.becomes : null }));
     const layout = { bands: (((m.layout || {}).bands) || []).slice(0, 10).map((b) => ({ label: txt(b.label, 60), note: txt(b.note, 200), x: int(b.x, 0, 6000), y: int(b.y, 0, 4000), w: int(b.w, 10, 6000), h: int(b.h, 10, 4000) })),
       ladder_y: (m.layout || {}).ladder_y != null ? int(m.layout.ladder_y, 0, 4000) : null,
@@ -439,7 +441,10 @@ async function importMap(req, company, doc) {
         await client.query(`INSERT INTO platform.vsm_edges (company, map_id, from_key, to_key, kind, label, from_side, to_side, from_at, to_at, inventory, sort) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
           [company, id, e.from, e.to, e.kind, e.label, e.from_side, e.to_side, e.from_at, e.to_at, e.inventory ? JSON.stringify(e.inventory) : null, e.sort]);
       }
-      for (const z of m.kaizen) await client.query(`INSERT INTO platform.vsm_kaizen (company, map_id, node_key, n, title, why, status, evidence, source, becomes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`, [company, id, z.node, z.n, z.title, z.why, z.status, z.evidence ? JSON.stringify(z.evidence) : null, z.source, z.becomes]);
+      for (const z of m.kaizen) {
+        const fb = z.feedback_id && (await client.query("SELECT 1 FROM platform.feedback WHERE id=$1 AND company=$2", [z.feedback_id, company])).rows[0] ? z.feedback_id : null;
+        await client.query(`INSERT INTO platform.vsm_kaizen (company, map_id, node_key, n, title, why, status, evidence, source, becomes, feedback_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11)`, [company, id, z.node, z.n, z.title, z.why, z.status, z.evidence ? JSON.stringify(z.evidence) : null, z.source, z.becomes, fb]);
+      }
     }
     for (const x of c.questions) {
       await client.query(`INSERT INTO platform.vsm_questions (company, map_key, node_key, where_label, claim, why, confidence, status, answer, sort) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,

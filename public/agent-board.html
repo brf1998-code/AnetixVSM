@@ -106,6 +106,8 @@
 const SLUG = (location.pathname.split("/")[2] || "").toLowerCase();
 const API = `/api/c/${SLUG}/vsm`;
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// a list or column name the way a person says it: "order_level" is "order level" (the VSM audit, 2026-11-03)
+const plainName = (s) => String(s == null ? "" : s).replace(/_/g, " ");
 const SHAPE = { stuck: "Stuck: sat in one state too long", waiting: "Waiting: open too long", level: "Over or under a limit", due: "Coming due, not done", quiet: "Quiet: the tool has not been used", disagree: "Disagree: two tools do not match", stage: "At a step: open too long, or too much open" };
 const KIND = { note: "Note", answer: "Answer", pass: "Passed on", ask: "Question", idea: "Watch idea", draft: "Draft request", record: "Draft for a tool" };
 const REC = { waiting: ["Waiting on the tool's screen", ""], taking: ["Being made", "ok"], taken: ["Made", "ok"], declined: ["Declined", ""], withdrawn: ["Withdrawn", ""], expired: ["Expired", ""] };
@@ -238,7 +240,7 @@ function agentPanel() {
     const limHtml = lim ? `<label class="row" style="font-weight:600">${w.shape === "due" ? "Within" : w.shape === "level" ? "Limit" : w.shape === "quiet" ? "After" : w.shape === "stage" ? (w.spec.measure === "wip" ? "More than" : "Open longer than") : "Older than"} <input type="number" min="0" step="any" value="${esc(lim[1])}" data-lim="${lim[0]}" data-w="${w.id}" aria-label="Limit for ${esc(w.title)}"> ${lim[2]}</label>`
       : w.shape === "disagree" ? `<span class="note">against ${esc(title(w.spec.other.tool))} · ${esc(w.spec.other.table)}</span>` : `<span class="note">under ${esc(String(w.spec.limit_column).replace(/_/g, " "))}</span>`;
     return `<div class="w ${w.status === "proposed" ? "proposed" : ""}"><div class="t">${esc(w.title)}</div>
-      <div class="note">${esc(SHAPE[w.shape] || w.shape)} · ${esc(title(w.tool))}${w.spec.table ? ` · ${esc(w.spec.table)}` : ""}${w.shape === "stage" ? ` · step ${esc(w.spec.step)}` : ""}${w.muted_until && new Date(w.muted_until) > new Date() ? ` · muted until ${esc(new Date(w.muted_until).toLocaleDateString())}` : ""}</div>
+      <div class="note">${esc(SHAPE[w.shape] || w.shape)} · ${esc(title(w.tool))}${w.spec.table ? ` · ${esc(plainName(w.spec.table))}` : ""}${w.shape === "stage" ? ` · step ${esc(w.spec.step)}` : ""}${w.muted_until && new Date(w.muted_until) > new Date() ? ` · muted until ${esc(new Date(w.muted_until).toLocaleDateString())}` : ""}</div>
       ${w.last_error ? `<div class="err">${esc(w.last_error)}</div>` : w.last_run_at ? `<div class="note">Last looked ${esc(ago(w.last_run_at))}: ${w.last_count ? `${w.last_count} found` : "nothing found"}</div>` : ""}
       <div class="row">${limHtml}<select data-sev="${w.id}" aria-label="How urgent"><option value="look"${w.severity === "look" ? " selected" : ""}>Look</option><option value="act"${w.severity === "act" ? " selected" : ""}>Act</option></select>
         ${w.status === "on" ? `<button type="button" class="btn quiet" data-act="watch" data-w="${w.id}" data-to="off">Turn off</button>` : `<button type="button" class="btn go" data-act="watch" data-w="${w.id}" data-to="on">Turn on</button>`}
@@ -299,7 +301,7 @@ function addHtml(a) {
   const tool = (t.find((x) => x.tool === S.add.tool) || t[0]);
   const table = tool && (tool.tables.find((x) => x.name === S.add.table) || tool.tables[0]);
   const cols = table ? table.columns : [];
-  const opt = (list, on) => list.map((c) => `<option value="${esc(c.name || c)}"${(c.name || c) === on ? " selected" : ""}>${esc(c.name || c)}</option>`).join("");
+  const opt = (list, on) => list.map((c) => `<option value="${esc(c.name || c)}"${(c.name || c) === on ? " selected" : ""}>${esc(plainName(c.name || c))}</option>`).join("");
   const times = cols.filter((c) => /timestamp|date/.test(c.type)), nums = cols.filter((c) => /integer|numeric|real|double|smallint|bigint/.test(c.type));
   const sh = S.add.shape;
   return `<form class="form" id="addform" data-agent="${a.id}"><div class="lbl">Add a watch</div>
@@ -307,11 +309,11 @@ function addHtml(a) {
     ${sh === "stage" ? "" : `<label>Tool<select name="tool">${t.map((x) => `<option value="${esc(x.tool)}"${x.tool === tool.tool ? " selected" : ""}>${esc(((S.agents.tools.find((y) => y.name === x.tool)) || { title: x.tool }).title)}</option>`).join("")}</select></label>`}
     ${sh === "stage" ? `<label>The step<select name="stepix">${(a.steps || []).map((x, i) => `<option value="${i}">${esc(x.step)} (${esc(((S.agents.tools.find((y) => y.name === x.module)) || { title: x.module }).title)})</option>`).join("")}</select></label>
       <label>Flag when<select name="measure"><option value="open">work is open there longer than</option><option value="wip">more work is open there than</option></select></label><label>Hours, or how many<input type="number" name="slimit" min="0" step="any" value="8"></label>` : sh === "quiet" ? `<label>After how many days with no use<input type="number" name="days" min="1" max="60" value="3"></label>` : `
-    <label>Table<select name="table">${opt(tool.tables, table && table.name)}</select></label>
+    <label>Which list<select name="table">${opt(tool.tables, table && table.name)}</select></label>
     <label>The name each row goes by<select name="label_column">${opt(cols, (cols.find((c) => /part_no|number|name|title|item/.test(c.name)) || cols[0] || {}).name)}</select></label>
-    ${sh === "stuck" ? `<label>The state column<select name="state_column">${opt(cols.filter((c) => /text|character/.test(c.type)), "")}</select></label><label>States that count as still open (comma between)<input type="text" name="states" placeholder="queued, at station"></label>` : ""}
-    ${sh === "stuck" || sh === "waiting" ? `<label>Measured from<select name="since_column">${opt(times, "")}</select></label><label>Older than (hours, 0 for any)<input type="number" name="hours" min="0" step="any" value="72"></label>` : ""}
-    ${sh === "level" ? `<label>The number<select name="column">${opt(nums, "")}</select></label><label>Under or over<select name="op"><option value="under">under</option><option value="over">over</option></select></label><label>The limit: a number, or another column<input type="text" name="limit" placeholder="10 or order_level"></label>` : ""}
+    ${sh === "stuck" ? `<label>The column that says where it is<select name="state_column">${opt(cols.filter((c) => /text|character/.test(c.type)), "")}</select></label><label>States that count as still open (comma between)<input type="text" name="states" placeholder="queued, at station"></label>` : ""}
+    ${sh === "stuck" || sh === "waiting" ? `<label>Counted from<select name="since_column">${opt(times, "")}</select></label><label>Older than (hours, 0 for any)<input type="number" name="hours" min="0" step="any" value="72"></label>` : ""}
+    ${sh === "level" ? `<label>The number<select name="column">${opt(nums, "")}</select></label><label>Under or over<select name="op"><option value="under">under</option><option value="over">over</option></select></label><label>The limit: a number, or another column<input type="text" name="limit" placeholder="10, or the column with the limit"></label>` : ""}
     ${sh === "due" ? `<label>The date<select name="date_column">${opt(times, "")}</select></label><label>Within (hours)<input type="number" name="within_hours" min="0" step="any" value="72"></label>` : ""}
     ${sh === "disagree" ? disagreeFields(t, tool, cols, opt) : ""}
     <label>Only rows where (optional)<span class="row"><select name="wcol"><option value=""></option>${opt(cols, "")}</select><select name="wop">${["is empty", "is not empty", "=", "!=", "<", "<=", ">", ">=", "contains"].map((o) => `<option>${esc(o)}</option>`).join("")}</select><input type="text" name="wval" placeholder="value" style="width:110px"></span></label>`}
@@ -350,7 +352,7 @@ function render() {
   const keepScroll = scrollY;
   app.innerHTML = `<aside class="side">${chansHtml()}${phoneChanHtml()}</aside>
     <section class="main" aria-label="Messages">
-      <div class="card head"><h2>${esc(head[0])}</h2><div class="note">${esc(head[1])}${S.board.push ? "" : " Phone alerts for climbed flags are off on this instance."}</div></div>
+      <div class="card head"><h2>${esc(head[0])}</h2><div class="note">${esc(head[1])}${S.board.push ? "" : " Phone alerts for climbed flags are off here."}</div></div>
       ${S.channel !== "escalations" ? `<form class="card compose" id="say"><textarea name="words" rows="1" maxlength="2000" placeholder="Write in ${esc(chan.kind === "plant" || chan.kind === "escalations" ? "#" + chan.name : chan.name)}" aria-label="Write a message"></textarea><button type="submit" class="btn go">Post</button></form>` : ""}
       ${S.err && !S.channel.startsWith("a:") ? `<div class="err">${esc(S.err)}</div>` : ""}
       <div class="card">${msgs.length ? msgs.map(msgHtml).join("") : `<div class="empty">Nothing here yet.</div>`}</div>

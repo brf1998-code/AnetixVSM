@@ -703,10 +703,19 @@ router.delete("/api/intakes/:id(\\d{1,9})/attach/:aid(\\d{1,9})", requireManager
   try { await attachments.remove(Number(req.params.aid), Number(req.params.id)); const it = await getIntake(Number(req.params.id)); res.json(await view(it)); }
   catch (e) { fail(res, e); }
 });
+// A stored file is shown in the browser only when it is a photo or a pdf; anything else is a download. Whatever it is, it
+// runs no script on the app's address: everything but a pdf goes out sandboxed with nothing it may load (the VSM audit,
+// 2026-11-03: a file's type is the browser's word when it is kept, so an SVG or a web page could be opened as one).
+const INLINE_SAFE = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"]);
 router.get("/api/attachments/:id(\\d{1,9})", requireManager, async (req, res) => {
   const a = await attachments.get(Number(req.params.id));
   if (!a) return res.status(404).end();
-  res.set("Content-Type", a.mime).set("X-Content-Type-Options", "nosniff").set("Content-Disposition", `inline; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600").send(a.bytes);
+  const mime = String(a.mime || "application/octet-stream").toLowerCase();
+  const inline = INLINE_SAFE.has(mime);
+  res.set("Content-Type", inline ? mime : (/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(mime) ? mime : "application/octet-stream")).set("X-Content-Type-Options", "nosniff")
+    .set("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${encodeURIComponent(a.filename)}"`).set("Cache-Control", "private, max-age=3600");
+  if (mime !== "application/pdf") res.set("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+  res.send(a.bytes);
 });
 
 module.exports = { router, create, openFor, slugTaken, answer, next, think, adjust, revise, mergeRevision, cleanChanges, withIds, POINT_KINDS, confirm, restart, abandon, view, getIntake, boardIntakes, questionsFor, roundState, intakeModel, generateDesign, estimateUsd, splitHandoffs, outsideDesignBrief, blankFor };

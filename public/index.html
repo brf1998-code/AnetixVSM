@@ -484,7 +484,8 @@ function boxChip(fb) {
   const k = boxKey(fb), b = k && (DATA.boxes || {})[k];
   if (!b) return "";
   const [mk, nk] = k.split("/");
-  return `<div class="meta"><button class="chip box" title="Show only the cards on this box" onclick="setBox('${esc(jsq(k))}')">ON THE MAP: ${esc(String(b.label).toUpperCase())}</button>${MGR() && b.map_id ? `<a class="maplink" href="map?mapkey=${encodeURIComponent(mk)}&box=${encodeURIComponent(nk)}">Show on map</a>` : ""}</div>`;
+  // a box no longer on the map (a walk's map replaced it and nothing matched it) is still named, and links nowhere
+  return `<div class="meta"><button class="chip box" title="Show only the cards on this box" onclick="setBox('${esc(jsq(k))}')">${b.gone ? "WAS ON THE MAP" : "ON THE MAP"}: ${esc(String(b.label).toUpperCase())}</button>${MGR() && b.map_id ? `<a class="maplink" href="map?mapkey=${encodeURIComponent(mk)}&box=${encodeURIComponent(nk)}">Show on map</a>` : ""}</div>`;
 }
 // a key from the map is letters, digits, - and _ with one slash; anything else is dropped before it goes in a handler
 const jsq = (k) => String(k).replace(/[^A-Za-z0-9_\/-]/g, "");

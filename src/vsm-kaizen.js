@@ -1,7 +1,8 @@
 // M3 of the value stream map (docs/VSM.md section 10, 2026-11-02): the Map and the Kaizen board joined.
 //
 //   - A request sits on a box. feedback.map_key and feedback.node_key tie it to a box of a map by keys (a box's key
-//     survives an import and a walk's "Use this map", where its id does not; the agent board ties boxes the same way).
+//     survives an import, where its id does not, and "Use this map" gives a walk's box the key of the box it matches
+//     (src/vsm-walk.js carryOver); the agent board ties boxes the same way).
 //     The board shows the box on the card, "Show on map" opens it, and the board filters by box as it does by tool.
 //   - A box with no tool can carry a request too: a plant request (feedback.kind 'plant', no tool). It is the plant's
 //     own work (move a bench, a FIFO lane, a word with the supplier), so no AI reads it and nothing is built: a manager
@@ -105,13 +106,15 @@ async function boxesFor(company, rows) {
   const pairs = [...new Set((rows || []).filter((f) => f.map_key && f.node_key).map((f) => `${f.map_key}/${f.node_key}`))];
   if (!pairs.length) return {};
   const mapKeys = [...new Set(pairs.map((p) => p.split("/")[0]))];
-  const found = (await q(`SELECT m.id AS map_id, m.key AS map_key, m.family, m.state, n.key, n.label FROM platform.vsm_nodes n JOIN platform.vsm_maps m ON m.id=n.map_id
-                           WHERE n.company=$1 AND m.key = ANY($2) AND m.replaced_at IS NULL`, [company, mapKeys])).rows;
+  // a box of a map a walk replaced is still named, as no longer on the map (its requests followed the hidden map when
+  // nothing on the new one matched it, src/vsm-walk.js carryOver)
+  const found = (await q(`SELECT m.id AS map_id, m.key AS map_key, m.family, m.state, m.replaced_at, n.key, n.label FROM platform.vsm_nodes n JOIN platform.vsm_maps m ON m.id=n.map_id
+                           WHERE n.company=$1 AND m.key = ANY($2)`, [company, mapKeys])).rows;
   const out = {};
   for (const p of pairs) {
     const [mk, nk] = p.split("/");
-    const r = found.find((x) => x.map_key === mk && x.key === nk);
-    out[p] = r ? { label: r.label, map_id: r.map_id, family: r.family, future: r.state === "future" } : { label: nk, map_id: null, gone: true };
+    const r = found.find((x) => x.map_key === mk && x.key === nk && !x.replaced_at) || found.find((x) => x.map_key === mk && x.key === nk);
+    out[p] = r && !r.replaced_at ? { label: r.label, map_id: r.map_id, family: r.family, future: r.state === "future" } : { label: r ? r.label : nk, map_id: null, gone: true };
   }
   return out;
 }
@@ -176,7 +179,7 @@ async function burstOf(company, id) {
 }
 async function fileBurst(req, company, id, b) {
   const { z, map } = await burstOf(company, id);
-  if (z.status === "filed" && z.feedback_id) throw bad(`This burst is request #${z.feedback_id} already.`, 409);
+  if (z.status === "filed") throw bad(z.feedback_id ? `This burst is request #${z.feedback_id} already.` : "This burst went to the Kaizen board before this map was imported.", 409);
   if (!z.node_key) throw bad("This burst is not on a box. Put it on the Kaizen board by hand.");
   const node = await nodeRow(company, map.id, z.node_key);
   if (!node) throw bad("The box this burst was on is not on the map now.", 409);
@@ -186,7 +189,7 @@ async function fileBurst(req, company, id, b) {
 }
 async function setBurst(req, company, id, to) {
   const { z } = await burstOf(company, id);
-  if (z.status === "filed") throw bad(`This burst is request #${z.feedback_id} already.`, 409);
+  if (z.status === "filed") throw bad(z.feedback_id ? `This burst is request #${z.feedback_id} already.` : "This burst went to the Kaizen board before this map was imported.", 409);
   const status = to === "dismissed" ? "dismissed" : "open";
   await q("UPDATE platform.vsm_kaizen SET status=$3, decided_by=$4, decided_at=now() WHERE company=$1 AND id=$2", [company, id, status, whoOf(req)]);
   await record.record(status === "dismissed" ? "kaizen_put_away" : "kaizen_brought_back", { company, actor: record.actor(req), after: z.title, detail: { kaizen: z.n, map_id: z.map_id } });
@@ -391,10 +394,14 @@ async function startFuture(req, company, mapId) {
   if (map.proposed) throw bad("This is a walk's draft. Use it as the family's map first.");
   const k = `${company}/${map.key}`;
   if (drafting.has(k) && !drafting.get(k).error) throw bad("The future state is being drafted already.", 409);
-  await agent.assertUnderCap(company);
-  const nodes = Number((await q("SELECT count(*) FROM platform.vsm_nodes WHERE map_id=$1", [map.id])).rows[0].count);
-  if (!nodes) throw bad("The map has no boxes to draft from.");
+  // marked before the next await, so two taps start one draft (the VSM audit, 2026-11-03)
+  const before = drafting.get(k);
   drafting.set(k, { started: Date.now(), error: null });
+  try {
+    await agent.assertUnderCap(company);
+    const nodes = Number((await q("SELECT count(*) FROM platform.vsm_nodes WHERE map_id=$1", [map.id])).rows[0].count);
+    if (!nodes) throw bad("The map has no boxes to draft from.");
+  } catch (e) { if (before) drafting.set(k, before); else drafting.delete(k); throw e; }
   await record.record("map_future_asked", { company, actor: record.actor(req), detail: { map: map.key } });
   const job = draftFuture(company, map, whoOf(req)).then(() => drafting.delete(k)).catch((e) => {
     console.error(`[vsm-kaizen] ${company}/${map.key} future draft failed:`, e.message);

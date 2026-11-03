@@ -233,6 +233,11 @@ to steps that a tool reports (Chelsea has none yet); the floor's station line is
 Chelsea acts on a draft an agent wrote) needs one of Chelsea's tools to take drafts: a Kaizen request for a drafts tray
 on MO Board or the Inventory Request, built and approved like any change.
 
+**Round 1 of the audit (2026-11-03):** one review of an agent at a time; a failed review leaves its inbox for the next
+(`last_done_at`); a flag its watch cleared that is back within the hour reopens in its own thread
+(`SOS_FLAG_REOPEN_MIN`); Make it a request works on a review's own flag and puts the card on the flag's box; under the
+data wall a request from a flag carries the watch's name and count only, and an agent's draft card is not sent.
+
 **The floor's line, as built (2026-11-02):** `src/vsm-floor.js`. A box's editor on the Map picks its station screen (a
 live screen of one of its own tools); a manager tags who each screen is for on the QR codes tab, and a screen picked as a
 station screen becomes the floor's. On an agent's panel, Its line on the floor (off by default) shows the agent's most

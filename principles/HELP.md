@@ -79,21 +79,24 @@ Managers and admins have two views, **Kaizen** (this board) and **Map**, as tabs
 value stream, one map per product family: the steps, the information and material moving between them, the stock
 waiting between them, and the timeline at the bottom. Every box is colored by where its record lives: an Anetix tool,
 another system (Fishbowl, Shopify, QuickBooks, HubSpot), paper, email or word of mouth, or no record at all. A "?" is a
-number nobody records yet; stage scans will fill those in later.
+number nobody records yet; a tool that reports the work at its steps fills those in (Live numbers on the map, below).
 
 - **Coverage** at the top counts the plant's stages: how many have an Anetix tool built, and how many of those tools
   are in daily use (changed by the plant's own people on 5 or more of the last 14 days). Anetix's own sign-ins do not
   count as use.
 - **Click a box** for what happens there, what is and is not recorded, the tools on it, the evidence and a quote from
   the walk-through. **Edit this box** changes its name, who does it, where its record lives, its tools and its data
-  box numbers. **Arrange boxes** lets a manager drag boxes; the flows follow.
+  box numbers. **Arrange boxes** lets a manager drag boxes; the flows follow. **Download the map** saves the whole map as
+  one file; Anetix can load a map from such a file (**Import a map**, Anetix only), which replaces the company's map.
+- **Every stage, and where its record lives** (below the map) lists the plant's own stage list; a manager changes where
+  a stage's record lives there, and coverage counts it.
 - **Review** lists the places the map is guessing. "That's right" confirms one; "Needs a fix" asks what is right.
 - **Layers**: Systems (the colors), Agents (the agent that watches each step, with its open flags), Kaizen (the
   improvement bursts, numbered; green once one is a request), Timeline (the lead time ladder).
 - **From the map to the Kaizen board.** Each kaizen burst becomes a request in one tap: **A change to** one of the box's
   tools (it goes to that tool, where the proposer reads it like any request), **A plant request** (work on the floor
-  itself with no tool to change: nothing reads it but people, and a manager moves it to Working on it, Done or Not
-  doing this, or makes it a new tool request later), or **A new tool** (a new tool request that starts with what the
+  itself with no tool to change: nothing reads it but people, and a manager moves it to Working on it (and back with
+  Not started), Done or Not doing this, or makes it a new tool request later), or **A new tool** (a new tool request that starts with what the
   box says filled in: what it is for, who uses it, how it is kept today, its stages; the manager names it and goes on).
   **Put away** hides a burst; **Bring back** returns it. A selected box lists the requests on it (**On the Kaizen
   board**) and has **Ask for something here** for the same three. On the board, a request on a box says "On the map"
@@ -113,12 +116,16 @@ number nobody records yet; stage scans will fill those in later.
   the systems in use, then starts at shipping and goes upstream ("What happens right before Pack and ship?"), with the
   sources' guess first. Each step gets a card already filled in (who, what tells them to start, where its record
   lives, what waits before it, any number someone said): **Looks right**, or change what is wrong. "?" stays where
-  nobody knows. Then the supplier, production control in order, a review, and **Draw the map**. Every answer is saved
+  nobody knows (a family's map holds up to 24 steps). Then the supplier, production control in order, a review, and
+  **Draw the map**. Every answer is saved
   as it is given, so the walk can be closed and picked up again, on a phone walking the floor too. Sources cannot be
   added after the read; **Read the sources again** starts the walk over from its sources.
 - The drawn map sits beside the family's current map as a **walk draft**, so the two can be compared; every guess on
-  it is a review question. **Use this map** makes it the family's map; the old one is kept, hidden, with its kaizen and
-  review answers, and Anetix can bring it back. **Map another family from the same sources** starts the next family
+  it is a review question. **Use this map** makes it the family's map. Where a box on it matches a box on the old map
+  (the same stage of the plant's list, the same name, or the same tools), it keeps that box's requests, agent, station
+  screen, live-number steps and kaizen bursts; a note above the map says what carried over. A request on an old box
+  with no match stays on the board, marked "was on the map". The old map is kept, hidden, with its review answers,
+  and Anetix can bring it back. **Map another family from the same sources** starts the next family
   without reading again. Anetix can also run a walk for the plant from a call, and then the manager decides on the
   board whether to use the map. The floor does not see the Map; it keeps its own screens.
 
@@ -128,8 +135,9 @@ Managers and admins have a third tab, **Agents**, beside Kaizen and Map: one pub
 post, and where everyone who manages the plant reads the same thing. The floor does not see it.
 
 - **Agents come from the map.** A box on the Map names the agent that watches it ("Inventory agent"; Edit this box
-  sets it, and several boxes can share one). An agent can be set up only where an Anetix tool sits on its boxes, since
-  it watches that tool's records. **Set up** drafts its watches from the tool's tables, and its **brief** (what the area
+  sets it, and several boxes can share one). An agent can be set up where an Anetix tool sits on its boxes, since it
+  watches that tool's records, or where its boxes are tied to steps a tool reports (Live numbers on the map, below).
+  **Pause** stops its watches and reviews until it is turned on again. **Set up** drafts its watches from the tool's tables, and its **brief** (what the area
   does and what normal looks like) with AI; none of the watches runs until a manager turns it on, and the brief is the
   manager's to change in the agent's panel (**Draft it again** redrafts it).
 - **Watches** are rules, checked every few minutes: work stuck in one state too long, something open too long, a
@@ -143,8 +151,11 @@ post, and where everyone who manages the plant reads the same thing. The floor d
   step that sends it work. Their agent gets it if they have one; otherwise it lands in that box's channel for its
   people. While the rows stay, it is one flag with its count kept up to date; when they clear, it says so and closes.
 - **What a person does with a flag**: Seen, On it, Resolved (with a line on what was done), Not a problem (with a
-  line on why; the watch is muted for a week), Make it a request (a card on the Kaizen board, on that tool, with the
-  evidence), or a reply in its thread. Anyone can also write in #plant or an agent's channel.
+  line on why; the watch is muted for a week, and **Unmute** on the watch undoes that), Make it a request (a card on the
+  Kaizen board, on that tool and on the flag's box, with the evidence), or a reply in its thread; **Reopen** brings a
+  closed flag back. A flag that clears and comes back within the hour opens again in its own thread rather than a new
+  one. Anyone can also write in #plant or an agent's channel. Where the plant's records are walled off from the AI,
+  a request made from a flag carries the watch's name and its count, not the rows, and waits for Review with AI.
 - **Climbing.** A Look flag nobody marks seen for a shift becomes Act; an Act flag nobody marks seen for a few hours
   goes to #escalations, onto the board's notices for every manager, and its box turns red on the Map. Anetix hears of
   it too.
@@ -154,7 +165,9 @@ post, and where everyone who manages the plant reads the same thing. The floor d
   before posting it), clear its own flag, answer a thread sent to it with what its records show, pass a thread on to
   a neighbor's agent when it is theirs, ask a neighbor one question, propose a watch for a manager to turn on, or
   draft a request card. **Review now** asks for one at once. An Act flag sent to an agent wakes it for an early
-  review. Each review uses AI, so a manager turns them on, and there is a most a day.
+  review. Each review uses AI, so a manager turns them on, and there is a daily limit. One review of an agent runs at a
+  time. **What the board left out of it** under the last review lists anything it said that the records did not hold
+  up, which the board did not post.
 - **Two hops.** An agent answers a thread once a review and never talks to itself; after two agents have spoken in a
   thread, only people write in it, so agents cannot keep a thread going between them.
 - **A draft request card** waits on the board until a manager taps **Send to Kaizen** (it becomes a request on that

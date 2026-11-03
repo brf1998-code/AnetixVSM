@@ -80,6 +80,26 @@ t("only a live screen of the tool, never a preview or the test floor", F.liveRel
 const tagged = F.applyTags([{ route: "/", for: "office" }, { route: "/station/:seq", for: null }, { route: "/stock", for: "floor" }], { "/station/:seq": "floor", "/stock": "office" });
 t("a manager's tag fills an untagged screen and wins over the tool's own word", tagged[1].for === "floor" && tagged[1].tag_by_manager && tagged[2].for === "office" && tagged[0].for === "office" && !tagged[0].tag_by_manager);
 
+// ---- the VSM audit, round 1: which box of a walk's draft is which box of the map it replaces
+const W = require("../src/vsm-walk");
+const oldB = [{ key: "kit", kind: "process", label: "Kitting", stage_refs: ["03"] }, { key: "asm", kind: "process", label: "Final assembly", modules: ["mo-board"] },
+  { key: "plan", kind: "control", label: "Plan the day" }, { key: "shops", kind: "customer", label: "Shops" }, { key: "paint", kind: "process", label: "Paint" }];
+const newB = [{ key: "p-s1", kind: "process", label: "Pick the kit", stage_refs: ["03"] }, { key: "p-s2", kind: "process", label: "Assembly", modules: ["mo-board"] },
+  { key: "c-c1", kind: "control", label: "Plan the day" }, { key: "cus", kind: "customer", label: "Customer" }, { key: "p-s3", kind: "process", label: "Pack" }];
+const mb = Object.fromEntries(W.matchBoxes(oldB, newB).map((p) => [p.new, p.old]));
+t("a shared stage of the plant's list matches boxes whatever their names", mb["p-s1"] === "kit");
+t("a name held in the other and the same tool match; the same name matches", mb["p-s2"] === "asm" && mb["c-c1"] === "plan");
+t("a lone customer is the customer", mb.cus === "shops");
+t("a box like no other is left alone, and each box is matched once", !mb["p-s3"] && Object.values(mb).length === new Set(Object.values(mb)).size, mb);
+t("boxes of different kinds never match", W.matchBoxes([{ key: "x", kind: "control", label: "Test" }], [{ key: "y", kind: "process", label: "Test" }]).length === 0);
+
+// ---- the VSM audit, round 1: why a watch could not run, in plain words; a filed burst through an import
+const AG = require("../src/vsm-agents"), V = require("../src/vsm");
+t("a database's own error is said plainly", AG.whyNotRun({ code: "42883", message: "operator does not exist: text >= integer" }) === "its limit and the column it compares do not match (words against a number, or a date against a number)"
+  && /not in the tool any more/.test(AG.whyNotRun({ code: "42703" })) && AG.whyNotRun({ message: "boom" }) === "the tool's records could not be read" && AG.whyNotRun({ status: 400, message: "Name one of the tool's tables." }) === "Name one of the tool's tables.");
+const imp = V.checkImport({ format: "anetix-map-1", maps: [{ key: "m", nodes: [{ key: "a", kind: "process", label: "A" }], kaizen: [{ node: "a", n: 1, title: "x", status: "filed", feedback_id: 12 }, { node: "a", n: 2, title: "y", status: "weird", feedback_id: 13 }] }] });
+t("an import keeps a filed burst filed with its request's number; anything else is open with none", imp.maps[0].kaizen[0].status === "filed" && imp.maps[0].kaizen[0].feedback_id === 12 && imp.maps[0].kaizen[1].status === "open" && imp.maps[0].kaizen[1].feedback_id === null);
+
 t("no words of M3's code carry an em or en dash", !/[\u2013\u2014]/.test(["src/vsm-kaizen.js", "src/vsm-floor.js"].map((f) => fs.readFileSync(path.join(__dirname, "..", f), "utf8")).join("")));
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

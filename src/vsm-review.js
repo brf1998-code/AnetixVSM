@@ -33,6 +33,7 @@ const SCHEMA = `
 ALTER TABLE platform.vsm_agents ADD COLUMN IF NOT EXISTS reviews BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE platform.vsm_agents ADD COLUMN IF NOT EXISTS last_review_at TIMESTAMPTZ;
 ALTER TABLE platform.vsm_agents ADD COLUMN IF NOT EXISTS last_shift_at TIMESTAMPTZ;
+ALTER TABLE platform.vsm_agents ADD COLUMN IF NOT EXISTS last_done_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS platform.vsm_agent_settings (
   company     TEXT PRIMARY KEY,
   shift_times TEXT[] NOT NULL DEFAULT '{15:00}',
@@ -94,6 +95,9 @@ const whoOf = (req) => (req.sosAccount && (req.sosAccount.name || req.sosAccount
 
 async function init() {
   await q(SCHEMA);
+  // last_done_at (the VSM audit, 2026-11-03): when the last review that finished started; what came in since is the next
+  // review's inbox, so a review that fails no longer swallows it. Agents from before take their last review's time.
+  await q("UPDATE platform.vsm_agents SET last_done_at=last_review_at WHERE last_done_at IS NULL AND last_review_at IS NOT NULL");
   // a review a restart cut off would read "reviewing now" for ever and hold Review now: it did not finish
   const cut = (await q("UPDATE platform.vsm_reviews SET status='failed', error=$1, finished_at=now() WHERE status='running' RETURNING id", [RESTARTED])).rows.length;
   if (cut) console.log(`[agents] ${cut} review(s) cut off by a restart marked as not finished`);
@@ -170,7 +174,8 @@ async function inputFor(company, a, reason) {
   const watches = (await q("SELECT id, title, shape, status, spec, last_count, last_error FROM platform.vsm_watches WHERE agent_id=$1 AND status IN ('on','proposed') ORDER BY status, id LIMIT 20", [a.id])).rows;
   const flags = (await q(`SELECT f.thread_id, f.status, f.severity, f.count, f.evidence, f.owner, f.watch_id, f.opened_at, f.climbed_at, m.words FROM platform.vsm_flags f JOIN platform.vsm_messages m ON m.id=f.thread_id
                            WHERE f.company=$1 AND f.agent_id=$2 AND f.status = ANY($3) ORDER BY f.thread_id DESC LIMIT 15`, [company, a.id, ["open", "seen", "on_it"]])).rows;
-  const since = a.last_review_at ? new Date(a.last_review_at) : new Date(Date.now() - 24 * 3600e3);
+  // since the last review that finished: a failed one leaves its inbox for the next (the VSM audit, 2026-11-03)
+  const since = a.last_done_at ? new Date(a.last_done_at) : new Date(Date.now() - 24 * 3600e3);
   // threads touching it with something new, but a flag that is closed (a closed thread is done; reopening brings it back)
   const roots = (await q(`SELECT r.* FROM platform.vsm_messages r LEFT JOIN platform.vsm_flags f ON f.thread_id=r.id
                            WHERE r.company=$1 AND r.thread_id IS NULL AND (f.status IS NULL OR NOT (f.status = ANY($5)))
@@ -318,24 +323,34 @@ const running = new Set();   // agent ids with a review going in this process
 async function canReview(company, a) {
   if (await require("./datawall").isWalled(company)) return "This company keeps its records walled off from Anetix's AI, so its agents run on their watches only.";
   if (a.status !== "on") return `${a.name} is paused.`;
-  if (running.has(a.id) || (await q("SELECT 1 FROM platform.vsm_reviews WHERE agent_id=$1 AND status='running' AND started_at > now() - ($2::int * interval '1 minute')", [a.id, STALE_MIN])).rows.length) return `${a.name} is reviewing now.`;
+  if ((await q("SELECT 1 FROM platform.vsm_reviews WHERE agent_id=$1 AND status='running' AND started_at > now() - ($2::int * interval '1 minute')", [a.id, STALE_MIN])).rows.length) return `${a.name} is reviewing now.`;
   const n = (await q("SELECT count(*)::int AS n FROM platform.vsm_reviews WHERE company=$1 AND started_at > now() - interval '1 day' AND status <> 'skipped'", [company])).rows[0].n;
   if (n >= REVIEWS_DAY()) return `The agents have had ${n} reviews in the last day, the most a day for now. The watches still run.`;
   return null;
 }
 // -> { id } of a review that has started (it runs on in the background), or throws (manual) / returns null (scheduled)
+// One review of an agent at a time (the VSM audit, 2026-11-03): the agent is marked before the first await, so five
+// flags waking it in one tick start one review, not five.
 async function start(company, agentId, { reason = "manual", by = null } = {}) {
-  const a = (await q("SELECT * FROM platform.vsm_agents WHERE company=$1 AND id=$2", [company, agentId])).rows[0];
-  if (!a) throw bad("no such agent", 404);
-  const why = await canReview(company, a);
-  if (why) { if (reason === "manual") throw bad(why, 409); return null; }
-  try { await agent.assertUnderCap(company); }
-  catch (e) { if (reason === "manual") throw bad(e.message || "The AI credit is used up.", e.status || 402); return null; }
-  running.add(a.id);
-  const r = (await q("INSERT INTO platform.vsm_reviews (company, agent_id, reason, by_name) VALUES ($1,$2,$3,$4) RETURNING id", [company, a.id, reason, by])).rows[0];
-  await q("UPDATE platform.vsm_agents SET last_review_at=now() WHERE id=$1", [a.id]);
-  const done = run(company, a, r.id, reason).catch((e) => console.error(`[agents] review ${r.id}:`, e.message)).finally(() => running.delete(a.id));
-  return { id: r.id, done };
+  const aid = Number(agentId);
+  if (running.has(aid)) { if (reason === "manual") throw bad("This agent is reviewing now.", 409); return null; }
+  running.add(aid);
+  let launched = false;
+  try {
+    const a = (await q("SELECT * FROM platform.vsm_agents WHERE company=$1 AND id=$2", [company, aid])).rows[0];
+    if (!a) throw bad("no such agent", 404);
+    // an early review keeps its hour from the last one, checked under the same mark
+    if (reason === "early" && a.last_review_at && Date.now() - new Date(a.last_review_at).getTime() < EARLY_MIN() * 60e3) return null;
+    const why = await canReview(company, a);
+    if (why) { if (reason === "manual") throw bad(why, 409); return null; }
+    try { await agent.assertUnderCap(company); }
+    catch (e) { if (reason === "manual") throw bad(e.message || "The AI credit is used up.", e.status || 402); return null; }
+    const r = (await q("INSERT INTO platform.vsm_reviews (company, agent_id, reason, by_name) VALUES ($1,$2,$3,$4) RETURNING id", [company, a.id, reason, by])).rows[0];
+    await q("UPDATE platform.vsm_agents SET last_review_at=now() WHERE id=$1", [a.id]);
+    launched = true;
+    const done = run(company, a, r.id, reason).catch((e) => console.error(`[agents] review ${r.id}:`, e.message)).finally(() => running.delete(aid));
+    return { id: r.id, done };
+  } finally { if (!launched) running.delete(aid); }
 }
 async function run(company, a, reviewId, reason) {
   const steps = [];
@@ -343,6 +358,8 @@ async function run(company, a, reviewId, reason) {
   try {
     model = await agent.modelFor(company, "propose");
     const input = await inputFor(company, a, reason);
+    const walledNow = () => require("./datawall").isWalled(company);
+    if (await walledNow()) throw Object.assign(new Error("the data wall went up"), { wall: true });
     const ctx = T().newCtx({ company, role: "manager", scope: { kind: "company" }, walled: false, person: a.name });
     ctx.only = input.tools.map((t) => t.name);
     const titles = new Map(input.tools.map((t) => [t.name, t.title]));
@@ -353,6 +370,8 @@ async function run(company, a, reviewId, reason) {
     const reads = [];
     let out = null;
     for (let step = 0; step < STEPS() && !out; step++) {
+      // the wall going up mid-review stops it: no more of the records reach the model (the VSM audit, 2026-11-03)
+      if (step > 0 && (await walledNow())) throw Object.assign(new Error("the data wall went up"), { wall: true });
       const last = step === STEPS() - 1;
       await agent.atWall("agent-review", { company, model, system: SYSTEM, messages });
       // the last step forces post_review where the model takes a forced tool; where it does not, the words before it said so
@@ -384,10 +403,12 @@ async function run(company, a, reviewId, reason) {
     if (!out) throw new Error("the review ended without posting");
     const posted = await apply(company, a, reviewId, out, input, steps);
     await q("UPDATE platform.vsm_reviews SET status='done', steps=$2, posted=$3, model=$4, cost_usd=$5, finished_at=now() WHERE id=$1", [reviewId, JSON.stringify(steps), JSON.stringify(posted), model, cost]);
+    await q("UPDATE platform.vsm_agents SET last_done_at=(SELECT started_at FROM platform.vsm_reviews WHERE id=$1) WHERE id=$2", [reviewId, a.id]);
     await record.record("agent_review", { company, actor: "agent", detail: { agent: a.key, review: reviewId, reason, posted, model, cost_usd: cost } });
   } catch (e) {
     console.error(`[agents] ${company} review ${reviewId} (${a.key}):`, e.message);
-    const plain = e.status === 402 || e.code === "cap" ? line(e.message, 300) : "The review did not finish. The watches still run; the next review tries again.";
+    const plain = e.wall ? "The review stopped: this company's records were walled off from the AI while it ran. The watches still run."
+      : e.status === 402 || e.code === "cap" ? line(e.message, 300) : "The review did not finish. The watches still run; the next review tries again.";
     await q("UPDATE platform.vsm_reviews SET status='failed', steps=$2, error=$3, model=$4, cost_usd=$5, finished_at=now() WHERE id=$1", [reviewId, JSON.stringify(steps), plain, model, cost]).catch(() => {});
     await record.record("agent_review_failed", { company, actor: "agent", detail: { agent: a.key, review: reviewId, reason, model, cost_usd: cost } }).catch(() => {});
   } finally {
@@ -570,13 +591,13 @@ function wake(company, key) {
   (async () => {
     const a = (await q("SELECT * FROM platform.vsm_agents WHERE company=$1 AND key=$2 AND status='on' AND reviews", [company, key])).rows[0];
     if (!a) return;
-    if (a.last_review_at && Date.now() - new Date(a.last_review_at).getTime() < EARLY_MIN() * 60e3) return;
-    await start(company, a.id, { reason: "early" });
+    await start(company, a.id, { reason: "early" });   // the hour between early reviews is checked inside start, under its mark
   })().catch((e) => console.error(`[agents] wake ${company}/${key}:`, e.message));
 }
 // Run by the watch runner (src/vsm-agents.js tick): every agent with reviews on whose company's last shift time it has
 // not reviewed for yet, within three hours of it. last_shift_at moves first, so a review that fails is not retried
-// every five minutes; the next shift tries again.
+// every five minutes; the next shift tries again. An agent reviewing right now (an early review) keeps its shift for the
+// next tick instead of losing it (the VSM audit, 2026-11-03).
 let ticking = false;
 async function tick(now = new Date()) {
   if (ticking) return 0;
@@ -588,6 +609,7 @@ async function tick(now = new Date()) {
       const { last } = slots(now, a.shift_times || ["15:00"], a.tz || "America/New_York");
       if (!last || now - last > MISSED_MIN * 60e3) continue;
       if (a.last_shift_at && new Date(a.last_shift_at) >= last) continue;
+      if (running.has(a.id)) continue;
       await q("UPDATE platform.vsm_agents SET last_shift_at=$2 WHERE id=$1", [a.id, last]);
       const r = await start(a.company, a.id, { reason: "shift" }).catch((e) => { console.error(`[agents] shift review ${a.company}/${a.key}:`, e.message); return null; });
       if (r) { n++; await r.done; }
@@ -699,6 +721,9 @@ async function decideDraft(req, company, messageId, action) {
   }
   const row = await require("./registry").getModule(company, d.tool);
   if (!row || !row.live_version) throw bad("This tool is not on the floor now, so the request has nowhere to go. Write it on the Kaizen board.");
+  // the agent wrote this card from the tool's records; under the data wall none of it goes to the proposer (the VSM audit,
+  // 2026-11-03). Reviews do not run under the wall, so only a card drafted before the wall went up gets here.
+  if (await require("./datawall").isWalled(company)) throw bad("The agent drafted this card from the tool's records, and this company keeps its records walled off from the AI. Write the request on the Kaizen board in your own words.", 409);
   const message = `From the agent board (drafted by ${a ? a.name : "an agent"}, sent by ${by}): ${d.what}${d.why ? `\n\nWhy: ${d.why}` : ""}`.slice(0, 2000);
   // M3: the card sits on the box it is about, when that is one box (the flag's, else the agent's only one)
   const fl = d.thread_id ? (await q("SELECT boxes FROM platform.vsm_flags WHERE thread_id=$1 AND company=$2", [d.thread_id, company])).rows[0] : null;
