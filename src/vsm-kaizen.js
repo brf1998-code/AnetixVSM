@@ -218,6 +218,17 @@ async function plantStatus(req, company, id, status) {
   await record.record("plant_request_moved", { company, actor: record.actor(req), feedback_id: id, before: fb.status, after: status });
   return { status };
 }
+// A plant request closed with Done or Not doing this can be opened again (the VSM audit, round 2, 2026-11-03: closing it
+// was for good). One that became a new tool request stays closed: the new request is where it goes on.
+async function plantReopen(req, company, id) {
+  const fb = await plantOf(company, id);
+  if (!["done", "declined"].includes(fb.status)) throw bad("This request is open.", 409);
+  const moved = /^Became new tool request #(\d+)/.exec(fb.outcome || "");
+  if (moved) throw bad(`This request became new tool request #${moved[1]}; it goes on there.`, 409);
+  await q("UPDATE platform.feedback SET status='new', outcome=NULL, updated_at=now() WHERE company=$1 AND id=$2", [company, id]);
+  await record.record("plant_request_reopened", { company, actor: record.actor(req), feedback_id: id, before: fb.outcome, after: "new", detail: { was: fb.status } });
+  return { status: "new" };
+}
 // "Make it a new tool": the request closes, pointing at the new tool request, which carries the same box.
 async function plantToTool(req, company, id) {
   const fb = await plantOf(company, id);
@@ -491,6 +502,7 @@ router.post(`${V}/nodes/${ID}/request`, requireManager, small, async (req, res) 
 router.post(`${V}/maps/${ID}/future`, requireManager, async (req, res) => res.json({ ok: true, ...(await startFuture(req, slugOf(req), Number(req.params.id))) }));
 router.post(`${V}/maps/${ID}/keep`, requireManager, async (req, res) => res.json({ ok: true, ...(await keepFuture(req, slugOf(req), Number(req.params.id))) }));
 router.post(`${V}/plant/${ID}/status`, requireManager, small, async (req, res) => res.json({ ok: true, ...(await plantStatus(req, slugOf(req), Number(req.params.id), String((req.body || {}).status || ""))) }));
+router.post(`${V}/plant/${ID}/reopen`, requireManager, async (req, res) => res.json({ ok: true, ...(await plantReopen(req, slugOf(req), Number(req.params.id))) }));
 router.post(`${V}/plant/${ID}/new-tool`, requireManager, async (req, res) => res.json({ ok: true, ...(await plantToTool(req, slugOf(req), Number(req.params.id))) }));
 
-module.exports = { init, SCHEMA, router, prefillFromBox, cardsFor, boxesFor, fileFrom, fileBurst, setBurst, fileFromBox, plantStatus, plantToTool, contextFor, promptFor, fakeFuture, checkFuture, drawFuture, startFuture, draftFuture, keepFuture, futureInfo, FUTURE_SCHEMA, SYSTEM, MAX_BURSTS };
+module.exports = { init, SCHEMA, router, prefillFromBox, cardsFor, boxesFor, fileFrom, fileBurst, setBurst, fileFromBox, plantStatus, plantReopen, plantToTool, contextFor, promptFor, fakeFuture, checkFuture, drawFuture, startFuture, draftFuture, keepFuture, futureInfo, FUTURE_SCHEMA, SYSTEM, MAX_BURSTS };

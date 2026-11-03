@@ -708,10 +708,19 @@ async function draftBrief(company, id, { by = null, auto = false } = {}) {
 async function decideDraft(req, company, messageId, action) {
   const d = (await q("SELECT * FROM platform.vsm_drafts WHERE company=$1 AND message_id=$2", [company, messageId])).rows[0];
   if (!d) throw bad("no such draft", 404);
-  if (d.state !== "draft") throw bad(d.state === "sent" ? `This draft is request #${d.feedback_id} already.` : "This draft was put away.");
   const by = whoOf(req);
   const V = A();
   const m = (await q("SELECT * FROM platform.vsm_messages WHERE id=$1", [messageId])).rows[0];
+  // Not now is not for good: Bring it back puts the card back as a draft (the VSM audit, round 2, 2026-11-03)
+  if (action === "restore") {
+    if (d.state !== "dismissed") throw bad(d.state === "sent" ? `This draft is request #${d.feedback_id} already.` : "This draft is waiting already.", 409);
+    const r = await q("UPDATE platform.vsm_drafts SET state='draft', decided_by=NULL, decided_at=NULL WHERE message_id=$1 AND state='dismissed'", [messageId]);
+    if (!r.rowCount) throw bad("This draft is waiting already.", 409);
+    await V.post({ company, channel: m.channel, thread_id: messageId, kind: "action", from_kind: "person", from_name: by, agent_id: d.agent_id, words: `${by} brought it back.` });
+    await record.record("agent_draft_brought_back", { company, actor: record.actor(req), detail: { message: messageId, agent_id: d.agent_id } });
+    return { state: "draft" };
+  }
+  if (d.state !== "draft") throw bad(d.state === "sent" ? `This draft is request #${d.feedback_id} already.` : "This draft was put away. Bring it back first.");
   const a = d.agent_id ? (await q("SELECT name FROM platform.vsm_agents WHERE id=$1", [d.agent_id])).rows[0] : null;
   if (action === "dismiss") {
     await q("UPDATE platform.vsm_drafts SET state='dismissed', decided_by=$2, decided_at=now() WHERE message_id=$1", [messageId, by]);
@@ -760,6 +769,6 @@ router.get(`${AG}/${ID}/reviews`, requireManager, async (req, res) => res.json({
 router.post(`${AG}/${ID}/brief`, requireManager, async (req, res) => res.json({ ok: true, ...(await draftBrief(slugOf(req), Number(req.params.id), { by: whoOf(req) })) }));
 router.get("/api/c/:slug/vsm/agent-settings", requireManager, async (req, res) => res.json(await settingsOf(slugOf(req))));
 router.post("/api/c/:slug/vsm/agent-settings", requireManager, small, async (req, res) => res.json({ ok: true, settings: await setSettings(req, slugOf(req), req.body || {}) }));
-router.post(`/api/c/:slug/vsm/board/drafts/${ID}/:action(send|dismiss)`, requireManager, async (req, res) => res.json({ ok: true, result: await decideDraft(req, slugOf(req), Number(req.params.id), req.params.action) }));
+router.post(`/api/c/:slug/vsm/board/drafts/${ID}/:action(send|dismiss|restore)`, requireManager, async (req, res) => res.json({ ok: true, result: await decideDraft(req, slugOf(req), Number(req.params.id), req.params.action) }));
 
 module.exports = { init, SCHEMA, TABLES, router, start, tick, wake, slots, cleanTimes, validZone, settingsOf, stateFor, inputFor, inputText, apply, draftBrief, decideDraft, deleteCompany, MAX_HOPS, SYSTEM, POST_SCHEMA };

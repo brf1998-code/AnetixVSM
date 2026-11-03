@@ -68,6 +68,21 @@ const throws = (fn, re) => { try { fn(); return false; } catch (e) { return e.st
   t("lead time from the first event to the last finish at the last box", c.lead && c.lead.refs === 1 && c.lead.lead_min === 80, c.lead);
   t("a box with no steps has no numbers", !c.nodes.pack);
   t("no events, no runs", S.compute([], nodes, edges, 7).nodes.cut.runs === 0 && S.compute([], nodes, edges, 7).lead === null);
+  // round 2 of the VSM audit (2026-11-03): a part scrap, a rework pass, a job that began before the window
+  const part = S.compute([ev("Weld", "J9", "start", 0, 10), ev("Weld", "J9", "scrap", 5, 2), ev("Weld", "J9", "finish", 30, 8)], nodes, edges, 7, Date.parse(at(100)));
+  t("a part scrap leaves the run open, so the rest finishes with a cycle time", part.nodes.weld.runs === 1 && part.nodes.weld.cycle_min === 30 && part.nodes.weld.scrapped === 2 && part.nodes.weld.finished === 8 && part.nodes.weld.wip === 0 && part.nodes.weld.fpy === 80, part.nodes.weld);
+  const half = S.compute([ev("Weld", "J9", "start", 0, 10), ev("Weld", "J9", "scrap", 5, 4)], nodes, edges, 7, Date.parse(at(100)));
+  t("and it is still work in process until it finishes", half.nodes.weld.wip === 1 && half.nodes.weld.oldest_open_min === 100, half.nodes.weld);
+  const all = S.compute([ev("Weld", "J9", "start", 0, 3), ev("Weld", "J9", "scrap", 5, 3)], nodes, edges, 7, Date.parse(at(100)));
+  t("a scrap of all of it ends the run", all.nodes.weld.wip === 0 && all.nodes.weld.runs === 0, all.nodes.weld);
+  const rework = S.compute([ev("Cut", "J7", "start", 0), ev("Cut", "J7", "finish", 10), ev("Weld", "J7", "start", 40), ev("Weld", "J7", "finish", 50), ev("Cut", "J7", "start", 60), ev("Cut", "J7", "finish", 70)], nodes, edges, 7, Date.parse(at(100)));
+  t("a rework pass back through the first box keeps the wait the job had between the boxes", rework.waits["cut>weld"] && rework.waits["cut>weld"].wait_min === 30 && rework.waits["cut>weld"].refs === 1, rework.waits);
+  const back = S.compute([ev("Cut", "J8", "start", 0), ev("Cut", "J8", "finish", 10), ev("Cut", "J8", "start", 20), ev("Cut", "J8", "finish", 30), ev("Weld", "J8", "start", 45)], nodes, edges, 7, Date.parse(at(100)));
+  t("a second pass at the first box before the move waits from the later finish", back.waits["cut>weld"].wait_min === 15 && back.waits["cut>weld"].refs === 1, back.waits);
+  const late = S.compute([ev("Weld", "J6", "start", 0), ev("Weld", "J6", "finish", 20)], nodes, edges, 7, Date.parse(at(100)), new Map([["J6", Date.parse(at(-600))]]));
+  t("lead time counts from when the job was first seen, before the window too", late.lead && late.lead.lead_min === 620, late.lead);
+  const op = S.openAt([{ ref: "A", kind: "start", qty: 5, at: at(0) }, { ref: "A", kind: "scrap", qty: 1, at: at(1) }, { ref: "B", kind: "wait", qty: 1, at: at(2) }, { ref: "C", kind: "start", qty: 1, at: at(3) }, { ref: "C", kind: "finish", qty: 1, at: at(4) }]);
+  t("what is open at a step: a part-scrapped run and one waiting, not one finished", op.length === 2 && op[0].ref === "A" && op[0].kind === "start" && op[1].ref === "B" && op[1].kind === "wait", op);
 
   // ---- the stage watch
   const steps = [{ module: "line", step: "Cut" }];

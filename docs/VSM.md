@@ -111,6 +111,13 @@ Changes to existing tables:
 Coverage, takt, lead time and the ladder are computed from these rows by platform code, not by a model, so they
 work behind the data wall.
 
+*As built, where it differs (written 2026-11-03 from the audit of 2026-11-02, item 15):* a map has no demand, takt,
+available time or owner yet, so takt is not computed. A box's data values are numbers as people said them (`detail`),
+with no source, time or person per number; the live numbers from stage events are shown beside them, marked as the
+floor's. There are five record kinds, not four: `anetix`, `next` (an Anetix tool planned), `other`, `paper`, `none`.
+A request is tied to a box by `feedback.map_key` and `node_key`, not `node_id` (section 10, M3). The stage events
+table is `platform.vsm_stage_events`.
+
 ## 5. The mapping walk
 
 Built on the new-tool intake (`public/assets/intake.js`, `src/intake.js`): the same popout, one question per
@@ -151,6 +158,10 @@ word-of-mouth flow, a long wait), and a future-state draft. The manager accepts 
 request on that box or a **new-tool intake pre-filled from the box** (round 1's who, devices, today, stages and
 works-with answers come straight from the node). This is the bridge from the map to Kaizen.
 
+*As built, where it differs (2026-11-03):* there is no photo per step; photos come in as sources at the start. Review
+questions go to managers on the Map only: the floor cannot answer one from its station screen yet. Phase 6 is the
+future state, drafted from the map (section 10, M3).
+
 Stopping and cost: the same shape as the intake. An "enough" check after each phase, a cap on generated questions
 per session, the design model for extraction and drafting, the short-text model for wording, metered as `mapping`.
 Under the data wall the walk still runs on what people say and upload (typed words are shared by rule); only reads
@@ -174,6 +185,9 @@ of the tools' records are refused.
 filters by tool today.
 
 The top band gets two tabs, Map and Kaizen. The floor sees neither; it sees its station screens, as today.
+
+*As built (2026-11-03):* three tabs, Kaizen, Map and Agents (the agent board, `docs/AGENTS.md`). Suggest a correction
+on a box is not built; a manager edits the box, or asks for a change on it. The wall mode is not built.
 
 ## 7. Live numbers: stage events
 
@@ -228,13 +242,16 @@ Each step has a gate, as in the roadmap.
 | M0 | Fork, dev instance, Chelsea snapshot | Chelsea's tools open on the dev instance |
 | M1 | Tables, Chelsea's map seeded, the Map view (read only, layers, detail, coverage) | Brendan or Taylor walks Zoe through Chelsea's map on the dev instance |
 | M2 | The mapping walk v1 (read, frame, walk, draft, review) | Run on Chelsea's sources, it finds the hand map's boxes; Taylor runs it for a second plant without help |
+| M3 | Map and Kaizen joined (`feedback.node_id`, bursts to requests, intake pre-filled from a box) | A burst on Chelsea's map becomes a change live on Chelsea's floor |
+| M4 | Stage events and live numbers | One Chelsea step scanned for a week; its box and ladder show real numbers |
+| M5 | Watchers, then tool agents (`docs/AGENTS.md`: A1 to A3) | A tool agent's message is acted on by a person at Chelsea |
+| M6 | Decide: merge back into SymbioticOS or replace it | Before a second customer's production data goes on the copy (the 2026-09-17 tenancy rule) |
 
 Status: M1 live 2026-11-01 (commit 9ab59bf). M2 built 2026-11-01 (`src/vsm-walk.js`, `src/mcp-vsm.js`, the walk panel in
 `public/map.html`; docs/FEATURES.md has the bullet): Brendan chose "confirm the guess" step cards, the board and the
 admin MCP both, and a draft beside the current map with "Use this map". Phase 4 (numbers) is folded into each step's
 card; phase 6 (future state and kaizen) waits for M3. The gate is a real-model run on Chelsea's sources on the dev
 instance, compared with the hand map.
-| M3 | Map and Kaizen joined (`feedback.node_id`, bursts to requests, intake pre-filled from a box) | A burst on Chelsea's map becomes a change live on Chelsea's floor |
 
 Status: M3 built 2026-11-02 (`src/vsm-kaizen.js`; docs/FEATURES.md has the bullet). Differences from section 4: a request
 is tied to a box by keys (`feedback.map_key`, `feedback.node_key`), not `node_id`, because an import keeps a box's key
@@ -244,14 +261,32 @@ steps and bursts; a request on an old box with no match follows the hidden map a
 reads it and a manager moves it along. Phase 6 of the walk is the future state, drafted by the agent from the current map
 (decision 9) as its own map beside the current one, with bursts each tied to evidence on the map; the walk's own screens
 end at "Use this map", and the future state is drafted from the map. The gate waits for a real burst on Chelsea's map.
-| M4 | Stage events and live numbers | One Chelsea step scanned for a week; its box and ladder show real numbers |
 
 Status: M4's platform side built 2026-11-02 with the agent board's A3 (`src/vsm-stages.js`: `ctx.vsm.event`, a box's
 steps in its editor, live numbers on the data boxes and the ladder, stage watches; the Paper Airplane Line reports its
 stations). The gate waits for a Chelsea tool that reports its stages, and for decision 5 (scanners or tablets).
 
-| M5 | Watchers, then tool agents | A tool agent's message is acted on by a person at Chelsea |
-| M6 | Decide: merge back into SymbioticOS or replace it | Before a second customer's production data goes on the copy (the 2026-09-17 tenancy rule) |
+M5: A1, A2 and A3 built 2026-11-02 and the floor's line the same day (`docs/AGENTS.md` section 7 has each as built);
+round 1 of the audit 2026-11-03 (`docs/FEATURES.md`).
+
+**What each gate needs on the dev copy** (the audit of 2026-11-02, item 5). The dev copy holds a snapshot of Chelsea
+taken on 2026-11-01, so its records do not move unless someone works in them there.
+
+- M1 and M2: a manager account on dev. Chelsea's own sign-ins do not work here (no production manager accounts came
+  across, and anything kept under production's `SOS_CONNECTION_KEY` cannot be read with dev's), so add a manager on the
+  company's card in /admin first. The admin MCP's walk tools need `SOS_PUBLIC_URL`, which is set on dev (the VSM connector).
+- M2's real-model run: the walk's sources (the 11/01 call and walk-through notes, Arthur's architecture), added on
+  dev, and a model key (set).
+- M3: Chelsea's floor. A burst becomes a request on dev, but "a change live on Chelsea's floor" means production;
+  until this copy merges back or replaces main, M3 can be met on dev only as a change live on the dev copy's Chelsea.
+- M4: a Chelsea tool that reports its stages (a Kaizen change that adds `ctx.vsm.event` to a station screen) and
+  decision 5. On dev, a week of numbers needs a person working that screen on dev, or a week of events written by a
+  test script, which proves the numbers but not the gate.
+- A1's week: watches on a frozen snapshot flag everything already past its limit on the first run, and Quiet flags
+  every tool after its days pass, since nobody uses the tools on dev. Either the week is run where the records move
+  (people using the dev copy, or production once merged), or Quiet stays off and the first day's flags are read as the
+  backlog they are. Nothing in the code tells a snapshot's old rows from new ones.
+- A2 and A3: the same, plus reviews turned on for an agent, and for A3 a Chelsea tool that takes drafts.
 
 ## 11. Carry-overs and traps
 
@@ -271,15 +306,21 @@ stations). The gate waits for a Chelsea tool that reports its stages, and for de
 2. Who runs the walk: the customer's manager on their own, Anetix as a paid service through the admin MCP, or both?
    *Answered 2026-11-01: both, from M2 (the board and the admin MCP). The walk confirms the sources' guess one step
    card at a time, and its map is a draft beside the current one until a manager uses it.*
-3. One map per family plus a plant overview (recommended), or one plant map with a family filter?
+3. One map per family plus a plant overview (recommended), or one plant map with a family filter? *Open. The code
+   today: one map per family, and the stages table under the map ("Every stage, and where its record lives") stands in
+   for the plant overview; there is no drawn overview map.*
 4. Does a stage with an Anetix tool built but not in daily use count toward coverage? *Answered 2026-11-01: two numbers,
    tool built and in daily use (worked out from the tool's own use).*
-5. Stage scans: barcode guns, tablets (Arthur's preference), or both?
+5. Stage scans: barcode guns, tablets (Arthur's preference), or both? *Open. The code today: stage events come only from
+   a tool's own screen code (`ctx.vsm.event`), so a tablet on a station screen works now; a barcode gun works where it
+   types into such a screen. There is no scanner path of its own.*
 6. Does the floor ever see the map (a wall TV), or only their own box's question? *For now managers and admins only.*
 7. Where agent messages surface: the map only, the board's notices, the person's station screen, a phone? *In part,
    2026-11-02: the agent board, the board's notices for a climbed flag, and, where a manager switches an agent's line
    on, one read-only line on its box's station screen (AGENTS.md decision 6). A phone alert for managers is not built.*
-8. Is the map part of the site fee, a service fee, or a tier?
+8. Is the map part of the site fee, a service fee, or a tier? *Open. The code today: the map, the walk, the future
+   draft and the agents' reviews are part of every site, with no fee or tier gate; their AI use is metered into the
+   company's AI budget (and a demo's credit) like any other.*
 9. Future state: drafted by the agent from the bursts, or led by the manager with the agent assisting? *Answered
    2026-11-02: the agent drafts it, beside the current map; the manager keeps it or drafts it again, and turns each
    burst into a request.*

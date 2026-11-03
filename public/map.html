@@ -440,6 +440,7 @@ function burstHtml(z, n) {
   if (z.status === "filed" && !z.feedback_id) tail = `<div class="acts2"><span class="stw">Sent to the Kaizen board before this map was imported</span></div>`;
   else if (z.status === "filed") tail = `<div class="acts2"><span class="stw ${esc(z.card_status || "")}">Request #${z.feedback_id}${z.card_kind === "plant" ? ", a plant request" : z.card_kind === "module_request" ? ", a new tool" : z.card_module ? `, ${esc(toolTitle(z.card_module))}` : ""}: ${esc(STW[z.card_status] || z.card_status || "")}</span>${node ? `<a class="quietbtn" href="${boardLink(node)}">Open on the board</a>` : ""}</div>`;
   else if (z.status === "dismissed") tail = `<div class="acts2"><span class="stw">Put away${z.decided_by ? ` by ${esc(z.decided_by)}` : ""}</span><button type="button" class="quietbtn" data-act="kz-back" data-z="${z.id}">Bring back</button></div>`;
+  else if (node && !S.view.map.proposed && S.kzfile && S.kzfile.z === z.id && S.kzfile.where === (n ? "box" : "list")) tail = kzFormHtml(z);
   else if (node && !S.view.map.proposed) {
     const best = (as, tool) => (z.becomes === as && (!tool || as === "change") ? "go" : "quietbtn");
     tail = `<div class="acts2">${liveTools(node).map((t) => `<button type="button" class="${best("change", t.name)}" data-act="kz-file" data-z="${z.id}" data-as="change" data-tool="${esc(t.name)}">A change to ${esc(t.title)}</button>`).join("")}
@@ -448,6 +449,20 @@ function burstHtml(z, n) {
   }
   return `<div class="burst"><button type="button" class="kz ${z.status === "filed" ? "done" : ""}" data-node="${esc(z.node_key || "")}" style="position:static;flex:none;width:28px;height:28px;font-size:12px" aria-label="Show kaizen ${z.n} on the map">${z.n}</button>
     <div style="min-width:0;flex:1"><b>${esc(z.title)}</b>${z.source === "agent" ? ` <span class="chip" style="background:#e3efe7;color:#1d5535">the agent's</span>` : ""}${node && n == null ? ` <span class="note">on ${esc(node.label)}</span>` : ""}${z.why ? `<div class="note">${esc(z.why)}</div>` : ""}${ev}${tail}</div></div>`;
+}
+// A burst becomes a request only after its words are shown and sent (the VSM audit, round 2, 2026-11-03: one tap filed
+// a plant request in the agent's words, with nothing asked). The words start as the burst's own and can be changed.
+const KZ_AS = {
+  change: (t) => [`A change to ${toolTitle(t)}`, "It goes to the tool's board, where the proposer reads it; you approve any change as always."],
+  plant: () => ["A plant request", "Work on the floor itself: no AI reads it, and you move it along on the Kaizen board."],
+  new_tool: () => ["A new tool", "A new tool request starts with these words and what this box says."],
+};
+function kzFormHtml(z) {
+  const [title, note] = KZ_AS[S.kzfile.as](S.kzfile.tool);
+  const words = S.kzfile.typed != null ? S.kzfile.typed : `${z.title}${z.why ? `. ${z.why}` : ""}${z.evidence && z.evidence.text ? `\n\nOn the map: "${z.evidence.text}"` : ""}`;
+  return `<form class="askbox" id="kzform" data-z="${z.id}"><label class="lbl" for="kzwords">${esc(title)}: what the request says</label><textarea id="kzwords" name="words" maxlength="2000">${esc(words)}</textarea>
+    <div class="note">${esc(note)}</div>${S.kzfile.err ? `<div class="err" role="alert">${esc(S.kzfile.err)}</div>` : ""}
+    <div class="chips"><button type="submit" class="go">Send to the Kaizen board</button><button type="button" class="quietbtn" data-act="kz-cancel">Cancel</button></div></form>`;
 }
 // the requests on a box, and the form that asks for one there
 function boxCardsHtml(n) {
@@ -719,7 +734,7 @@ function wScreenHtml(sc) {
     case "drafted": return `<h2>The map is drawn</h2><p>It sits beside ${esc(w.family)}'s current map as a draft, so the two can be compared. Every guess on it is a review question.</p>
       <div class="chips"><button type="button" class="go big" data-act="w-showmap" data-mapid="${w.map_id}">Open the draft</button><button type="button" class="quietbtn big" data-act="w-reopen">Change the walk</button><button type="button" class="quietbtn big" data-act="w-another">Map another family from the same sources</button></div>`;
     case "used": return `<h2>This walk's map is ${esc(w.family)}'s map now</h2><div class="chips"><button type="button" class="go big" data-act="w-showmap" data-mapid="${w.map_id}">Open it</button><button type="button" class="quietbtn big" data-act="w-another">Map another family from the same sources</button></div>`;
-    default: return `<h2>This walk is put away</h2>`;
+    default: return `<h2>This walk is put away</h2><p class="note">Its sources and answers are kept. Bring it back to go on where it was; a drawn map is drawn again from its answers.</p><div class="chips"><button type="button" class="go" data-act="w-back">Bring the walk back</button></div>`;
   }
 }
 const recChip = (k) => ({ anetix: "background:var(--anetix);color:#fff", other: "background:var(--other);color:#14202c", paper: "background:var(--paper);color:#3d2000", none: "background:#eef0f3" }[k] || "");
@@ -795,7 +810,8 @@ async function walkClick(t, act) {
   if (act === "w-draft") { t.disabled = true; await wpost("/draft", {}); return render(); }
   if (act === "w-reopen") { await wpost("/reopen", {}); return render(); }
   if (act === "w-reread") { if (!confirm("Read the sources again? The walk starts over from its sources; the sources stay, the answers go.")) return; await wpost("/reread", {}); return render(); }
-  if (act === "w-abandon") { if (!confirm("Put this walk away? Its draft map goes with it; the map in use stays as it is.")) return; await wpost("/abandon", {}); return closeWalk(); }
+  if (act === "w-abandon") { if (!confirm("Put this walk away? Its draft map goes with it; the map in use stays as it is. For two weeks the Map page can bring the walk back, with its sources and answers.")) return; await wpost("/abandon", {}); return closeWalk(); }
+  if (act === "w-back") { await wpost("/bring-back", {}); return render(); }
   if (act === "w-another") { const r = await post("/walks", { from_walk: S.walk.id }); return openWalk(r.walk.id); }
   if (act === "w-showmap") { const id = Number(t.dataset.mapid); clearTimeout(pollT); S.panel = null; S.walk = null; S.mapId = id; history.replaceState(null, "", `?map=${id}`); return load(false); }
 }
@@ -810,18 +826,20 @@ async function walkFile(file) {
 // them). A redraw a form asked for itself (a save that failed, with its error) draws it fresh.
 function snapForms() {
   const out = [];
-  for (const id of ["editform", "askform", "fixtext"]) { const el = document.getElementById(id); if (el) out.push({ id, el, ctx: id === "fixtext" ? S.fixing : S.sel }); }
+  const ctxOf = (id) => (id === "fixtext" ? S.fixing : id === "kzform" ? S.kzfile && S.kzfile.z : S.sel);
+  for (const id of ["editform", "askform", "fixtext", "kzform"]) { const el = document.getElementById(id); if (el) out.push({ id, el, ctx: ctxOf(id) }); }
   const a = document.activeElement;
   return { out, active: a && a !== document.body ? a : null, start: a && a.selectionStart, end: a && a.selectionEnd };
 }
 function putForms(k) {
   for (const x of k.out) {
     const now = document.getElementById(x.id);
-    if (now && now !== x.el && (x.id === "fixtext" ? S.fixing === x.ctx : S.sel === x.ctx)) now.replaceWith(x.el);
+    const same = x.id === "fixtext" ? S.fixing === x.ctx : x.id === "kzform" ? Boolean(S.kzfile) && S.kzfile.z === x.ctx : S.sel === x.ctx;
+    if (now && now !== x.el && same) now.replaceWith(x.el);
   }
   if (k.active && document.contains(k.active) && document.activeElement !== k.active) { k.active.focus({ preventScroll: true }); try { k.active.setSelectionRange(k.start, k.end); } catch (e) { /* not a text box */ } }
 }
-const typing = () => S.editing || S.asking || S.fixing != null || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+const typing = () => S.editing || S.asking || S.fixing != null || Boolean(S.kzfile) || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
 function render(opts = {}) {
   const kept = opts.keep ? snapForms() : null;
   const app = document.getElementById("app");
@@ -829,7 +847,8 @@ function render(opts = {}) {
   if (S.panel === "walk" && S.walk) { app.innerHTML = walkHtml(); return; }
   const imp = S.ov.can_import ? `<label class="quietbtn" style="cursor:pointer">Import a map<input type="file" accept="application/json,.json" id="importfile" hidden></label>` : "";
   const walks = (S.ov.walks || []).slice(0, 3).map((w) => `<button type="button" class="pill" data-act="w-open" data-walk="${w.id}">Walk: ${esc(w.family || (w.status === "reading" ? "reading" : "sources"))}${w.steps ? ` · ${w.steps} steps` : ""}</button>`).join("");
-  const walkBtns = `${walks}<button type="button" class="quietbtn" data-act="w-new">Map a family</button>`;
+  const away = (S.ov.walks_away || []).map((w) => `<button type="button" class="quietbtn" data-act="w-open" data-walk="${w.id}">Put away: ${esc(w.family || "a walk")}</button>`).join("");
+  const walkBtns = `${walks}<button type="button" class="quietbtn" data-act="w-new">Map a family</button>${away}`;
   if (!S.view) {
     app.innerHTML = `<div class="card empty"><h2 style="font-size:18px;color:var(--ink);margin-bottom:6px">No value stream map yet</h2><p>The map shows every step of the plant, the information and material between them, and where each step's record lives. The mapping walk builds it with you: add your call and walk-through notes, the agent makes a first guess at every step, and you confirm each one walking upstream from shipping.</p><div class="chips" style="justify-content:center;margin-top:12px">${walks}<button type="button" class="go big" data-act="w-new">Start the mapping walk</button>${imp}</div>${S.err ? `<div class="err" style="margin-top:10px">${esc(S.err)}</div>` : ""}</div>`;
     return;
@@ -879,11 +898,11 @@ app.addEventListener("click", async (ev) => {
     if (act === "notice-x") { S.notice = ""; return render(); }
     // M3: a burst to a request, put away and back; a box's own request; the future state
     if (act === "kz-file") {
-      t.disabled = true;
-      const r = await post(`/kaizen/${t.dataset.z}/file`, { as: t.dataset.as, tool: t.dataset.tool || undefined });
-      if (r.intake_id) { location.href = `./?intake=${r.intake_id}`; return; }
-      S.err = ""; return load(true);
+      S.kzfile = { z: Number(t.dataset.z), as: t.dataset.as, tool: t.dataset.tool || undefined, where: t.closest(".detail") ? "box" : "list" };
+      S.err = ""; render(); const ta = document.getElementById("kzwords"); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+      return;
     }
+    if (act === "kz-cancel") { S.kzfile = null; return render(); }
     if (act === "kz-away") { await post(`/kaizen/${t.dataset.z}/dismiss`, {}); S.err = ""; return load(true); }
     if (act === "kz-back") { await post(`/kaizen/${t.dataset.z}/restore`, {}); S.err = ""; return load(true); }
     if (act === "ask") { S.asking = true; S.err = ""; render(); const ta = document.getElementById("askwords"); if (ta) ta.focus(); return; }
@@ -923,6 +942,18 @@ app.addEventListener("submit", async (ev) => {
       else await wpost("/answer", wformBody(f));
       render(); scrollTo(0, 0);
     } catch (e) { if (btn) btn.disabled = false; walkErr(e.message); }
+    return;
+  }
+  if (ev.target.id === "kzform") {
+    ev.preventDefault();
+    const f = ev.target, k = S.kzfile;
+    const btn = f.querySelector("button[type=submit]"); if (btn) btn.disabled = true;
+    try {
+      const r = await post(`/kaizen/${k.z}/file`, { as: k.as, tool: k.tool, words: f.words.value });
+      S.kzfile = null;
+      if (r.intake_id) { location.href = `./?intake=${r.intake_id}`; return; }
+      S.err = ""; await load(true);
+    } catch (e) { k.err = e.message; k.typed = f.words.value; render(); const ta = document.getElementById("kzwords"); if (ta) ta.focus(); }
     return;
   }
   if (ev.target.id === "askform") {

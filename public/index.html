@@ -1365,14 +1365,15 @@ function plantCard(fb) {
   html += `<div class="meta">#${fb.id} · <span class="chip plant">PLANT REQUEST</span> · ${esc(fb.name || "a manager")}</div>` + boxChip(fb);
   if (fb.status === "done" || fb.status === "declined") {
     if (fb.outcome) html += `<div class="${fb.status === "done" ? "outcome" : "fail-note"}">${fb.status === "done" ? "Done: " : "Not doing this: "}${esc(fb.outcome)}</div>`;
+    if (MGR() && !/^Became new tool request #/.test(fb.outcome || "")) html += actions(pk, "", [`<button class="quiet" onclick="act('/api/c/${SLUG}/vsm/plant/${fb.id}/reopen',{})">Reopen</button>`]);
     return html + "</div>";
   }
   html += `<div class="meta">${fb.status === "in_progress" ? "Being worked on at the plant." : "Work on the floor itself, with no tool to change. Nothing reads it but people."}</div>`;
   if (MGR()) {
     const base = `/api/c/${SLUG}/vsm/plant/${fb.id}`;
-    const main = fb.status === "new" ? `<button class="primary" onclick="act('${base}/status',{status:'in_progress'})">Working on it</button>` : `<button class="go" onclick="closeItem(${fb.id}, false)">Done</button>`;
-    html += actions(pk, main, [fb.status === "new" ? `<button class="quiet" onclick="closeItem(${fb.id}, false)">Done</button>` : `<button class="quiet" onclick="act('${base}/status',{status:'new'})">Not started</button>`,
-      `<button class="quiet" title="Start a new tool request with this box's answers filled in" onclick="plantToTool(${fb.id})">Make it a new tool</button>`, `<button class="no" onclick="closeItem(${fb.id}, true)">Not doing this</button>`]);
+    const main = fb.status === "new" ? `<button class="primary" onclick="act('${base}/status',{status:'in_progress'})">Working on it</button>` : `<button class="go" onclick="closeItem(${fb.id}, false, true)">Done</button>`;
+    html += actions(pk, main, [fb.status === "new" ? `<button class="quiet" onclick="closeItem(${fb.id}, false, true)">Done</button>` : `<button class="quiet" onclick="act('${base}/status',{status:'new'})">Not started</button>`,
+      `<button class="quiet" title="Start a new tool request with this box's answers filled in" onclick="plantToTool(${fb.id})">Make it a new tool</button>`, `<button class="no" onclick="closeItem(${fb.id}, true, true)">Not doing this</button>`]);
   }
   return html + "</div>";
 }
@@ -1387,8 +1388,10 @@ function decline(pid) {
   const note = prompt("Reason (shown back to the reporter):") || "declined";
   act(`/api/proposals/${pid}/decide`, { decision: "decline", note });
 }
-function closeItem(id, declined) {
-  const outcome = prompt(declined ? "Reason:" : "What shipped:") || (declined ? "declined" : "done");
+function closeItem(id, declined, plant) {
+  const said = prompt(declined ? "Reason:" : plant ? "What was done:" : "What shipped:");
+  if (said === null && plant) return;   // Cancel on a plant request leaves it open
+  const outcome = said || (declined ? "declined" : "done");
   act(`/api/feedback/${id}/close`, { outcome, declined });
 }
 

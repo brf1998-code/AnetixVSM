@@ -83,6 +83,7 @@
   .form { display:flex; flex-direction:column; gap:8px; }
   .form label { display:flex; flex-direction:column; gap:3px; font-weight:600; font-size:12.5px; }
   .err { background:var(--redSoft); color:#7d1a14; border-radius:8px; padding:9px 12px; }
+  .err.top { position:sticky; top:8px; z-index:5; box-shadow:0 2px 8px rgba(0,0,0,.12); }
   .empty { padding:24px 16px; text-align:center; color:var(--steel); }
   .phonechan { display:none; }
   .chip.agent { background:#e7edf6; color:var(--navy); }
@@ -158,9 +159,13 @@ function chansHtml() {
       ${boxes.length ? `<details class="boxes"${S.channel.startsWith("b:") ? " open" : ""}><summary>Boxes with no agent (${boxes.length})</summary>${boxes.map((c) => btn(c, `${esc(c.name)}${c.people ? ` <span class="note">${esc(c.people)}</span>` : ""}`)).join("")}</details>` : ""}
     </nav>`;
 }
+// on a phone the channel list is a picker; the agents on the map that are not set up sit under it, so a phone can set one
+// up too (the VSM audit, round 2, 2026-11-03: that list was on the desktop's side bar only)
 function phoneChanHtml() {
   const ch = S.board.channels;
-  return `<div class="card phonechan"><label class="lbl" for="chansel">Channel</label><select id="chansel">${ch.map((c) => `<option value="${esc(c.key)}"${c.key === S.channel ? " selected" : ""}>${c.kind === "plant" || c.kind === "escalations" ? "#" : ""}${esc(c.name)}${c.open ? ` (${c.open} open)` : ""}</option>`).join("")}</select></div>`;
+  const notYet = S.agents.agents.filter((a) => !a.set_up);
+  return `<div class="card phonechan"><label class="lbl" for="chansel">Channel</label><select id="chansel">${ch.map((c) => `<option value="${esc(c.key)}"${c.key === S.channel ? " selected" : ""}>${c.kind === "plant" || c.kind === "escalations" ? "#" : ""}${esc(c.name)}${c.open ? ` (${c.open} open)` : ""}</option>`).join("")}</select>
+    ${notYet.length ? `<div class="lbl" style="margin-top:10px">On the map, not set up</div>${notYet.map((a) => `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${esc(a.name)}</span>${a.can_set_up ? `<button type="button" class="btn" data-act="setup" data-key="${esc(a.key)}">Set up</button>` : `<span class="note">no tool yet</span>`}</div>`).join("")}` : ""}</div>`;
 }
 
 // ---------- the stream
@@ -168,7 +173,7 @@ function flagActs(m) {
   const f = m.flag, open = ["open", "seen", "on_it"].includes(f.status);
   if (S.asking && S.asking.id === m.id) {
     const what = { resolved: "What was done?", not_a_problem: "Why is it not a problem? The watch is muted for a week.", request: "Anything to add for the request? (optional)" }[S.asking.action];
-    return `<form class="form" data-ask="${m.id}"><label>${esc(what)}<textarea name="words" rows="2" maxlength="600"></textarea></label><div class="acts"><button type="submit" class="btn go">${S.asking.action === "request" ? "Make the request" : "Save"}</button><button type="button" class="btn quiet" data-act="cancelask">Cancel</button></div></form>`;
+    return `<form class="form" data-ask="${m.id}"><label>${esc(what)}<textarea name="words" rows="2" maxlength="600"></textarea></label>${S.err && S.errAt === "ask" ? `<div class="err" role="alert">${esc(S.err)}</div>` : ""}<div class="acts"><button type="submit" class="btn go">${S.asking.action === "request" ? "Make the request" : "Save"}</button><button type="button" class="btn quiet" data-act="cancelask">Cancel</button></div></form>`;
   }
   if (!open) return `<div class="acts"><button type="button" class="btn quiet" data-act="flag" data-do="reopen" data-id="${m.id}">Reopen</button>${f.feedback_id ? "" : `<button type="button" class="btn" data-act="ask" data-do="request" data-id="${m.id}">Make it a request</button>`}</div>`;
   return `<div class="acts">${f.status === "open" ? `<button type="button" class="btn" data-act="flag" data-do="seen" data-id="${m.id}">Seen</button>` : ""}${f.status !== "on_it" ? `<button type="button" class="btn" data-act="flag" data-do="on_it" data-id="${m.id}">On it</button>` : ""}
@@ -201,7 +206,7 @@ function draftHtml(m) {
   const c = m.evidence.card, d = m.draft || { state: "draft" };
   return `<div class="card2"><div class="lbl">A request for ${esc(c.tool_title)}, drafted for you to check</div><div class="words">${esc(c.what)}</div>${c.why ? `<div class="note">Why: ${esc(c.why)}</div>` : ""}
     ${d.state === "draft" ? `<div class="acts"><button type="button" class="btn go" data-act="draft" data-do="send" data-id="${m.id}">Send to Kaizen</button><button type="button" class="btn quiet" data-act="draft" data-do="dismiss" data-id="${m.id}">Not now</button></div><div class="note">Nothing is filed until you send it; then it is a request on the Kaizen board, where you approve any change as always.</div>`
-      : d.state === "sent" ? `<div><a class="chip ok" href="./" style="text-decoration:none">Sent to Kaizen as request #${esc(d.feedback_id)}${d.decided_by ? ` by ${esc(d.decided_by)}` : ""}</a></div>` : `<div><span class="chip">Not now${d.decided_by ? `, ${esc(d.decided_by)}` : ""}</span></div>`}</div>`;
+      : d.state === "sent" ? `<div><a class="chip ok" href="./" style="text-decoration:none">Sent to Kaizen as request #${esc(d.feedback_id)}${d.decided_by ? ` by ${esc(d.decided_by)}` : ""}</a></div>` : `<div class="acts"><span class="chip">Not now${d.decided_by ? `, ${esc(d.decided_by)}` : ""}</span><button type="button" class="btn quiet" data-act="draft" data-do="restore" data-id="${m.id}">Bring it back</button></div>`}</div>`;
 }
 // a record an agent drafted for a tool (A3): made on that tool's own screen, so the card links there
 function recordHtml(m) {
@@ -229,7 +234,7 @@ function agentPanel() {
       <form class="form sec" id="shiftform"><div class="lbl">When the agents review</div>
         <label>Shift times (one to four, like 07:00, 15:00)<input type="text" name="shift_times" value="${esc(st.shift_times.join(", "))}" maxlength="40"></label>
         <label>Time zone<input type="text" name="tz" value="${esc(st.tz)}" maxlength="60" list="zones"></label><datalist id="zones">${["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Phoenix", "UTC"].map((z) => `<option value="${z}">`).join("")}</datalist>
-        <div class="acts"><button type="submit" class="btn">Save</button></div>${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}</form></section>`;
+        <div class="acts"><button type="submit" class="btn">Save</button></div>${S.err && S.errAt === "panel" ? `<div class="err" role="alert">${esc(S.err)}</div>` : ""}</form></section>`;
   }
   const a = S.agents.agents.find((x) => x.set_up && `a:${x.key}` === S.channel);
   if (!a) return "";
@@ -251,7 +256,7 @@ function agentPanel() {
     <div class="row" style="justify-content:space-between"><b style="font-size:16px">${esc(a.name)}</b><span class="chip ${a.status === "on" ? "ok" : ""}">${a.status === "on" ? "On" : "Paused"}</span></div>
     <div class="note">Watches ${[a.tools.length ? a.tools.map((t) => esc(title(t))).join(", ") : "", (a.steps || []).length ? `the work reported at ${a.steps.map((x) => esc(x.step)).join(", ")}` : ""].filter(Boolean).join(" and ") || "nothing yet"} on ${a.boxes.map((b) => esc(b.label)).join(", ") || "no box on the map now"}.${a.people ? ` People: ${esc(a.people)}.` : ""}</div>
     <div class="row"><button type="button" class="btn" data-act="check" data-id="${a.id}"${a.status !== "on" ? " disabled" : ""}>Check now</button><button type="button" class="btn quiet" data-act="agent" data-id="${a.id}" data-to="${a.status === "on" ? "paused" : "on"}">${a.status === "on" ? "Pause" : "Turn on"}</button><button type="button" class="btn quiet" data-act="propose" data-id="${a.id}">Look again</button></div>
-    ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
+    ${S.err && S.errAt === "panel" ? `<div class="err" role="alert">${esc(S.err)}</div>` : ""}
     ${reviewsHtml(a)}
     ${floorLineHtml(a)}
     <form class="form sec" data-brief="${a.id}"><div class="lbl">Its brief</div><div class="note">What this area does and what normal looks like, in your words. The agent reads it every review.</div>
@@ -350,48 +355,73 @@ function render() {
   const head = chan.kind === "plant" ? ["#plant", "Everything every agent and person posted, newest first."] : chan.kind === "escalations" ? ["#escalations", "Flags nobody picked up."] : chan.kind === "agent" ? [chan.name, "This agent's flags and notes, and what other agents sent it."] : [chan.name, "A box with no agent: what reaches its people."];
   const msgs = S.board.messages;
   const keepScroll = scrollY;
+  const drafts = typedNow();
   app.innerHTML = `<aside class="side">${chansHtml()}${phoneChanHtml()}</aside>
     <section class="main" aria-label="Messages">
       <div class="card head"><h2>${esc(head[0])}</h2><div class="note">${esc(head[1])}${S.board.push ? "" : " Phone alerts for climbed flags are off here."}</div></div>
       ${S.channel !== "escalations" ? `<form class="card compose" id="say"><textarea name="words" rows="1" maxlength="2000" placeholder="Write in ${esc(chan.kind === "plant" || chan.kind === "escalations" ? "#" + chan.name : chan.name)}" aria-label="Write a message"></textarea><button type="submit" class="btn go">Post</button></form>` : ""}
-      ${S.err && !S.channel.startsWith("a:") ? `<div class="err">${esc(S.err)}</div>` : ""}
+      ${S.err && S.errAt === "main" ? `<div class="err top" role="alert">${esc(S.err)}</div>` : ""}
       <div class="card">${msgs.length ? msgs.map(msgHtml).join("") : `<div class="empty">Nothing here yet.</div>`}</div>
     </section>
     <aside class="right">${agentPanel()}</aside>`;
+  putTyped(drafts);
   scrollTo(0, keepScroll);
+}
+// What a person typed and has not sent survives a redraw: the 15-second look used to wipe a reply typed and left (the
+// VSM audit, round 2, 2026-11-03). A box is kept when its words differ from what the page drew; a form being sent is not.
+const boxKey = (el) => { const f = el.form || {}; const d = f.dataset || {}; return [f.id || "", d.reply || "", d.ask || "", d.brief || "", d.agent || "", el.name || "", el.dataset.w || "", el.dataset.lim || ""].join("|"); };
+function typedNow() {
+  const out = new Map();
+  for (const el of app.querySelectorAll("textarea, input[type=text], input[type=number]")) {
+    if (el.form && el.form.dataset.sent) continue;
+    if (el.value !== el.defaultValue) out.set(boxKey(el), el.value);
+  }
+  return out;
+}
+function putTyped(drafts) {
+  if (!drafts.size) return;
+  for (const el of app.querySelectorAll("textarea, input[type=text], input[type=number]")) { const k = boxKey(el); if (drafts.has(k)) el.value = drafts.get(k); }
 }
 
 // ---------- events (delegated; ids and keys only, never free text, in attributes that act)
 const app = document.getElementById("app");
-async function go(fn) { if (S.busy) return; S.busy = true; try { await fn(); S.err = ""; } catch (e) { S.err = e.message; } finally { S.busy = false; } await load().catch((e) => { S.err = e.message; render(); }); }
+// where: which part of the page says an error (main: above the messages, held in sight; panel: the agent's panel;
+// ask: inside the flag's own form). form: a form being sent; its words are dropped once it went, kept when it failed.
+async function go(fn, where = "main", form = null) {
+  if (S.busy) return; S.busy = true;
+  if (form) form.dataset.sent = "1";
+  try { await fn(); S.err = ""; } catch (e) { S.err = e.message; S.errAt = where; if (form) delete form.dataset.sent; } finally { S.busy = false; }
+  await load().catch((e) => { S.err = e.message; S.errAt = "main"; render(); });
+}
 app.addEventListener("click", (ev) => {
   const t = ev.target.closest("[data-chan],[data-act]"); if (!t) return;
   if (t.dataset.chan) { S.channel = t.dataset.chan; S.open.clear(); S.threads = {}; S.adding = false; S.err = ""; history.replaceState(null, "", `?channel=${encodeURIComponent(S.channel)}`); return go(async () => {}); }
   const act = t.dataset.act, id = Number(t.dataset.id || t.dataset.w || 0);
   if (act === "thread") { if (S.open.has(id)) { S.open.delete(id); delete S.threads[id]; return render(); } S.open.add(id); return go(async () => {}); }
-  if (act === "ask") { S.asking = { id, action: t.dataset.do }; return render(); }
-  if (act === "cancelask") { S.asking = null; return render(); }
+  if (act === "ask") { S.asking = { id, action: t.dataset.do }; S.err = ""; return render(); }
+  if (act === "cancelask") { S.asking = null; S.err = ""; return render(); }
   if (act === "flag") return go(() => post(`/board/flags/${id}/${t.dataset.do}`, {}));
   if (act === "setup") return go(async () => { await post("/agents", { key: t.dataset.key }); S.channel = `a:${t.dataset.key}`; history.replaceState(null, "", `?channel=${encodeURIComponent(S.channel)}`); });
-  if (act === "check") return go(() => post(`/agents/${id}/check`, {}));
-  if (act === "propose") return go(() => post(`/agents/${id}/propose`, {}));
-  if (act === "agent") return go(() => post(`/agents/${id}`, { status: t.dataset.to }));
-  if (act === "unmute") return go(() => post(`/watches/${id}`, { unmute: true }));
+  if (act === "check") return go(() => post(`/agents/${id}/check`, {}), "panel");
+  if (act === "propose") return go(() => post(`/agents/${id}/propose`, {}), "panel");
+  if (act === "agent") return go(() => post(`/agents/${id}`, { status: t.dataset.to }), "panel");
+  if (act === "unmute") return go(() => post(`/watches/${id}`, { unmute: true }), "panel");
   if (act === "watch") {
     const lim = app.querySelector(`input[data-w="${id}"]`), sev = app.querySelector(`select[data-sev="${id}"]`);
     const body = { status: t.dataset.to };
     if (t.dataset.to === "on") { if (lim && lim.value !== "") body[lim.dataset.lim] = Number(lim.value); if (sev) body.severity = sev.value; }
-    return go(() => post(`/watches/${id}`, body));
+    return go(() => post(`/watches/${id}`, body), "panel");
   }
-  if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; if (!r.tools.length) S.add.shape = "stage"; render(); }).catch((e) => { S.err = e.message; S.adding = false; render(); }); }
+  if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; if (!r.tools.length) S.add.shape = "stage"; render(); }).catch((e) => { S.err = e.message; S.errAt = "panel"; S.adding = false; render(); }); }
   if (act === "canceladd") { S.adding = false; return render(); }
-  if (act === "reviews") return go(() => post(`/agents/${id}`, { reviews: t.dataset.to === "on" }));
-  if (act === "floorline") return go(() => post(`/agents/${id}`, { floor_line: t.dataset.to === "on" }));
-  if (act === "review") return go(() => post(`/agents/${id}/review`, {}));
-  if (act === "draftbrief") return go(() => post(`/agents/${id}/brief`, {}));
+  if (act === "reviews") return go(() => post(`/agents/${id}`, { reviews: t.dataset.to === "on" }), "panel");
+  if (act === "floorline") return go(() => post(`/agents/${id}`, { floor_line: t.dataset.to === "on" }), "panel");
+  if (act === "review") return go(() => post(`/agents/${id}/review`, {}), "panel");
+  if (act === "draftbrief") return go(() => post(`/agents/${id}/brief`, {}), "panel");
   if (act === "draft") return go(() => post(`/board/drafts/${id}/${t.dataset.do}`, {}));
-  if (act === "withdraw") return go(() => post(`/record-drafts/${id}/withdraw`, {}));
-  if (act === "floordrafts") return go(() => post(`/draft-tools/${encodeURIComponent(t.dataset.mod)}`, { floor: t.dataset.to === "on" }));
+  // withdrawing a record draft cannot be undone: the tool's screen stops offering it (round 2: it was one tap)
+  if (act === "withdraw") { if (!confirm("Withdraw this draft? The tool's screen stops offering it, and nothing is made from it. It cannot be brought back.")) return; return go(() => post(`/record-drafts/${id}/withdraw`, {})); }
+  if (act === "floordrafts") return go(() => post(`/draft-tools/${encodeURIComponent(t.dataset.mod)}`, { floor: t.dataset.to === "on" }), "panel");
 });
 app.addEventListener("change", (ev) => {
   const t = ev.target;
@@ -403,11 +433,11 @@ app.addEventListener("change", (ev) => {
 app.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
-  if (f.dataset.brief) { const brief = f.elements.brief.value; return go(() => post(`/agents/${f.dataset.brief}`, { brief })); }
-  if (f.id === "shiftform") { const shift_times = f.elements.shift_times.value, tz = f.elements.tz.value.trim(); return go(() => post("/agent-settings", { shift_times, tz })); }
-  if (f.id === "say") { const words = f.elements.words.value; return go(() => post("/board/messages", { channel: S.channel, words })); }
-  if (f.dataset.reply) { const words = f.elements.words.value; return go(() => post("/board/messages", { thread_id: Number(f.dataset.reply), words })); }
-  if (f.dataset.ask) { const id = Number(f.dataset.ask), action = S.asking.action, words = f.elements.words.value; return go(async () => { await post(`/board/flags/${id}/${action}`, { words }); S.asking = null; }); }
+  if (f.dataset.brief) { const brief = f.elements.brief.value; return go(() => post(`/agents/${f.dataset.brief}`, { brief }), "panel", f); }
+  if (f.id === "shiftform") { const shift_times = f.elements.shift_times.value, tz = f.elements.tz.value.trim(); return go(() => post("/agent-settings", { shift_times, tz }), "panel", f); }
+  if (f.id === "say") { const words = f.elements.words.value; return go(() => post("/board/messages", { channel: S.channel, words }), "main", f); }
+  if (f.dataset.reply) { const words = f.elements.words.value; return go(() => post("/board/messages", { thread_id: Number(f.dataset.reply), words }), "main", f); }
+  if (f.dataset.ask) { const id = Number(f.dataset.ask), action = S.asking.action, words = f.elements.words.value; return go(async () => { await post(`/board/flags/${id}/${action}`, { words }); S.asking = null; }, "ask", f); }
   if (f.id === "addform") {
     const v = (n) => (f.elements[n] ? f.elements[n].value : undefined);
     const shape = v("shape"), spec = {};
@@ -429,7 +459,7 @@ app.addEventListener("submit", (ev) => {
       }
       if (v("wcol")) { const op = v("wop"); spec.where = [op === "is empty" || op === "is not empty" ? { column: v("wcol"), op } : { column: v("wcol"), op, value: /^-?\d+(\.\d+)?$/.test(v("wval")) ? Number(v("wval")) : v("wval") === "true" ? true : v("wval") === "false" ? false : v("wval") }]; }
     }
-    return go(async () => { await post(`/agents/${f.dataset.agent}/watches`, { shape, tool: v("tool"), spec, title: v("title"), severity: v("severity") }); S.adding = false; });
+    return go(async () => { await post(`/agents/${f.dataset.agent}/watches`, { shape, tool: v("tool"), spec, title: v("title"), severity: v("severity") }); S.adding = false; }, "panel", f);
   }
 });
 // new messages come in while the page is open; it does not redraw while someone is typing; every 4 s while a review runs

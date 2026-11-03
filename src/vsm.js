@@ -233,8 +233,11 @@ async function overview(company, role) {
   const open = (await q(`SELECT count(*)::int AS n FROM platform.vsm_questions x WHERE x.company=$1 AND x.status='open'
                            AND (x.map_key IS NULL OR EXISTS (SELECT 1 FROM platform.vsm_maps m WHERE m.company=x.company AND m.key=x.map_key AND NOT m.proposed AND m.replaced_at IS NULL))`, [company])).rows[0].n;
   const co = (await q(`SELECT slug, name FROM platform.companies WHERE slug=$1`, [company])).rows[0] || { slug: company, name: company };
-  const walks = (await require("./vsm-walk").list(company)).filter((w) => w.open);
-  return { company: co, role, maps, stages, tools: toolList, coverage: coverage(stages, toolList), questions_open: open, walks, can_import: role === "admin" };
+  const all = await require("./vsm-walk").list(company);
+  const walks = all.filter((w) => w.open);
+  // put away in the last two weeks: the Map page offers to bring them back (round 2)
+  const walks_away = all.filter((w) => w.status === "abandoned" && Date.now() - new Date(w.updated_at).getTime() < 14 * 864e5).slice(0, 3);
+  return { company: co, role, maps, stages, tools: toolList, coverage: coverage(stages, toolList), questions_open: open, walks, walks_away, can_import: role === "admin" };
 }
 async function mapView(company, id) {
   const map = (await q(`SELECT id, key, family, title, state, status, layout, walk_id, proposed, replaced_at, parent_key, updated_at FROM platform.vsm_maps WHERE company=$1 AND id=$2`, [company, id])).rows[0];

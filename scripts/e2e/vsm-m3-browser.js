@@ -1,7 +1,7 @@
 // In a browser, VSM M3 and the floor's line (public/map.html, public/index.html, public/agent-board.html,
 // public/assets/feedback-widget.js). Runs right after scripts/e2e/vsm-m3.js on the same server and database: the map
 // "planes", its kept future state, the Line agent with its line on and one open flag on the Assembly box's station screen.
-// What it proves: a burst becomes a plant request in one tap and its star turns green; a box's ask form files a change to
+// What it proves: a burst shows its words, then becomes a plant request in the words sent, and its star turns green; a box's ask form files a change to
 // its tool, and a new tool request opens on the board with its popout; the future state is a tab beside the current
 // state, with no agent chips, and drafting it again opens the new draft; the editor picks a box's station screen; the
 // board filters by box, shows a plant request's own buttons and takes it to Working on it, and links back to the box on
@@ -31,9 +31,16 @@ const A = "/api/c/demo/vsm";
   t("the board's link opens the map on its box", (await p.textContent(".detail h2")).trim() === "Ship");
   const ship = (await q("SELECT k.id FROM platform.vsm_kaizen k JOIN platform.vsm_maps m ON m.id=k.map_id WHERE m.key='planes' AND k.n=3")).rows[0].id;
   await p.click(`.detail [data-act="kz-file"][data-z="${ship}"][data-as="plant"]`);
+  await p.waitForSelector("#kzform #kzwords");
+  t("a burst shows its words before it is filed (the VSM audit, round 2)", /^A shipping log/.test(await p.$eval("#kzwords", (x) => x.value)) && /A plant request/.test(await p.textContent("#kzform")) && !(await q("SELECT feedback_id FROM platform.vsm_kaizen WHERE id=$1", [ship])).rows[0].feedback_id);
+  await p.click('#kzform [data-act="kz-cancel"]');
+  t("Cancel leaves it a burst", !(await p.$("#kzform")) && Boolean(await p.$(`.detail [data-act="kz-file"][data-z="${ship}"]`)));
+  await p.click(`.detail [data-act="kz-file"][data-z="${ship}"][data-as="plant"]`);
+  await p.fill("#kzwords", "A shipping log by the door");
+  await p.click('#kzform button[type="submit"]');
   await p.waitForSelector(`.detail .burst .stw`);
-  t("a burst becomes a plant request in one tap, and says so on the box", /a plant request: new/.test(await p.textContent(".detail .burst .stw")) && Boolean(await p.$('.host .kz.done[data-node="ship"]')));
-  t("the box lists it under On the Kaizen board", /A shipping log/.test(await p.textContent(".detail .cards")));
+  t("sent, it becomes a plant request in the words sent, and says so on the box", (await q("SELECT f.message FROM platform.vsm_kaizen k JOIN platform.feedback f ON f.id=k.feedback_id WHERE k.id=$1", [ship])).rows[0].message === "A shipping log by the door" && /a plant request: new/.test(await p.textContent(".detail .burst .stw")) && Boolean(await p.$('.host .kz.done[data-node="ship"]')));
+  t("the box lists it under On the Kaizen board", /A shipping log by the door/.test(await p.textContent(".detail .cards")));
 
   // ---- the ask form on a box
   await p.click('.host .node[data-node="asm"]');
@@ -142,6 +149,37 @@ const A = "/api/c/demo/vsm";
   t("it fits a phone", (await fp.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await fp.goto(`${BASE}/c/demo/m/paperline/stock`); await fp.waitForTimeout(1500);
   t("and shows nowhere else", !(await fp.$("#sos-line")));
+
+  // ---- the agent board, round 2 of the audit: what is typed and left survives the board's look; an error says itself
+  // where the action was; on a phone, an agent on the map that is not set up can be set up
+  await p.goto(`${BASE}/c/demo/agent-board?channel=plant`);
+  await p.waitForSelector("#say textarea");
+  await p.fill("#say textarea", "typed and left on the board");
+  await p.click(".card.head h2");
+  await p.evaluate(() => load());
+  t("a message typed and left survives the board's look", (await p.$eval("#say textarea", (x) => x.value)) === "typed and left on the board");
+  await p.click('#say button[type="submit"]');
+  await p.waitForFunction(() => /typed and left on the board/.test((document.querySelector("section.main .msg .words") || {}).textContent || ""));
+  t("sent, its box is empty again", (await p.$eval("#say textarea", (x) => x.value)) === "");
+  await p.goto(`${BASE}/c/demo/agent-board?channel=a:line-agent`);
+  await p.waitForSelector('[data-act="ask"][data-do="resolved"]');
+  await p.click('[data-act="ask"][data-do="resolved"]');
+  await p.click('form[data-ask] button[type="submit"]');
+  await p.waitForSelector("form[data-ask] .err");
+  t("an empty Resolved says why inside the flag's own form, and the form stays", /what was done/i.test(await p.textContent("form[data-ask] .err")) && !(await p.$("section.main > .err.top")));
+  await p.click('[data-act="cancelask"]');
+  await q("UPDATE platform.vsm_nodes n SET detail = n.detail || '{\"agent_name\":\"Kit agent\"}'::jsonb, modules = ARRAY['paperline'] FROM platform.vsm_maps m WHERE m.id=n.map_id AND m.key='planes' AND m.replaced_at IS NULL AND m.state='current' AND n.key='kit'");
+  const kitKey = ((await mgr.get(`${A}/agents`)).json.agents.find((a) => a.name === "Kit agent") || {}).key;
+  const pctx = await b.newContext({ viewport: { width: 390, height: 844 } });
+  await pctx.addCookies(mgr.cookies());
+  const pp = await pctx.newPage();
+  pp.on("pageerror", (e) => errs.push(`phone: ${e.message}`));
+  await pp.goto(`${BASE}/c/demo/agent-board`);
+  await pp.waitForSelector(`.phonechan [data-act="setup"][data-key="${kitKey}"]`, { timeout: 8000 });
+  t("on a phone, an agent on the map that is not set up is under the channel picker", Boolean(kitKey) && await pp.isVisible(`.phonechan [data-act="setup"][data-key="${kitKey}"]`) && !(await pp.isVisible("nav.chans")));
+  await pp.click(`.phonechan [data-act="setup"][data-key="${kitKey}"]`);
+  await pp.waitForFunction((k) => new URLSearchParams(location.search).get("channel") === `a:${k}`, kitKey);
+  t("and the phone sets it up", (await mgr.get(`${A}/agents`)).json.agents.some((a) => a.key === kitKey && a.status !== "not_set_up"));
 
   t("no page threw", errs.length === 0, errs);
   await b.close();

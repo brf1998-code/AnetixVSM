@@ -854,6 +854,7 @@ async function reread(company, id, opts = {}) {
 async function abandon(company, id, opts = {}) {
   await inWalk(company, id, async (w, client) => {
     if (!OPEN.includes(w.status) || w.status === "reading") throw bad(`The walk cannot be put away now: ${STATUS_WORDS[w.status] || w.status}.`);
+    w.walk.away_from = w.status;
     w.status = "abandoned";
     for (const m of (await client.query("SELECT id, key FROM platform.vsm_maps WHERE company=$1 AND walk_id=$2 AND proposed", [company, w.id])).rows) {
       await client.query("DELETE FROM platform.vsm_questions WHERE company=$1 AND map_key=$2", [company, m.key]);
@@ -861,6 +862,17 @@ async function abandon(company, id, opts = {}) {
     }
     w.map_id = null;
     await record.record("map_walk_abandoned", { company, actor: opts.actor, detail: { walk: id } });
+  });
+}
+// A walk put away comes back where it was, with its sources and answers (the VSM audit, round 2, 2026-11-03: putting it
+// away was for good). Its draft map went with it, so a drawn walk comes back to the review before drawing.
+async function bringBack(company, id, opts = {}) {
+  await inWalk(company, id, async (w) => {
+    if (w.status !== "abandoned") throw Object.assign(bad(`This walk is not put away: ${STATUS_WORDS[w.status] || w.status}.`), { status: 409 });
+    const was = w.walk.away_from;
+    w.status = was === "drafted" ? "walking" : ["sources", "walking", "failed"].includes(was) ? was : (w.chain.length || Object.keys(w.steps).length ? "walking" : "sources");
+    delete w.walk.away_from;
+    await record.record("map_walk_brought_back", { company, actor: opts.actor, detail: { walk: id, to: w.status } });
   });
 }
 // Which box of the walk's draft is which box of the map it replaces (the VSM audit, 2026-11-03: a walk's boxes have keys
@@ -1028,9 +1040,10 @@ router.post(`${W}/${ID}/draft`, requireManager, async (req, res) => { const r = 
 router.post(`${W}/${ID}/reopen`, requireManager, async (req, res) => { await reopen(slugOf(req), Number(req.params.id), ctxOf(req)); res.json({ ok: true, walk: await shown(req, Number(req.params.id)) }); });
 router.post(`${W}/${ID}/reread`, requireManager, async (req, res) => { await reread(slugOf(req), Number(req.params.id), ctxOf(req)); res.json({ ok: true, walk: await shown(req, Number(req.params.id)) }); });
 router.post(`${W}/${ID}/abandon`, requireManager, async (req, res) => { await abandon(slugOf(req), Number(req.params.id), ctxOf(req)); res.json({ ok: true, walk: await shown(req, Number(req.params.id)) }); });
+router.post(`${W}/${ID}/bring-back`, requireManager, async (req, res) => { await bringBack(slugOf(req), Number(req.params.id), ctxOf(req)); res.json({ ok: true, walk: await shown(req, Number(req.params.id)) }); });
 router.post(`${W}/${ID}/use`, requireManager, async (req, res) => { const r = await use(slugOf(req), Number(req.params.id), ctxOf(req)); res.json({ ok: true, ...r, walk: await shown(req, Number(req.params.id)) }); });
 
 module.exports = {
-  init, SCHEMA, TABLES, router, start, addWords, addFile, removeSource, read, extract, cleanExtraction, fakeExtraction, answer, answerMany, draft, buildDraft, reopen, reread, abandon, use, matchBoxes,
+  init, SCHEMA, TABLES, router, start, addWords, addFile, removeSource, read, extract, cleanExtraction, fakeExtraction, answer, answerMany, draft, buildDraft, reopen, reread, abandon, bringBack, use, matchBoxes,
   view, list, getWalk, screenOf, SCREEN_WORDS, familyOptions, deleteCompany, EXTRACT_SCHEMA, STATUS_WORDS, OPEN, MAX_STEPS, MAX_CONTROL, MAX_SOURCES, MAX_WORDS, MAX_WORDS_TOTAL, fileKind, sameName,
 };

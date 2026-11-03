@@ -4490,3 +4490,36 @@ One instance hosts many **companies**. Everything is scoped by company slug:
     words, an import's filed burst).
   - *Not yet (round 2).* The stage-number edge cases (lead time across the window, rework, a partial scrap); the actions
     with no way back; the agent board on a phone; the design drift and decisions written into the docs.
+- **The VSM audit's round 2 (2026-11-03, VSM dev copy)**
+  - *Why.* Round 2 of the audit of 2026-11-02 (project doc `claude/vsm-audit-2026-11-02.md`): the stage numbers' edge
+    cases (item 10), the actions with no way back (17), the agent board on a phone (13), and the docs (5, 15, 16).
+    Brendan: "go with the next run".
+  - *Stage numbers* (`src/vsm-stages.js`). A run is walked one ref at a time (`walkRef`): a scrap ends the run only
+    when it takes all of what started, so a part-scrapped job is still work in process and its finish still has a
+    cycle time. The wait between two boxes pairs each finish at the first with the next entry at the second, and a
+    finish followed by another pass through the first box waits from the later one, so a rework pass no longer erases
+    the wait. Lead time counts from when a job was first seen at the map's steps, looked up to 90 days back
+    (`firstSeenOf`), not from the start of the week's window. The stage watch and an agent's review read what is open
+    the same way (`openAt`), where they read only each ref's last event before.
+  - *Ways back.* Not now on an agent's draft card has **Bring it back** (`decideDraft` "restore"). A plant request
+    closed with Done or Not doing this has **Reopen** (`plantReopen`; one that became a new tool request stays closed
+    and names it); Cancel on its Done prompt leaves it open. **Put this walk away** keeps where the walk was
+    (`walk.away_from`); the Map lists a walk put away in the last two weeks, and **Bring the walk back** returns it to its
+    sources or its walk, a drawn walk to the review before drawing (`bringBack`; its draft map went with it).
+    **Withdraw** on a record draft stays for good and asks first.
+  - *A burst shows its words before it is filed.* The three buttons on a burst open its words (the burst's own, to
+    keep or change) with Send to the Kaizen board and Cancel; one tap used to file a plant request in the agent's
+    words. The form survives the page's own redraws like the box's ask form.
+  - *The agent board on a phone and under a redraw.* On a phone the agents on the map that are not set up sit under the
+    channel picker with Set up. An error says itself where the action was: inside a flag's Resolved or Not a problem
+    form, in the agent's panel for the panel's buttons, or held in sight above the messages. What a person typed and
+    has not sent (a message, a reply, a brief, a limit) is put back after every redraw, the board's 15-second look
+    included; a form that was sent comes back empty, one that failed keeps its words.
+  - *Docs.* `docs/VSM.md` section 10 is one table again with the status notes under it, and says what each gate needs on
+    the dev copy (a manager account, Chelsea's floor for M3 and M4, a frozen snapshot for A1's week); the as-built
+    differences are written where the design says otherwise (sections 4, 5, 6 and `docs/AGENTS.md` 3.1, 3.4); decisions
+    3, 5 and 8 say what the code does while they stay open. HELP.md has every way back and the stage number rules.
+  - *Tests.* `scripts/e2e/vsm-audit-r2.js` (18), the board and burst cases in `scripts/e2e/vsm-m3-browser.js` (31 in
+    all), the stage cases in `scripts/test-vsm-a3.js` (36 in all).
+  - *Not done.* The audit's low items beyond these; a walk put away more than two weeks ago is still kept, and opened by its
+    address (`/c/<slug>/map?walk=<number>`) it can be brought back, but the Map no longer lists it.

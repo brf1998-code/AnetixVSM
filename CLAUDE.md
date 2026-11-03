@@ -229,6 +229,7 @@ Index of `docs/FEATURES.md`, in its order:
 - The value stream map, M3: the Map and the Kaizen board joined, and the future state (2026-11-02, VSM dev copy)
 - The floor's side of the map: who each screen is for, a box's station screen, the agent's line on it (2026-11-02, VSM dev copy)
 - The VSM audit's round 1 (2026-11-03, VSM dev copy)
+- The VSM audit's round 2 (2026-11-03, VSM dev copy)
 
 ## What this is
 

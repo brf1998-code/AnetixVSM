@@ -270,6 +270,11 @@ run vsm-m3                 env $M3 node scripts/e2e/vsm-m3.js
 R1="SOS_WATCH_MS=0 SOS_AGENT_EARLY_MIN=0"
 fresh; start "SOS_BROWSER=off $R1"
 run vsm-audit-r1           env $R1 node scripts/e2e/vsm-audit-r1.js
+# 2026-11-03 (VSM dev copy): round 2: ways back (a draft card's Not now, a closed plant request, a walk put away), a
+# burst filed in the words sent, a part-scrapped run still open, a job older than the window keeps its lead time
+R2="SOS_WATCH_MS=0"
+fresh; start "SOS_BROWSER=off $R2"
+run vsm-audit-r2           env $R2 node scripts/e2e/vsm-audit-r2.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

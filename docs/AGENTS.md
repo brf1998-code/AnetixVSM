@@ -48,7 +48,8 @@ boxes), its brief (what normal looks like in this area, in the manager's words, 
 (the boxes' `who`), its watches, and a switch (on, paused). The map's Agents layer already draws a chip per agent from
 `detail.agent_name`; those chips become the real agents, with a count of open flags on each.
 
-Setting one up: on the map, a manager opens a box's agent chip and presses **Set up this agent**. The agent reads its
+Setting one up: on the map, a manager opens a box's agent chip and presses **Set up this agent**. *As built: set up from
+the agent board ("On the map, not set up", on a phone under the channel picker); the map's chip links there.* The agent reads its
 tools' tables (names and columns, and counts, never whole records) and drafts its brief and a starting set of watches
 in plain words. The manager turns each watch on, changes its limit, or leaves it off. Under the data wall the draft
 uses the table names and columns only.
@@ -106,7 +107,7 @@ One stream, filtered by channel, built like a chat:
 - **Threads.** A flag starts a thread; answers, people's replies and "cleared" go under it.
 - **People's part.** A manager or admin can reply in any thread, and on a flag: **Seen**, **On it** (their name goes
   on it), **Resolved** (with a line on what was done), **Not a problem** (mutes that fingerprint for a week and tells
-  the agent why), or **Make it a request** (a Kaizen card on that box, carrying the evidence). Every one of those is a
+  the agent why; *as built it mutes the whole watch for a week, and Unmute on the watch undoes it*), or **Make it a request** (a Kaizen card on that box, carrying the evidence). Every one of those is a
   message on the thread, so the board is also the log.
 - **Where it shows.** Its own view beside Kaizen and Map (decision 1), the Map's Agents layer (chips with open flag
   counts, a red box for a climbed flag), and one line in the board's notices for anything climbed.
@@ -237,6 +238,11 @@ on MO Board or the Inventory Request, built and approved like any change.
 (`last_done_at`); a flag its watch cleared that is back within the hour reopens in its own thread
 (`SOS_FLAG_REOPEN_MIN`); Make it a request works on a review's own flag and puts the card on the flag's box; under the
 data wall a request from a flag carries the watch's name and count only, and an agent's draft card is not sent.
+
+**Round 2 of the audit (2026-11-03):** Not now on a draft card has Bring it back; Withdraw on a record draft asks first;
+the board keeps a reply typed and left through its look every 15 seconds, and says an error where the action was
+(inside a flag's form, or held in sight above the messages); on a phone the agents not set up are under the channel
+picker. Stage watches and an agent's open work read a part-scrapped run as still open.
 
 **The floor's line, as built (2026-11-02):** `src/vsm-floor.js`. A box's editor on the Map picks its station screen (a
 live screen of one of its own tools); a manager tags who each screen is for on the QR codes tab, and a screen picked as a
