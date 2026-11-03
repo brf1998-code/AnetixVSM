@@ -226,7 +226,7 @@ function coverage(stages, toolList) {
 }
 async function overview(company, role) {
   // a map the walk replaced is kept, hidden (replaced_at); a walk's draft (proposed) is listed beside its family's map
-  const maps = (await q(`SELECT id, key, family, title, state, status, walk_id, proposed, updated_at FROM platform.vsm_maps WHERE company=$1 AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows;
+  const maps = (await q(`SELECT id, key, family, title, state, status, walk_id, proposed, parent_key, updated_at FROM platform.vsm_maps WHERE company=$1 AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows;
   const stages = (await q(`SELECT id, ref, name, who, record_kind, record_system, modules, anetix_note, phase, target FROM platform.vsm_stages WHERE company=$1 ORDER BY sort, ref`, [company])).rows;
   const toolList = await tools(company);
   // the open questions of the maps in use (a walk's draft and a replaced map keep theirs to themselves)
@@ -237,16 +237,26 @@ async function overview(company, role) {
   return { company: co, role, maps, stages, tools: toolList, coverage: coverage(stages, toolList), questions_open: open, walks, can_import: role === "admin" };
 }
 async function mapView(company, id) {
-  const map = (await q(`SELECT id, key, family, title, state, status, layout, walk_id, proposed, replaced_at, updated_at FROM platform.vsm_maps WHERE company=$1 AND id=$2`, [company, id])).rows[0];
+  const map = (await q(`SELECT id, key, family, title, state, status, layout, walk_id, proposed, replaced_at, parent_key, updated_at FROM platform.vsm_maps WHERE company=$1 AND id=$2`, [company, id])).rows[0];
   if (!map) throw notFound("map");
   const nodes = (await q(`SELECT id, key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence, updated_at, updated_by
                             FROM platform.vsm_nodes WHERE company=$1 AND map_id=$2 ORDER BY id`, [company, id])).rows;
   const edges = (await q(`SELECT id, from_key, to_key, kind, label, from_side, to_side, from_at, to_at, inventory FROM platform.vsm_edges WHERE company=$1 AND map_id=$2 ORDER BY sort, id`, [company, id])).rows;
-  const kaizen = (await q(`SELECT id, node_key, n, title, why, status, feedback_id FROM platform.vsm_kaizen WHERE company=$1 AND map_id=$2 ORDER BY n`, [company, id])).rows;
-  const questions = (await q(`SELECT id, map_key, node_key, where_label, claim, why, confidence, status, answer, answered_by, answered_at
+  // a burst's card (M3, src/vsm-kaizen.js): the request it became, and where that request is now
+  const kaizen = (await q(`SELECT k.id, k.node_key, k.n, k.title, k.why, k.status, k.feedback_id, k.evidence, k.source, k.becomes, k.decided_by,
+                                  f.status AS card_status, f.kind AS card_kind, f.module AS card_module
+                             FROM platform.vsm_kaizen k LEFT JOIN platform.feedback f ON f.id=k.feedback_id AND f.company=k.company
+                            WHERE k.company=$1 AND k.map_id=$2 ORDER BY k.n`, [company, id])).rows;
+  // a future state's own questions are its current map's (it has none of its own)
+  const questions = map.state === "future" ? [] : (await q(`SELECT id, map_key, node_key, where_label, claim, why, confidence, status, answer, answered_by, answered_at
                                 FROM platform.vsm_questions WHERE company=$1 AND (map_key IS NULL OR map_key=$2) ORDER BY (status='open') DESC, sort, id`, [company, map.key])).rows;
+  const K = require("./vsm-kaizen");
   return { map, nodes, edges, kaizen, questions, tools: await tools(company), agents: await require("./vsm-agents").chips(company),
-    live: await require("./vsm-stages").liveFor(company, nodes, edges) };   // the boxes' numbers from stage events, null when none is tied to a step
+    // the boxes' numbers from stage events, null when none is tied to a step; a future state is not where work is done today
+    live: map.state === "future" ? null : await require("./vsm-stages").liveFor(company, nodes, edges),
+    cards: await K.cardsFor(company, map),                      // the requests on its boxes (M3)
+    future: await K.futureInfo(company, map),                   // its future state, or a future's current map, and a draft in flight
+    screens: await require("./vsm-floor").screensOf(company) }; // every live screen, tagged, for a box's station screen
 }
 
 // ---- small edits (M1): a box's words, record, tools, who, data box rows and place
@@ -284,6 +294,8 @@ async function editNode(req, company, id, body) {
     patch.agent_name = changed.agent_name = name;
   }
   if (body.steps !== undefined) patch.steps = changed.steps = await require("./vsm-stages").cleanSteps(company, body.steps);
+  // its station screen (src/vsm-floor.js): a live screen of one of its own tools, ticked in this same edit or before
+  if (body.screen !== undefined) patch.screen = changed.screen = await require("./vsm-floor").cleanScreen(req, company, body.screen, changed.modules || before.modules);
   if (Object.keys(patch).length) { vals.push(JSON.stringify(patch)); sets.push(`detail = coalesce(detail, '{}'::jsonb) || $${vals.length}::jsonb`); }
   if (!sets.length) throw bad("nothing to change");
   if (changed.modules) {
@@ -296,7 +308,7 @@ async function editNode(req, company, id, body) {
   await q(`UPDATE platform.vsm_maps SET updated_at=now() WHERE id=$1`, [before.map_id]);
   const moveOnly = Object.keys(changed).every((k) => k === "x" || k === "y");
   if (!moveOnly) {
-    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, ["notes", "agent_name", "steps"].includes(k) ? (before.detail || {})[k] || (k === "steps" ? [] : "") : before[k]]));
+    const was = Object.fromEntries(Object.keys(changed).map((k) => [k, ["notes", "agent_name", "steps", "screen"].includes(k) ? (before.detail || {})[k] || (k === "steps" ? [] : k === "screen" ? null : "") : before[k]]));
     await record.record("map_changed", { company, actor: record.actor(req), before: JSON.stringify(was), after: JSON.stringify(changed), detail: { box: before.key, label: before.label, map_id: before.map_id } });
   }
   return (await q(`SELECT id, key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence, updated_at, updated_by FROM platform.vsm_nodes WHERE id=$1`, [id])).rows[0];
@@ -334,10 +346,10 @@ async function answer(req, company, id, body) {
 async function exportMap(company) {
   const stages = (await q(`SELECT ref, name, who, record_kind, record_system, modules, anetix_note, phase, target FROM platform.vsm_stages WHERE company=$1 ORDER BY sort, ref`, [company])).rows;
   const maps = [];
-  for (const m of (await q(`SELECT id, key, family, title, state, status, layout FROM platform.vsm_maps WHERE company=$1 AND NOT proposed AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows) {
+  for (const m of (await q(`SELECT id, key, family, title, state, status, layout, parent_key AS parent FROM platform.vsm_maps WHERE company=$1 AND NOT proposed AND replaced_at IS NULL ORDER BY sort, id`, [company])).rows) {
     const nodes = (await q(`SELECT key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence FROM platform.vsm_nodes WHERE map_id=$1 ORDER BY id`, [m.id])).rows;
     const edges = (await q(`SELECT from_key AS "from", to_key AS "to", kind, label, from_side, to_side, from_at, to_at, inventory FROM platform.vsm_edges WHERE map_id=$1 ORDER BY sort, id`, [m.id])).rows;
-    const kaizen = (await q(`SELECT node_key AS node, n, title, why, status FROM platform.vsm_kaizen WHERE map_id=$1 ORDER BY n`, [m.id])).rows;
+    const kaizen = (await q(`SELECT node_key AS node, n, title, why, status, evidence, source, becomes FROM platform.vsm_kaizen WHERE map_id=$1 ORDER BY n`, [m.id])).rows;
     const { id, ...rest } = m;
     maps.push({ ...rest, nodes, edges, kaizen });
   }
@@ -375,12 +387,15 @@ function checkImport(doc) {
         from_at: Math.max(0, Math.min(1, Number(e.from_at) || 0.5)), to_at: Math.max(0, Math.min(1, Number(e.to_at) || 0.5)),
         inventory: e.inventory ? { label: txt(e.inventory.label, 40), note: txt(e.inventory.note, 200) } : null, sort: i };
     });
-    const kaizen = (m.kaizen || []).slice(0, 50).map((z) => ({ node: z.node && nodeKeys.has(txt(z.node, 40)) ? txt(z.node, 40) : null, n: int(z.n || 0, 0, 999), title: txt(z.title, 160), why: txt(z.why, 400), status: txt(z.status, 20) || "open" }));
+    // a burst that became a request keeps its words on import, not the link: the request belongs to the company's board
+    const kaizen = (m.kaizen || []).slice(0, 50).map((z) => ({ node: z.node && nodeKeys.has(txt(z.node, 40)) ? txt(z.node, 40) : null, n: int(z.n || 0, 0, 999), title: txt(z.title, 160), why: txt(z.why, 400), status: ["open", "dismissed"].includes(z.status) ? z.status : "open",
+      evidence: z.evidence && typeof z.evidence === "object" ? { kind: txt(z.evidence.kind, 20), text: txt(z.evidence.text, 300) } : null, source: z.source === "agent" ? "agent" : "map", becomes: ["change", "plant", "new_tool"].includes(z.becomes) ? z.becomes : null }));
     const layout = { bands: (((m.layout || {}).bands) || []).slice(0, 10).map((b) => ({ label: txt(b.label, 60), note: txt(b.note, 200), x: int(b.x, 0, 6000), y: int(b.y, 0, 4000), w: int(b.w, 10, 6000), h: int(b.h, 10, 4000) })),
       ladder_y: (m.layout || {}).ladder_y != null ? int(m.layout.ladder_y, 0, 4000) : null,
       // what the agents would say to each other on this map: a concept until the agents exist (docs/VSM.md, section 8)
       feed: (((m.layout || {}).feed) || []).slice(0, 20).map((f) => ({ from: txt(f.from, 40), to: txt(f.to, 40), text: txt(f.text, 300), tag: txt(f.tag, 60), now: /^possible/i.test(String(f.tag || "")) })) };
-    return { key, family: txt(m.family, 80) || key, title: txt(m.title, 120) || key, state: m.state === "future" ? "future" : "current", status: m.status === "confirmed" ? "confirmed" : "draft", layout, nodes, edges, kaizen, sort: mi };
+    return { key, family: txt(m.family, 80) || key, title: txt(m.title, 120) || key, state: m.state === "future" ? "future" : "current", status: m.status === "confirmed" ? "confirmed" : "draft", layout, nodes, edges, kaizen, sort: mi,
+      parent: m.state === "future" && m.parent ? txt(m.parent, 40) : null };
   });
   const questions = (doc.questions || []).slice(0, 300).map((x, i) => ({ map: x.map && keys.has(txt(x.map, 40)) ? txt(x.map, 40) : null, node: txt(x.node, 40) || null, where: txt(x.where, 80),
     claim: (() => { const c = txt(x.claim, 600); if (!c) throw bad(`question ${i + 1} needs words`); return c; })(), why: txt(x.why, 1000),
@@ -394,10 +409,14 @@ function cleanDetail(d) {
   // the steps of the tools' stage events that are the box's work (src/vsm-stages.js): kept by shape here, read only
   // against the company's own events
   if (Array.isArray(o.steps)) { const st = o.steps.slice(0, 12).map((x) => ({ module: txt(x && x.module, 60), step: txt(x && x.step, 60) })).filter((x) => x.module && x.step); if (st.length) out.steps = st; }
+  // the box's station screen, where the floor sees its agent's line (src/vsm-floor.js), and a future state's note
+  if (o.screen && typeof o.screen === "object" && txt(o.screen.module, 60) && txt(o.screen.route, 200)) out.screen = { module: txt(o.screen.module, 60), route: txt(o.screen.route, 200), label: txt(o.screen.label, 80) };
+  if (o.future) out.future = txt(o.future, 300);
   return out;
 }
 async function importMap(req, company, doc) {
   const c = checkImport(doc);
+  const mapKeys = new Set(c.maps.map((m) => m.key));
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -409,8 +428,8 @@ async function importMap(req, company, doc) {
         [company, s.ref, s.name, s.who, s.record_kind, s.record_system, s.modules, s.anetix_note, s.phase, s.target, s.sort]);
     }
     for (const m of c.maps) {
-      const id = (await client.query(`INSERT INTO platform.vsm_maps (company, key, family, title, state, status, layout, sort) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [company, m.key, m.family, m.title, m.state, m.status, JSON.stringify(m.layout), m.sort])).rows[0].id;
+      const id = (await client.query(`INSERT INTO platform.vsm_maps (company, key, family, title, state, status, layout, sort, parent_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+        [company, m.key, m.family, m.title, m.state, m.status, JSON.stringify(m.layout), m.sort, m.parent && mapKeys.has(m.parent) ? m.parent : null])).rows[0].id;
       for (const n of m.nodes) {
         await client.query(`INSERT INTO platform.vsm_nodes (company, map_id, key, kind, label, sub, who, stage_refs, record_kind, record_system, modules, x, y, w, h, data, detail, confidence)
                             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18)`,
@@ -420,7 +439,7 @@ async function importMap(req, company, doc) {
         await client.query(`INSERT INTO platform.vsm_edges (company, map_id, from_key, to_key, kind, label, from_side, to_side, from_at, to_at, inventory, sort) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
           [company, id, e.from, e.to, e.kind, e.label, e.from_side, e.to_side, e.from_at, e.to_at, e.inventory ? JSON.stringify(e.inventory) : null, e.sort]);
       }
-      for (const z of m.kaizen) await client.query(`INSERT INTO platform.vsm_kaizen (company, map_id, node_key, n, title, why, status) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [company, id, z.node, z.n, z.title, z.why, z.status]);
+      for (const z of m.kaizen) await client.query(`INSERT INTO platform.vsm_kaizen (company, map_id, node_key, n, title, why, status, evidence, source, becomes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`, [company, id, z.node, z.n, z.title, z.why, z.status, z.evidence ? JSON.stringify(z.evidence) : null, z.source, z.becomes]);
     }
     for (const x of c.questions) {
       await client.query(`INSERT INTO platform.vsm_questions (company, map_key, node_key, where_label, claim, why, confidence, status, answer, sort) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -437,6 +456,7 @@ async function deleteCompany(company) {
   await require("./vsm-walk").deleteCompany(company);   // the mapping walks and their sources (their files are attachments, deleted with the company's)
   await require("./vsm-agents").deleteCompany(company); // the agent board: agents, watches, messages, flags, reviews, drafts
   await require("./vsm-stages").deleteCompany(company); // the stage events
+  await require("./vsm-floor").deleteCompany(company);  // the screen tags (who each screen is for)
   for (const t of ["vsm_questions", "vsm_kaizen", "vsm_edges", "vsm_nodes", "vsm_maps", "vsm_stages", "module_use"]) await q(`DELETE FROM platform.${t} WHERE company=$1`, [company]);
 }
 

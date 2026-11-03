@@ -195,11 +195,12 @@ const tools = [
     // The agent board (A2, docs/AGENTS.md section 5): counts and status, never the words. A flag's words and an agent's note
     // carry the plant's records, the same rule as an Ask Anetix answer that read records.
     name: "agent_board_status", title: "The agent boards",
-    description: "Each company's agent board in counts: its shift times, its records drafted for tools (waiting, made and declined in the last 7 days), the stage events its tools reported in the last 7 days, and per agent whether it is on and its shift reviews are on, how many tools it reads, its watches (on, proposed), its flags (open, climbed to every manager, closed in the last 7 days) and its reviews (done and failed in the last 7 days, and the last one). Counts and status only: never a flag's, a note's or an answer's words. A paying site's own agents are numbered, not named.",
+    description: "Each company's agent board in counts: its shift times, its records drafted for tools (waiting, made and declined in the last 7 days), the stage events its tools reported in the last 7 days, the map's requests (kaizen bursts turned into requests, plant requests open, requests on a box), and per agent whether it is on and its shift reviews are on, whether its line shows on the floor's station screens and how often a floor screen showed one of its flags in the last 7 days, how many tools it reads, its watches (on, proposed), its flags (open, climbed to every manager, closed in the last 7 days) and its reviews (done and failed in the last 7 days, and the last one). Counts and status only: never a flag's, a note's or an answer's words. A paying site's own agents are numbered, not named.",
     input: { company: z.string().optional().describe("A company's slug; leave out for every company with an agent") },
     async run({ company }) {
       const slug = company ? slugArg(company) : null;
-      const agents = (await q(`SELECT a.id, a.company, a.key, a.name, a.status, a.reviews, coalesce(array_length(a.tools, 1), 0) AS tools,
+      const agents = (await q(`SELECT a.id, a.company, a.key, a.name, a.status, a.reviews, a.floor_line, coalesce(array_length(a.tools, 1), 0) AS tools,
+          (SELECT coalesce(sum(f.floor_views),0)::int FROM platform.vsm_flags f WHERE f.agent_id=a.id AND f.floor_seen_at > now() - interval '7 days') AS floor_views_7d,
           (SELECT count(*)::int FROM platform.vsm_watches w WHERE w.agent_id=a.id AND w.status='on') AS watches_on,
           (SELECT count(*)::int FROM platform.vsm_watches w WHERE w.agent_id=a.id AND w.status='proposed') AS watches_proposed,
           (SELECT count(*)::int FROM platform.vsm_flags f WHERE f.agent_id=a.id AND f.status IN ('open','seen','on_it')) AS flags_open,
@@ -216,7 +217,12 @@ const tools = [
           const dr = (await q(`SELECT count(*) FILTER (WHERE state IN ('waiting','taking'))::int AS waiting, count(*) FILTER (WHERE state='taken' AND decided_at > now() - interval '7 days')::int AS made_7d,
                                       count(*) FILTER (WHERE state='declined' AND decided_at > now() - interval '7 days')::int AS declined_7d FROM platform.vsm_record_drafts WHERE company=$1`, [a.company])).rows[0];
           const se = (await q("SELECT count(*)::int AS n FROM platform.vsm_stage_events WHERE company=$1 AND at > now() - interval '7 days'", [a.company])).rows[0].n;
-          out.set(a.company, { company: a.company, own: await plantsOwn(a.company), shift_times: st ? st.shift_times : ["15:00"], time_zone: st ? st.tz : "America/New_York", drafts_for_tools: dr, stage_events_7d: se, agents: [] });
+          // the map and the Kaizen board joined (M3, src/vsm-kaizen.js): counts only
+          const mp = (await q(`SELECT (SELECT count(*)::int FROM platform.vsm_kaizen k WHERE k.company=$1 AND k.status='filed') AS bursts_filed,
+                                      (SELECT count(*)::int FROM platform.vsm_kaizen k JOIN platform.vsm_maps m ON m.id=k.map_id WHERE k.company=$1 AND k.status='open' AND m.replaced_at IS NULL) AS bursts_open,
+                                      (SELECT count(*)::int FROM platform.feedback f WHERE f.company=$1 AND f.kind='plant' AND f.status IN ('new','in_progress')) AS plant_requests_open,
+                                      (SELECT count(*)::int FROM platform.feedback f WHERE f.company=$1 AND f.node_key IS NOT NULL) AS requests_on_a_box`, [a.company])).rows[0];
+          out.set(a.company, { company: a.company, own: await plantsOwn(a.company), shift_times: st ? st.shift_times : ["15:00"], time_zone: st ? st.tz : "America/New_York", drafts_for_tools: dr, stage_events_7d: se, map_requests: mp, agents: [] });
         }
         const c = out.get(a.company);
         const { id, company: _c, key, name, ...counts } = a;

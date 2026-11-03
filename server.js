@@ -76,6 +76,8 @@ async function main() {
   await require("./src/vsm-review").init();  // the agent board, A2: the agents' shift reviews, briefs, draft request cards (src/vsm-review.js)
   await require("./src/vsm-stages").init();  // stage events and the boxes' live numbers, VSM M4 with the agent board's A3 (src/vsm-stages.js)
   await require("./src/vsm-drafts").init();  // the agent board, A3: records agents draft for a tool, made on its own screen (src/vsm-drafts.js)
+  await require("./src/vsm-kaizen").init();  // VSM M3: requests on a box, bursts to requests, the future state (src/vsm-kaizen.js)
+  await require("./src/vsm-floor").init();   // who each screen is for, a box's station screen, the agent's line on it (src/vsm-floor.js)
   await require("./src/mcp-company").init(); // the company MCP: the records switch, Anetix's lock, feedback.held for a request a connected app filed (src/mcp-company.js, docs/MCP.md)
 
   const app = express();
@@ -255,6 +257,8 @@ async function main() {
   app.use(require("./src/vsm-review").router); // /api/c/:slug/vsm/agents/:id/review|reviews|brief, /vsm/agent-settings, /vsm/board/drafts/:id: the agents' reviews (src/vsm-review.js)
   app.use(require("./src/vsm-drafts").router); // /api/c/:slug/vsm/draft-tools*, /vsm/record-drafts/:id/withdraw: drafts across tools (src/vsm-drafts.js)
   app.use(require("./src/vsm-stages").router); // /api/c/:slug/vsm/steps: the steps the tools report, for a box's editor (src/vsm-stages.js)
+  app.use(require("./src/vsm-kaizen").router); // /api/c/:slug/vsm/kaizen/:id/*, /vsm/nodes/:id/request, /vsm/maps/:id/future|keep, /vsm/plant/:id/*: M3 (src/vsm-kaizen.js)
+  app.use(require("./src/vsm-floor").router);  // /api/c/:slug/who/line (any device of the company), /api/c/:slug/screens/:module/tag (managers) (src/vsm-floor.js)
   app.use(require("./src/campaign").router);  // /api/runs/:id/campaign*, /api/c/:slug/who/campaign*: the test campaign on a build
   app.use(platformApi);      // /api/*
   registry.attach(app);      // /c/:slug/m/:module, /c/:slug/staging/m/:module and /c/:slug/test/m/:module

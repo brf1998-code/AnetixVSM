@@ -1,6 +1,7 @@
 # Anetix VSM: the living value stream map
 
-*Design, rev 2, 2026-11-01. M1 (the Map) and M2 (the mapping walk) are built; section 10 has the status. The worked example is
+*Design, rev 3, 2026-11-02. M1 (the Map), M2 (the mapping walk), M3 (the Map and Kaizen joined, the future state) and
+M4's platform side are built; section 10 has the status. The worked example is
 Chelsea Clock (the canvas "Chelsea Clock Value Stream Map", 2026-11-01). Grounded in the code as of SymbioticOS
 615a490; file references are to this repo.*
 
@@ -234,6 +235,13 @@ admin MCP both, and a draft beside the current map with "Use this map". Phase 4 
 card; phase 6 (future state and kaizen) waits for M3. The gate is a real-model run on Chelsea's sources on the dev
 instance, compared with the hand map.
 | M3 | Map and Kaizen joined (`feedback.node_id`, bursts to requests, intake pre-filled from a box) | A burst on Chelsea's map becomes a change live on Chelsea's floor |
+
+Status: M3 built 2026-11-02 (`src/vsm-kaizen.js`; docs/FEATURES.md has the bullet). Differences from section 4: a request
+is tied to a box by keys (`feedback.map_key`, `feedback.node_key`), not `node_id`, because an import and a walk's "Use
+this map" keep a box's key and change its id. A request on a box with no tool is a plant request (`kind` 'plant'): no AI
+reads it and a manager moves it along. Phase 6 of the walk is the future state, drafted by the agent from the current map
+(decision 9) as its own map beside the current one, with bursts each tied to evidence on the map; the walk's own screens
+end at "Use this map", and the future state is drafted from the map. The gate waits for a real burst on Chelsea's map.
 | M4 | Stage events and live numbers | One Chelsea step scanned for a week; its box and ladder show real numbers |
 
 Status: M4's platform side built 2026-11-02 with the agent board's A3 (`src/vsm-stages.js`: `ctx.vsm.event`, a box's
@@ -248,7 +256,8 @@ stations). The gate waits for a Chelsea tool that reports its stages, and for de
 - **Plain words.** "Integration", "sync", "query" and "database" are scrubbed from generated manager text
   (`plainwords.js:11`). Map labels use "connected to", "kept in", "records".
 - **HELP.md** changes in the same push as any board or map change (hard rule).
-- **Floor and office tags** are missing on tools built before 2026-10-29; the map needs them to tie a box to a
+- **Floor and office tags** (done 2026-11-02, `src/vsm-floor.js`: a manager tags a screen on the QR codes tab, and
+  picking a box's station screen tags it the floor's) were missing on tools built before 2026-10-29; the map needs them to tie a box to a
   station screen, so the tagging pass runs first.
 - **Pricing.** The site fee counts tools live (`modprice.js`). Map boxes are not tools and must not change the bill.
 - **Trials.** Diagrams are drawn only when asked and Ask Anetix files only on live sites; a demo's map will be
@@ -265,6 +274,10 @@ stations). The gate waits for a Chelsea tool that reports its stages, and for de
    tool built and in daily use (worked out from the tool's own use).*
 5. Stage scans: barcode guns, tablets (Arthur's preference), or both?
 6. Does the floor ever see the map (a wall TV), or only their own box's question? *For now managers and admins only.*
-7. Where agent messages surface: the map only, the board's notices, the person's station screen, a phone?
+7. Where agent messages surface: the map only, the board's notices, the person's station screen, a phone? *In part,
+   2026-11-02: the agent board, the board's notices for a climbed flag, and, where a manager switches an agent's line
+   on, one read-only line on its box's station screen (AGENTS.md decision 6). A phone alert for managers is not built.*
 8. Is the map part of the site fee, a service fee, or a tier?
-9. Future state: drafted by the agent from the bursts, or led by the manager with the agent assisting?
+9. Future state: drafted by the agent from the bursts, or led by the manager with the agent assisting? *Answered
+   2026-11-02: the agent drafts it, beside the current map; the manager keeps it or drafts it again, and turns each
+   burst into a request.*

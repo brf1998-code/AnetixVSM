@@ -88,8 +88,24 @@ number nobody records yet; stage scans will fill those in later.
   the walk-through. **Edit this box** changes its name, who does it, where its record lives, its tools and its data
   box numbers. **Arrange boxes** lets a manager drag boxes; the flows follow.
 - **Review** lists the places the map is guessing. "That's right" confirms one; "Needs a fix" asks what is right.
-- **Layers**: Systems (the colors), Agents (which agent would watch each step: a plan, nothing runs yet), Kaizen (the
-  improvement bursts, numbered), Timeline (the lead time ladder).
+- **Layers**: Systems (the colors), Agents (the agent that watches each step, with its open flags), Kaizen (the
+  improvement bursts, numbered; green once one is a request), Timeline (the lead time ladder).
+- **From the map to the Kaizen board.** Each kaizen burst becomes a request in one tap: **A change to** one of the box's
+  tools (it goes to that tool, where the proposer reads it like any request), **A plant request** (work on the floor
+  itself with no tool to change: nothing reads it but people, and a manager moves it to Working on it, Done or Not
+  doing this, or makes it a new tool request later), or **A new tool** (a new tool request that starts with what the
+  box says filled in: what it is for, who uses it, how it is kept today, its stages; the manager names it and goes on).
+  **Put away** hides a burst; **Bring back** returns it. A selected box lists the requests on it (**On the Kaizen
+  board**) and has **Ask for something here** for the same three. On the board, a request on a box says "On the map"
+  with the box: tap it to see only that box's cards, or **Show on map** to go to the box.
+- **The future state.** **Draft the future state** has the agent read the family's current map and draw where it
+  should go, beside it: the same boxes, the flows it would change (pull, FIFO lanes, a supermarket, information in a
+  system instead of by word of mouth), where each step's record would live, and up to eight kaizen bursts, each tied
+  to something on the map (a person's words, a ?, a word-of-mouth hand-off, a wait, a step with no record). Anything it
+  said that the map does not show is left out, and the bar says what. **Current state** and **Future state** switch
+  between them. **Keep this future state** keeps it; **Draft it again** draws a new one (the earlier one is kept,
+  hidden). A burst on the future state becomes a request on the same box of today's map. Nothing on the floor changes
+  until a request is approved, as always. It uses AI, once a draft.
 - **The mapping walk** builds a map with the manager, one product family at a time. **Map a family** (or **Start the
   mapping walk** on an empty map) opens it. First add the sources: call and walk-through transcripts, notes, the
   plant's own documents (a pdf, a text file, a spreadsheet), photos of a whiteboard. **Read the sources** has the agent
@@ -152,6 +168,11 @@ post, and where everyone who manages the plant reads the same thing. The floor d
   under **Tools that take drafts** in #plant's panel. A draft nobody makes expires after a week. A tool takes drafts
   once it has a drafts tray on its screen: ask for one on the Kaizen board.
 - On the Map, the Agents layer shows each agent's chip with its open flags; a chip opens that agent's channel.
+- **Its line on the floor** (in the agent's panel, off until a manager turns it on) is an experiment: the agent's most
+  urgent open flag shows as one line at the bottom of the station screen of its boxes, red for Act and amber for Look,
+  and a tap shows all of it and how long it has been open. The floor only reads it; managers handle the flag here. A
+  box's station screen is picked in **Edit this box** on the Map. The panel counts how often a floor screen showed the
+  agent's flags.
 - Agents read only their own tools' records and never change anything in a tool. Everything they write is on the
   board, in the open.
 
@@ -171,7 +192,9 @@ reporting once it is asked to on the Kaizen board.
   every screen: tape it where that screen is used, and a phone's camera opens it (the first time on a phone or tablet
   it asks for the floor PIN, on the plant's wifi). A screen for one of many (a station, a work center) gets one code
   each, or a box to type which one. Pick a size for each code and Print; Print all puts every code on one sheet.
-  People on the floor see only the Feedback button on a tool's screen, not the link back to the board.
+  People on the floor see only the Feedback button on a tool's screen, not the link back to the board. **Who uses it**
+  under each code says whether a screen is the floor's or the office's; the floor's come first, here and when a box's
+  station screen is picked on the Map.
 - **Diagrams** draws how a tool's data flows and who does what in it.
 - **Sample data** (trial companies only) fills a tool with a made-up week of work to see what it does, and clears
   exactly those rows again.

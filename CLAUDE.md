@@ -226,6 +226,8 @@ Index of `docs/FEATURES.md`, in its order:
 - The agent board, A1: agents from the map, watches, flags routed by the map, climbing (2026-11-02, VSM dev copy)
 - The agent board, A2: shift reviews, answers between agents, Disagree watches, briefs, draft request cards (2026-11-02, VSM dev copy)
 - The agent board, A3, and stage events (VSM M4): drafts across tools made on the tool's own screen, live numbers on the map (2026-11-02, VSM dev copy)
+- The value stream map, M3: the Map and the Kaizen board joined, and the future state (2026-11-02, VSM dev copy)
+- The floor's side of the map: who each screen is for, a box's station screen, the agent's line on it (2026-11-02, VSM dev copy)
 
 ## What this is
 
@@ -380,7 +382,8 @@ tool list, 401 from the API) proves the CLI itself starts.
   `SOS_AGENT_REVIEW_STEPS` (6 model calls a review), `SOS_AGENT_REVIEW_TOKENS` (2000 a call). The shift times are set on
   the board, not here. Drafts across tools (`src/vsm-drafts.js`, A3): `SOS_DRAFT_DAYS` (7: a draft nobody makes expires),
   `SOS_DRAFTS_WAITING` (10 waiting a tool). Stage events (`src/vsm-stages.js`): `SOS_STAGE_EVENTS_DAY` (20000 a company
-  a day), `SOS_STAGE_WINDOW_DAYS` (7: the window of the live numbers).
+  a day), `SOS_STAGE_WINDOW_DAYS` (7: the window of the live numbers). M3 (`src/vsm-kaizen.js`) and the floor's line
+  (`src/vsm-floor.js`) need none; `SOS_FAKE_FUTURE_MS` is the tests' slow fake future-state draft, never on Railway.
 - `SOS_DRAIN_MS` (25000): how long SIGTERM waits for requests in flight
   (`src/restart.js`; railway.json gives 30 s). `SOS_LATE_SWEEP_MS` (180000): the
   second orphaned-build sweep after boot. `SOS_MODULE_HANG_LIMIT` (3): timeouts
@@ -539,7 +542,10 @@ Passwords live only in Railway; never commit them.
   session of whoever has the page open, a manager included. So a platform
   feature the widget needs on module pages gets routes of its own that are
   safe for any device of the company (`/who`), and its manager routes live on
-  a path the policy does not open (`/people`). Never widen the policy to a
+  a path the policy does not open (`/people`). The agent's line on a station
+  screen (`/who/line`, VSM copy) is one: it answers only for agents a manager
+  switched on and only what the board shows a manager; who a screen is for is
+  set on `/api/c/:slug/screens/`, which the policy does not open. Never widen the policy to a
   prefix that also holds manager or admin routes.
 - Every request below `auth.companyGuard` belongs to one company. A new route
   under `/c/:slug/` is scoped for free; a new route addressed by an id must be

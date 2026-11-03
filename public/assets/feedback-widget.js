@@ -793,6 +793,35 @@
     justUpdated = null;
     try { if (j && j.live_version) localStorage.setItem(seenKey, String(j.live_version)); } catch (e) {}
   }
+  // ---- the agent's line (the VSM copy, src/vsm-floor.js): when a manager turned an agent's line on, its most urgent open
+  // flag shows as one line on the station screen of its box. Read only: the floor reads it, managers handle it on the
+  // agent board. Only on a live screen, never in the board's screen tiles; asked again every minute.
+  let lineEl = null, lineOpen = false, lastLine = null;
+  const ago = (m) => (m < 60 ? Math.max(1, m) + " min" : m < 2880 ? Math.round(m / 60) + " h" : Math.round(m / 1440) + " days");
+  async function loadLine() {
+    let j = null;
+    try { const r = await peopleApi("/line?module=" + encodeURIComponent(mod) + "&page=" + encodeURIComponent(location.pathname), { cache: "no-store" }); if (r.ok) j = await r.json(); } catch (e) {}
+    lastLine = j && j.line ? j.line : null;
+    drawLine();
+  }
+  function drawLine() {
+    const l = lastLine;
+    if (!l) { if (lineEl) { lineEl.remove(); lineEl = null; } return; }
+    if (!lineEl) {
+      lineEl = document.createElement("button"); lineEl.id = "sos-line"; lineEl.type = "button"; lineEl.setAttribute("role", "status");
+      lineEl.onclick = () => { lineOpen = !lineOpen; drawLine(); };
+      document.body.appendChild(lineEl);
+    }
+    const bg = l.severity === "act" ? "#b3261e" : "#c2620a";
+    lineEl.style.cssText = "position:fixed!important;left:50%!important;transform:translateX(-50%)!important;bottom:12px!important;top:auto!important;right:auto!important;z-index:9998;width:max-content!important;max-width:min(560px,calc(100vw - 140px))!important;min-height:0!important;height:auto!important;margin:0!important;box-sizing:border-box!important;display:flex!important;gap:8px;align-items:flex-start;text-align:left!important;background:" + bg + "!important;color:#fff!important;border:none!important;border-radius:" + (lineOpen ? "12px" : "20px") + "!important;padding:9px 14px!important;font:600 13px/1.35 system-ui,sans-serif!important;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25)";
+    lineEl.setAttribute("aria-label", (l.agent ? l.agent + ": " : "") + l.words + ". Open " + ago(l.since_min) + ".");
+    lineEl.title = lineOpen ? "Tap to make it small" : "Tap to read it all";
+    const flag = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:none;margin-top:2px"><path d="M4 22V4"/><path d="M4 4h12l-2 4 2 4H4"/></svg>';
+    const text = (l.agent ? "<b>" + esc(l.agent) + ":</b> " : "") + esc(l.words);
+    lineEl.innerHTML = flag + (lineOpen
+      ? '<span style="white-space:normal">' + text + '<br><span style="font-weight:500;opacity:.9">Open ' + esc(ago(l.since_min)) + ". The managers handle it on the agent board.</span></span>"
+      : '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">' + text + ' <span style="font-weight:500;opacity:.9">\u00b7 ' + esc(ago(l.since_min)) + "</span></span>");
+  }
   function namedBanner(text) {
     const el = document.createElement("div"); el.id = "sos-news";
     el.style.cssText = "position:fixed;left:12px;right:12px;top:12px;margin:0 auto;width:fit-content;max-width:640px;z-index:10000;background:#1f3a5f;color:#fff;border-radius:12px;padding:10px 14px 10px 16px;font:600 14px/1.4 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.25);display:flex;gap:10px;align-items:flex-start;box-sizing:border-box";
@@ -821,6 +850,7 @@
     watchVersion();
     drawExtras();
     loadWho();
+    if (mod && mod !== "platform" && !staged && !onTest && window.top === window.self) { loadLine(); setInterval(loadLine, 60000); }
     setTimeout(maybeTour, 400); // give the page's own first render a moment so targets exist
     const nameEl = panel.querySelector("#fbw-name");
     try { nameEl.value = localStorage.getItem("sos.name") || ""; } catch (e) {}

@@ -4383,5 +4383,65 @@ One instance hosts many **companies**. Everything is scoped by company slug:
   - *Tests.* `scripts/test-vsm-a3.js` (29), `scripts/e2e/vsm-a3.js` (42, with tools in their own process and again
     inline), the module gate's suite, `scripts/test-mcp.js` and `scripts/e2e/mcp.js` for the counts.
   - *Not yet.* Chelsea's own tools opting in (each a Kaizen change: a drafts tray on MO Board, stage events on its
-    stages); scanners or tablets for stage scans (VSM decision 5); the floor's station line (decision 6).
+    stages); scanners or tablets for stage scans (VSM decision 5); the floor's station line (decision 6, built next:
+    "The floor's side of the map" below).
 
+- **The value stream map, M3: the Map and the Kaizen board joined, and the future state (2026-11-02, VSM dev copy)**
+  - *Why.* The last unbuilt piece of `docs/VSM.md` (section 10, M3): a request sits on a box of the map, every box can
+    start a request, a kaizen burst becomes a request in one tap, and the walk's last phase, the future state. Decision 9
+    (Brendan, 2026-11-02): the agent drafts the future state and the manager keeps it.
+  - *A request on a box* (`src/vsm-kaizen.js`). `feedback.map_key` and `feedback.node_key` tie a request to a box by keys
+    (a key survives an import and a walk's "Use this map", an id does not; the agent board ties boxes the same way). The
+    board's payload has `boxes` (label, map); a card shows "On the map: <box>" (a tap filters the board to that box,
+    `?box=<map>/<box>`, as the tool filter does) and Show on map (`map?mapkey=&box=`). A request an agent drafted and a
+    manager sent from the agent board sits on the flag's box when it is one box. The box's panel on the Map lists its
+    cards and has Ask for something here.
+  - *Three ways from the map.* A change to one of the box's live tools (`source` 'map', the proposer reads it on arrival
+    as any request); a plant request (`feedback.kind` 'plant', no tool: work on the floor itself, never a request to
+    Anetix, never read by AI; the board's card has Working on it, Done, Not doing this and Make it a new tool); a new
+    tool request with round 1 pre-filled from the box (`prefillFromBox`: the request's words and the box's own as the
+    purpose, the floor for a process box and the office for production control, how it is kept today from where its
+    record lives, the plant's stages when the box carries two or more, the other system it works with), opened on the
+    board in its popout (`?intake=`). The same three from a burst (`/vsm/kaizen/:id/file`), which then shows its
+    request's number and where it is; a burst can be put away and brought back.
+  - *The future state.* Draft the future state (`/vsm/maps/:id/future`): one model call (the design model, metered as
+    `mapping`) reads the current map (boxes, who, records, tools, data boxes, what happens, quotes, flows, waits, open
+    questions, the kaizen already there, today's live numbers unless the data wall is up) and returns a summary, up to
+    eight bursts, flow changes and record changes. `checkFuture` holds each to the map: a burst's box must be there and
+    its evidence must be on it (a quote in the box's own words, a ? in its data box, a word-of-mouth flow, a wait before
+    it, no record or paper); a flow joins boxes that are there; what fails is listed as left out. `drawFuture` copies the
+    boxes in place, changes the flows and records, and numbers the bursts (`source` 'agent', with `evidence` and
+    `becomes`). The future map (`state` 'future', `parent_key`) sits beside the current one as a Current state / Future
+    state tab with a bar: the summary, what was left out, Keep this future state, Draft it again (the earlier draft is
+    kept hidden). A burst on it files on the current map's same box. The draft runs in the background; the page shows the
+    agent drafting and opens the draft when it is there. Agents, the walk and the live numbers never read a future map.
+  - *Rules kept.* Managers and admins only, every route under `/api/c/:slug/vsm` with ids checked against the company;
+    nothing moves toward the floor (a change waits for its proposal and the approval; a new tool for its design and
+    confirm); no model or cost on the map; on the record (`kaizen_filed`, `kaizen_put_away`, `kaizen_brought_back`,
+    `intake_started_from_map`, `plant_request_moved`, `map_future_asked`, `map_future_drafted`, `map_future_kept`); the
+    map file carries the future state, its parent and each burst's evidence; the admin MCP's `agent_board_status` counts
+    the map's requests.
+  - *Tests.* `scripts/test-vsm-m3.js` (26), `scripts/e2e/vsm-m3.js` (54), `scripts/e2e/vsm-m3-browser.js` (23).
+  - *Not yet.* A future state with boxes of its own (a supermarket, a merged cell) and its flows edited by hand; bursts
+    on a flow rather than a box; the gate (a burst on Chelsea's map becomes a change live on Chelsea's floor).
+- **The floor's side of the map: who each screen is for, a box's station screen, the agent's line on it (2026-11-02, VSM dev copy)**
+  - *Why.* Agent board decision 6 (Brendan, 2026-11-02): the floor sees a flag only as an experiment, a switch per agent,
+    off by default, one line on that box's station screen; read only. Tools built before 2026-10-29 say nothing of who
+    each screen is for, so that comes first.
+  - *Screen tags* (`src/vsm-floor.js`, `platform.screen_tags`). A manager says who a screen is for (The floor, The office,
+    Not said) on the QR codes tab of a tool's Screens; kept by route, it wins over the tool's own module.json word and
+    needs no build. The board's screens and the QR codes read the tags (the floor's first). A build's page check still
+    reads only the manifest.
+  - *A box's station screen.* The box's editor on the Map picks one live screen of the box's own tools
+    (`detail.screen`); an untagged screen picked there becomes the floor's.
+  - *The line.* The agent board's panel for an agent has Its line on the floor (`vsm_agents.floor_line`, a note in its
+    channel when switched). With it on, the feedback button on a live tool screen asks `/api/c/:slug/who/line` once a
+    minute and draws the agent's most urgent open flag (climbed, then Act, then oldest) as one line at the bottom of the
+    screen, red for Act, amber for Look; a tap opens the words and how long it has been open. Only on a box's station
+    screen, only live (never a preview, the test floor or the board's screen tiles), nothing to press. Cut to 160
+    characters, scrubbed of model names and long dashes. A floor device being shown a flag counts once each ten minutes
+    (`vsm_flags.floor_views`), shown on the agent's panel and in `agent_board_status`.
+  - *Rules kept.* `/who/line` is open to any device of the company, like the rest of `/who`, and gives only what the
+    board already shows a manager for agents a manager switched on; the tag route is managers only, on a path the tool
+    page policy does not open; screen tags are in the backup and go with the company.
+  - *Tests.* In `scripts/test-vsm-m3.js` and `scripts/e2e/vsm-m3.js` and `-browser.js` (the line on a phone).

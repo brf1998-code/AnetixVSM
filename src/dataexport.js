@@ -70,7 +70,7 @@ async function exportCompany(slug) {
   if (!co) throw Object.assign(new Error("no such company"), { status: 404 });
   const requests = (await q(`SELECT id, module, page, kind, message, name, status, outcome, question, floor_answer, floor_answer_at,
       manager_answer, manager_answer_at, follow_up_of, duplicate_of, shipped_version, shipped_at, anetix_stage, anetix_note, anetix_at,
-      created_at, updated_at FROM platform.feedback WHERE company=$1 ORDER BY id`, [slug])).rows;
+      map_key, node_key, created_at, updated_at FROM platform.feedback WHERE company=$1 ORDER BY id`, [slug])).rows;   // map_key, node_key: the box of the map it sits on (VSM M3)
   const intakes = (await q("SELECT id, feedback_id, name, slug AS tool, status, answers, created_at, updated_at FROM platform.module_intakes WHERE company=$1 ORDER BY id", [slug])).rows;
   // the files one at a time, newest first, until the export's total is spent; the rest are listed for Anetix to send
   let left = ATTACH_TOTAL;

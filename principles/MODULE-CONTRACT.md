@@ -55,7 +55,10 @@ from a code, with no menu before it. A floor screen for one of many (one
 station, one bench, one work center: a route with a `:param`) also names
 `"each"`: a GET address of this module's own API that answers a list of them,
 `[{ "id": "3", "label": "Bench 3" }, ...]`, where `id` is what goes in the
-route. The platform prints one code for each.
+route. The platform prints one code for each. A manager can also say who a
+screen is for on the board (the QR codes tab), and that word wins over this
+one; it is kept by the screen's route, so keep a screen's route when you
+change the screen.
 
 ## routes.js
 

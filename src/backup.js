@@ -37,6 +37,7 @@ const PLATFORM_TABLES = [
   "vsm_agents", "vsm_watches", "vsm_messages", "vsm_flags",   // the agent board: agents (before the watches that point at them), watches, the board's messages, flags (src/vsm-agents.js)
   "vsm_agent_settings", "vsm_reviews", "vsm_drafts",   // the agents' shift times, their reviews (after the agents they point at), draft request cards (src/vsm-review.js)
   "vsm_record_drafts", "vsm_tool_settings", "vsm_stage_events",   // records agents drafted for a tool and the floor switch per tool (src/vsm-drafts.js); the stage events (src/vsm-stages.js)
+  "screen_tags",   // who each screen of a tool is for, set by a manager (src/vsm-floor.js)
 ];
 // The admin accounts (src/accounts.js), parents first: the two others point at accounts. They travel with the backup
 // so a restore does not lock every admin out: password hashes, authenticator secrets encrypted under

@@ -136,7 +136,8 @@ async function companyTools(company) {
     .map((m) => ({ name: m.name, title: m.title || m.name, live: Boolean(m.live_version) }));
 }
 async function currentMaps(company) {
-  return (await q("SELECT id, key, family, title, walk_id, proposed, sort FROM platform.vsm_maps WHERE company=$1 AND replaced_at IS NULL ORDER BY sort, id", [company])).rows;
+  // a family's future state (src/vsm-kaizen.js) is not a family of its own
+  return (await q("SELECT id, key, family, title, walk_id, proposed, sort FROM platform.vsm_maps WHERE company=$1 AND replaced_at IS NULL AND state <> 'future' ORDER BY sort, id", [company])).rows;
 }
 
 // ---- starting a walk, and its sources ----------------------------------------------------------------------------------

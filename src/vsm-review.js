@@ -700,8 +700,13 @@ async function decideDraft(req, company, messageId, action) {
   const row = await require("./registry").getModule(company, d.tool);
   if (!row || !row.live_version) throw bad("This tool is not on the floor now, so the request has nowhere to go. Write it on the Kaizen board.");
   const message = `From the agent board (drafted by ${a ? a.name : "an agent"}, sent by ${by}): ${d.what}${d.why ? `\n\nWhy: ${d.why}` : ""}`.slice(0, 2000);
-  const fb = (await q(`INSERT INTO platform.feedback (company, module, page, message, name, person_id, reply_token, source, source_ref) VALUES ($1,$2,$3,$4,$5,$6,$7,'agent_board',$8) RETURNING id`,
-    [company, d.tool, `/c/${company}/m/${d.tool}/`, message, by.slice(0, 80), req.sosPersonId || null, require("./arrival").newToken(), d.thread_id || messageId])).rows[0];
+  // M3: the card sits on the box it is about, when that is one box (the flag's, else the agent's only one)
+  const fl = d.thread_id ? (await q("SELECT boxes FROM platform.vsm_flags WHERE thread_id=$1 AND company=$2", [d.thread_id, company])).rows[0] : null;
+  const ag = d.agent_id ? (await q("SELECT boxes FROM platform.vsm_agents WHERE id=$1 AND company=$2", [d.agent_id, company])).rows[0] : null;
+  const only = (fl && Array.isArray(fl.boxes) && fl.boxes.length === 1) ? String(fl.boxes[0]).split("/")
+    : (ag && Array.isArray(ag.boxes) && ag.boxes.length === 1 && ag.boxes[0].map_key) ? [ag.boxes[0].map_key, ag.boxes[0].key] : null;
+  const fb = (await q(`INSERT INTO platform.feedback (company, module, page, message, name, person_id, reply_token, source, source_ref, map_key, node_key) VALUES ($1,$2,$3,$4,$5,$6,$7,'agent_board',$8,$9,$10) RETURNING id`,
+    [company, d.tool, `/c/${company}/m/${d.tool}/`, message, by.slice(0, 80), req.sosPersonId || null, require("./arrival").newToken(), d.thread_id || messageId, only ? only[0] : null, only ? only[1] : null])).rows[0];
   await q("UPDATE platform.vsm_drafts SET state='sent', feedback_id=$2, decided_by=$3, decided_at=now() WHERE message_id=$1", [messageId, fb.id, by]);
   if (d.thread_id) await q("UPDATE platform.vsm_flags SET feedback_id=coalesce(feedback_id, $2) WHERE thread_id=$1", [d.thread_id, fb.id]);
   await V.post({ company, channel: m.channel, thread_id: messageId, kind: "action", from_kind: "person", from_name: by, agent_id: d.agent_id, words: `${by} sent it to the Kaizen board (#${fb.id}).` });

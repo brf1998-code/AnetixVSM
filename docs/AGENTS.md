@@ -233,6 +233,14 @@ to steps that a tool reports (Chelsea has none yet); the floor's station line is
 Chelsea acts on a draft an agent wrote) needs one of Chelsea's tools to take drafts: a Kaizen request for a drafts tray
 on MO Board or the Inventory Request, built and approved like any change.
 
+**The floor's line, as built (2026-11-02):** `src/vsm-floor.js`. A box's editor on the Map picks its station screen (a
+live screen of one of its own tools); a manager tags who each screen is for on the QR codes tab, and a screen picked as a
+station screen becomes the floor's. On an agent's panel, Its line on the floor (off by default) shows the agent's most
+urgent open flag as one line on its boxes' station screens, drawn by the feedback button from `/api/c/:slug/who/line`:
+live screens only, read only, a tap for the whole line. How often a floor screen showed its flags is counted (once each
+ten minutes) on its panel and in `agent_board_status`. An agent's request card sent to Kaizen now sits on its box (VSM
+M3).
+
 ## 8. Decisions for Brendan
 
 1. Where the board lives: its own view beside Kaizen and Map, or only inside the Map as a side panel? *Answered: its own
@@ -250,7 +258,7 @@ on MO Board or the Inventory Request, built and approved like any change.
    after 4 more (`SOS_FLAG_RAISE_MIN`, `SOS_FLAG_CLIMB_MIN`).*
 6. Should the floor ever see a flag, as one line on its own station screen? *Answered: worth an experiment, since nobody
    knows how people will take it. Not in A1; when it comes it is a switch per agent, off by default, and a line on that
-   box's station screen only.*
+   box's station screen only. Built 2026-11-02, read only (Brendan: the floor reads it, managers handle it here).*
 7. A3, how an agent's draft for another tool reaches it: the tool takes it (a drafts service lent to tools; each tool
    opts in through one normal Kaizen change that adds a drafts tray to its own screen, and its own create logic runs),
    a platform tray on every tool page calling a route the tool names, or the board writing the row? *Answered: the tool

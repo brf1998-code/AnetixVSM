@@ -196,6 +196,10 @@
   .chip.rec { background:var(--steel); } .chip.platform { background:var(--navy); } .chip.integration { background:#0f6b5c; margin-left:4px; }
   .stacknote { background:#eef4fb; border-radius:8px; padding:8px; color:#1f3a5f; margin:6px 0; }
   .chip.screen { background:#e5e9ee; color:var(--ink); } .chip.review { background:var(--purple); }
+  /* VSM M3: the box a request sits on, and a plant request (no tool) */
+  .chip.box { background:#fbe3cc; color:#7a3a00; border:none; cursor:pointer; font-family:inherit; font-size:10.5px; font-weight:800; letter-spacing:.04em; min-height:0; margin:0 4px 0 0; padding:2px 8px; line-height:1.4; }
+  .chip.plant { background:#1d5535; }
+  a.maplink { font-size:12px; font-weight:700; color:var(--navy); }
   .prop { background:var(--fog); border-radius:8px; padding:8px; margin-top:8px; font-size:12.5px; white-space:pre-wrap; line-height:1.45; }
   .req { background:var(--amberSoft); border-radius:8px; padding:8px; margin-top:8px; font-size:12.5px; white-space:pre-wrap; }
   button { border:none; border-radius:7px; padding:8px 12px; font-size:12.5px; font-weight:700; cursor:pointer; margin:8px 6px 0 0; min-height:36px; }
@@ -471,6 +475,19 @@ function toggleModule(name) {
   normalizeSel(); writeSel(); render();
 }
 function selectAll() { SEL = null; writeSel(); render(); }
+// VSM M3: the board filters by a box of the map as it does by tool (?box=<map>/<box>, from the Map's "On the Kaizen board").
+// Requests to Anetix ignore it, as they ignore the tool filter.
+let BOX = new URLSearchParams(location.search).get("box") || null;
+const boxKey = (fb) => (fb.node_key ? `${fb.map_key}/${fb.node_key}` : null);
+function setBox(k) { BOX = k || null; const url = new URL(location.href); if (BOX) url.searchParams.set("box", BOX); else url.searchParams.delete("box"); history.replaceState(null, "", url.pathname + url.search + url.hash); render(); }
+function boxChip(fb) {
+  const k = boxKey(fb), b = k && (DATA.boxes || {})[k];
+  if (!b) return "";
+  const [mk, nk] = k.split("/");
+  return `<div class="meta"><button class="chip box" title="Show only the cards on this box" onclick="setBox('${esc(jsq(k))}')">ON THE MAP: ${esc(String(b.label).toUpperCase())}</button>${MGR() && b.map_id ? `<a class="maplink" href="map?mapkey=${encodeURIComponent(mk)}&box=${encodeURIComponent(nk)}">Show on map</a>` : ""}</div>`;
+}
+// a key from the map is letters, digits, - and _ with one slash; anything else is dropped before it goes in a handler
+const jsq = (k) => String(k).replace(/[^A-Za-z0-9_\/-]/g, "");
 SEL = readSel();
 // Which model does what, and what it costs, are not on the board (Brendan,
 // 2026-09-20: keep it a black box). The choices live on the agent settings
@@ -555,6 +572,7 @@ function pendingKey(url) {
   if ((m = /\/api\/proposals\/(\d+)\//.exec(url))) { const fb = (DATA.feedback || []).find(f => f.proposal_id === Number(m[1])); return ["fb:" + (fb ? fb.id : m[1]), ACTION_LABELS.decide]; }
   if ((m = /\/api\/runs\/(\d+)\/(\w+)/.exec(url))) return ["run:" + m[1], ACTION_LABELS[m[2]] || "Working"];
   if (/\/api\/runs\/batch/.test(url)) return ["batch", ACTION_LABELS.batch];
+  if ((m = /\/vsm\/plant\/(\d+)\//.exec(url))) return ["fb:" + m[1], "Working"];
   return ["global", "Working"];
 }
 function pendingHtml(key) { const l = PENDING.get(key); return l ? `<div class="working"><span class="spin"></span>${esc(l)}…</div>` : ""; }
@@ -1071,7 +1089,7 @@ function requestCard(fb) {
   let html = `<div class="card request ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}`;
   html += `<div class="msg">${esc(fb.message)}</div>`;
   if (fb.status === "in_progress") html += gateTopHtml(runOf(fb), fb);
-  html += `<div class="meta">#${fb.id} · <span class="chip screen">New tool request</span> · started by ${esc(fb.name || "a manager")}</div>`;
+  html += `<div class="meta">#${fb.id} · <span class="chip screen">New tool request</span> · started by ${esc(fb.name || "a manager")}</div>` + boxChip(fb);
   const openBtn = (label, cls) => (MGR() ? `<button class="${cls || "primary"}" onclick="Intake.open(${fb.intake_id})">${label}</button>` : "");
   const withdraw = MGR() && !["building", "done"].includes(it.status) ? `<button class="no" onclick="if(confirm('Withdraw this tool request? The answers are kept on the record but nothing is built.'))act('/api/intakes/${fb.intake_id}/abandon')">Withdraw</button>` : "";
   if (fb.status === "declined") { html += `<div class="fail-note">${esc(fb.outcome || "Withdrawn.")}</div>`; return html + "</div>"; }
@@ -1253,6 +1271,7 @@ function anetixState(fb) {
 
 function card(fb) {
   if (fb.kind === "module_request") return requestCard(fb);
+  if (fb.kind === "plant") return plantCard(fb);
   const run = DATA.runs.find(r => (r.feedback_ids || [r.feedback_id]).includes(fb.id) && liveRun(r));
   const isPlatform = !fb.module || fb.module === "platform";
   const pk = run && fb.status === "in_progress" ? "run:" + run.id : "fb:" + fb.id;
@@ -1266,7 +1285,9 @@ function card(fb) {
        + (fb.source === "assistant" ? ` · ${MGR() && window.Assist && fb.source_ref ? `<button class="chip convo" title="Sent from Ask Anetix; open the conversation" onclick="Assist.openConversation(${Number(fb.source_ref)})">FROM A CONVERSATION</button>` : `<span class="chip convo">FROM A CONVERSATION</span>`}` : "")
        // filed by the company's own connected AI app (src/mcp-company.js), in a manager's name
        + (fb.source === "mcp" ? ` · <span class="chip app" title="Sent from an AI app a manager connected to this company (Settings, Connected apps)">FROM ${esc(String(fb.source_app || "A CONNECTED APP").toUpperCase())}</span>` : "") + `</div>`;
-  html += `<div class="meta"><span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>${/^\/c\/[^/]+\/test\/m\//.test(fb.page || "") ? `<span class="chip testfloor" title="Sent from the test floor, where nothing is real; the screen is the same as on the floor">from the test floor</span>` : ""}${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
+  html += boxChip(fb);
+  // a request from a box of the map names no screen of the tool: the box chip above says where it is
+  html += `<div class="meta">${fb.source === "map" ? "" : `<span class="chip screen">Screen: ${esc(fb.screen || fb.page || "unknown")}</span>`}${/^\/c\/[^/]+\/test\/m\//.test(fb.page || "") ? `<span class="chip testfloor" title="Sent from the test floor, where nothing is real; the screen is the same as on the floor">from the test floor</span>` : ""}${fb.review_id ? `<span class="chip review">REVIEW #${fb.review_id}${priorityOf(fb)}</span>` : ""}</div>`;
   html += pointedHtml(fb) + askedHtml(fb);
   if (fb.follow_up_of) html += fb.follow_up_origin === "little_left"
     ? `<div class="meta" style="background:#fff4e5;border-radius:8px;padding:8px;color:#7a4a00"><b>Follow-up to #${fb.follow_up_of}: a little left.</b> ${esc(fb.name || "The manager")} checked what went live and says this is left to finish. First asked: "${esc(String(fb.follow_up_words || "").slice(0, 200))}"</div>`
@@ -1335,6 +1356,32 @@ function card(fb) {
   return html + "</div>";
 }
 
+// A plant request (VSM M3, src/vsm-kaizen.js): work on the floor itself, filed from a box of the map. No AI reads it and
+// nothing is built: a manager moves it to Working on it, closes it, or makes it a new tool request from its box.
+function plantCard(fb) {
+  const pk = "fb:" + fb.id;
+  let html = `<div class="card ${PENDING.has(pk) ? "busy" : ""}" data-key="${pk}">${pendingHtml(pk)}<div class="msg">${esc(fb.message)}</div>`;
+  html += `<div class="meta">#${fb.id} · <span class="chip plant">PLANT REQUEST</span> · ${esc(fb.name || "a manager")}</div>` + boxChip(fb);
+  if (fb.status === "done" || fb.status === "declined") {
+    if (fb.outcome) html += `<div class="${fb.status === "done" ? "outcome" : "fail-note"}">${fb.status === "done" ? "Done: " : "Not doing this: "}${esc(fb.outcome)}</div>`;
+    return html + "</div>";
+  }
+  html += `<div class="meta">${fb.status === "in_progress" ? "Being worked on at the plant." : "Work on the floor itself, with no tool to change. Nothing reads it but people."}</div>`;
+  if (MGR()) {
+    const base = `/api/c/${SLUG}/vsm/plant/${fb.id}`;
+    const main = fb.status === "new" ? `<button class="primary" onclick="act('${base}/status',{status:'in_progress'})">Working on it</button>` : `<button class="go" onclick="closeItem(${fb.id}, false)">Done</button>`;
+    html += actions(pk, main, [fb.status === "new" ? `<button class="quiet" onclick="closeItem(${fb.id}, false)">Done</button>` : `<button class="quiet" onclick="act('${base}/status',{status:'new'})">Not started</button>`,
+      `<button class="quiet" title="Start a new tool request with this box's answers filled in" onclick="plantToTool(${fb.id})">Make it a new tool</button>`, `<button class="no" onclick="closeItem(${fb.id}, true)">Not doing this</button>`]);
+  }
+  return html + "</div>";
+}
+async function plantToTool(id) {
+  if (!confirm("Start a new tool request from this one? It closes here, pointing at the new request, and the new one starts with what its box on the map says.")) return;
+  const r = await fetch(`/api/c/${SLUG}/vsm/plant/${id}/new-tool`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || "That did not work."); return; }
+  await load(); Intake.open(j.intake_id);
+}
 function decline(pid) {
   const note = prompt("Reason (shown back to the reporter):") || "declined";
   act(`/api/proposals/${pid}/decide`, { decision: "decline", note });
@@ -1435,6 +1482,14 @@ const QR_SIZES = [["2", "Small, 2 in"], ["3", "Medium, 3 in"], ["4.5", "Large, 4
 let CODES = null;   // { mod, items: [{ label, sub, path, route, for, typed, value, size }] }
 const fillRoute = (route, v) => String(route || "/").replace(/:[^/]+/, encodeURIComponent(v));
 const codeSrc = (path, px) => `/api/c/${SLUG}/qr.svg?px=${px}&path=${encodeURIComponent(path)}`;
+// who a screen is for (src/vsm-floor.js): a manager's word, kept by the screen's route, wins over the tool's own; tools
+// built before 2026-10-29 carry none. The floor's screens come first here and in a box's station screen on the Map.
+async function tagScreen(i, v) {
+  const it = CODES.items[i];
+  const r = await fetch(`/api/c/${SLUG}/screens/${encodeURIComponent(CODES.mod)}/tag`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ route: it.route, for: v || null }) });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || "That did not work."); return; }
+  await load(); openCodes(CODES.mod);
+}
 async function openCodes(mod) {
   const p = (DATA.pages || {})[mod] || {}, m = DATA.modules.find((x) => x.name === mod) || {};
   SCR = { mod, which: "codes" };
@@ -1468,6 +1523,7 @@ async function openCodes(mod) {
       ${it.typed ? `<label class="qr-which">Which one? <input id="qr-v-${i}" value="${esc(it.value)}" maxlength="40" oninput="codeValue(${i}, this.value)"></label>` : ""}
       <div class="qr-act"><select aria-label="Print size" onchange="CODES.items[${i}].size=this.value">${QR_SIZES.map(([v, l]) => `<option value="${v}" ${v === it.size ? "selected" : ""}>${l}</option>`).join("")}</select>
         <button class="go small" onclick="printCodes([${i}])">Print</button><a id="qr-open-${i}" href="${esc(it.path)}" target="_blank" rel="noopener">Open</a><button class="quiet small" onclick="copyCode(${i}, this)">Copy link</button></div>
+      ${MGR() ? `<label class="qr-which">Who uses it <select aria-label="Who uses ${esc(it.label)}" onchange="tagScreen(${i}, this.value)"><option value=""${it.for ? "" : " selected"}>Not said</option><option value="floor"${it.for === "floor" ? " selected" : ""}>The floor</option><option value="office"${it.for === "office" ? " selected" : ""}>The office</option></select></label>` : ""}
     </div>`).join("");
   root.innerHTML = `<div class="scr-back" onclick="if(event.target===this)closeScreens()"><div class="scr-box" role="dialog" aria-modal="true" aria-label="QR codes for ${esc(m.title || mod)}">
     <div class="scr-head"><b>${esc(m.title || mod)}: QR codes</b><span class="seg"><button onclick="openScreens('${esc(mod)}','live')">Screens</button><button class="on">QR codes</button></span>${items.length > 1 ? `<button class="go small" style="margin:0" onclick="printCodes()">Print all ${items.length}</button>` : ""}<button class="quiet x" onclick="closeScreens()">Close</button></div>
@@ -1825,7 +1881,8 @@ function render() {
       ${many ? `<button class="tog" onclick="toggleModule('${m.name}')" title="${on ? (SEL ? "Hide this tool's feedback" : "Show only this tool's feedback") : "Show this tool's feedback too"}">${esc(m.title)}</button>` : `<b>${esc(m.title)}</b>`}<span class="links">${links(m)}</span></span>`;
     }).join("") +
     (MGR() ? `<button class="modall newmod" onclick="Intake.start()" title="Describe a new tool in plain words; the AI designs it, you confirm, then it is built">+ New tool</button>` : "") +
-    (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one tool" : SEL.size + " tools"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "");
+    (SEL ? `<span class="filterhint">showing ${SEL.size === 1 ? "one tool" : SEL.size + " tools"} · <a href="#" style="color:#fff" onclick="selectAll();return false">show all</a></span>` : "") +
+    (BOX ? `<span class="filterhint">showing the cards on ${esc(((DATA.boxes || {})[BOX] || { label: "one box of the map" }).label)} · <a href="#" style="color:#fff" onclick="setBox(null);return false">show all</a></span>` : "");
   const runs = DATA.runs.filter(r => visible(r.module));
   // the counts on the column headers are the board's only numbers; spend and the loop's health are on the admin page
   const buckets = { new: [], reviewing: [], in_progress: [], done: [], platform: [] };
@@ -1837,7 +1894,7 @@ function render() {
     const col = ["deployed", "rolled_back"].includes(r.status) ? "done" : "in_progress";
     const ids = (r.feedback_ids || []).filter(id => !folded.has(id));
     if (!ids.length) continue;
-    const fbsInRun = DATA.feedback.filter(f => ids.includes(f.id));
+    const fbsInRun = DATA.feedback.filter(f => ids.includes(f.id) && (!BOX || boxKey(f) === BOX));
     // only fold items whose own status matches the run (a cancelled/re-reviewed item stays its own card)
     const live = fbsInRun.filter(f => (col === "done" ? f.status === "done" : f.status === "in_progress"));
     if (!live.length) continue;
@@ -1845,6 +1902,10 @@ function render() {
     tiles[col].push({ run: r, ids: live.map(f => f.id) });
   }
   for (const fb of DATA.feedback) {
+    const toAnetix = fb.kind === "feedback" && (!fb.module || fb.module === "platform");
+    if (BOX && !toAnetix && boxKey(fb) !== BOX) continue;
+    // a plant request (VSM M3): work on the floor itself, on a box of the map; no tool, no AI, never a request to Anetix
+    if (fb.kind === "plant") { if (!folded.has(fb.id)) (buckets[fb.status === "declined" ? "done" : fb.status] || buckets.new).push(fb); continue; }
     // a new tool request is the company's own, named or not, and shows whatever the filter (the launch audit 1.5: an
     // unnamed one landed in Requests to Anetix, so a demo manager who closed the popout lost it and started another)
     if (fb.kind === "module_request") { if (!folded.has(fb.id)) (buckets[fb.status === "declined" ? "done" : fb.status] || buckets.new).push(fb); continue; }

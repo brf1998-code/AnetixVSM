@@ -432,9 +432,10 @@ router.get("/api/c/:slug/board", async (req, res) => {
   // every screen of each tool, live and in a waiting preview, with an address to open it at: the board's "Screens"
   // popout shows them side by side (2026-10-01). A route with a parameter gets its value from a smoke path, as the
   // page check does (src/pageload.js screenPaths).
-  const pages = {};
+  // who each screen is for: the tool's own word, or a manager's where one was set (src/vsm-floor.js, the VSM copy)
+  const pages = {}, tags = await require("./vsm-floor").tagsOf(co.slug);
   for (const m of modules) {
-    const at = (v) => { if (v == null) return []; try { return require("./pageload").screenPaths(registry.readManifest(co.slug, m.name, v)).map((x) => ({ path: x.path, label: x.label, route: x.route, for: x.for, each: x.each })); } catch (e) { return []; } };
+    const at = (v) => { if (v == null) return []; try { return require("./vsm-floor").applyTags(require("./pageload").screenPaths(registry.readManifest(co.slug, m.name, v)), tags[m.name]).map((x) => ({ path: x.path, label: x.label, route: x.route, for: x.for, each: x.each, tag_by_manager: Boolean(x.tag_by_manager) })); } catch (e) { return []; } };
     pages[m.name] = { live: at(m.live_version), staged: m.staged_version != null && m.staged_version !== m.live_version ? at(m.staged_version) : [] };
   }
   const reviews = await review.listReviews(co.slug);
@@ -446,6 +447,7 @@ router.get("/api/c/:slug/board", async (req, res) => {
   const intakes = req.sosRole === "floor" ? {} : await intake.boardIntakes(co.slug);
   res.json({
     company: coPublic, brand: brandPublic(b, co.name), icon_v: iconVersion(b, co.name), feedback, runs, modules, screens, pages, reviews, batches, intakes,
+    boxes: await require("./vsm-kaizen").boxesFor(co.slug, feedback),   // the map boxes the requests sit on (M3, the VSM copy)
     archived_tools: archivedNames.size,   // how many are under Settings, Archived tools
     requirement_gate: pipeline.requirementGate(),   // off by default since 2026-10-01: a functionality change writes its requirement and builds
     test_floor: Boolean(co.test_floor),   // the strip shows a "Test floor" link per tool only while the company's switch is on

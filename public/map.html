@@ -166,6 +166,21 @@
   @keyframes spin { to { transform:rotate(360deg); } }
   .walkchip { background:#fbe3cc; color:#7a3a00; }
   @media (max-width:700px) { .wrap { padding:12px; } .band { padding:8px 12px; } .band .right { margin-left:0; } .wmain { padding:14px; } }
+  /* M3: a burst's card and actions, the requests on a box, the future state */
+  .kz.done { background:var(--green); }
+  .burst { display:flex; gap:10px; align-items:flex-start; padding:8px 0 2px; border-top:1px solid var(--fog); }
+  .burst:first-of-type { border-top:none; }
+  .burst .ev { font-size:12.5px; color:var(--steel); margin-top:3px; }
+  .acts2 { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .acts2 button, .acts2 a { min-height:32px; padding:0 10px; font-size:12.5px; }
+  .stw { font-weight:700; font-size:12px; color:var(--steel); }
+  .stw.done { color:#1d5535; } .stw.in_progress { color:var(--navy); } .stw.declined { color:#7d1a14; }
+  .cards { display:flex; flex-direction:column; gap:4px; }
+  .cards a { color:var(--ink); text-decoration:none; } .cards a:hover b { text-decoration:underline; }
+  .futurebar { padding:12px 16px; display:flex; flex-direction:column; gap:8px; border-color:#9fc0a8; background:#f2f8f3; }
+  .askbox { border:1px solid var(--line); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px; background:var(--fog); }
+  .askbox textarea { min-height:64px; }
+  .tog { display:inline-flex; align-items:center; gap:6px; font-weight:600; }
 </style>
 </head>
 <body>
@@ -183,7 +198,8 @@ const REC = { anetix: "In Anetix", next: "Anetix, rolling out", other: "Another 
 const CONF = { heard: ["Heard on a walk-through", "#e3efe7", "#1d5535"], seen: ["Seen in a tool or document", "#dfe7f1", "#1f3a5f"], assumed: ["Assumed, needs a person to confirm", "#fbe3cc", "#7a3a00"], confirmed: ["Confirmed", "#e3efe7", "#1d5535"] };
 const EDGE = { push: ["#1c242e", 3, ""], pull: ["#1c242e", 3, "2 5"], fifo: ["#1c242e", 3, ""], supermarket: ["#1c242e", 3, ""], supply: ["#1c242e", 3, ""], ship: ["#1c242e", 3, ""], info_system: ["#1f3a5f", 2, ""], info_word: ["#c2620a", 2, "6 5"] };
 const S = { ov: null, mapId: null, view: null, sel: null, layers: { sys: true, agents: false, kz: true, ladder: true }, arrange: false, editing: false, fixing: null, err: "", fit: true, z: 1,
-            panel: null, walk: null, walkEdit: null };   // panel "walk": the mapping walk is open instead of the map
+            panel: null, walk: null, walkEdit: null,     // panel "walk": the mapping walk is open instead of the map
+            asking: false };                              // M3: the box's "Ask for something here" form is open
 
 async function api(path, opts) {
   const r = await fetch(API + path, Object.assign({ cache: "no-store", headers: { "Content-Type": "application/json" } }, opts || {}));
@@ -204,9 +220,13 @@ async function load(keepSel) {
   const wantWalk = Number(new URLSearchParams(location.search).get("walk"));
   if (wantWalk && !S.panel && !keepSel) { try { return await openWalk(wantWalk); } catch (e) { history.replaceState(null, "", location.pathname); } }
   if (!S.ov.maps.length) { S.view = null; return render(); }
-  const want = Number(new URLSearchParams(location.search).get("map")) || S.mapId;
-  S.mapId = S.ov.maps.some((m) => m.id === want) ? want : S.ov.maps[0].id;
+  // the board's "Show on map" names a map by its key and a box by its (M3)
+  const qs = new URLSearchParams(location.search), byKey = qs.get("mapkey") && S.ov.maps.find((m) => m.key === qs.get("mapkey"));
+  const want = (byKey && !S.mapId ? byKey.id : null) || Number(qs.get("map")) || S.mapId;
+  S.mapId = S.ov.maps.some((m) => m.id === want) ? want : (S.ov.maps.find((m) => m.state !== "future") || S.ov.maps[0]).id;
   S.view = await api(`/maps/${S.mapId}`);
+  if (byKey && qs.get("box") && !keepSel && S.view.nodes.some((n) => n.key === qs.get("box"))) { S.sel = qs.get("box"); keepSel = true; history.replaceState(null, "", `?map=${S.mapId}`); }
+  watchDraft();
   // the Agents layer opens on its own the first time once an agent on this company's map is running
   if (!S.layersAuto) { S.layersAuto = true; if ((((S.view.agents || {}).agents) || []).some((a) => a.status === "on")) S.layers.agents = true; }
   if (!keepSel || !S.view.nodes.some((n) => n.key === S.sel)) S.sel = (S.view.nodes.find((n) => n.kind === "control") || S.view.nodes[0] || {}).key || null;
@@ -308,7 +328,7 @@ function mapHtml() {
       const rows = [`<b>Stage</b> ${esc((n.stage_refs || []).join(", ") || "?")}`].concat(n.who ? [`<b>Who</b> ${esc(n.who)}`] : [], (n.data || []).map((d) => `<b>${esc(d.label)}</b> <span class="${d.value === "?" ? "unk" : ""}">${esc(d.value)}</span>`), liveRows(liveOf(n)), [`<b>Record</b> ${esc(n.record_system || REC[n.record_kind])}`]);
       html += `<div class="databox" data-node="${esc(n.key)}" style="left:${n.x}px;top:${n.y + n.h + 8}px;width:${n.w}px;min-height:${dataH(n)}px">${rows.join("<br>")}</div>`;
     }
-    if (S.layers.agents && n.detail && n.detail.agent_name) {
+    if (S.layers.agents && n.detail && n.detail.agent_name && v.map.state !== "future") {   // no agent watches a future state
       const factory = ["supplier", "customer", "outside"].includes(n.kind);
       const top = n.kind === "process" ? n.y + n.h + 8 + dataH(n) + 8 : n.y - (factory ? 46 : 30);
       const ag = agentOf(n.detail.agent_name);
@@ -317,7 +337,7 @@ function mapHtml() {
       html += `<a class="agent ${esc(cls)}" data-for="${esc(n.key)}" href="agent-board?channel=${encodeURIComponent(ag && ag.status !== "not_set_up" ? `a:${ag.key}` : "plant")}" title="${esc(ag && ag.status === "not_set_up" ? "Not set up yet: open the agent board to set it up" : "Open this agent's channel")}" style="left:${n.x}px;top:${top}px;width:${n.kind === "process" ? n.w : n.w - 24}px">${esc(n.detail.agent_name)}${fl}</a>`;
     }
   }
-  if (S.layers.kz) for (const z of v.kaizen) { const n = nodes[z.node_key]; if (n) html += `<button type="button" class="kz" data-node="${esc(n.key)}" style="left:${n.x + n.w - 18}px;top:${n.y - 18}px" title="${esc(z.title)}" aria-label="Kaizen ${z.n}: ${esc(z.title)}">${z.n}</button>`; }
+  if (S.layers.kz) for (const z of v.kaizen) { const n = nodes[z.node_key]; if (n && z.status !== "dismissed") html += `<button type="button" class="kz ${z.status === "filed" ? "done" : ""}" data-node="${esc(n.key)}" style="left:${n.x + n.w - 18}px;top:${n.y - 18}px" title="${esc(z.title)}${z.status === "filed" ? ` (request #${z.feedback_id})` : ""}" aria-label="Kaizen ${z.n}: ${esc(z.title)}">${z.n}</button>`; }
   if (S.layers.ladder && procs.length) {
     const waits = (v.live && v.live.waits) || {};
     const inv = (n, prev) => { const w = prev && waits[`${prev.key}>${n.key}`]; if (w) return `${mins(w.wait_min)} live`; const e = v.edges.find((x) => x.to_key === n.key && x.inventory); return e ? e.inventory.label || "?" : "?"; };
@@ -379,9 +399,11 @@ function detailHtml() {
     <div class="chips"><span class="chip" style="${recStyle}">${esc(REC[n.record_kind])}</span>${n.record_system ? `<span>${esc(n.record_system)}</span>` : ""}<span class="chip" style="background:${c[1]};color:${c[2]}">${esc(c[0])}</span></div>
     ${tools.length ? `<div class="tools"><div class="lbl">Anetix tools on this box</div>${tools.map((t) => `<div><a href="/c/${esc(SLUG)}/m/${esc(t.name)}/">${esc(t.title)}</a> <span class="note">${t.live ? (t.daily ? "in daily use" : `built; changed on ${t.days_changed} of the last ${S.ov.coverage.rule.days} days`) : t.archived ? "archived" : "not live"}</span></div>`).join("")}</div>` : ""}
     ${liveDetail(n)}
-    <div class="grid2">${field("What happens", d.what)}${field("Recorded today", d.recorded)}${field("Not recorded", d.missing)}${field("In Anetix", d.anetix)}${field("Agent (concept)", d.agent, "var(--navy)")}${field("Kaizen", d.kaizen, "var(--amberDeep)")}${field("Notes", d.notes)}</div>
+    ${d.screen ? `<div class="note">Station screen: <b>${esc(d.screen.label || d.screen.route)}</b> (${esc(toolTitle(d.screen.module))}). ${agentOf(d.agent_name || "") && agentOf(d.agent_name).status === "on" ? "Its agent's line shows there when its switch is on." : ""}</div>` : ""}
+    <div class="grid2">${field("What happens", d.what)}${field("Recorded today", d.recorded)}${field("Not recorded", d.missing)}${field("In Anetix", d.anetix)}${field("Agent (concept)", d.agent, "var(--navy)")}${field("Kaizen", d.kaizen, "var(--amberDeep)")}${field("In the future state", d.future, "#1d5535")}${field("Notes", d.notes)}</div>
     ${d.quote ? `<figure class="quote"><blockquote>“${esc(d.quote)}”</blockquote><figcaption>${esc(d.quote_by || "")}</figcaption></figure>` : ""}
-    ${kz.length ? `<div><div class="lbl" style="color:var(--amberDeep)">Kaizen bursts here</div>${kz.map((z) => `<div><b>${z.n}.</b> ${esc(z.title)}</div>`).join("")}</div>` : ""}
+    ${kz.filter((z) => z.status !== "dismissed").length ? `<div><div class="lbl" style="color:var(--amberDeep)">Kaizen bursts here</div>${kz.filter((z) => z.status !== "dismissed").map((z) => burstHtml(z, n)).join("")}</div>` : ""}
+    ${boxCardsHtml(n)}
     ${qs.length ? `<div><div class="lbl">Questions about this box</div>${qs.map((q) => `<div>${esc(q.claim)} <span class="st-${q.status}">${q.status === "open" ? "open" : q.status === "confirmed" ? "confirmed" : "needs a fix"}</span></div>`).join("")}</div>` : ""}
     <div class="note">${d.source ? `Source: ${esc(d.source)}` : ""}${n.updated_by ? ` · last changed by ${esc(n.updated_by)}` : ""}</div>
   </section>`;
@@ -404,6 +426,87 @@ function liveDetail(n) {
     <div class="note">Steps: ${steps.map((x) => `${esc(x.step)} (${esc(title(x.module))})`).join(", ")}</div>
     ${lv && lv.events ? `<div>Cycle time <b>${esc(mins(lv.cycle_min))}</b> (${lv.runs} runs)${lv.queue_min != null ? ` · waits in line <b>${esc(mins(lv.queue_min))}</b>` : ""} · work in process <b>${lv.wip}</b>${lv.oldest_open_min != null ? ` (oldest ${esc(mins(lv.oldest_open_min))})` : ""} · first pass <b>${lv.fpy == null ? "?" : `${lv.fpy}%`}</b> · <b>${lv.per_day}</b> a day</div>` : `<div class="note">No work reported at these steps in the last ${days} days.</div>`}</div>`;
 }
+// ---------- M3: the Map and the Kaizen board joined (src/vsm-kaizen.js)
+const toolTitle = (m) => ((S.view.tools.find((t) => t.name === m)) || { title: m }).title;
+const liveTools = (n) => S.view.tools.filter((t) => t.live && (n.modules || []).includes(t.name));
+const EVW = { quote: "In their words", unknown: "Not known yet", word: "Passed on by word of mouth", wait: "Waits before it", no_record: "Nothing keeps its record" };
+const STW = { new: "new", reviewing: "a change proposed", in_progress: "being worked on", done: "done", declined: "not doing" };
+const boardLink = (n) => `./?box=${encodeURIComponent(`${S.view.map.state === "future" && S.view.map.parent_key && S.view.nodes.some((x) => x.key === n.key) ? S.view.map.parent_key : S.view.map.key}/${n.key}`)}`;
+// a burst: its words, what it stands on, and what it became, or the three ways it can go and Put away
+function burstHtml(z, n) {
+  const ev = z.evidence && z.evidence.kind ? `<div class="ev">${esc(EVW[z.evidence.kind] || "")}${z.evidence.text ? `: ${z.evidence.kind === "quote" ? `“${esc(z.evidence.text)}”` : esc(z.evidence.text)}` : ""}</div>` : "";
+  const node = n || S.view.nodes.find((x) => x.key === z.node_key);
+  let tail = "";
+  if (z.status === "filed") tail = `<div class="acts2"><span class="stw ${esc(z.card_status || "")}">Request #${z.feedback_id}${z.card_kind === "plant" ? ", a plant request" : z.card_kind === "module_request" ? ", a new tool" : z.card_module ? `, ${esc(toolTitle(z.card_module))}` : ""}: ${esc(STW[z.card_status] || z.card_status || "")}</span>${node ? `<a class="quietbtn" href="${boardLink(node)}">Open on the board</a>` : ""}</div>`;
+  else if (z.status === "dismissed") tail = `<div class="acts2"><span class="stw">Put away${z.decided_by ? ` by ${esc(z.decided_by)}` : ""}</span><button type="button" class="quietbtn" data-act="kz-back" data-z="${z.id}">Bring back</button></div>`;
+  else if (node && !S.view.map.proposed) {
+    const best = (as, tool) => (z.becomes === as && (!tool || as === "change") ? "go" : "quietbtn");
+    tail = `<div class="acts2">${liveTools(node).map((t) => `<button type="button" class="${best("change", t.name)}" data-act="kz-file" data-z="${z.id}" data-as="change" data-tool="${esc(t.name)}">A change to ${esc(t.title)}</button>`).join("")}
+      <button type="button" class="${best("plant")}" data-act="kz-file" data-z="${z.id}" data-as="plant">A plant request</button><button type="button" class="${best("new_tool")}" data-act="kz-file" data-z="${z.id}" data-as="new_tool">A new tool</button>
+      <button type="button" class="linkish" data-act="kz-away" data-z="${z.id}">Put away</button></div>`;
+  }
+  return `<div class="burst"><button type="button" class="kz ${z.status === "filed" ? "done" : ""}" data-node="${esc(z.node_key || "")}" style="position:static;flex:none;width:28px;height:28px;font-size:12px" aria-label="Show kaizen ${z.n} on the map">${z.n}</button>
+    <div style="min-width:0;flex:1"><b>${esc(z.title)}</b>${z.source === "agent" ? ` <span class="chip" style="background:#e3efe7;color:#1d5535">the agent's</span>` : ""}${node && n == null ? ` <span class="note">on ${esc(node.label)}</span>` : ""}${z.why ? `<div class="note">${esc(z.why)}</div>` : ""}${ev}${tail}</div></div>`;
+}
+// the requests on a box, and the form that asks for one there
+function boxCardsHtml(n) {
+  if (S.view.map.proposed) return "";
+  const cards = (S.view.cards || []).filter((c) => c.node_key === n.key);
+  const list = cards.length ? `<div class="cards">${cards.slice(0, 8).map((c) => `<a href="${boardLink(n)}"><span class="note">#${c.id}</span> <b>${esc(c.message)}</b> <span class="stw ${esc(c.status)}">${c.kind === "plant" ? "plant request, " : c.kind === "module_request" ? "new tool, " : c.module ? `${esc(toolTitle(c.module))}, ` : ""}${esc(c.kind === "module_request" && c.status === "declined" ? "withdrawn" : STW[c.status] || c.status)}</span></a>`).join("")}${cards.length > 8 ? `<a class="note" href="${boardLink(n)}">and ${cards.length - 8} more on the board</a>` : ""}</div>` : `<div class="note">Nothing on the Kaizen board for this box yet.</div>`;
+  const tools = liveTools(n);
+  const ask = S.asking ? `<form class="askbox" id="askform"><label class="lbl" for="askwords">What should change here</label><textarea id="askwords" name="words" maxlength="2000" placeholder="In a line or two, in the plant's words"></textarea>
+      <div class="chips">${tools.map((t, i) => `<label class="tog"><input type="radio" name="as" value="change|${esc(t.name)}"${i === 0 ? " checked" : ""}> A change to ${esc(t.title)}</label>`).join("")}<label class="tog"><input type="radio" name="as" value="plant"${tools.length ? "" : " checked"}> A plant request (no tool)</label><label class="tog"><input type="radio" name="as" value="new_tool"> A new tool for this box</label></div>
+      <div class="note">${tools.length ? "A change goes to the tool's board, where the proposer reads it. " : ""}A plant request is work on the floor itself: no AI reads it, and you move it along. A new tool starts its request with what this box says.</div>
+      ${S.err && S.asking ? `<div class="err">${esc(S.err)}</div>` : ""}<div class="chips"><button type="submit" class="go">Send to the Kaizen board</button><button type="button" class="quietbtn" data-act="ask-cancel">Cancel</button></div></form>`
+    : `<div><button type="button" class="quietbtn" data-act="ask">Ask for something here</button></div>`;
+  return `<div><div class="lbl" style="margin-bottom:4px">On the Kaizen board${cards.length ? ` (${cards.length})` : ""}</div>${list}</div>${ask}`;
+}
+// the station screen of a box: a screen of one of its own live tools, the floor's first
+function screenField(n) {
+  const mods = (n.modules || []).filter((m) => (S.view.screens || {})[m]);
+  if (!mods.length || !["process", "control"].includes(n.kind)) return "";
+  const cur = (n.detail || {}).screen;
+  const opts = mods.flatMap((m) => S.view.screens[m].map((x) => { const v = `${m}|${x.route}`; return `<option value="${esc(v)}"${cur && cur.module === m && cur.route === x.route ? " selected" : ""}>${esc(x.label)} · ${esc(toolTitle(m))}${x.for === "floor" ? " · the floor's" : x.for === "office" ? " · the office's" : ""}</option>`; })).join("");
+  return `<label>Its station screen (where its agent's line shows, when that agent's switch is on)<select name="screen"><option value="">None</option>${opts}</select></label>`;
+}
+// the future state: what the agent drafted, what it left out, keep it or draft it again
+function futureBarHtml() {
+  const m = S.view.map, f = S.view.future || {};
+  if (m.state !== "future") return "";
+  return `<div class="card futurebar"><div><b>${m.status === "confirmed" ? "The future state of" : "The agent's draft of the future state of"} ${esc(m.family)}.</b> ${f.summary ? esc(f.summary) : ""}</div>
+    <div class="note">The same boxes as today. The flows it changes, where each step's record would live, and its kaizen bursts, each tied to what the current map shows. Turn a burst into a request below; nothing changes on the floor until a request is approved.${f.drafted_at ? ` Drafted ${esc(new Date(f.drafted_at).toLocaleString())}${f.drafted_by ? ` for ${esc(f.drafted_by)}` : ""}.` : ""}</div>
+    ${(f.left_out || []).length ? `<details><summary class="note" style="cursor:pointer">What the board left out of the draft (${f.left_out.length})</summary><div class="note">${f.left_out.map(esc).join("<br>")}</div></details>` : ""}
+    <div class="chips">${f.parent ? `<button type="button" class="quietbtn" data-map="${f.parent.id}">Back to the current state</button>` : ""}${m.status === "confirmed" ? `<span class="chip" style="background:#e3efe7;color:#1d5535">Kept</span>` : `<button type="button" class="go" data-act="fs-keep">Keep this future state</button>`}${f.parent ? `<button type="button" class="quietbtn" data-act="fs-draft" data-from="${f.parent.id}">Draft it again</button>` : ""}</div></div>`;
+}
+let draftT = null;
+// while the agent drafts, the page looks every few seconds, and opens the draft when it is there (at once, when it was
+// quicker than the page). S.awaitFuture: the future state that was there before "Draft", so a new one is told apart.
+function watchDraft() {
+  clearTimeout(draftT);
+  const f = S.view && S.view.future;
+  if (!f || S.view.map.state === "future") return;
+  const had = S.awaitFuture !== undefined ? S.awaitFuture : (f.future ? f.future.id : null);
+  const fresh = (x) => x && !x.drafting && x.future && x.future.id !== had;
+  if (S.awaitFuture !== undefined && fresh(f)) { delete S.awaitFuture; openMap(f.future.id); return; }
+  if (!f.drafting) { delete S.awaitFuture; return; }
+  const from = S.view.map.id;
+  draftT = setTimeout(async () => {
+    try {
+      const v = await api(`/maps/${from}`);
+      if (S.view && S.view.map.id === from) {
+        if (fresh(v.future)) { delete S.awaitFuture; S.ov = await api(""); return openMap(v.future.future.id); }
+        S.view.future = v.future; S.awaitFuture = had; render();
+      }
+    } catch (e) { /* the next look tries again */ }
+    watchDraft();
+  }, 3000);
+}
+async function openMap(id) {
+  S.mapId = id; history.replaceState(null, "", `?map=${id}`);
+  S.view = await api(`/maps/${id}`);
+  if (!S.view.nodes.some((n) => n.key === S.sel)) S.sel = (S.view.nodes.find((n) => n.kind === "control") || S.view.nodes[0] || {}).key || null;
+  render();
+}
 function editHtml(n) {
   const opts = Object.entries(REC).map(([k, l]) => `<option value="${k}"${k === n.record_kind ? " selected" : ""}>${esc(l)}</option>`).join("");
   const tools = S.view.tools.filter((t) => !t.archived).map((t) => `<label style="flex-direction:row;align-items:center;gap:8px;font-weight:500"><input type="checkbox" name="mod" value="${esc(t.name)}"${(n.modules || []).includes(t.name) ? " checked" : ""}> ${esc(t.title)}</label>`).join("");
@@ -416,6 +519,7 @@ function editHtml(n) {
     ${tools ? `<fieldset style="border:none;padding:0;display:flex;flex-direction:column;gap:4px"><legend class="lbl" style="margin-bottom:4px">Anetix tools on this box</legend>${tools}</fieldset>` : ""}
     ${n.kind === "process" ? `<div><div class="lbl" style="margin-bottom:4px">Data box (? for a number nobody knows yet)</div><div id="drows" style="display:flex;flex-direction:column;gap:6px">${rows}</div><button type="button" class="quietbtn" data-act="addrow" style="margin-top:6px">Add a row</button></div>` : ""}
     ${stepsField(n)}
+    ${screenField(n)}
     <label>The agent that watches it (several boxes may share one; leave empty for none)<input type="text" name="agent_name" value="${esc((n.detail || {}).agent_name || "")}" maxlength="60" placeholder="Inventory agent"></label>
     <label>Notes<textarea name="notes" maxlength="2000">${esc((n.detail || {}).notes || "")}</textarea></label>
     ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
@@ -451,7 +555,11 @@ function legendHtml() {
 }
 function kaizenHtml() {
   if (!S.layers.kz || !S.view.kaizen.length) return "";
-  return `<section class="card" aria-label="Kaizen"><div class="lbl" style="color:var(--amberDeep)">Kaizen on this map</div>${S.view.kaizen.map((z) => `<div style="display:flex;gap:10px;align-items:flex-start"><button type="button" class="kz" data-node="${esc(z.node_key || "")}" style="position:static;flex:none;width:28px;height:28px;font-size:12px" aria-label="Show kaizen ${z.n} on the map">${z.n}</button><div><b>${esc(z.title)}</b><div class="note">${esc(z.why)}</div></div></div>`).join("")}</section>`;
+  const shown = S.view.kaizen.filter((z) => z.status !== "dismissed"), away = S.view.kaizen.filter((z) => z.status === "dismissed");
+  return `<section class="card" aria-label="Kaizen"><div class="lbl" style="color:var(--amberDeep)">Kaizen on this map</div>
+    <div class="note">Each burst becomes a request on the Kaizen board in one tap: a change to a tool on its box, a plant request, or a new tool started from the box.</div>
+    ${S.err && !S.editing && !S.asking ? `<div class="err">${esc(S.err)}</div>` : ""}
+    ${shown.map((z) => burstHtml(z)).join("")}${away.length ? `<details><summary class="note" style="cursor:pointer">Put away (${away.length})</summary>${away.map((z) => burstHtml(z)).join("")}</details>` : ""}</section>`;
 }
 function feedHtml() {
   const f = (S.view.map.layout || {}).feed || [];
@@ -703,15 +811,25 @@ function render() {
     app.innerHTML = `<div class="card empty"><h2 style="font-size:18px;color:var(--ink);margin-bottom:6px">No value stream map yet</h2><p>The map shows every step of the plant, the information and material between them, and where each step's record lives. The mapping walk builds it with you: add your call and walk-through notes, the agent makes a first guess at every step, and you confirm each one walking upstream from shipping.</p><div class="chips" style="justify-content:center;margin-top:12px">${walks}<button type="button" class="go big" data-act="w-new">Start the mapping walk</button>${imp}</div>${S.err ? `<div class="err" style="margin-top:10px">${esc(S.err)}</div>` : ""}</div>`;
     return;
   }
-  const fam = S.ov.maps.map((m) => `<button type="button" data-map="${m.id}" class="${m.id === S.mapId ? "on" : ""}" aria-pressed="${m.id === S.mapId}">${esc(m.family)}${m.proposed ? " · walk draft" : ""}</button>`).join("");
+  const cur = S.view.map.state === "future" ? S.ov.maps.find((m) => m.key === S.view.map.parent_key) : S.view.map;
+  const fam = S.ov.maps.filter((m) => m.state !== "future").map((m) => `<button type="button" data-map="${m.id}" class="${cur && m.id === cur.id ? "on" : ""}" aria-pressed="${Boolean(cur && m.id === cur.id)}">${esc(m.family)}${m.proposed ? " · walk draft" : ""}</button>`).join("");
+  // current or future state (M3): the future is the agent's draft until a manager keeps it
+  const fut = S.view.map.state === "future" ? S.view.map : S.ov.maps.find((m) => m.state === "future" && cur && m.parent_key === cur.key);
+  const fs = S.view.future || {};
+  const stateSeg = S.view.map.proposed ? "" : [
+    fut ? `<div class="seg" role="group" aria-label="Current or future state"><button type="button" data-map="${cur ? cur.id : S.mapId}" class="${S.view.map.state !== "future" ? "on" : ""}">Current state</button><button type="button" data-map="${fut.id}" class="${S.view.map.state === "future" ? "on" : ""}">Future state</button></div>` : "",
+    fs.drafting ? `<span class="note" role="status"><span class="spin" style="display:inline-block;width:14px;height:14px;margin:0 6px -2px 0;border-width:2px"></span>The agent is drafting the future state…</span>`
+      : fut ? "" : `<button type="button" class="pill" data-act="fs-draft" data-from="${S.mapId}">Draft the future state</button>`,
+    fs.error && !fs.drafting ? `<span class="err" style="padding:4px 8px">${esc(fs.error)}</span>` : ""].join("");
   const layer = (k, label) => `<button type="button" class="pill ${S.layers[k] ? "on" : ""}" data-layer="${k}" aria-pressed="${S.layers[k]}">${label}</button>`;
   const scroll = document.querySelector(".scroller"); const keep = scroll ? [scroll.scrollLeft, scroll.scrollTop] : null;
   app.innerHTML = `<div class="head"><div class="controls"><div class="seg" role="group" aria-label="Product family">${fam}</div>
       <div class="controls" role="group" aria-label="Layers"><span class="lbl">Layers</span>${layer("sys", "Systems")}${layer("agents", "Agents")}${layer("kz", "Kaizen")}${layer("ladder", "Timeline")}</div></div>
-    <div class="controls">${walkBtns}<button type="button" class="pill ${S.arrange ? "on" : ""}" data-act="arrange" aria-pressed="${S.arrange}">${S.arrange ? "Done arranging" : "Arrange boxes"}</button><a class="quietbtn" href="${API}/export">Download the map</a>${imp}</div></div>
+    <div class="controls">${stateSeg}${walkBtns}<button type="button" class="pill ${S.arrange ? "on" : ""}" data-act="arrange" aria-pressed="${S.arrange}">${S.arrange ? "Done arranging" : "Arrange boxes"}</button><a class="quietbtn" href="${API}/export">Download the map</a>${imp}</div></div>
     ${coverageHtml()}
+    ${futureBarHtml()}
     ${S.view.map.proposed ? `<div class="card" style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border-color:#e5b98a;background:#fff8f1"><div><b>This is the walk's draft of ${esc(S.view.map.family)}.</b> <span class="note">It sits beside the current map so the two can be compared. Using it replaces the current map; the current one is kept, hidden, with its kaizen and review answers.</span></div><div class="chips"><button type="button" class="quietbtn" data-act="w-open" data-walk="${S.view.map.walk_id}">Back to the walk</button><button type="button" class="go" data-act="w-use" data-walk="${S.view.map.walk_id}">Use this map</button></div></div>` : ""}
-    <section class="card" aria-label="Map"><div class="maphead"><div style="font-size:15px"><b>${esc(S.view.map.title)}</b> <span class="note">· current state · ${S.view.map.proposed ? "walk draft" : S.view.map.status === "confirmed" ? "confirmed" : "draft"}</span></div><div class="controls"><span class="note">${S.arrange ? "Drag a box to move it. Its flows follow." : "Information across the top, material left to right below. Click a box for detail."}</span><button type="button" class="quietbtn" data-act="fit">${S.fit ? "Actual size" : "Fit to screen"}</button></div></div><div class="scroller">${mapHtml()}</div></section>
+    <section class="card" aria-label="Map"><div class="maphead"><div style="font-size:15px"><b>${esc(S.view.map.title)}</b> <span class="note">· ${S.view.map.state === "future" ? "future state" : "current state"} · ${S.view.map.proposed ? "walk draft" : S.view.map.status === "confirmed" ? (S.view.map.state === "future" ? "kept" : "confirmed") : "draft"}</span></div><div class="controls"><span class="note">${S.arrange ? "Drag a box to move it. Its flows follow." : "Information across the top, material left to right below. Click a box for detail."}</span><button type="button" class="quietbtn" data-act="fit">${S.fit ? "Actual size" : "Fit to screen"}</button></div></div><div class="scroller">${mapHtml()}</div></section>
     <div class="lower">${detailHtml()}<div class="side">${reviewHtml()}${kaizenHtml()}${feedHtml()}${legendHtml()}</div></div>
     ${stagesHtml()}`;
   layoutAfter();
@@ -727,12 +845,32 @@ app.addEventListener("click", async (ev) => {
   const t = ev.target.closest("[data-map],[data-layer],[data-node],[data-act]");
   if (!t) return;
   try {
-    if (t.dataset.map) { S.mapId = Number(t.dataset.map); S.sel = null; S.editing = false; history.replaceState(null, "", `?map=${S.mapId}`); S.view = await api(`/maps/${S.mapId}`); S.sel = (S.view.nodes.find((n) => n.kind === "control") || S.view.nodes[0] || {}).key; return render(); }
+    if (t.dataset.map) { const keepBox = S.sel; S.mapId = Number(t.dataset.map); S.editing = false; S.asking = false; S.err = ""; history.replaceState(null, "", `?map=${S.mapId}`); S.view = await api(`/maps/${S.mapId}`); S.sel = S.view.nodes.some((n) => n.key === keepBox) ? keepBox : (S.view.nodes.find((n) => n.kind === "control") || S.view.nodes[0] || {}).key; render(); return watchDraft(); }
     if (t.dataset.layer) { S.layers[t.dataset.layer] = !S.layers[t.dataset.layer]; return render(); }
-    if (t.dataset.node !== undefined && !t.dataset.act) { if (!t.dataset.node) return; S.sel = t.dataset.node; S.editing = false; S.err = ""; render(); if (!t.closest(".host")) document.getElementById("host").scrollIntoView({ block: "nearest" }); return; }
+    if (t.dataset.node !== undefined && !t.dataset.act) { if (!t.dataset.node) return; S.sel = t.dataset.node; S.editing = false; S.asking = false; S.err = ""; render(); if (!t.closest(".host")) document.getElementById("host").scrollIntoView({ block: "nearest" }); return; }
     const act = t.dataset.act;
     if (act && act.startsWith("w-")) return await walkClick(t, act);
     if (act === "arrange") { S.arrange = !S.arrange; return render(); }
+    // M3: a burst to a request, put away and back; a box's own request; the future state
+    if (act === "kz-file") {
+      t.disabled = true;
+      const r = await post(`/kaizen/${t.dataset.z}/file`, { as: t.dataset.as, tool: t.dataset.tool || undefined });
+      if (r.intake_id) { location.href = `./?intake=${r.intake_id}`; return; }
+      S.err = ""; return load(true);
+    }
+    if (act === "kz-away") { await post(`/kaizen/${t.dataset.z}/dismiss`, {}); S.err = ""; return load(true); }
+    if (act === "kz-back") { await post(`/kaizen/${t.dataset.z}/restore`, {}); S.err = ""; return load(true); }
+    if (act === "ask") { S.asking = true; S.err = ""; render(); const ta = document.getElementById("askwords"); if (ta) ta.focus(); return; }
+    if (act === "ask-cancel") { S.asking = false; S.err = ""; return render(); }
+    if (act === "fs-draft") {
+      const from = Number(t.dataset.from);
+      if (S.view.map.state === "future" && !confirm("Draft the future state again? This draft is kept, hidden; the requests its bursts became stay on the board.")) return;
+      t.disabled = true;
+      const had = S.view.map.state === "future" ? S.view.map.id : ((S.view.future || {}).future || {}).id || null;
+      await post(`/maps/${from}/future`, {});
+      S.mapId = from; S.awaitFuture = had; history.replaceState(null, "", `?map=${from}`); S.err = ""; return load(true);
+    }
+    if (act === "fs-keep") { await post(`/maps/${S.mapId}/keep`, {}); S.err = ""; return load(true); }
     if (act === "fit") { S.fit = !S.fit; return render(); }
     if (act === "edit") { S.editing = true; S.err = ""; render(); api("/steps").then((r) => { S.steps = r.steps || []; if (S.editing) render(); }).catch(() => {}); return; }
     if (act === "canceledit") { S.editing = false; S.err = ""; return render(); }
@@ -761,6 +899,18 @@ app.addEventListener("submit", async (ev) => {
     } catch (e) { if (btn) btn.disabled = false; walkErr(e.message); }
     return;
   }
+  if (ev.target.id === "askform") {
+    ev.preventDefault();
+    const f = ev.target, n = S.view.nodes.find((x) => x.key === S.sel), pick = (f.querySelector("input[name=as]:checked") || {}).value || "plant";
+    const [as, tool] = pick.split("|");
+    const btn = f.querySelector("button[type=submit]"); if (btn) btn.disabled = true;
+    try {
+      const r = await post(`/nodes/${n.id}/request`, { as, tool, words: f.words.value });
+      if (r.intake_id) { location.href = `./?intake=${r.intake_id}`; return; }
+      S.asking = false; S.err = ""; await load(true);
+    } catch (e) { if (btn) btn.disabled = false; let box = f.querySelector(".err"); if (!box) { box = document.createElement("div"); box.className = "err"; box.setAttribute("role", "alert"); btn.parentElement.before(box); } box.textContent = e.message; }
+    return;
+  }
   if (ev.target.id !== "editform") return;
   ev.preventDefault();
   const f = ev.target, n = S.view.nodes.find((x) => x.key === S.sel);
@@ -772,6 +922,7 @@ app.addEventListener("submit", async (ev) => {
     body.steps = [...f.querySelectorAll("input[name=step]:checked")].map((i) => all[Number(i.value)]).filter(Boolean);
   }
   if (n.kind === "process") { const ls = [...f.querySelectorAll("input[name=dl]")], vs = [...f.querySelectorAll("input[name=dv]")]; body.data = ls.map((l, i) => ({ label: l.value, value: vs[i].value })).filter((r) => r.label.trim()); }
+  if (f.screen) { const [module, ...rest] = f.screen.value.split("|"); const cur = (n.detail || {}).screen; if (f.screen.value ? !(cur && cur.module === module && cur.route === rest.join("|")) : cur) body.screen = f.screen.value ? { module, route: rest.join("|") } : null; }
   try { await post(`/nodes/${n.id}`, body); S.editing = false; S.err = ""; await load(true); } catch (e) { S.err = e.message; render(); }
 });
 app.addEventListener("change", async (ev) => {

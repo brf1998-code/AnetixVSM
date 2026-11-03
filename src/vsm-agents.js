@@ -157,9 +157,10 @@ async function init() {
 async function mapBoxes(company) {
   const nodes = (await q(`SELECT m.id AS map_id, m.key AS map_key, m.family, n.key, n.kind, n.label, n.who, n.modules, coalesce(n.detail->>'agent_name','') AS agent_name, coalesce(n.detail->'steps','[]'::jsonb) AS steps
                             FROM platform.vsm_nodes n JOIN platform.vsm_maps m ON m.id=n.map_id
-                           WHERE n.company=$1 AND NOT m.proposed AND m.replaced_at IS NULL ORDER BY m.sort, m.id, n.id`, [company])).rows;
+                           WHERE n.company=$1 AND NOT m.proposed AND m.replaced_at IS NULL AND m.state <> 'future' ORDER BY m.sort, m.id, n.id`, [company])).rows;
+  // a future state (src/vsm-kaizen.js) is where the plant is going, not where it is: no agent watches it
   const edges = (await q(`SELECT e.map_id, e.from_key, e.to_key, e.kind FROM platform.vsm_edges e JOIN platform.vsm_maps m ON m.id=e.map_id
-                           WHERE e.company=$1 AND NOT m.proposed AND m.replaced_at IS NULL`, [company])).rows;
+                           WHERE e.company=$1 AND NOT m.proposed AND m.replaced_at IS NULL AND m.state <> 'future'`, [company])).rows;
   return { nodes, edges };
 }
 async function liveTools(company) {
@@ -181,7 +182,7 @@ function agentsFrom(nodes, rows, live) {
   }
   for (const r of rows) {
     if (!by.has(r.key)) by.set(r.key, { key: r.key, name: r.name, boxes: [], tools: [], steps: [], off_map: true });
-    Object.assign(by.get(r.key), { id: r.id, status: r.status, brief: r.brief, people: r.people, set_up: true, tools_at_setup: r.tools, reviews: Boolean(r.reviews), last_review_at: r.last_review_at || null });
+    Object.assign(by.get(r.key), { id: r.id, status: r.status, brief: r.brief, people: r.people, set_up: true, tools_at_setup: r.tools, reviews: Boolean(r.reviews), last_review_at: r.last_review_at || null, floor_line: Boolean(r.floor_line) });
   }
   return [...by.values()].map((a) => ({ ...a, status: a.set_up ? a.status : "not_set_up", can_set_up: a.tools.length > 0 || a.steps.length > 0 }));
 }
@@ -638,6 +639,10 @@ async function overview(company) {
     const o = open.find((x) => x.agent_id === a.id) || {};
     a.open = o.n || 0; a.climbed = o.climbed || 0;
   }
+  // the floor's line (src/vsm-floor.js): the station screens of each agent's boxes, and how often a floor screen showed its flags
+  const stations = await require("./vsm-floor").stationsOf(company);
+  const shown = (await q("SELECT agent_id, count(*)::int AS flags, coalesce(sum(floor_views),0)::int AS views FROM platform.vsm_flags WHERE company=$1 AND floor_seen_at > now() - interval '7 days' GROUP BY agent_id", [company])).rows;
+  for (const a of agents) { a.stations = stations[a.key] || []; const sh = shown.find((x) => x.agent_id === a.id); a.floor_shown_7d = sh ? { flags: sh.flags, views: sh.views } : null; }
   const st = await require("./vsm-review").stateFor(company, agents);
   return { agents, tools: live, settings: st.settings, walled: st.walled };
 }
@@ -716,6 +721,8 @@ async function editAgent(req, company, id, b) {
     // the next shift time is the first one: no catching up on a shift that already passed
     if (on && !a.reviews) sets.push("last_shift_at=now()");
   }
+  // the floor's line (agent board decision 6, src/vsm-floor.js): off by default, a manager's switch per agent
+  if (b.floor_line !== undefined) { vals.push(b.floor_line === true); sets.push(`floor_line=$${vals.length}`); changed.floor_line = b.floor_line === true; }
   if (!sets.length) throw bad("nothing to change");
   await q(`UPDATE platform.vsm_agents SET ${sets.join(", ")}, updated_at=now() WHERE company=$1 AND id=$2`, vals);
   // switches are said by Anetix, naming who, so an agent's review does not take them for a person talking to it
@@ -725,7 +732,9 @@ async function editAgent(req, company, id, b) {
     await post({ company, channel: `a:${a.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: a.id,
       words: changed.reviews ? `${whoOf(req)} turned on ${a.name}'s shift reviews: it reviews its area at ${s.shift_times.join(", ")} (${s.tz}), and early when a neighbor sends it an urgent flag.` : `${whoOf(req)} turned off ${a.name}'s shift reviews. Its watches still run.` });
   }
-  await record.record("agent_changed", { company, actor: record.actor(req), before: JSON.stringify({ status: a.status, brief: a.brief, reviews: Boolean(a.reviews) }), after: JSON.stringify(changed), detail: { agent: a.key } });
+  if (changed.floor_line !== undefined && changed.floor_line !== Boolean(a.floor_line)) await post({ company, channel: `a:${a.key}`, kind: "note", from_kind: "platform", from_name: "Anetix", agent_id: a.id,
+    words: changed.floor_line ? `${whoOf(req)} turned on ${a.name}'s line on the floor: its most urgent open flag shows as one line on the station screens of its boxes. The floor reads it; managers still handle it here.` : `${whoOf(req)} turned off ${a.name}'s line on the floor.` });
+  await record.record("agent_changed", { company, actor: record.actor(req), before: JSON.stringify({ status: a.status, brief: a.brief, reviews: Boolean(a.reviews), floor_line: Boolean(a.floor_line) }), after: JSON.stringify(changed), detail: { agent: a.key } });
   return agentOf(company, id);
 }
 async function tablesFor(company, id) {

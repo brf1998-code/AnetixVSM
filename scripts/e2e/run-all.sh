@@ -258,6 +258,13 @@ fresh; rm -f "$LOG/vsm-a3-prompts.jsonl"; start "SOS_BROWSER=off $A3"
 run vsm-a3                 env $A3 node scripts/e2e/vsm-a3.js
 fresh; rm -f "$LOG/vsm-a3-prompts.jsonl"; start "SOS_BROWSER=off SOS_MODULE_RUNNER=inline $A3"
 run vsm-a3-inline          env $A3 node scripts/e2e/vsm-a3.js
+# 2026-11-02 (VSM dev copy): M3, the Map and the Kaizen board joined (src/vsm-kaizen.js): bursts and boxes to requests,
+# plant requests, the future state drafted by the agent; and the floor's side (src/vsm-floor.js): screen tags, a box's
+# station screen, the agent's line on it. The browser half runs on what the first half left, with a slow fake draft.
+M3="SOS_WATCH_MS=0 SOS_FAKE_FUTURE_MS=1500 SOS_PROMPT_LOG=$LOG/vsm-m3-prompts.jsonl"
+fresh; rm -f "$LOG/vsm-m3-prompts.jsonl"; start "SOS_BROWSER=off $M3"
+run vsm-m3                 env $M3 node scripts/e2e/vsm-m3.js
+[ -z "$QUICK" ] && run vsm-m3-browser env $M3 node scripts/e2e/vsm-m3-browser.js
 # 2026-10-29: sign in with Google or Microsoft (src/oidc.js), against a stand-in for both the script serves on 4777
 OI="SOS_PUBLIC_URL=http://127.0.0.1:3999 SOS_OIDC_STUB=http://127.0.0.1:4777 SOS_GOOGLE_CLIENT_ID=g-client SOS_GOOGLE_CLIENT_SECRET=g-secret SOS_MS_CLIENT_ID=m-client SOS_MS_CLIENT_SECRET=m-secret"
 fresh; start "SOS_BROWSER=off $OI"

@@ -251,6 +251,7 @@ function agentPanel() {
     <div class="row"><button type="button" class="btn" data-act="check" data-id="${a.id}"${a.status !== "on" ? " disabled" : ""}>Check now</button><button type="button" class="btn quiet" data-act="agent" data-id="${a.id}" data-to="${a.status === "on" ? "paused" : "on"}">${a.status === "on" ? "Pause" : "Turn on"}</button><button type="button" class="btn quiet" data-act="propose" data-id="${a.id}">Look again</button></div>
     ${S.err ? `<div class="err">${esc(S.err)}</div>` : ""}
     ${reviewsHtml(a)}
+    ${floorLineHtml(a)}
     <form class="form sec" data-brief="${a.id}"><div class="lbl">Its brief</div><div class="note">What this area does and what normal looks like, in your words. The agent reads it every review.</div>
       <textarea class="brief" name="brief" maxlength="2000" aria-label="The agent's brief">${esc(a.brief || "")}</textarea>
       <div class="acts"><button type="submit" class="btn">Save the brief</button><button type="button" class="btn quiet" data-act="draftbrief" data-id="${a.id}">Draft it again</button></div></form>
@@ -273,6 +274,14 @@ function draftToolsHtml() {
   return `<div class="sec"><div class="lbl">Tools that take drafts</div><div class="note">An agent may draft a record for its own tools and its neighbors'. A person makes it on the tool's own screen, or declines it. Managers always can; the floor only where you open it.</div>
     ${tools.map((t) => `<div class="row" style="justify-content:space-between"><span><b>${esc(t.title)}</b> <span class="note">${t.kinds.map((k) => esc(k.label)).join(", ")}${t.waiting ? ` · ${t.waiting} waiting` : ""}</span></span>
       <button type="button" class="btn ${t.floor ? "" : "quiet"}" data-act="floordrafts" data-mod="${esc(t.module)}" data-to="${t.floor ? "off" : "on"}" aria-pressed="${t.floor}">${t.floor ? "The floor can make them" : "Managers only"}</button></div>`).join("")}</div>`;
+}
+// The floor's line (decision 6, src/vsm-floor.js): an experiment, off by default, read only on the floor
+function floorLineHtml(a) {
+  const st = a.stations || [], sh = a.floor_shown_7d;
+  return `<div class="sec"><div class="row" style="justify-content:space-between"><span class="lbl">Its line on the floor</span><span class="chip ${a.floor_line ? "ok" : ""}">${a.floor_line ? "On" : "Off"}</span></div>
+    <div class="note">An experiment: its most urgent open flag shows as one line on the station screens of its boxes, for the floor to read. Nothing can be changed there; you still mark a flag Seen or On it here.</div>
+    <div class="note">${st.length ? `Station screens: ${st.map((x) => `${esc(x.screen)} (${esc(x.tool)}) for ${esc(x.box)}`).join("; ")}.` : "None of its boxes has a station screen yet. Pick one in the box's editor on the Map."}${sh ? ` In the last 7 days ${sh.flags} of its flags showed there, looked at ${sh.views} time${sh.views === 1 ? "" : "s"} (counted once each ten minutes).` : ""}</div>
+    <div class="acts"><button type="button" class="btn ${a.floor_line ? "quiet" : "go"}" data-act="floorline" data-id="${a.id}" data-to="${a.floor_line ? "off" : "on"}">${a.floor_line ? "Take it off the floor" : "Show it on the floor"}</button></div></div>`;
 }
 function reviewsHtml(a) {
   const walled = S.agents.walled, r = a.last_review;
@@ -375,6 +384,7 @@ app.addEventListener("click", (ev) => {
   if (act === "add") { S.adding = true; S.add = { shape: "waiting" }; S.tables = null; render(); return api(`/agents/${id}/tables`).then((r) => { S.tables = r.tools; S.add.tool = (r.tools[0] || {}).tool; if (!r.tools.length) S.add.shape = "stage"; render(); }).catch((e) => { S.err = e.message; S.adding = false; render(); }); }
   if (act === "canceladd") { S.adding = false; return render(); }
   if (act === "reviews") return go(() => post(`/agents/${id}`, { reviews: t.dataset.to === "on" }));
+  if (act === "floorline") return go(() => post(`/agents/${id}`, { floor_line: t.dataset.to === "on" }));
   if (act === "review") return go(() => post(`/agents/${id}/review`, {}));
   if (act === "draftbrief") return go(() => post(`/agents/${id}/brief`, {}));
   if (act === "draft") return go(() => post(`/board/drafts/${id}/${t.dataset.do}`, {}));
